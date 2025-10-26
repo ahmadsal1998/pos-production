@@ -1,9 +1,0 @@
-{
-  "name": "pos-production",
-  "version": "1.0.0",
-  "private": true,
-  "scripts": {
-    "install": "cd mvp && npm install",
-    "build": "cd mvp && npm run build"
-  }
-}
