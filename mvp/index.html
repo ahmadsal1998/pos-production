@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PoshPointHub Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+      /* Custom scrollbar for Webkit browsers */
+      ::-webkit-scrollbar {
+        width: 8px; /* Width of the scrollbar */
+      }
+      ::-webkit-scrollbar-track {
+        background: #2D3748; /* Color of the track */
+        border-radius: 10px;
+      }
+      ::-webkit-scrollbar-thumb {
+        background: #F97316; /* Color of the scroll thumb */
+        border-radius: 10px;
+      }
+      ::-webkit-scrollbar-thumb:hover {
+        background: #ea580c; /* Color of the scroll thumb on hover */
+      }
+
+      /* Print-specific styles for the receipt modal */
+      @media print {
+        body * {
+          visibility: hidden;
+        }
+        #printable-receipt, #printable-receipt * {
+          visibility: visible;
+        }
+        #printable-receipt {
+          position: absolute;
+          left: 0;
+          top: 0;
+          width: 100%;
+          margin: 0;
+          padding: 1.5rem;
+          font-size: 12px;
+          color: black;
+        }
+        .print-hidden {
+          display: none !important;
+        }
+        .print-only-text {
+            visibility: visible !important;
+        }
+      }
+    </style>
+<script type="importmap">
+{
+  "imports": {
+    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/",
+    "react/": "https://aistudiocdn.com/react@^19.2.0/",
+    "react": "https://aistudiocdn.com/react@^19.2.0"
+  }
+}
+</script>
+<link rel="stylesheet" href="/src/index.css">
+<script>
+  // Immediately apply theme before React hydrates to prevent FOUC
+  (function() {
+    try {
+      const theme = localStorage.getItem('theme') || 'light';
+      const root = document.documentElement;
+      root.classList.remove('light', 'dark');
+      root.classList.add(theme);
+    } catch (e) {
+      // Fallback if localStorage is unavailable
+      const root = document.documentElement;
+      root.classList.remove('light', 'dark');
+      root.classList.add('light');
+    }
+  })();
+</script>
+</head>
+<body class="bg-gray-100 dark:bg-gray-900 font-sans">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+</body>
+</html>
