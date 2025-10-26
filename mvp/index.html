@@ -10,13 +10,17 @@
         try {
           const theme = localStorage.getItem('theme') || 'light';
           const root = document.documentElement;
-          root.classList.remove('light', 'dark');
-          root.classList.add(theme);
+          // For Tailwind dark mode to work, we only need 'dark' class
+          // Light mode = no class, Dark mode = 'dark' class
+          if (theme === 'dark') {
+            root.classList.add('dark');
+          } else {
+            root.classList.remove('dark');
+          }
         } catch (e) {
           // Fallback if localStorage is unavailable
           const root = document.documentElement;
-          root.classList.remove('light', 'dark');
-          root.classList.add('light');
+          root.classList.remove('dark');
         }
       })();
     </script>

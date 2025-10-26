@@ -28,15 +28,18 @@ const MainLayout = () => {
   useEffect(() => {
     const root = window.document.documentElement;
     
-    // Remove both light and dark classes to ensure clean state
-    root.classList.remove('light', 'dark');
-    
-    // Add the current theme class
-    root.classList.add(theme);
+    // For Tailwind dark mode to work, we only need 'dark' class
+    // Light mode = no class, Dark mode = 'dark' class
+    if (theme === 'dark') {
+      root.classList.add('dark');
+    } else {
+      root.classList.remove('dark');
+    }
     
     // Save to localStorage
     try {
       localStorage.setItem('theme', theme);
+      console.log('Theme updated to:', theme, 'ClassList:', root.classList.toString());
     } catch (e) {
       // Ignore localStorage errors
       console.warn('Could not save theme to localStorage:', e);
