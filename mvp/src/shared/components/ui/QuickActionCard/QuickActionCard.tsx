@@ -1,5 +1,5 @@
-import { QuickActionProps } from '../../../types';
-import { animations } from '../../../styles/design-tokens';
+import { QuickActionProps } from '@/shared/constants';
+import { animations } from '@/shared/styles/design-tokens';
 
 const QuickActionCard = ({ title, icon, colorClass, path }: QuickActionProps) => {
   // Enhanced color class handling with better dark mode support

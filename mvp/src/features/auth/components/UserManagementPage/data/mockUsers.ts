@@ -1,6 +1,6 @@
-import { User } from '../../../../../shared/types';
-import { UUID } from '../../../../../shared/constants';
-import { ALL_PERMISSIONS } from '../../../../../shared/types';
+import { User } from '@/shared/types';
+import { UUID } from '@/shared/constants';
+import { ALL_PERMISSIONS } from '@/shared/types';
 
 export const createInitialUsers = (): User[] => [
   {

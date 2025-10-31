@@ -1,11 +1,11 @@
 import React, { useState, useRef, useEffect } from 'react';
 
-interface DropdownOption {
+export interface DropdownOption {
   value: string;
   label: string;
 }
 
-interface CustomDropdownProps {
+export interface CustomDropdownProps {
   value: string;
   onChange: (value: string) => void;
   options: DropdownOption[];

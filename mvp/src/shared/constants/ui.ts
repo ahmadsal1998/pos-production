@@ -36,6 +36,7 @@ export const AR_LABELS = {
 
   // --- NEW AUTH LABELS ---
   login: 'تسجيل الدخول',
+  welcomeBack: 'مرحباً بعودتك',
   emailOrUsername: 'البريد الإلكتروني أو اسم المستخدم',
   password: 'كلمة المرور',
   forgotPassword: 'هل نسيت كلمة المرور؟',
@@ -43,6 +44,7 @@ export const AR_LABELS = {
   sendVerificationCode: 'إرسال رمز التحقق',
   email: 'البريد الإلكتروني',
   emailNotRegistered: 'البريد الإلكتروني غير مسجل',
+  loggingIn: 'جاري تسجيل الدخول... ',
   backToLogin: 'العودة إلى تسجيل الدخول',
   enterVerificationCode: 'أدخل رمز التحقق',
   verificationCodeSent: 'تم إرسال رمز مكون من 6 أرقام إلى بريدك الإلكتروني.',

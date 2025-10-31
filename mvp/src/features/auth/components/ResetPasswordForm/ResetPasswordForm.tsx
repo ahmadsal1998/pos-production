@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { AR_LABELS, LockIcon } from '../../../../shared/constants';
+import { AR_LABELS, LockIcon } from '@/shared/constants';
 
 interface ResetPasswordPageProps {
   onPasswordResetSuccess: () => void;

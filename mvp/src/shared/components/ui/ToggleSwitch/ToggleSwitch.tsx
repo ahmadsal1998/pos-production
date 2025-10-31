@@ -1,6 +1,6 @@
-import { typography } from '../../../styles/design-tokens';
+import { typography } from '../../../../styles/design-tokens';
 
-interface ToggleSwitchProps {
+export interface ToggleSwitchProps {
   enabled: boolean;
   onChange: (enabled: boolean) => void;
   label?: string;

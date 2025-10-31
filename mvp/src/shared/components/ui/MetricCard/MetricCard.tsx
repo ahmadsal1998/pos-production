@@ -1,5 +1,5 @@
-import { MetricCardProps } from '../../../types';
-import { components, typography } from '../../../styles/design-tokens';
+import { MetricCardProps } from '@/shared/constants';
+import { components, typography } from '@/shared/styles/design-tokens';
 
 const MetricCard = ({ title, value, icon, bgColor, valueColor }: MetricCardProps) => {
   // Enhanced mapping for dark mode with better color handling

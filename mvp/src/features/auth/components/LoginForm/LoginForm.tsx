@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { AR_LABELS, UserIcon, LockIcon } from '../../../../shared/constants';
+import { AR_LABELS, UserIcon, LockIcon } from '@/shared/constants';
 
 interface LoginFormProps {
   onLoginSuccess: () => void;

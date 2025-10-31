@@ -1,4 +1,3 @@
-import { NavItem, TopNavItem, MetricCardProps, QuickActionProps } from '../types';
 import { AR_LABELS } from './ui';
 import {
   DashboardIcon,
@@ -20,7 +19,66 @@ import {
   AddProductIcon,
   ViewCustomersIcon,
   ViewReportsIcon,
-} from '../assets/icons';
+  ChevronDownIcon,
+  SunIcon,
+  MoonIcon,
+  SearchIcon,
+  GridViewIcon,
+  TableViewIcon,
+  XIcon,
+  CheckCircleIcon,
+  EditIcon,
+  MailIcon,
+  UserIcon,
+  LockIcon,
+  PlusIcon,
+  FilterIcon,
+  DeleteIcon,
+  ViewIcon,
+  // Additional icons needed
+  CancelIcon,
+  PrintIcon,
+  ExportIcon,
+  ImportIcon,
+  HandIcon,
+  ReturnIcon,
+  MinusIcon,
+  GenerateBarcodeIcon,
+  AddPaymentIcon
+} from '../../shared/assets/icons';
+
+// Define types locally to avoid circular dependencies
+export interface NavItem {
+  id: number;
+  label: string;
+  icon: React.ReactNode;
+  path: string;
+  isDropdown?: boolean;
+  dropdownItems?: NavItem[];
+}
+
+export interface TopNavItem {
+  id: number;
+  label: string;
+  path: string;
+}
+
+export interface MetricCardProps {
+  id: number;
+  title: string;
+  value: string;
+  icon: React.ReactNode;
+  bgColor: string;
+  valueColor: string;
+}
+
+export interface QuickActionProps {
+  id: number;
+  title: string;
+  icon: React.ReactNode;
+  colorClass: string;
+  path: string;
+}
 
 export const NAV_ITEMS: NavItem[] = [
   { id: 1, label: AR_LABELS.dashboard, icon: <DashboardIcon />, path: '/' },
@@ -38,13 +96,13 @@ export const NAV_ITEMS: NavItem[] = [
     dropdownItems: [
       {
         id: 71,
-        label: 'نقطة بيع ١ (Retail)',
+        label: 'نقطة بيع (مفرق)',
         icon: <span className="block h-2 w-2 rounded-full bg-gray-500"></span>,
         path: '/pos/1',
       },
       {
         id: 72,
-        label: 'نقطة بيع ٢ (Wholesale)',
+        label: 'نقطة بيع (جملة)',
         icon: <span className="block h-2 w-2 rounded-full bg-gray-500"></span>,
         path: '/pos/2',
       },
@@ -191,3 +249,36 @@ export const PRODUCT_CATEGORIES = [
 
 // Utility to generate a unique ID
 export const UUID = () => Math.random().toString(36).substring(2, 9);
+
+// Re-export icons for convenience
+export { 
+  ChevronDownIcon, 
+  SunIcon, 
+  MoonIcon,
+  SearchIcon,
+  GridViewIcon,
+  TableViewIcon,
+  ClockIcon,
+  ChequesIcon,
+  XIcon,
+  CheckCircleIcon,
+  EditIcon,
+  MailIcon,
+  UserIcon,
+  LockIcon,
+  PlusIcon,
+  FilterIcon,
+  DeleteIcon,
+  ViewIcon,
+  // Additional icons
+  CancelIcon,
+  PrintIcon,
+  ExportIcon,
+  ImportIcon,
+  HandIcon,
+  ReturnIcon,
+  MinusIcon,
+  GenerateBarcodeIcon,
+  AddPaymentIcon,
+  AddProductIcon
+};

@@ -55,3 +55,14 @@ code {
 .animate-shake {
   animation: shake 0.5s ease-in-out;
 }
+
+/* Subtle grid background utility for modern feel */
+.bg-grid {
+  background-image:
+    radial-gradient(circle at 1px 1px, rgba(0,0,0,0.06) 1px, transparent 0);
+  background-size: 24px 24px;
+}
+.dark .bg-grid {
+  background-image:
+    radial-gradient(circle at 1px 1px, rgba(255,255,255,0.06) 1px, transparent 0);
+}

@@ -1,8 +1,8 @@
 import React, { memo, useCallback } from 'react';
-import { User, ALL_PERMISSIONS } from '../../../../../../shared/types';
-import { AR_LABELS } from '../../../../../../shared/constants';
-import { EditIcon, DeleteIcon } from '../../../../../../shared/assets/icons';
-import { components, typography } from '../../../../../../shared/styles/design-tokens';
+import { User, ALL_PERMISSIONS } from '@/shared/types';
+import { AR_LABELS } from '@/shared/constants';
+import { EditIcon, DeleteIcon } from '@/shared/assets/icons';
+import { components, typography } from '@/shared/styles/design-tokens';
 
 interface UserTableProps {
   users: User[];

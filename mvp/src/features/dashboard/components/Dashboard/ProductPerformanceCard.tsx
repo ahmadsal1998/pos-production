@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { AR_LABELS } from '../../../../shared/constants';
-import { Product } from '../../../../shared/types';
-import CustomDropdown from '../../../../shared/components/ui/CustomDropdown';
+import { AR_LABELS } from '@/shared/constants';
+import { Product } from '@/shared/types';
+import { CustomDropdown } from '@/shared/components/ui/CustomDropdown';
 
 // --- MOCK DATA FOR THIS COMPONENT ---
 const MOCK_PRODUCTS_WITH_COST: Product[] = [

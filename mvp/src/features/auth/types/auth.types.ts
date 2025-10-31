@@ -1,7 +1,22 @@
 // --- USER MANAGEMENT INTERFACES ---
 export type SystemRole = 'Admin' | 'Manager' | 'Cashier';
 
-export const ALL_PERMISSIONS = [
+export type ScreenPermission = 
+  | 'dashboard'
+  | 'products'
+  | 'categories'
+  | 'brands'
+  | 'purchases'
+  | 'expenses'
+  | 'salesToday'
+  | 'salesHistory'
+  | 'posRetail'
+  | 'posWholesale'
+  | 'refunds'
+  | 'preferences'
+  | 'users';
+
+export const ALL_PERMISSIONS: ScreenPermission[] = [
   'dashboard',
   'products',
   'categories',
@@ -14,10 +29,8 @@ export const ALL_PERMISSIONS = [
   'posWholesale',
   'refunds',
   'preferences',
-  'users',
-] as const;
-
-export type ScreenPermission = (typeof ALL_PERMISSIONS)[number];
+  'users'
+];
 
 export interface User {
   id: string;

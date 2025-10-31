@@ -40,12 +40,22 @@ export default {
       },
       animation: {
         'shake': 'shake 0.5s ease-in-out',
+        'fade-in-up': 'fadeInUp 600ms cubic-bezier(0.22, 1, 0.36, 1)',
+        'fade-in': 'fadeIn 600ms ease-out',
       },
       keyframes: {
         shake: {
           '0%, 100%': { transform: 'translateX(0)' },
           '10%, 30%, 50%, 70%, 90%': { transform: 'translateX(-5px)' },
           '20%, 40%, 60%, 80%': { transform: 'translateX(5px)' },
+        },
+        fadeInUp: {
+          '0%': { opacity: '0', transform: 'translateY(12px)' },
+          '100%': { opacity: '1', transform: 'translateY(0)' },
+        },
+        fadeIn: {
+          '0%': { opacity: '0' },
+          '100%': { opacity: '1' },
         },
       },
     },

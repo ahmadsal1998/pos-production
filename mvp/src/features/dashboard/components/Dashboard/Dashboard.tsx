@@ -1,6 +1,6 @@
 import React from 'react';
-import { AR_LABELS, METRIC_CARDS_DATA, QUICK_ACTIONS_DATA } from '../../../../shared/constants';
-import { MetricCard, QuickActionCard } from '../../../../shared/components';
+import { AR_LABELS, METRIC_CARDS_DATA, QUICK_ACTIONS_DATA } from '@/shared/constants';
+import { MetricCard, QuickActionCard } from '@/shared/components';
 import ProductPerformanceCard from './ProductPerformanceCard';
 
 const Dashboard = () => {

@@ -4,9 +4,10 @@ import {
   SystemRole,
   ScreenPermission,
   ALL_PERMISSIONS,
-} from '../../../../../../shared/types';
-import { AR_LABELS, UUID, ToggleSwitch } from '../../../../../../shared/constants';
-import { components, typography } from '../../../../../../shared/styles/design-tokens';
+} from '@/shared/types';
+import { AR_LABELS, UUID } from '@/shared/constants';
+import { ToggleSwitch } from '@/shared/components/ui/ToggleSwitch';
+import { components, typography } from '@/shared/styles/design-tokens';
 
 interface UserFormModalProps {
   isOpen: boolean;
