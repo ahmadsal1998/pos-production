@@ -3,6 +3,7 @@ import { Link, useLocation } from 'react-router-dom';
 import { NavItem } from '@/shared/constants';
 import { AR_LABELS, NAV_ITEMS, ChevronDownIcon } from '@/shared/constants';
 import { useAppStore } from '@/app/store';
+import { useDropdown } from '@/shared/contexts/DropdownContext';
 
 interface SidebarProps {
   activePath: string;
@@ -14,35 +15,63 @@ interface SidebarProps {
 const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
   const location = useLocation();
   const { isSidebarCollapsed, toggleSidebar } = useAppStore();
+  const { setOpenDropdownId, closeAllDropdowns } = useDropdown();
   const [openDropdowns, setOpenDropdowns] = useState<Record<number, boolean>>({});
   const [activePopoverId, setActivePopoverId] = useState<number | null>(null);
   const [popoverPosition, setPopoverPosition] = useState<Record<number, { top: number; right: number }>>({});
   const dropdownRefs = React.useRef<Record<number, HTMLElement | null>>({});
 
   const toggleDropdown = (id: number) => {
+    const dropdownId = `sidebar-dropdown-${id}`;
+    
     if (isSidebarCollapsed) {
       // When collapsed, toggle popover and calculate position
       if (activePopoverId === id) {
         setActivePopoverId(null);
+        setOpenDropdownId(null);
       } else {
+        closeAllDropdowns();
         const element = dropdownRefs.current[id];
         if (element) {
           const rect = element.getBoundingClientRect();
           const collapsedSidebarWidth = 80; // w-20 = 80px
           const gap = 8; // 8px gap between sidebar and popover
+          const viewportWidth = window.innerWidth;
+          const viewportHeight = window.innerHeight;
+          
+          // Calculate position to prevent overflow
+          let right = collapsedSidebarWidth + gap;
+          let top = rect.top;
+          
+          // Ensure popover doesn't overflow viewport
+          if (rect.top + 300 > viewportHeight) {
+            top = Math.max(8, viewportHeight - 300);
+          }
+          if (top < 0) {
+            top = 8;
+          }
+          
           setPopoverPosition(prev => ({
             ...prev,
             [id]: {
-              top: rect.top,
-              right: collapsedSidebarWidth + gap, // Position to the left of sidebar with gap
+              top,
+              right,
             },
           }));
         }
         setActivePopoverId(id);
+        setOpenDropdownId(dropdownId);
       }
     } else {
       // When expanded, toggle inline dropdown
-      setOpenDropdowns(prev => ({ ...prev, [id]: !prev[id] }));
+      if (openDropdowns[id]) {
+        setOpenDropdowns(prev => ({ ...prev, [id]: false }));
+        setOpenDropdownId(null);
+      } else {
+        closeAllDropdowns();
+        setOpenDropdowns(prev => ({ ...prev, [id]: true }));
+        setOpenDropdownId(dropdownId);
+      }
     }
   };
 
@@ -68,7 +97,7 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
   useEffect(() => {
     if (!isSidebarCollapsed || activePopoverId === null) return;
 
-    const handleClickOutside = (event: MouseEvent) => {
+    const handleClickOutside = (event: MouseEvent | TouchEvent) => {
       const target = event.target as HTMLElement;
       const dropdownElement = dropdownRefs.current[activePopoverId];
       
@@ -78,21 +107,25 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
         !target.closest('.sidebar-dropdown-popover')
       ) {
         setActivePopoverId(null);
+        setOpenDropdownId(null);
       }
     };
 
     document.addEventListener('mousedown', handleClickOutside);
+    document.addEventListener('touchstart', handleClickOutside);
     return () => {
       document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('touchstart', handleClickOutside);
     };
-  }, [isSidebarCollapsed, activePopoverId]);
+  }, [isSidebarCollapsed, activePopoverId, setOpenDropdownId]);
 
   // Close popover when sidebar expands
   useEffect(() => {
     if (!isSidebarCollapsed) {
       setActivePopoverId(null);
+      setOpenDropdownId(null);
     }
-  }, [isSidebarCollapsed]);
+  }, [isSidebarCollapsed, setOpenDropdownId]);
 
   // Update popover position on scroll
   useEffect(() => {
@@ -126,7 +159,8 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
   // Close popover on route change
   useEffect(() => {
     setActivePopoverId(null);
-  }, [location.pathname]);
+    setOpenDropdownId(null);
+  }, [location.pathname, setOpenDropdownId]);
 
   // Prevent body scroll when sidebar is open on mobile
   useEffect(() => {
@@ -326,7 +360,7 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
                   {/* Popover dropdown when collapsed */}
                   {item.isDropdown && isSidebarCollapsed && activePopoverId === item.id && popoverPosition[item.id] && (
                     <div
-                      className="sidebar-dropdown-popover fixed z-[60] bg-white dark:bg-gray-900 rounded-xl shadow-2xl border border-gray-200 dark:border-gray-800 min-w-[200px] overflow-hidden transition-all duration-200 opacity-100 transform translate-x-0"
+                      className="sidebar-dropdown-popover fixed z-[60] bg-white dark:bg-gray-900 rounded-xl shadow-2xl border border-gray-200 dark:border-gray-800 min-w-[200px] max-w-[calc(100vw-120px)] max-h-[calc(100vh-16px)] overflow-hidden transition-all duration-200 opacity-100 transform translate-x-0"
                       style={{
                         top: `${popoverPosition[item.id].top}px`,
                         right: `${popoverPosition[item.id].right}px`,
@@ -336,34 +370,36 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
                         <div className="px-3 py-2 mb-1 border-b border-gray-200 dark:border-gray-800">
                           <span className="text-sm font-semibold text-gray-700 dark:text-gray-300">{item.label}</span>
                         </div>
-                        <ul className="space-y-0.5">
-                          {item.dropdownItems?.map(subItem => (
-                            <li key={subItem.id}>
-                              <Link
-                                to={subItem.path}
-                                className={`flex items-center gap-3 px-3 py-2 rounded-md transition-all duration-200 group ${
-                                  location.pathname === subItem.path
-                                    ? 'bg-orange-50 dark:bg-orange-950/30 text-orange-600 dark:text-orange-400 shadow-sm'
-                                    : 'hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-400 hover:text-orange-600 dark:hover:text-orange-400'
-                                }`}
-                                onClick={handleNavClick}
-                              >
-                                <div
-                                  className={`transition-all duration-200 ${
+                        <div className="overflow-y-auto max-h-[calc(100vh-200px)] custom-scrollbar">
+                          <ul className="space-y-0.5">
+                            {item.dropdownItems?.map(subItem => (
+                              <li key={subItem.id}>
+                                <Link
+                                  to={subItem.path}
+                                  className={`flex items-center gap-3 px-3 py-2 rounded-md transition-all duration-200 group touch-manipulation ${
                                     location.pathname === subItem.path
-                                      ? 'text-orange-600 dark:text-orange-400 scale-105'
-                                      : 'text-gray-400 dark:text-gray-500 group-hover:text-orange-600 dark:group-hover:text-orange-400 group-hover:scale-105'
+                                      ? 'bg-orange-50 dark:bg-orange-950/30 text-orange-600 dark:text-orange-400 shadow-sm'
+                                      : 'hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-400 hover:text-orange-600 dark:hover:text-orange-400'
                                   }`}
+                                  onClick={handleNavClick}
                                 >
-                                  {subItem.icon}
-                                </div>
-                                <span className={`text-sm font-medium ${location.pathname === subItem.path ? 'font-semibold' : ''}`}>
-                                  {subItem.label}
-                                </span>
-                              </Link>
-                            </li>
-                          ))}
-                        </ul>
+                                  <div
+                                    className={`transition-all duration-200 ${
+                                      location.pathname === subItem.path
+                                        ? 'text-orange-600 dark:text-orange-400 scale-105'
+                                        : 'text-gray-400 dark:text-gray-500 group-hover:text-orange-600 dark:group-hover:text-orange-400 group-hover:scale-105'
+                                    }`}
+                                  >
+                                    {subItem.icon}
+                                  </div>
+                                  <span className={`text-sm font-medium ${location.pathname === subItem.path ? 'font-semibold' : ''}`}>
+                                    {subItem.label}
+                                  </span>
+                                </Link>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
                       </div>
                     </div>
                   )}
@@ -385,32 +421,6 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
         )}
       </aside>
 
-      {/* Custom scrollbar styles */}
-      <style>{`
-        .custom-scrollbar::-webkit-scrollbar {
-          width: 6px;
-        }
-        .custom-scrollbar::-webkit-scrollbar-track {
-          background: rgba(229, 231, 235, 0.5);
-          border-radius: 3px;
-        }
-        .dark .custom-scrollbar::-webkit-scrollbar-track {
-          background: rgba(17, 24, 39, 0.5);
-        }
-        .custom-scrollbar::-webkit-scrollbar-thumb {
-          background: rgba(156, 163, 175, 0.5);
-          border-radius: 3px;
-        }
-        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-          background: rgba(249, 115, 22, 0.6);
-        }
-        .dark .custom-scrollbar::-webkit-scrollbar-thumb {
-          background: rgba(75, 85, 99, 0.5);
-        }
-        .dark .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-          background: rgba(249, 115, 22, 0.6);
-        }
-      `}</style>
     </>
   );
 };

@@ -308,7 +308,7 @@ const PurchasesPage: React.FC = () => {
                     </div>
                     
                     {/* Modern Navigation Tabs */}
-                    <div className="flex gap-3 flex-wrap">
+                    <div className="flex gap-2 sm:gap-3 flex-wrap w-full sm:w-auto">
                         {[
                             { id: 'purchases', label: 'المشتريات' },
                             { id: 'suppliers', label: 'الموردين' },
@@ -318,7 +318,7 @@ const PurchasesPage: React.FC = () => {
                             <button
                                 key={tab.id}
                                 onClick={() => setActiveTab(tab.id as TabType)}
-                                className={`group relative px-6 py-3 rounded-xl text-sm font-medium transition-all duration-300 ${
+                                className={`group relative flex-1 sm:flex-none px-4 sm:px-6 py-2 sm:py-3 rounded-xl text-xs sm:text-sm font-medium transition-all duration-300 ${
                                     activeTab === tab.id
                                         ? 'bg-gradient-to-r from-orange-500 to-amber-500 text-white shadow-lg shadow-orange-500/50'
                                         : 'bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl text-slate-700 dark:text-slate-200 border border-slate-200/50 dark:border-slate-700/50 hover:shadow-md'
@@ -484,10 +484,10 @@ const PurchaseOrdersView: React.FC<{
     return (
         <div>
             {/* Control Bar: Search */}
-            <div className="bg-white/95 dark:bg-gray-800/95 rounded-2xl shadow-sm p-6 backdrop-blur-xl border border-slate-200/50 dark:border-slate-700/50">
-                <div className="flex flex-col md:flex-row justify-between items-center gap-4">
+            <div className="bg-white/95 dark:bg-gray-800/95 rounded-2xl shadow-sm p-4 sm:p-6 backdrop-blur-xl border border-slate-200/50 dark:border-slate-700/50">
+                <div className="flex flex-col sm:flex-row justify-between items-stretch sm:items-center gap-4">
                     {/* Search Bar */}
-                    <div className="relative flex-1">
+                    <div className="relative flex-1 w-full sm:w-auto">
                         <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400 dark:text-gray-500" />
                         <input
                             type="text"
@@ -498,17 +498,17 @@ const PurchaseOrdersView: React.FC<{
                         />
                     </div>
                     {/* Layout Toggle */}
-                    <div className="flex border border-gray-300 dark:border-gray-600 rounded-lg overflow-hidden">
+                    <div className="flex border border-gray-300 dark:border-gray-600 rounded-lg overflow-hidden w-full sm:w-auto flex-shrink-0">
                         <button 
                             onClick={() => setLayout('table')} 
-                            className={`px-3 py-2 ${layout === 'table' ? 'bg-orange-500 text-white' : 'bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300'}`}
+                            className={`flex-1 sm:flex-none px-3 py-2 ${layout === 'table' ? 'bg-orange-500 text-white' : 'bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300'}`}
                             title="عرض الجدول"
                         >
                             <TableViewIcon />
                         </button>
                         <button 
                             onClick={() => setLayout('grid')} 
-                            className={`px-3 py-2 ${layout === 'grid' ? 'bg-orange-500 text-white' : 'bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300'}`}
+                            className={`flex-1 sm:flex-none px-3 py-2 ${layout === 'grid' ? 'bg-orange-500 text-white' : 'bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300'}`}
                             title="عرض الشبكة"
                         >
                             <GridViewIcon/>
@@ -520,40 +520,40 @@ const PurchaseOrdersView: React.FC<{
             {/* Purchase Table/Grid */}
             {layout === 'table' ? (
                 <div className="bg-white/95 dark:bg-gray-800/95 rounded-2xl shadow-sm overflow-hidden backdrop-blur-xl border border-slate-200/50 dark:border-slate-700/50">
-                    <div className="overflow-x-auto">
-                        <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700 text-right">
+                    <div className="overflow-x-auto overscroll-contain">
+                        <table className="w-full divide-y divide-gray-200 dark:divide-gray-700 text-right">
                             <thead className="bg-gray-50 dark:bg-gray-700">
                                 <tr>
-                                    <th scope="col" className="px-6 py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">{AR_LABELS.poNumber}</th>
-                                    <th scope="col" className="px-6 py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">{AR_LABELS.purchaseDate}</th>
-                                    <th scope="col" className="px-6 py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">{AR_LABELS.supplier}</th>
-                                    <th scope="col" className="px-6 py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">{AR_LABELS.totalAmount}</th>
-                                    <th scope="col" className="px-6 py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">{AR_LABELS.paymentMethod}</th>
-                                    <th scope="col" className="px-6 py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">{AR_LABELS.status}</th>
-                                    <th scope="col" className="px-6 py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider text-center">{AR_LABELS.actions}</th>
+                                    <th scope="col" className="px-2 py-3 sm:px-4 sm:py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">{AR_LABELS.poNumber}</th>
+                                    <th scope="col" className="px-2 py-3 sm:px-4 sm:py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">{AR_LABELS.purchaseDate}</th>
+                                    <th scope="col" className="px-2 py-3 sm:px-4 sm:py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">{AR_LABELS.supplier}</th>
+                                    <th scope="col" className="px-2 py-3 sm:px-4 sm:py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">{AR_LABELS.totalAmount}</th>
+                                    <th scope="col" className="px-2 py-3 sm:px-4 sm:py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">{AR_LABELS.paymentMethod}</th>
+                                    <th scope="col" className="px-2 py-3 sm:px-4 sm:py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">{AR_LABELS.status}</th>
+                                    <th scope="col" className="px-2 py-3 sm:px-4 sm:py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider text-center">{AR_LABELS.actions}</th>
                                 </tr>
                             </thead>
                             <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
                                 {filteredPurchases.length > 0 ? filteredPurchases.map((purchase) => (
                                     <tr key={purchase.id} className="hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors duration-150">
-                                        <td className="px-6 py-4 whitespace-nowrap"><div className="text-sm font-medium text-blue-600 dark:text-blue-400">{purchase.id}</div></td>
-                                        <td className="px-6 py-4 whitespace-nowrap"><div className="text-sm text-gray-700 dark:text-gray-300">{new Date(purchase.purchaseDate).toLocaleDateString('ar-SA')}</div></td>
-                                        <td className="px-6 py-4 whitespace-nowrap"><div className="text-sm font-medium text-gray-900 dark:text-gray-100">{purchase.supplierName}</div></td>
-                                        <td className="px-6 py-4 whitespace-nowrap"><div className="text-sm font-semibold text-orange-600">{purchase.totalAmount.toFixed(2)} ر.س</div></td>
-                                        <td className="px-6 py-4 whitespace-nowrap"><div className="text-sm text-gray-700 dark:text-gray-300">{PAYMENT_METHOD_LABELS[purchase.paymentMethod]}</div></td>
-                                        <td className="px-6 py-4 whitespace-nowrap">
+                                        <td className="px-2 py-3 sm:px-4 sm:py-4 whitespace-nowrap"><div className="text-xs sm:text-sm font-medium text-blue-600 dark:text-blue-400">{purchase.id}</div></td>
+                                        <td className="px-2 py-3 sm:px-4 sm:py-4 whitespace-nowrap"><div className="text-xs sm:text-sm text-gray-700 dark:text-gray-300">{new Date(purchase.purchaseDate).toLocaleDateString('ar-SA')}</div></td>
+                                        <td className="px-2 py-3 sm:px-4 sm:py-4 whitespace-nowrap"><div className="text-xs sm:text-sm font-medium text-gray-900 dark:text-gray-100 truncate max-w-[120px] sm:max-w-none" title={purchase.supplierName}>{purchase.supplierName}</div></td>
+                                        <td className="px-2 py-3 sm:px-4 sm:py-4 whitespace-nowrap"><div className="text-xs sm:text-sm font-semibold text-orange-600">{purchase.totalAmount.toFixed(2)} ر.س</div></td>
+                                        <td className="px-2 py-3 sm:px-4 sm:py-4 whitespace-nowrap"><div className="text-xs sm:text-sm text-gray-700 dark:text-gray-300">{PAYMENT_METHOD_LABELS[purchase.paymentMethod]}</div></td>
+                                        <td className="px-2 py-3 sm:px-4 sm:py-4 whitespace-nowrap">
                                             <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${STATUS_STYLES[purchase.status]}`}>
                                                 {STATUS_LABELS[purchase.status]}
                                             </span>
                                         </td>
-                                        <td className="px-6 py-4 whitespace-nowrap text-center text-sm font-medium">
-                                            <button onClick={() => alert('View details for ' + purchase.id)} className="text-blue-600 hover:text-blue-900 dark:text-blue-400 dark:hover:text-blue-300 ml-4 p-2 rounded-full hover:bg-blue-50 dark:hover:bg-gray-700 transition-colors duration-200" aria-label={`${AR_LABELS.viewDetails} ${purchase.id}`}><ViewIcon /></button>
-                                            <button onClick={() => onEdit(purchase)} className="text-indigo-600 hover:text-indigo-900 dark:text-indigo-400 dark:hover:text-indigo-300 p-2 rounded-full hover:bg-indigo-50 dark:hover:bg-gray-700 transition-colors duration-200" aria-label={`${AR_LABELS.edit} ${purchase.id}`}><EditIcon /></button>
+                                        <td className="px-2 py-3 sm:px-4 sm:py-4 whitespace-nowrap text-center text-xs sm:text-sm font-medium">
+                                            <button onClick={() => alert('View details for ' + purchase.id)} className="text-blue-600 hover:text-blue-900 dark:text-blue-400 dark:hover:text-blue-300 ml-2 sm:ml-4 p-1 sm:p-2 rounded-full hover:bg-blue-50 dark:hover:bg-gray-700 transition-colors duration-200" aria-label={`${AR_LABELS.viewDetails} ${purchase.id}`}><ViewIcon /></button>
+                                            <button onClick={() => onEdit(purchase)} className="text-indigo-600 hover:text-indigo-900 dark:text-indigo-400 dark:hover:text-indigo-300 p-1 sm:p-2 rounded-full hover:bg-indigo-50 dark:hover:bg-gray-700 transition-colors duration-200" aria-label={`${AR_LABELS.edit} ${purchase.id}`}><EditIcon /></button>
                                         </td>
                                     </tr>
                                 )) : (
                                     <tr>
-                                        <td colSpan={7} className="px-6 py-10 text-center text-gray-500 dark:text-gray-400">{AR_LABELS.noSalesFound}</td>
+                                        <td colSpan={7} className="px-4 py-10 text-center text-xs sm:text-sm text-gray-500 dark:text-gray-400">{AR_LABELS.noSalesFound}</td>
                                     </tr>
                                 )}
                             </tbody>

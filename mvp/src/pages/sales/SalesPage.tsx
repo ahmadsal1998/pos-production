@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { SaleTransaction, Customer, CustomerPayment, CustomerAccountSummary, SalePaymentMethod, SaleStatus } from '@/shared/types';
 import { AR_LABELS, UUID, SearchIcon, PlusIcon, EditIcon, DeleteIcon, PrintIcon, ViewIcon, ExportIcon, AddPaymentIcon } from '@/shared/constants';
 import { MetricCard } from '@/shared/components/ui/MetricCard';
+import CustomDropdown from '@/shared/components/ui/CustomDropdown/CustomDropdown';
 
 interface SalesPageProps {
   setActivePath?: (path: string) => void; // Make optional for backward compatibility
@@ -175,12 +176,19 @@ const AddPaymentModal: React.FC<{
                         <input type="number" value={amount} onChange={e => setAmount(parseFloat(e.target.value) || 0)} className="w-full p-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200 rounded-md text-left"/>
                     </div>
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{AR_LABELS.paymentMethod}</label>
-                        <select value={method} onChange={e => setMethod(e.target.value as any)} className="w-full p-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200 rounded-md">
-                            <option value="Cash">{AR_LABELS.cash}</option>
-                            <option value="Bank Transfer">{AR_LABELS.bankTransfer}</option>
-                            <option value="Cheque">{AR_LABELS.cheque}</option>
-                        </select>
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">{AR_LABELS.paymentMethod}</label>
+                        <CustomDropdown
+                            id="payment-method-dropdown"
+                            value={method}
+                            onChange={(value) => setMethod(value as any)}
+                            options={[
+                                { value: 'Cash', label: AR_LABELS.cash },
+                                { value: 'Bank Transfer', label: AR_LABELS.bankTransfer },
+                                { value: 'Cheque', label: AR_LABELS.cheque }
+                            ]}
+                            placeholder={AR_LABELS.paymentMethod}
+                            className="w-full"
+                        />
                     </div>
                      <div>
                         <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{AR_LABELS.date}</label>
@@ -584,13 +592,20 @@ const ReportsView: React.FC<{ sales: SaleTransaction[], customers: Customer[], p
         <div className="space-y-6">
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 items-end p-4 bg-gray-50 dark:bg-gray-800/50 rounded-lg border border-gray-200 dark:border-gray-700">
                 <div>
-                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{AR_LABELS.reportType}</label>
-                    <select value={reportType} onChange={(e) => setReportType(e.target.value as ReportType)} className="w-full p-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200 rounded-md text-right">
-                        <option value="total">{AR_LABELS.totalSalesReport}</option>
-                        <option value="customer">{AR_LABELS.salesByCustomerReport}</option>
-                        <option value="user">{AR_LABELS.salesByUserReport}</option>
-                        <option value="payment">{AR_LABELS.salesByPaymentTypeReport}</option>
-                    </select>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">{AR_LABELS.reportType}</label>
+                    <CustomDropdown
+                        id="report-type-dropdown"
+                        value={reportType}
+                        onChange={(value) => setReportType(value as ReportType)}
+                        options={[
+                            { value: 'total', label: AR_LABELS.totalSalesReport },
+                            { value: 'customer', label: AR_LABELS.salesByCustomerReport },
+                            { value: 'user', label: AR_LABELS.salesByUserReport },
+                            { value: 'payment', label: AR_LABELS.salesByPaymentTypeReport }
+                        ]}
+                        placeholder={AR_LABELS.reportType}
+                        className="w-full"
+                    />
                 </div>
                 <div>
                     <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{AR_LABELS.from}</label>
@@ -690,15 +705,18 @@ const CustomerAccountsView: React.FC<{
                     />
                 </div>
                  <div className="flex items-center gap-2">
-                    <select 
-                        value={balanceFilter} 
-                        onChange={e => setBalanceFilter(e.target.value)} 
-                        className="px-4 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:border-transparent text-right"
-                    >
-                        <option value="all">{AR_LABELS.allCustomers}</option>
-                        <option value="has_balance">{AR_LABELS.hasBalance}</option>
-                        <option value="no_balance">{AR_LABELS.noBalance}</option>
-                    </select>
+                    <CustomDropdown
+                        id="balance-filter-dropdown"
+                        value={balanceFilter}
+                        onChange={(value) => setBalanceFilter(value)}
+                        options={[
+                            { value: 'all', label: AR_LABELS.allCustomers },
+                            { value: 'has_balance', label: AR_LABELS.hasBalance },
+                            { value: 'no_balance', label: AR_LABELS.noBalance }
+                        ]}
+                        placeholder={AR_LABELS.allCustomers}
+                        className="w-full sm:w-auto"
+                    />
                 </div>
             </div>
             <div className="overflow-x-auto rounded-lg">

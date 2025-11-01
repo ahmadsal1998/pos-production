@@ -3,6 +3,7 @@ import { Product, Customer, POSInvoice, POSCartItem, SaleTransaction } from '@/s
 
 import { AR_LABELS, UUID, SearchIcon, DeleteIcon, PlusIcon, HandIcon, CancelIcon, PrintIcon, CheckCircleIcon, ReturnIcon } from '@/shared/constants';
 import { ToggleSwitch } from '@/shared/components/ui/ToggleSwitch';
+import CustomDropdown from '@/shared/components/ui/CustomDropdown/CustomDropdown';
 
 // --- MOCK DATA ---
 const MOCK_PRODUCTS_DATA: Product[] = [
@@ -346,17 +347,18 @@ const POSPage: React.FC = () => {
                     <div className="flex flex-col gap-3 sm:gap-4 min-h-0 min-w-0">
                         {/* Customer & Held Invoices */}
                         <div className="bg-white/95 dark:bg-gray-800/95 rounded-xl sm:rounded-2xl shadow-sm p-4 sm:p-6 backdrop-blur-xl border border-slate-200/50 dark:border-slate-700/50 space-y-3 sm:space-y-4">
-                            <h3 className="font-bold text-sm sm:text-base text-gray-700 dark:text-gray-200 text-right">{AR_LABELS.customerName}</h3>
-                            <select 
+                            <h3 className="font-bold text-sm sm:text-base text-gray-700 dark:text-gray-200 text-right mb-2">{AR_LABELS.customerName}</h3>
+                            <CustomDropdown
+                                id="pos-customer-dropdown"
                                 value={currentInvoice.customer?.id || ''}
-                                onChange={(e) => {
-                                    const customer = MOCK_CUSTOMERS.find(c => c.id === e.target.value);
+                                onChange={(value) => {
+                                    const customer = MOCK_CUSTOMERS.find(c => c.id === value);
                                     setCurrentInvoice(inv => ({...inv, customer: customer || null}));
                                 }}
-                                className="w-full px-3 sm:px-4 py-2 sm:py-2.5 text-sm sm:text-base rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-orange-500 focus:border-transparent text-right"
-                            >
-                                {MOCK_CUSTOMERS.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                            </select>
+                                options={MOCK_CUSTOMERS.map(c => ({ value: c.id, label: c.name }))}
+                                placeholder={AR_LABELS.customerName}
+                                className="w-full"
+                            />
                             <button className="w-full text-center text-xs sm:text-sm text-orange-600 hover:text-orange-700 dark:text-orange-400 font-medium transition-colors py-1.5">{AR_LABELS.addNewCustomer}</button>
                             
                             {heldInvoices.length > 0 && (
@@ -742,12 +744,19 @@ const ReturnModal: React.FC<{
                         <input type="text" value={reason} onChange={e => setReason(e.target.value)} className="w-full text-sm sm:text-base border-gray-300 dark:border-gray-600 rounded-md shadow-sm text-right bg-white dark:bg-gray-700 py-1.5 sm:py-2 px-2 sm:px-3"/>
                     </div>
                      <div>
-                        <label className="block text-xs sm:text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{AR_LABELS.refundMethod}</label>
-                        <select value={refundMethod} onChange={e => setRefundMethod(e.target.value as any)} className="w-full text-sm sm:text-base border-gray-300 dark:border-gray-600 rounded-md shadow-sm text-right bg-white dark:bg-gray-700 py-1.5 sm:py-2 px-2 sm:px-3">
-                            <option value="Cash">{AR_LABELS.cash}</option>
-                            <option value="Card">{AR_LABELS.card}</option>
-                            <option value="Customer Credit">{AR_LABELS.customerCredit}</option>
-                        </select>
+                        <label className="block text-xs sm:text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">{AR_LABELS.refundMethod}</label>
+                        <CustomDropdown
+                            id="refund-method-dropdown"
+                            value={refundMethod}
+                            onChange={(value) => setRefundMethod(value as any)}
+                            options={[
+                                { value: 'Cash', label: AR_LABELS.cash },
+                                { value: 'Card', label: AR_LABELS.card },
+                                { value: 'Customer Credit', label: AR_LABELS.customerCredit }
+                            ]}
+                            placeholder={AR_LABELS.refundMethod}
+                            className="w-full"
+                        />
                     </div>
                     <div className="text-left text-lg sm:text-xl font-bold"><span>{AR_LABELS.totalReturnValue}: </span><span className="text-red-600">{totalReturnValue.toFixed(2)} ر.س</span></div>
                     <div className="flex flex-col sm:flex-row justify-start gap-2 sm:gap-4 sm:space-x-4 sm:space-x-reverse pt-3 sm:pt-4">

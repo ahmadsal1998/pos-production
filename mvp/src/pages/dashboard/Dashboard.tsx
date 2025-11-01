@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { AR_LABELS, METRIC_CARDS_DATA, QUICK_ACTIONS_DATA } from '@/shared/constants';
 import { MetricCard } from '@/shared/components/ui/MetricCard';
 import { QuickActionCard } from '@/shared/components/ui/QuickActionCard';
+import CustomDropdown, { DropdownOption } from '@/shared/components/ui/CustomDropdown/CustomDropdown';
 
 const DashboardPage: React.FC = () => {
   const navigate = useNavigate();
@@ -266,45 +267,55 @@ const TopSellingProductsSection: React.FC<{ onRowClick: (productId: number) => v
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
         <div className="space-y-2">
-          <h2 className="text-2xl font-bold text-slate-900 dark:text-white">المنتجات الأعلى مبيعًا</h2>
+          <h2 className="text-xl sm:text-2xl font-bold text-slate-900 dark:text-white">المنتجات الأعلى مبيعًا</h2>
           <div className="h-1 w-16 rounded-full bg-gradient-to-r from-blue-500 to-indigo-500" />
         </div>
-        <div className="flex gap-3">
-          <select 
-            value={timeFilter} 
-            onChange={e => setTimeFilter(e.target.value as TimeFilter)} 
-            className="px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl text-sm font-medium text-slate-700 dark:text-slate-200 shadow-sm hover:shadow-md transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
-          >
-            <option value="today">{AR_LABELS.today}</option>
-            <option value="week">{AR_LABELS.thisWeek}</option>
-            <option value="month">{AR_LABELS.thisMonth}</option>
-            <option value="year">{AR_LABELS.thisYear}</option>
-          </select>
-          <select 
-            value={category} 
-            onChange={e => setCategory(e.target.value)} 
-            className="px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl text-sm font-medium text-slate-700 dark:text-slate-200 shadow-sm hover:shadow-md transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
-          >
-            {categories.map(c => (
-              <option key={c} value={c}>{c === 'all' ? AR_LABELS.allCategories : c}</option>
-            ))}
-          </select>
+        <div className="flex flex-wrap gap-3 w-full sm:w-auto">
+          <div className="w-full sm:w-auto">
+            <CustomDropdown
+              id="time-filter-dashboard"
+              value={timeFilter}
+              onChange={(value) => setTimeFilter(value as TimeFilter)}
+              options={[
+                { value: 'today', label: AR_LABELS.today },
+                { value: 'week', label: AR_LABELS.thisWeek },
+                { value: 'month', label: AR_LABELS.thisMonth },
+                { value: 'year', label: AR_LABELS.thisYear },
+              ]}
+              placeholder={AR_LABELS.thisMonth}
+              className="w-full sm:w-auto"
+            />
+          </div>
+          <div className="w-full sm:w-auto">
+            <CustomDropdown
+              id="category-filter-dashboard"
+              value={category}
+              onChange={setCategory}
+              options={categories.map(c => ({
+                value: c,
+                label: c === 'all' ? AR_LABELS.allCategories : c
+              }))}
+              placeholder={AR_LABELS.allCategories}
+              className="w-full sm:w-auto"
+            />
+          </div>
         </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
         {/* Table/List */}
-        <div className="overflow-x-auto rounded-xl border border-slate-200/50 dark:border-slate-700/50">
-          <table className="min-w-full text-right text-sm">
+        <div className="w-full overflow-x-auto rounded-xl border border-slate-200/50 dark:border-slate-700/50 overscroll-contain">
+          <div className="min-w-full">
+            <table className="w-full text-right text-sm">
             <thead className="bg-gradient-to-r from-slate-50 to-slate-100 dark:from-slate-800 dark:to-slate-700">
               <tr>
-                <th className="px-4 py-3 font-semibold text-slate-700 dark:text-slate-200">#</th>
-                <th className="px-4 py-3 font-semibold text-slate-700 dark:text-slate-200">{AR_LABELS.productName}</th>
-                <th className="px-4 py-3 font-semibold text-slate-700 dark:text-slate-200">{AR_LABELS.salesCount}</th>
-                <th className="px-4 py-3 font-semibold text-slate-700 dark:text-slate-200">{AR_LABELS.revenue}</th>
-                <th className="px-4 py-3 font-semibold text-slate-700 dark:text-slate-200">%</th>
+                <th className="px-2 py-3 sm:px-4 font-semibold text-slate-700 dark:text-slate-200 text-xs sm:text-sm">#</th>
+                <th className="px-2 py-3 sm:px-4 font-semibold text-slate-700 dark:text-slate-200 text-xs sm:text-sm">{AR_LABELS.productName}</th>
+                <th className="px-2 py-3 sm:px-4 font-semibold text-slate-700 dark:text-slate-200 text-xs sm:text-sm">{AR_LABELS.salesCount}</th>
+                <th className="px-2 py-3 sm:px-4 font-semibold text-slate-700 dark:text-slate-200 text-xs sm:text-sm">{AR_LABELS.revenue}</th>
+                <th className="px-2 py-3 sm:px-4 font-semibold text-slate-700 dark:text-slate-200 text-xs sm:text-sm">%</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
@@ -317,23 +328,23 @@ const TopSellingProductsSection: React.FC<{ onRowClick: (productId: number) => v
                     className="transition-all duration-300 hover:bg-gradient-to-r hover:from-blue-50/50 hover:to-indigo-50/50 dark:hover:from-blue-950/20 dark:hover:to-indigo-950/20 cursor-pointer group" 
                     onClick={() => onRowClick(p.id)}
                   >
-                    <td className="px-4 py-3 text-slate-600 dark:text-slate-300 font-medium">{i + 1}</td>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-3">
-                        <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-orange-400 to-pink-500 flex items-center justify-center text-white font-bold shadow-md group-hover:scale-110 transition-transform duration-300">
+                    <td className="px-2 py-3 sm:px-4 text-slate-600 dark:text-slate-300 font-medium text-xs sm:text-sm">{i + 1}</td>
+                    <td className="px-2 py-3 sm:px-4">
+                      <div className="flex items-center gap-2 sm:gap-3">
+                        <div className="h-8 w-8 sm:h-10 sm:w-10 rounded-xl bg-gradient-to-br from-orange-400 to-pink-500 flex items-center justify-center text-white font-bold shadow-md group-hover:scale-110 transition-transform duration-300 text-xs sm:text-sm flex-shrink-0">
                           {productMeta?.name?.slice(0, 1) || '•'}
                         </div>
-                        <div className="font-semibold text-slate-900 dark:text-white truncate max-w-[160px]" title={p.name}>{p.name}</div>
+                        <div className="font-semibold text-slate-900 dark:text-white truncate max-w-[100px] sm:max-w-[160px] text-xs sm:text-sm" title={p.name}>{p.name}</div>
                       </div>
                     </td>
-                    <td className="px-4 py-3 text-center text-slate-600 dark:text-slate-300 font-medium">{p.qty}</td>
-                    <td className="px-4 py-3 font-bold text-emerald-600 dark:text-emerald-400">{p.revenue.toFixed(2)}</td>
-                    <td className="px-4 py-3 w-40">
-                      <div className="flex items-center gap-2">
-                        <div className="flex-1 h-2.5 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
-                          <div className="h-2.5 bg-gradient-to-r from-blue-500 to-indigo-500 rounded-full transition-all duration-500" style={{ width: `${pct.toFixed(0)}%` }}></div>
+                    <td className="px-2 py-3 sm:px-4 text-center text-slate-600 dark:text-slate-300 font-medium text-xs sm:text-sm">{p.qty}</td>
+                    <td className="px-2 py-3 sm:px-4 font-bold text-emerald-600 dark:text-emerald-400 text-xs sm:text-sm">{p.revenue.toFixed(2)}</td>
+                    <td className="px-2 py-3 sm:px-4 min-w-[80px] sm:w-40">
+                      <div className="flex items-center gap-1 sm:gap-2">
+                        <div className="flex-1 h-2 sm:h-2.5 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
+                          <div className="h-2 sm:h-2.5 bg-gradient-to-r from-blue-500 to-indigo-500 rounded-full transition-all duration-500" style={{ width: `${pct.toFixed(0)}%` }}></div>
                         </div>
-                        <span className="text-xs tabular-nums font-semibold text-slate-600 dark:text-slate-300">{pct.toFixed(0)}%</span>
+                        <span className="text-xs tabular-nums font-semibold text-slate-600 dark:text-slate-300 whitespace-nowrap">{pct.toFixed(0)}%</span>
                       </div>
                     </td>
                   </tr>
@@ -341,11 +352,12 @@ const TopSellingProductsSection: React.FC<{ onRowClick: (productId: number) => v
               })}
               {ranked.length === 0 && (
                 <tr>
-                  <td className="px-4 py-8 text-center text-slate-500 dark:text-slate-400" colSpan={5}>{AR_LABELS.noSalesFound}</td>
+                  <td className="px-4 py-8 text-center text-slate-500 dark:text-slate-400 text-xs sm:text-sm" colSpan={5}>{AR_LABELS.noSalesFound}</td>
                 </tr>
               )}
             </tbody>
           </table>
+          </div>
         </div>
 
         {/* Simple Bar Chart for Top 5 */}

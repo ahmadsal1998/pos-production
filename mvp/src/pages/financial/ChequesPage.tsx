@@ -2,6 +2,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { PurchaseOrder, ChequeDetails, ChequeStatus } from '@/features/financial/types';
 import { AR_LABELS, UUID, SearchIcon, GridViewIcon, TableViewIcon, ClockIcon, ChequesIcon, XIcon, CheckCircleIcon, EditIcon } from '@/shared/constants';
 import { MetricCard } from '@/shared/components/ui/MetricCard';
+import CustomDropdown, { DropdownOption } from '@/shared/components/ui/CustomDropdown/CustomDropdown';
 
 // Replicating mock data locally as we can't import from other components
 const MOCK_SUPPLIERS_DATA = [
@@ -193,54 +194,72 @@ const ChequesPage: React.FC = () => {
                     <MetricCard id={4} title={AR_LABELS.totalCleared} value={summaryMetrics.cleared.total.toLocaleString('ar-SA', {style: 'currency', currency: 'SAR'})} icon={<CheckCircleIcon className="h-6 w-6"/>} bgColor="bg-green-100" valueColor="text-green-600" />
                 </div>
 
-                <div className="bg-white/95 dark:bg-gray-800/95 rounded-2xl shadow-sm p-6 backdrop-blur-xl border border-slate-200/50 dark:border-slate-700/50">
-                    <div className="flex flex-col lg:flex-row items-stretch gap-4">
-                        <div className="relative flex-1">
+                <div className="bg-white/95 dark:bg-gray-800/95 rounded-2xl shadow-sm p-4 sm:p-6 backdrop-blur-xl border border-slate-200/50 dark:border-slate-700/50">
+                    <div className="flex flex-col sm:flex-row items-stretch gap-3 sm:gap-4">
+                        <div className="relative flex-1 w-full sm:w-auto">
                             <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />
                             <input type="text" placeholder={AR_LABELS.searchByChequeOrSupplier} value={searchTerm} onChange={e => setSearchTerm(e.target.value)} className="w-full pl-10 pr-4 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-orange-500 focus:border-transparent text-right"/>
                         </div>
-                        <select name="status" value={filters.status} onChange={e => setFilters(f => ({...f, status: e.target.value}))} className="px-4 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-orange-500 focus:border-transparent text-right">
-                            <option value="all">{AR_LABELS.allStatuses}</option>
-                            <option value="Pending">{AR_LABELS.pending}</option>
-                            <option value="Cleared">{AR_LABELS.cleared}</option>
-                            <option value="Bounced">{AR_LABELS.bounced}</option>
-                        </select>
-                        <select name="date" value={filters.date} onChange={e => setFilters(f => ({...f, date: e.target.value}))} className="px-4 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-orange-500 focus:border-transparent text-right">
-                            <option value="all">{AR_LABELS.allDates}</option>
-                            <option value="today">{AR_LABELS.dueToday}</option>
-                            <option value="this_week">{AR_LABELS.dueThisWeek}</option>
-                            <option value="overdue">{AR_LABELS.overdue}</option>
-                        </select>
-                        <div className="flex border border-gray-300 dark:border-gray-600 rounded-lg overflow-hidden">
-                            <button onClick={() => setView('list')} className={`px-3 py-2 ${view === 'list' ? 'bg-orange-500 text-white' : 'bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300'}`} aria-label={AR_LABELS.listView}><TableViewIcon/></button>
-                            <button onClick={() => setView('calendar')} className={`px-3 py-2 ${view === 'calendar' ? 'bg-orange-500 text-white' : 'bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300'}`} aria-label={AR_LABELS.calendarView}><GridViewIcon/></button>
+                        <div className="w-full sm:w-auto">
+                            <CustomDropdown
+                                id="status-filter-cheques"
+                                value={filters.status}
+                                onChange={(value) => setFilters(f => ({...f, status: value}))}
+                                options={[
+                                    { value: 'all', label: AR_LABELS.allStatuses },
+                                    { value: 'Pending', label: AR_LABELS.pending },
+                                    { value: 'Cleared', label: AR_LABELS.cleared },
+                                    { value: 'Bounced', label: AR_LABELS.bounced },
+                                ]}
+                                placeholder={AR_LABELS.allStatuses}
+                                className="w-full sm:w-auto"
+                            />
+                        </div>
+                        <div className="w-full sm:w-auto">
+                            <CustomDropdown
+                                id="date-filter-cheques"
+                                value={filters.date}
+                                onChange={(value) => setFilters(f => ({...f, date: value}))}
+                                options={[
+                                    { value: 'all', label: AR_LABELS.allDates },
+                                    { value: 'today', label: AR_LABELS.dueToday },
+                                    { value: 'this_week', label: AR_LABELS.dueThisWeek },
+                                    { value: 'overdue', label: AR_LABELS.overdue },
+                                ]}
+                                placeholder={AR_LABELS.allDates}
+                                className="w-full sm:w-auto"
+                            />
+                        </div>
+                        <div className="flex border border-gray-300 dark:border-gray-600 rounded-lg overflow-hidden w-full sm:w-auto flex-shrink-0">
+                            <button onClick={() => setView('list')} className={`flex-1 sm:flex-none px-3 py-2 ${view === 'list' ? 'bg-orange-500 text-white' : 'bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300'}`} aria-label={AR_LABELS.listView}><TableViewIcon/></button>
+                            <button onClick={() => setView('calendar')} className={`flex-1 sm:flex-none px-3 py-2 ${view === 'calendar' ? 'bg-orange-500 text-white' : 'bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300'}`} aria-label={AR_LABELS.calendarView}><GridViewIcon/></button>
                         </div>
                     </div>
                 </div>
 
                 {view === 'list' && (
                     <div className="bg-white/95 dark:bg-gray-800/95 rounded-2xl shadow-sm overflow-hidden backdrop-blur-xl border border-slate-200/50 dark:border-slate-700/50">
-                        <div className="overflow-x-auto">
-                            <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700 text-right">
+                        <div className="overflow-x-auto overscroll-contain">
+                            <table className="w-full divide-y divide-gray-200 dark:divide-gray-700 text-right">
                                 <thead className="bg-gray-50 dark:bg-gray-700">
                                     <tr>
-                                        <th className="px-6 py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">{AR_LABELS.chequeNumberShort}</th>
-                                        <th className="px-6 py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">{AR_LABELS.supplier}</th>
-                                        <th className="px-6 py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">{AR_LABELS.amount}</th>
-                                        <th className="px-6 py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">{AR_LABELS.dueDate}</th>
-                                        <th className="px-6 py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">{AR_LABELS.status}</th>
-                                        <th className="px-6 py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider text-center">{AR_LABELS.actions}</th>
+                                        <th className="px-2 py-3 sm:px-4 sm:py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">{AR_LABELS.chequeNumberShort}</th>
+                                        <th className="px-2 py-3 sm:px-4 sm:py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">{AR_LABELS.supplier}</th>
+                                        <th className="px-2 py-3 sm:px-4 sm:py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">{AR_LABELS.amount}</th>
+                                        <th className="px-2 py-3 sm:px-4 sm:py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">{AR_LABELS.dueDate}</th>
+                                        <th className="px-2 py-3 sm:px-4 sm:py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">{AR_LABELS.status}</th>
+                                        <th className="px-2 py-3 sm:px-4 sm:py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider text-center">{AR_LABELS.actions}</th>
                                     </tr>
                                 </thead>
                                 <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
                                     {filteredCheques.map(cheque => (
                                         <tr key={cheque.id} className="hover:bg-gray-50 dark:hover:bg-gray-700">
-                                            <td className="px-6 py-4 whitespace-nowrap text-sm font-mono text-gray-800 dark:text-gray-200">{cheque.chequeNumber}</td>
-                                            <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">{cheque.supplierName}</td>
-                                            <td className="px-6 py-4 whitespace-nowrap text-sm font-semibold text-orange-600">{cheque.chequeAmount.toLocaleString('ar-SA', {style: 'currency', currency: 'SAR'})}</td>
-                                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700 dark:text-gray-300">{new Date(cheque.chequeDueDate).toLocaleDateString('ar-SA')}</td>
-                                            <td className="px-6 py-4 whitespace-nowrap"><span className={`px-2 py-1 text-xs font-semibold rounded-full ${CHEQUE_STATUS_STYLES[cheque.status].bg} ${CHEQUE_STATUS_STYLES[cheque.status].text}`}>{CHEQUE_STATUS_STYLES[cheque.status].label}</span></td>
-                                            <td className="px-6 py-4 whitespace-nowrap text-center text-sm"><button onClick={() => setModalCheque(cheque)} className="text-indigo-600 hover:text-indigo-900 dark:text-indigo-400 dark:hover:text-indigo-300 p-1" title={AR_LABELS.edit}><EditIcon/></button></td>
+                                            <td className="px-2 py-3 sm:px-4 sm:py-4 whitespace-nowrap text-xs sm:text-sm font-mono text-gray-800 dark:text-gray-200">{cheque.chequeNumber}</td>
+                                            <td className="px-2 py-3 sm:px-4 sm:py-4 whitespace-nowrap text-xs sm:text-sm font-medium text-gray-900 dark:text-gray-100 truncate max-w-[120px] sm:max-w-none">{cheque.supplierName}</td>
+                                            <td className="px-2 py-3 sm:px-4 sm:py-4 whitespace-nowrap text-xs sm:text-sm font-semibold text-orange-600">{cheque.chequeAmount.toLocaleString('ar-SA', {style: 'currency', currency: 'SAR'})}</td>
+                                            <td className="px-2 py-3 sm:px-4 sm:py-4 whitespace-nowrap text-xs sm:text-sm text-gray-700 dark:text-gray-300">{new Date(cheque.chequeDueDate).toLocaleDateString('ar-SA')}</td>
+                                            <td className="px-2 py-3 sm:px-4 sm:py-4 whitespace-nowrap"><span className={`px-2 py-1 text-xs font-semibold rounded-full ${CHEQUE_STATUS_STYLES[cheque.status].bg} ${CHEQUE_STATUS_STYLES[cheque.status].text}`}>{CHEQUE_STATUS_STYLES[cheque.status].label}</span></td>
+                                            <td className="px-2 py-3 sm:px-4 sm:py-4 whitespace-nowrap text-center text-xs sm:text-sm"><button onClick={() => setModalCheque(cheque)} className="text-indigo-600 hover:text-indigo-900 dark:text-indigo-400 dark:hover:text-indigo-300 p-1" title={AR_LABELS.edit}><EditIcon/></button></td>
                                         </tr>
                                     ))}
                                 </tbody>

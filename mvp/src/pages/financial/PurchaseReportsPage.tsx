@@ -2,6 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { PurchaseOrder, Supplier, SupplierPayment } from '@/features/financial/types';
 import { AR_LABELS, SearchIcon } from '@/shared/constants';
 import { MetricCard } from '@/shared/components/ui/MetricCard';
+import CustomDropdown from '@/shared/components/ui/CustomDropdown/CustomDropdown';
 
 interface PurchaseReportsPageProps {
   purchases?: PurchaseOrder[];
@@ -83,38 +84,44 @@ const PurchaseReportsPage: React.FC<PurchaseReportsPageProps> = ({
   return (
     <div className="space-y-8">
       {/* Filters */}
-      <div className="bg-white dark:bg-gray-800 p-4 rounded-lg shadow-sm">
+      <div className="bg-white/95 dark:bg-gray-800/95 p-4 sm:p-6 rounded-2xl shadow-lg backdrop-blur-xl border border-slate-200/50 dark:border-slate-700/50">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">من تاريخ</label>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">من تاريخ</label>
             <input
               type="date"
               value={dateRange.startDate}
               onChange={(e) => setDateRange({ ...dateRange, startDate: e.target.value })}
-              className="w-full border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200 rounded-md shadow-sm"
+              className="w-full px-4 py-3 rounded-lg border border-slate-200/50 dark:border-slate-700/50 bg-white dark:bg-slate-800/90 text-gray-900 dark:text-gray-200 shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-300"
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">إلى تاريخ</label>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">إلى تاريخ</label>
             <input
               type="date"
               value={dateRange.endDate}
               onChange={(e) => setDateRange({ ...dateRange, endDate: e.target.value })}
-              className="w-full border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200 rounded-md shadow-sm"
+              className="w-full px-4 py-3 rounded-lg border border-slate-200/50 dark:border-slate-700/50 bg-white dark:bg-slate-800/90 text-gray-900 dark:text-gray-200 shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-300"
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">المورد</label>
-            <select
-              value={selectedSupplierId}
-              onChange={(e) => setSelectedSupplierId(e.target.value)}
-              className="w-full border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200 rounded-md shadow-sm"
-            >
-              <option value="all">جميع الموردين</option>
-              {suppliers.map(supplier => (
-                <option key={supplier.id} value={supplier.id}>{supplier.name}</option>
-              ))}
-            </select>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">المورد</label>
+            <div className="w-full sm:w-auto">
+              <CustomDropdown
+                id="supplier-filter-purchase-reports"
+                value={selectedSupplierId}
+                onChange={(value) => setSelectedSupplierId(value)}
+                options={[
+                  { value: 'all', label: 'جميع الموردين' },
+                  ...suppliers.map(supplier => ({
+                    value: supplier.id,
+                    label: supplier.name
+                  }))
+                ]}
+                placeholder="جميع الموردين"
+                className="w-full sm:w-auto"
+              />
+            </div>
           </div>
         </div>
       </div>

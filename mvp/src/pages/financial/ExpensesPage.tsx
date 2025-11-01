@@ -4,6 +4,7 @@ import {
   AR_LABELS, UUID, SearchIcon, PlusIcon, EditIcon, DeleteIcon
 } from '@/shared/constants';
 import { MetricCard } from '@/shared/components/ui/MetricCard';
+import CustomDropdown from '@/shared/components/ui/CustomDropdown/CustomDropdown';
 
 // --- MOCK DATA ---
 const MOCK_EXPENSES: Expense[] = [
@@ -79,9 +80,13 @@ const ExpenseFormModal: React.FC<{
         }
     }, [expenseToEdit, isOpen]);
 
-    const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
+    const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
         const { name, value } = e.target;
         setFormData(prev => ({ ...prev, [name]: name === 'amount' ? parseFloat(value) : value }));
+    };
+
+    const handleDropdownChange = (name: string, value: string) => {
+        setFormData(prev => ({ ...prev, [name]: value }));
     };
 
     const handleSubmit = (e: React.FormEvent) => {
@@ -102,33 +107,52 @@ const ExpenseFormModal: React.FC<{
                     <h2 className="text-xl font-bold text-gray-900 dark:text-gray-100">{expenseToEdit ? AR_LABELS.edit : AR_LABELS.addNewExpense}</h2>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div>
-                            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{AR_LABELS.expenseCategory}</label>
-                            <select name="category" value={formData.category} onChange={handleChange} className="w-full border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200 rounded-md shadow-sm">{EXPENSE_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}</select>
+                            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">{AR_LABELS.expenseCategory}</label>
+                            <CustomDropdown
+                                id="expense-category-dropdown"
+                                value={formData.category}
+                                onChange={(value) => handleDropdownChange('category', value)}
+                                options={EXPENSE_CATEGORIES.map(c => ({ value: c, label: c }))}
+                                placeholder={AR_LABELS.expenseCategory}
+                                className="w-full"
+                            />
                         </div>
                         <div>
-                            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{AR_LABELS.responsiblePerson}</label>
+                            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">{AR_LABELS.responsiblePerson}</label>
                             <input type="text" name="responsible" value={formData.responsible} onChange={handleChange} className="w-full border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200 rounded-md shadow-sm" required />
                         </div>
                         <div>
-                            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{AR_LABELS.amount}</label>
+                            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">{AR_LABELS.amount}</label>
                             <input type="number" name="amount" value={formData.amount} onChange={handleChange} className="w-full border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200 rounded-md shadow-sm" required min="0.01" step="0.01" />
                         </div>
                         <div>
-                            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{AR_LABELS.date}</label>
+                            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">{AR_LABELS.date}</label>
                             <input type="date" name="date" value={formData.date} onChange={handleChange} className="w-full border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200 rounded-md shadow-sm" required />
                         </div>
                         <div>
-                             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{AR_LABELS.status}</label>
-                            <select name="status" value={formData.status} onChange={handleChange} className="w-full border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200 rounded-md shadow-sm">
-                                <option value="Paid">{AR_LABELS.paid}</option>
-                                <option value="Unpaid">{AR_LABELS.unpaid}</option>
-                            </select>
+                             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">{AR_LABELS.status}</label>
+                            <CustomDropdown
+                                id="expense-status-dropdown"
+                                value={formData.status}
+                                onChange={(value) => handleDropdownChange('status', value)}
+                                options={[
+                                    { value: 'Paid', label: AR_LABELS.paid },
+                                    { value: 'Unpaid', label: AR_LABELS.unpaid }
+                                ]}
+                                placeholder={AR_LABELS.status}
+                                className="w-full"
+                            />
                         </div>
                          <div>
-                             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{AR_LABELS.paymentMethod}</label>
-                            <select name="paymentMethod" value={formData.paymentMethod} onChange={handleChange} className="w-full border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200 rounded-md shadow-sm">
-                                {PAYMENT_METHODS.map(m => <option key={m} value={m}>{m}</option>)}
-                            </select>
+                             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">{AR_LABELS.paymentMethod}</label>
+                            <CustomDropdown
+                                id="expense-payment-method-dropdown"
+                                value={formData.paymentMethod}
+                                onChange={(value) => handleDropdownChange('paymentMethod', value)}
+                                options={PAYMENT_METHODS.map(m => ({ value: m, label: m }))}
+                                placeholder={AR_LABELS.paymentMethod}
+                                className="w-full"
+                            />
                         </div>
                     </div>
                     <div>
@@ -287,23 +311,29 @@ const ExpensesPage: React.FC = () => {
                                 className="w-full pl-10 pr-4 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-red-500 focus:border-transparent text-right"
                             />
                         </div>
-                        <select 
-                            onChange={e => setFilters(f => ({...f, status: e.target.value}))} 
+                        <CustomDropdown
+                            id="filter-status-dropdown"
                             value={filters.status}
-                            className="px-4 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-red-500 focus:border-transparent text-right"
-                        >
-                            <option value="all">{AR_LABELS.allStatuses}</option>
-                            <option value="Paid">{AR_LABELS.paid}</option>
-                            <option value="Unpaid">{AR_LABELS.unpaid}</option>
-                        </select>
-                        <select 
-                            onChange={e => setFilters(f => ({...f, category: e.target.value}))} 
+                            onChange={(value) => setFilters(f => ({...f, status: value}))}
+                            options={[
+                                { value: 'all', label: AR_LABELS.allStatuses },
+                                { value: 'Paid', label: AR_LABELS.paid },
+                                { value: 'Unpaid', label: AR_LABELS.unpaid }
+                            ]}
+                            placeholder={AR_LABELS.allStatuses}
+                            className="w-full lg:w-auto"
+                        />
+                        <CustomDropdown
+                            id="filter-category-dropdown"
                             value={filters.category}
-                            className="px-4 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-red-500 focus:border-transparent text-right"
-                        >
-                            <option value="all">كل الفئات</option>
-                            {EXPENSE_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
-                        </select>
+                            onChange={(value) => setFilters(f => ({...f, category: value}))}
+                            options={[
+                                { value: 'all', label: 'كل الفئات' },
+                                ...EXPENSE_CATEGORIES.map(c => ({ value: c, label: c }))
+                            ]}
+                            placeholder="كل الفئات"
+                            className="w-full lg:w-auto"
+                        />
                     </div>
                 </div>
 

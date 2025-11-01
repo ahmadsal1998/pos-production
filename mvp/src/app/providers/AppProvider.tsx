@@ -1,5 +1,6 @@
 // Application-level configuration and providers
 import React from 'react';
+import { DropdownProvider } from '@/shared/contexts/DropdownContext';
 
 interface AppProviderProps {
   children: React.ReactNode;
@@ -7,8 +8,10 @@ interface AppProviderProps {
 
 export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
   return (
-    <div className="app">
-      {children}
-    </div>
+    <DropdownProvider>
+      <div className="app">
+        {children}
+      </div>
+    </DropdownProvider>
   );
 };

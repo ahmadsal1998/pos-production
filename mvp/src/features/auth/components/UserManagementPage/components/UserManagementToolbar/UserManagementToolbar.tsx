@@ -2,6 +2,7 @@ import React, { memo, useCallback } from 'react';
 import { AR_LABELS } from '../../../../../../shared/constants';
 import { SearchIcon, PlusIcon } from '../../../../../../shared/assets/icons';
 import { components, typography } from '../../../../../../shared/styles/design-tokens';
+import CustomDropdown, { DropdownOption } from '../../../../../../shared/components/ui/CustomDropdown/CustomDropdown';
 
 export interface UserFilters {
   status: string;
@@ -32,18 +33,31 @@ export const UserManagementToolbar = memo(
     );
 
     const handleStatusChange = useCallback(
-      (e: React.ChangeEvent<HTMLSelectElement>) => {
-        onFilterChange({ ...filters, status: e.target.value });
+      (value: string) => {
+        onFilterChange({ ...filters, status: value });
       },
       [filters, onFilterChange]
     );
 
     const handleRoleChange = useCallback(
-      (e: React.ChangeEvent<HTMLSelectElement>) => {
-        onFilterChange({ ...filters, role: e.target.value });
+      (value: string) => {
+        onFilterChange({ ...filters, role: value });
       },
       [filters, onFilterChange]
     );
+
+    const statusOptions: DropdownOption[] = [
+      { value: 'all', label: AR_LABELS.allStatuses },
+      { value: 'active', label: AR_LABELS.active },
+      { value: 'inactive', label: AR_LABELS.inactive },
+    ];
+
+    const roleOptions: DropdownOption[] = [
+      { value: 'all', label: 'كل الأدوار' },
+      { value: 'Admin', label: AR_LABELS.admin },
+      { value: 'Manager', label: AR_LABELS.manager },
+      { value: 'Cashier', label: AR_LABELS.cashier },
+    ];
 
     return (
       <div className={components.card}>
@@ -59,25 +73,26 @@ export const UserManagementToolbar = memo(
             <SearchIcon className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-gray-400 dark:text-gray-500" />
           </div>
           <div className="flex w-full flex-wrap items-center justify-end gap-2 md:w-auto">
-            <select
-              value={filters.status}
-              onChange={handleStatusChange}
-              className={`${components.input} w-full text-right md:w-auto`}
-            >
-              <option value="all">{AR_LABELS.allStatuses}</option>
-              <option value="active">{AR_LABELS.active}</option>
-              <option value="inactive">{AR_LABELS.inactive}</option>
-            </select>
-            <select
-              value={filters.role}
-              onChange={handleRoleChange}
-              className={`${components.input} w-full text-right md:w-auto`}
-            >
-              <option value="all">كل الأدوار</option>
-              <option value="Admin">{AR_LABELS.admin}</option>
-              <option value="Manager">{AR_LABELS.manager}</option>
-              <option value="Cashier">{AR_LABELS.cashier}</option>
-            </select>
+            <div className="w-full md:w-auto">
+              <CustomDropdown
+                id="status-filter"
+                value={filters.status}
+                onChange={handleStatusChange}
+                options={statusOptions}
+                placeholder={AR_LABELS.allStatuses}
+                className="w-full md:w-auto"
+              />
+            </div>
+            <div className="w-full md:w-auto">
+              <CustomDropdown
+                id="role-filter"
+                value={filters.role}
+                onChange={handleRoleChange}
+                options={roleOptions}
+                placeholder="كل الأدوار"
+                className="w-full md:w-auto"
+              />
+            </div>
             <button onClick={onAddUser} className={components.button.primary}>
               <PlusIcon className="ml-2 h-4 w-4" />
               <span>{AR_LABELS.addNewUser}</span>

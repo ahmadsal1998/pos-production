@@ -3,6 +3,7 @@ import { Outlet, useLocation } from 'react-router-dom';
 import { useThemeStore, useAppStore } from '@/app/store';
 import Sidebar from '../Sidebar/Sidebar';
 import Header from '../Header/Header';
+import { DropdownProvider } from '@/shared/contexts/DropdownContext';
 
 const MainLayout: React.FC = () => {
   const { theme } = useThemeStore();
@@ -36,29 +37,31 @@ const MainLayout: React.FC = () => {
   }, [setMobileMenuOpen]);
 
   return (
-    <div className="flex h-screen bg-gray-50 dark:bg-gray-950 overflow-hidden">
-      <Sidebar 
-        activePath={location.pathname} 
-        setActivePath={() => {}} // No longer needed with router
-        isOpen={isMobileMenuOpen}
-        onClose={() => setMobileMenuOpen(false)}
-      />
-
-      {/* Main Content Area */}
-      <div className={`flex-1 flex flex-col w-full transition-all duration-300 ${isSidebarCollapsed ? 'lg:mr-20' : 'lg:mr-64'} min-w-0 overflow-hidden`}>
-        <Header 
+    <DropdownProvider>
+      <div className="flex h-screen bg-gray-50 dark:bg-gray-950 overflow-hidden">
+        <Sidebar 
           activePath={location.pathname} 
           setActivePath={() => {}} // No longer needed with router
-          theme={theme} 
-          setTheme={() => {}} // Now handled by store
-          onMenuToggle={() => setMobileMenuOpen(!isMobileMenuOpen)}
-          isMobileMenuOpen={isMobileMenuOpen}
+          isOpen={isMobileMenuOpen}
+          onClose={() => setMobileMenuOpen(false)}
         />
-        <main className="flex-1 w-full overflow-y-auto overflow-x-hidden min-h-0">
-          <Outlet />
-        </main>
+
+        {/* Main Content Area */}
+        <div className={`flex-1 flex flex-col w-full transition-all duration-300 ${isSidebarCollapsed ? 'lg:mr-20' : 'lg:mr-64'} min-w-0 overflow-hidden`}>
+          <Header 
+            activePath={location.pathname} 
+            setActivePath={() => {}} // No longer needed with router
+            theme={theme} 
+            setTheme={() => {}} // Now handled by store
+            onMenuToggle={() => setMobileMenuOpen(!isMobileMenuOpen)}
+            isMobileMenuOpen={isMobileMenuOpen}
+          />
+          <main className="flex-1 w-full overflow-y-auto overflow-x-hidden min-h-0">
+            <Outlet />
+          </main>
+        </div>
       </div>
-    </div>
+    </DropdownProvider>
   );
 };
 
