@@ -56,7 +56,8 @@ const MainLayout: React.FC = () => {
             onMenuToggle={() => setMobileMenuOpen(!isMobileMenuOpen)}
             isMobileMenuOpen={isMobileMenuOpen}
           />
-          <main className="flex-1 w-full overflow-y-auto overflow-x-hidden min-h-0">
+          {/* Add padding-top to account for fixed header height (h-16 = 64px on mobile, md:h-20 = 80px on desktop) */}
+          <main className="flex-1 w-full overflow-y-auto overflow-x-hidden min-h-0 pt-16 md:pt-20">
             <Outlet />
           </main>
         </div>

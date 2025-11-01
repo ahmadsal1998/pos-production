@@ -1,6 +1,6 @@
 import React from 'react';
 import { AR_LABELS, SunIcon, MoonIcon } from '@/shared/constants';
-import { useThemeStore } from '@/app/store';
+import { useThemeStore, useAppStore } from '@/app/store';
 
 interface HeaderProps {
   activePath: string;
@@ -13,9 +13,10 @@ interface HeaderProps {
 
 const Header: React.FC<HeaderProps> = ({ onMenuToggle, isMobileMenuOpen }) => {
   const { theme, toggleTheme } = useThemeStore();
+  const { isSidebarCollapsed } = useAppStore();
 
   return (
-    <header className="sticky top-0 z-[60] bg-white/80 dark:bg-gray-900/80 backdrop-blur-xl backdrop-saturate-150 border-b border-gray-200/80 dark:border-gray-800/80 shadow-sm w-full flex-shrink-0 supports-[backdrop-filter]:bg-white/80 supports-[backdrop-filter]:dark:bg-gray-900/80">
+    <header className={`fixed top-0 left-0 z-[60] bg-white/80 dark:bg-gray-900/80 backdrop-blur-xl backdrop-saturate-150 border-b border-gray-200/80 dark:border-gray-800/80 shadow-sm flex-shrink-0 supports-[backdrop-filter]:bg-white/80 supports-[backdrop-filter]:dark:bg-gray-900/80 transition-all duration-300 ${isSidebarCollapsed ? 'lg:right-20' : 'lg:right-64'} right-0`}>
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 w-full">
         <div className="flex h-16 md:h-20 items-center justify-between">
           {/* Left section: Mobile menu + Logo */}
