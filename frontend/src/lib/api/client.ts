@@ -22,7 +22,7 @@ export class ApiClient {
   constructor(baseURL: string = '/api') {
     this.client = axios.create({
       baseURL,
-      timeout: 10000,
+      timeout: 30000, // Increased to 30s for Render cold starts
       headers: {
         'Content-Type': 'application/json',
       },
