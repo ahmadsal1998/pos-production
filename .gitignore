@@ -12,6 +12,9 @@ build/
 .next/
 out/
 
+# Backend build output
+backend/dist/
+
 # Environment variables
 .env
 .env.local
@@ -94,6 +97,10 @@ dist
 # Temporary folders
 tmp/
 temp/
+
+# Backup files
+*.backup
+*.bak
 
 # Editor directories and files
 .vscode/*
