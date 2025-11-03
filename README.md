@@ -139,6 +139,7 @@ pos-production-main/
 - **RENDER_DEPLOYMENT_GUIDE.md** - Deploy backend to Render
 - **backend/DEPLOY_QUICKSTART.md** - Quick deploy to Render
 - **backend/ENV_SETUP.md** - Environment variables reference
+- **FRONTEND_API_CONFIGURATION.md** - Configure frontend API URL
 
 ## 🧪 Testing
 
@@ -205,9 +206,10 @@ npm run build         # Build for production
 - Environment setup: **backend/ENV_SETUP.md**
 
 ### Frontend (Vercel/Netlify)
-- Update API URL in environment variables
+- See **FRONTEND_API_CONFIGURATION.md** for environment setup
 - Build command: `npm run build`
 - Output directory: `dist`
+- **Important**: Set `VITE_API_URL` to point to your Render backend
 
 ## 🎯 Next Steps
 
