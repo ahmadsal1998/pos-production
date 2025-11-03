@@ -33,8 +33,10 @@ interface AuthState {
 }
 
 // Create axios instance
+// Use VITE_API_URL from environment, fallback to '/api' for local development
+const API_BASE_URL = (import.meta.env.VITE_API_URL as string) || '/api';
 const api = axios.create({
-  baseURL: '/api',
+  baseURL: API_BASE_URL,
   headers: {
     'Content-Type': 'application/json',
   },
