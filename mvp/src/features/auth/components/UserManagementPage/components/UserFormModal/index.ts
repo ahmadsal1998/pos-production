@@ -1,1 +1,0 @@
-export { UserFormModal } from './UserFormModal';
