@@ -33,8 +33,9 @@ export const sendOTPEmail = async (
       };
     }
 
-    // Get sender email from environment or use default
-    const fromEmail = process.env.RESEND_FROM_EMAIL || 'no-reply@possystem.com';
+    // Get sender email from environment or use Resend's default test domain
+    // For production, use a verified domain. For testing, use onboarding@resend.dev
+    const fromEmail = process.env.RESEND_FROM_EMAIL || 'onboarding@resend.dev';
     const fromName = process.env.RESEND_FROM_NAME || 'POS System';
 
     const emailHtml = `
@@ -135,6 +136,9 @@ export const sendOTPEmail = async (
       If you did not request this password reset, please ignore this email.
     `;
 
+    // Log email sending attempt
+    console.log(`📧 Attempting to send OTP email to ${email} from ${fromEmail}`);
+
     // Send email using Resend
     const { data, error } = await resend.emails.send({
       from: `${fromName} <${fromEmail}>`,
@@ -145,23 +149,32 @@ export const sendOTPEmail = async (
     });
 
     if (error) {
-      console.error('❌ Error sending OTP email:', error);
+      console.error('❌ Resend API Error:', JSON.stringify(error, null, 2));
+      console.error('❌ Error details:', {
+        message: error.message,
+        name: error.name,
+        statusCode: (error as any)?.statusCode,
+        response: (error as any)?.response,
+      });
       return {
         success: false,
-        error: error.message || 'Failed to send OTP email',
+        error: error.message || JSON.stringify(error) || 'Failed to send OTP email',
       };
     }
 
-    console.log(`✅ OTP email sent to ${email}:`, data?.id);
+    console.log(`✅ OTP email sent successfully to ${email}`);
+    console.log(`✅ Email ID: ${data?.id}`);
     return {
       success: true,
       message: `OTP email sent successfully to ${email}`,
     };
   } catch (error: any) {
-    console.error('❌ Error sending OTP email:', error);
+    console.error('❌ Exception sending OTP email:', error);
+    console.error('❌ Error stack:', error?.stack);
+    console.error('❌ Full error object:', JSON.stringify(error, Object.getOwnPropertyNames(error), 2));
     return {
       success: false,
-      error: error.message || 'Failed to send OTP email. Please try again later.',
+      error: error?.message || error?.toString() || 'Failed to send OTP email. Please try again later.',
     };
   }
 };
