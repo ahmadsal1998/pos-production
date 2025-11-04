@@ -18,18 +18,48 @@ const PORT = process.env.PORT || 5000;
 connectDB();
 
 // Middleware
-// CORS configuration - Allow all localhost origins in development
+// CORS configuration - Allow configured origins and Vercel preview deployments
 const isDevelopment = process.env.NODE_ENV !== 'production';
-const allowedOrigins = isDevelopment
-  ? true // Allow all origins in development
-  : [process.env.CLIENT_URL || 'http://localhost:3000'];
 
-app.use(
-  cors({
-    origin: allowedOrigins,
-    credentials: true,
-  })
-);
+const corsOptions = {
+  origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) {
+      return callback(null, true);
+    }
+
+    // In development, allow all origins
+    if (isDevelopment) {
+      return callback(null, true);
+    }
+
+    // In production, check allowed origins
+    const allowedOrigins: string[] = [];
+    
+    // Add CLIENT_URL if set
+    if (process.env.CLIENT_URL) {
+      allowedOrigins.push(process.env.CLIENT_URL);
+    }
+
+    // Allow any Vercel preview/production deployment
+    if (origin.includes('.vercel.app')) {
+      return callback(null, true);
+    }
+
+    // Check if origin is in allowed list
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+
+    // Origin not allowed
+    callback(new Error('Not allowed by CORS'));
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+};
+
+app.use(cors(corsOptions));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
