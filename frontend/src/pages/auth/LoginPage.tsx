@@ -1,12 +1,24 @@
-import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useState, useEffect } from 'react';
+import { useNavigate, Navigate } from 'react-router-dom';
 import { useAuthStore } from '@/app/store';
 import { AR_LABELS, UserIcon, LockIcon } from '@/shared/constants';
 import { AuthLayout } from '@/shared/components/layout/AuthLayout';
 
 const LoginPage = () => {
   const navigate = useNavigate();
-  const { login, isLoading, error, clearError } = useAuthStore();
+  const { login, isLoading, error, clearError, isAuthenticated } = useAuthStore();
+
+  // Redirect to dashboard if user is already authenticated
+  useEffect(() => {
+    if (isAuthenticated) {
+      navigate('/', { replace: true });
+    }
+  }, [isAuthenticated, navigate]);
+
+  // If authenticated, redirect immediately
+  if (isAuthenticated) {
+    return <Navigate to="/" replace />;
+  }
   
   const [emailOrUsername, setEmailOrUsername] = useState('');
   const [password, setPassword] = useState('');

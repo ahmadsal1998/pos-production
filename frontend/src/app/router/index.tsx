@@ -1,5 +1,6 @@
 import { createBrowserRouter } from 'react-router-dom';
 import { MainLayout } from '@/shared/components/layout';
+import { ProtectedRoute } from '@/shared/components';
 
 // Auth Pages
 import LoginPage from '@/pages/auth/LoginPage';
@@ -56,10 +57,14 @@ export const router = createBrowserRouter([
     element: <VerificationPage />,
   },
   
-  // Main Application Routes
+  // Main Application Routes (Protected)
   {
     path: '/',
-    element: <MainLayout />,
+    element: (
+      <ProtectedRoute>
+        <MainLayout />
+      </ProtectedRoute>
+    ),
     children: [
       // Dashboard
       {
