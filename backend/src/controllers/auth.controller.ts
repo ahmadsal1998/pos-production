@@ -181,12 +181,11 @@ export const forgotPassword = asyncHandler(
     });
 
     // Send OTP via email
-    try {
-      await sendOTPEmail(email, code);
-    } catch (error: any) {
+    const emailResult = await sendOTPEmail(email, code);
+    if (!emailResult.success) {
       // If email fails, still return success for security
       // Log error for debugging
-      console.error('Failed to send OTP email:', error);
+      console.error('Failed to send OTP email:', emailResult.error || emailResult.message);
       // Optionally, you could delete the OTP here if email fails
       // await OTP.deleteMany({ email: email.toLowerCase() });
     }

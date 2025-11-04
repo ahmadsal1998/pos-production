@@ -86,8 +86,9 @@ In the Render dashboard, add these environment variables:
 |-----|-------|-------------|
 | `JWT_EXPIRE` | `7d` | Token expiration (optional, defaults to 7d) |
 | `JWT_REFRESH_EXPIRE` | `30d` | Refresh token expiration (optional, defaults to 30d) |
-| `EMAIL_USER` | Your Gmail | Email for OTP (optional) |
-| `EMAIL_PASS` | Gmail app password | Email password (optional) |
+| `RESEND_API_KEY` | Your Resend API key | API key for sending emails via Resend (optional) |
+| `RESEND_FROM_EMAIL` | no-reply@yourdomain.com | Sender email address (optional) |
+| `RESEND_FROM_NAME` | POS System | Sender name (optional) |
 
 #### Generate Secure Secrets
 

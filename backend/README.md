@@ -46,9 +46,11 @@ JWT_REFRESH_EXPIRE=30d
 CLIENT_URL=http://localhost:5173
 
 # Optional: Email configuration for password reset OTP
-# For Gmail, use App Password instead of regular password
-EMAIL_USER=your-email@gmail.com
-EMAIL_PASS=your-app-password
+# Get your API key from: https://resend.com/api-keys
+RESEND_API_KEY=re_your_resend_api_key_here
+# Optional: Customize sender (defaults to no-reply@possystem.com)
+RESEND_FROM_EMAIL=no-reply@yourdomain.com
+RESEND_FROM_NAME=POS System
 ```
 
 ## 🗄️ Database Setup
@@ -145,7 +147,7 @@ backend/
 │   ├── utils/
 │   │   ├── jwt.ts               # JWT utilities
 │   │   ├── otp.ts               # OTP generation utilities
-│   │   ├── email.ts             # Email service (Nodemailer)
+│   │   ├── email.ts             # Email service (Resend)
 │   │   └── seedDatabase.ts      # Database seeder
 │   └── server.ts                # Express app entry
 ├── .env                         # Environment variables
@@ -182,10 +184,11 @@ npm test
 | JWT_EXPIRE | Token expiration | 7d |
 | JWT_REFRESH_EXPIRE | Refresh token expiration | 30d |
 | CLIENT_URL | Frontend URL for CORS | http://localhost:5173 |
-| EMAIL_USER | Email address for sending OTP (optional for dev) | - |
-| EMAIL_PASS | Email app password for sending OTP (optional for dev) | - |
+| RESEND_API_KEY | Resend API key for sending emails (optional for dev) | - |
+| RESEND_FROM_EMAIL | Sender email address (optional) | no-reply@possystem.com |
+| RESEND_FROM_NAME | Sender name (optional) | POS System |
 
-**Note**: For development, if `EMAIL_USER` and `EMAIL_PASS` are not set, OTP codes will be logged to the console instead of being sent via email.
+**Note**: For development, if `RESEND_API_KEY` is not set, OTP codes will be logged to the console instead of being sent via email.
 
 ## 🤝 Contributing
 

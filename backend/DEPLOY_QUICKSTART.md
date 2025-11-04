@@ -61,8 +61,9 @@ CLIENT_URL = https://your-frontend-url.vercel.app
 
 Optional (for email OTP):
 ```
-EMAIL_USER = your-email@gmail.com
-EMAIL_PASS = your-gmail-app-password
+RESEND_API_KEY = re_your_resend_api_key_here
+RESEND_FROM_EMAIL = no-reply@yourdomain.com
+RESEND_FROM_NAME = POS System
 ```
 
 4. **Deploy**
@@ -156,8 +157,9 @@ exit
 | CLIENT_URL | Yes | - | Frontend URL for CORS |
 | JWT_EXPIRE | No | 7d | Token expiration |
 | JWT_REFRESH_EXPIRE | No | 30d | Refresh token expiration |
-| EMAIL_USER | No | - | Gmail for OTP |
-| EMAIL_PASS | No | - | Gmail app password |
+| RESEND_API_KEY | No | - | Resend API key for sending emails |
+| RESEND_FROM_EMAIL | No | no-reply@possystem.com | Sender email address |
+| RESEND_FROM_NAME | No | POS System | Sender name |
 
 ## Cost Estimate
 

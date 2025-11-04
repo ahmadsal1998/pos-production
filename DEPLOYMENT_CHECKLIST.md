@@ -39,8 +39,9 @@ Use this checklist to ensure a smooth deployment to production.
 - [ ] `CLIENT_URL` = Your frontend URL (HTTPS)
 - [ ] `JWT_EXPIRE` = `7d` (optional)
 - [ ] `JWT_REFRESH_EXPIRE` = `30d` (optional)
-- [ ] `EMAIL_USER` = Your Gmail (optional)
-- [ ] `EMAIL_PASS` = Gmail app password (optional)
+- [ ] `RESEND_API_KEY` = Your Resend API key (optional)
+- [ ] `RESEND_FROM_EMAIL` = Sender email (optional, defaults to no-reply@possystem.com)
+- [ ] `RESEND_FROM_NAME` = Sender name (optional, defaults to POS System)
 
 ### Verify Backend
 - [ ] Deployment succeeds without errors

@@ -8,7 +8,7 @@ The forgot password flow has been successfully implemented with the following co
 
 1. **`src/models/OTP.ts`** - OTP model for storing password reset codes
 2. **`src/utils/otp.ts`** - OTP generation utilities
-3. **`src/utils/email.ts`** - Email service using Nodemailer
+3. **`src/utils/email.ts`** - Email service using Resend API
 
 ### 🔄 Modified Files
 
@@ -36,13 +36,16 @@ JWT_SECRET=your-secret-key
 JWT_REFRESH_SECRET=your-refresh-secret-key
 
 # Optional for email (if not set, OTP will be logged to console)
-EMAIL_USER=your-email@gmail.com
-EMAIL_PASS=your-app-password
+# Get your API key from: https://resend.com/api-keys
+RESEND_API_KEY=re_your_resend_api_key_here
+# Optional: Customize sender
+RESEND_FROM_EMAIL=no-reply@yourdomain.com
+RESEND_FROM_NAME=POS System
 ```
 
 ### 2. For Development (No Email Setup Required)
 
-If you don't configure `EMAIL_USER` and `EMAIL_PASS`:
+If you don't configure `RESEND_API_KEY`:
 - OTP codes will be **logged to the console** instead of being sent via email
 - This is perfect for development and testing
 - Look for output like:
@@ -57,15 +60,20 @@ If you don't configure `EMAIL_USER` and `EMAIL_PASS`:
 
 ### 3. For Production (Email Setup)
 
-#### Gmail Setup:
-1. Enable 2-Step Verification on your Google account
-2. Generate an App Password:
-   - Go to: https://myaccount.google.com/apppasswords
-   - Generate a new app password for "Mail"
-   - Use this app password in `EMAIL_PASS` (not your regular password)
-
-#### Other Email Providers:
-Modify `src/utils/email.ts` to use the correct SMTP configuration for your provider.
+#### Resend Setup:
+1. Sign up for a free Resend account at: https://resend.com
+2. Create an API key:
+   - Go to: https://resend.com/api-keys
+   - Create a new API key
+   - Copy the key (starts with `re_`)
+   - Add it to your environment variables as `RESEND_API_KEY`
+3. Verify your domain (optional but recommended):
+   - Add your domain in Resend dashboard
+   - Configure DNS records as instructed
+   - Use your verified domain email in `RESEND_FROM_EMAIL`
+4. Optional: Customize sender name:
+   - Set `RESEND_FROM_NAME` to your desired sender name
+   - Defaults to "POS System" if not set
 
 ## 📝 Testing the Flow
 
@@ -125,8 +133,15 @@ Response:
 
 ## 🐛 Troubleshooting
 
-### Issue: "EMAIL_USER or EMAIL_PASS not set"
+### Issue: "RESEND_API_KEY not set"
 **Solution**: This is normal for development. OTP codes will be logged to console instead.
+
+### Issue: "Failed to send OTP email"
+**Solution**: 
+1. Verify your `RESEND_API_KEY` is correct and active
+2. Check that your domain is verified in Resend (if using custom domain)
+3. Ensure the `RESEND_FROM_EMAIL` uses a verified domain or the default Resend domain
+4. Check Resend dashboard for email delivery status and errors
 
 ### Issue: OTP email not received
 **Check**:

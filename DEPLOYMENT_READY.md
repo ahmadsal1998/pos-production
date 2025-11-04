@@ -78,8 +78,9 @@ CLIENT_URL=<your-frontend-url>
 ```
 JWT_EXPIRE=7d
 JWT_REFRESH_EXPIRE=30d
-EMAIL_USER=<your-gmail>
-EMAIL_PASS=<your-app-password>
+RESEND_API_KEY=<your-resend-api-key>
+RESEND_FROM_EMAIL=no-reply@yourdomain.com
+RESEND_FROM_NAME=POS System
 ```
 
 ## 🎯 Deployment Process

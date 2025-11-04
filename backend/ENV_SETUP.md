@@ -22,10 +22,11 @@ JWT_REFRESH_EXPIRE=30d
 CLIENT_URL=http://localhost:5173
 
 # Email Configuration (Optional - for production)
-# For Gmail, use App Password instead of regular password
-# Generate App Password: https://myaccount.google.com/apppasswords
-EMAIL_USER=your-email@gmail.com
-EMAIL_PASS=your-app-password
+# Get your API key from: https://resend.com/api-keys
+RESEND_API_KEY=re_your_resend_api_key_here
+# Optional: Customize sender (defaults to no-reply@possystem.com)
+RESEND_FROM_EMAIL=no-reply@yourdomain.com
+RESEND_FROM_NAME=POS System
 ```
 
 ## Required for Render Deployment
@@ -49,8 +50,9 @@ In the Render dashboard, add these environment variables:
 |-----|-------|-------------|
 | `JWT_EXPIRE` | `7d` | Token expiration |
 | `JWT_REFRESH_EXPIRE` | `30d` | Refresh token expiration |
-| `EMAIL_USER` | Your Gmail | Email for sending OTP |
-| `EMAIL_PASS` | Gmail app password | Email password for Gmail |
+| `RESEND_API_KEY` | Your Resend API key | API key for sending emails via Resend |
+| `RESEND_FROM_EMAIL` | no-reply@yourdomain.com | Sender email address (optional) |
+| `RESEND_FROM_NAME` | POS System | Sender name (optional) |
 
 ## Generate Secure Secrets
 
