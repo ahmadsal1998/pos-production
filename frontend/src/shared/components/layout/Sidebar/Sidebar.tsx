@@ -1,9 +1,11 @@
-import React, { useState, useEffect } from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import React, { useState, useEffect, useMemo } from 'react';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { NavItem } from '@/shared/constants';
 import { AR_LABELS, NAV_ITEMS, ChevronDownIcon } from '@/shared/constants';
-import { useAppStore } from '@/app/store';
+import { useAppStore, useAuthStore } from '@/app/store';
 import { useDropdown } from '@/shared/contexts/DropdownContext';
+import { LogoutIcon } from '@/shared/assets/icons';
+import { hasRoutePermission } from '@/shared/utils/permissions';
 
 interface SidebarProps {
   activePath: string;
@@ -14,12 +16,50 @@ interface SidebarProps {
 
 const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
   const location = useLocation();
+  const navigate = useNavigate();
   const { isSidebarCollapsed, toggleSidebar } = useAppStore();
   const { setOpenDropdownId, closeAllDropdowns } = useDropdown();
+  const { logout, user } = useAuthStore();
   const [openDropdowns, setOpenDropdowns] = useState<Record<number, boolean>>({});
   const [activePopoverId, setActivePopoverId] = useState<number | null>(null);
   const [popoverPosition, setPopoverPosition] = useState<Record<number, { top: number; right: number }>>({});
   const dropdownRefs = React.useRef<Record<number, HTMLElement | null>>({});
+
+  // Filter navigation items based on user permissions
+  const filteredNavItems = useMemo(() => {
+    // Admin users see all items
+    if (user?.role === 'Admin') {
+      return NAV_ITEMS;
+    }
+
+    const userPermissions = user?.permissions || [];
+    
+    return NAV_ITEMS.filter(item => {
+      // Filter dropdown items
+      if (item.isDropdown && item.dropdownItems) {
+        const filteredDropdownItems = item.dropdownItems.filter(subItem => 
+          hasRoutePermission(subItem.path, userPermissions, user?.role)
+        );
+        // Include dropdown if it has at least one accessible item
+        return filteredDropdownItems.length > 0;
+      }
+      
+      // Check permission for regular items
+      return hasRoutePermission(item.path, userPermissions, user?.role);
+    }).map(item => {
+      // Filter dropdown items for items that passed the filter
+      if (item.isDropdown && item.dropdownItems) {
+        const filteredDropdownItems = item.dropdownItems.filter(subItem => 
+          hasRoutePermission(subItem.path, userPermissions, user?.role)
+        );
+        return {
+          ...item,
+          dropdownItems: filteredDropdownItems
+        };
+      }
+      return item;
+    });
+  }, [user]);
 
   const toggleDropdown = (id: number) => {
     const dropdownId = `sidebar-dropdown-${id}`;
@@ -190,6 +230,16 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
     setActivePopoverId(null); // Close popover after navigation
   };
 
+  const handleLogout = async () => {
+    try {
+      await logout();
+      navigate('/login');
+      onClose(); // Close sidebar on mobile after logout
+    } catch (error) {
+      console.error('Logout error:', error);
+    }
+  };
+
   return (
     <>
       {/* Mobile overlay */}
@@ -247,7 +297,7 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
         {/* Navigation */}
         <nav className="flex-grow overflow-y-auto px-3 py-4 custom-scrollbar">
           <ul className="space-y-1">
-            {NAV_ITEMS.map((item) => {
+            {filteredNavItems.map((item) => {
               const itemIsActive = isItemActive(item);
               return (
                 <li key={item.id}>
@@ -409,7 +459,26 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
           </ul>
         </nav>
 
-     
+        {/* Logout Button - Fixed at bottom */}
+        <div className="px-3 py-4 border-t border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 flex-shrink-0">
+          <button
+            onClick={handleLogout}
+            className={`group flex items-center ${isSidebarCollapsed ? 'justify-center' : 'justify-start'} gap-3 w-full px-3 py-2.5 rounded-lg transition-all duration-200 bg-red-50 dark:bg-red-950/20 hover:bg-red-100 dark:hover:bg-red-950/30 text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 dark:focus:ring-offset-gray-900`}
+            title={isSidebarCollapsed ? AR_LABELS.logout : ''}
+            aria-label={AR_LABELS.logout}
+          >
+            <div className="transition-all duration-200 text-red-600 dark:text-red-400 group-hover:scale-110">
+              <LogoutIcon className="h-5 w-5" />
+            </div>
+            <span
+              className={`text-sm font-medium transition-all duration-300 ${
+                isSidebarCollapsed ? 'opacity-0 w-0 overflow-hidden' : 'opacity-100'
+              }`}
+            >
+              {AR_LABELS.logout}
+            </span>
+          </button>
+        </div>
 
         {/* Copyright */}
         {!isSidebarCollapsed && (

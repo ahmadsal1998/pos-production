@@ -1,7 +1,14 @@
 import { Resend } from 'resend';
 
-// Initialize Resend client
-const resend = new Resend(process.env.RESEND_API_KEY);
+// Initialize Resend client lazily (only when API key is available)
+let resend: Resend | null = null;
+
+const getResendClient = (): Resend | null => {
+  if (!resend && process.env.RESEND_API_KEY) {
+    resend = new Resend(process.env.RESEND_API_KEY);
+  }
+  return resend;
+};
 
 /**
  * Send OTP code via email using Resend API
@@ -139,8 +146,14 @@ export const sendOTPEmail = async (
     // Log email sending attempt
     console.log(`📧 Attempting to send OTP email to ${email} from ${fromEmail}`);
 
+    // Get Resend client (will be null if API key is not set)
+    const resendClient = getResendClient();
+    if (!resendClient) {
+      throw new Error('Resend client not initialized - API key missing');
+    }
+
     // Send email using Resend
-    const { data, error } = await resend.emails.send({
+    const { data, error } = await resendClient.emails.send({
       from: `${fromName} <${fromEmail}>`,
       to: [email],
       subject: 'Password Reset OTP Code',

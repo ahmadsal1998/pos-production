@@ -1,6 +1,6 @@
 import { createBrowserRouter } from 'react-router-dom';
 import { MainLayout } from '@/shared/components/layout';
-import { ProtectedRoute } from '@/shared/components';
+import { ProtectedRoute, PermissionProtectedRoute } from '@/shared/components';
 
 // Auth Pages
 import LoginPage from '@/pages/auth/LoginPage';
@@ -69,7 +69,11 @@ export const router = createBrowserRouter([
       // Dashboard
       {
         index: true,
-        element: <DashboardPage />,
+        element: (
+          <PermissionProtectedRoute>
+            <DashboardPage />
+          </PermissionProtectedRoute>
+        ),
       },
       
       // Products Routes
@@ -78,31 +82,59 @@ export const router = createBrowserRouter([
         children: [
           {
             index: true,
-            element: <ProductDashboard />,
+            element: (
+              <PermissionProtectedRoute>
+                <ProductDashboard />
+              </PermissionProtectedRoute>
+            ),
           },
           {
             path: 'list',
-            element: <ProductListPage />,
+            element: (
+              <PermissionProtectedRoute>
+                <ProductListPage />
+              </PermissionProtectedRoute>
+            ),
           },
           {
             path: 'management',
-            element: <ProductManagementPage />,
+            element: (
+              <PermissionProtectedRoute>
+                <ProductManagementPage />
+              </PermissionProtectedRoute>
+            ),
           },
           {
             path: 'add-multi-unit',
-            element: <AddMultiUnitProductPage />,
+            element: (
+              <PermissionProtectedRoute>
+                <AddMultiUnitProductPage />
+              </PermissionProtectedRoute>
+            ),
           },
           {
             path: 'categories',
-            element: <CategoryManagementPage />,
+            element: (
+              <PermissionProtectedRoute>
+                <CategoryManagementPage />
+              </PermissionProtectedRoute>
+            ),
           },
           {
             path: 'brands',
-            element: <BrandManagementPage />,
+            element: (
+              <PermissionProtectedRoute>
+                <BrandManagementPage />
+              </PermissionProtectedRoute>
+            ),
           },
           {
             path: ':id',
-            element: <ProductPage />,
+            element: (
+              <PermissionProtectedRoute>
+                <ProductPage />
+              </PermissionProtectedRoute>
+            ),
           },
         ],
       },
@@ -113,19 +145,35 @@ export const router = createBrowserRouter([
         children: [
           {
             index: true,
-            element: <SalesPage />,
+            element: (
+              <PermissionProtectedRoute>
+                <SalesPage />
+              </PermissionProtectedRoute>
+            ),
           },
           {
             path: 'history',
-            element: <SalesHistoryPage />,
+            element: (
+              <PermissionProtectedRoute>
+                <SalesHistoryPage />
+              </PermissionProtectedRoute>
+            ),
           },
           {
             path: 'today',
-            element: <SalesTodayPage />,
+            element: (
+              <PermissionProtectedRoute>
+                <SalesTodayPage />
+              </PermissionProtectedRoute>
+            ),
           },
           {
             path: 'refunds',
-            element: <RefundsPage />,
+            element: (
+              <PermissionProtectedRoute>
+                <RefundsPage />
+              </PermissionProtectedRoute>
+            ),
           },
         ],
       },
@@ -136,11 +184,19 @@ export const router = createBrowserRouter([
         children: [
           {
             path: '1',
-            element: <POSPage />,
+            element: (
+              <PermissionProtectedRoute requiredPermission="posRetail">
+                <POSPage />
+              </PermissionProtectedRoute>
+            ),
           },
           {
             path: '2',
-            element: <WholesalePOSPage />,
+            element: (
+              <PermissionProtectedRoute requiredPermission="posWholesale">
+                <WholesalePOSPage />
+              </PermissionProtectedRoute>
+            ),
           },
         ],
       },
@@ -151,19 +207,35 @@ export const router = createBrowserRouter([
         children: [
           {
             path: 'purchases',
-            element: <PurchasesPage />,
+            element: (
+              <PermissionProtectedRoute>
+                <PurchasesPage />
+              </PermissionProtectedRoute>
+            ),
           },
           {
             path: 'expenses',
-            element: <ExpensesPage />,
+            element: (
+              <PermissionProtectedRoute>
+                <ExpensesPage />
+              </PermissionProtectedRoute>
+            ),
           },
           {
             path: 'cheques',
-            element: <ChequesPage />,
+            element: (
+              <PermissionProtectedRoute>
+                <ChequesPage />
+              </PermissionProtectedRoute>
+            ),
           },
           {
             path: 'payment-methods',
-            element: <PaymentMethodsPage />,
+            element: (
+              <PermissionProtectedRoute>
+                <PaymentMethodsPage />
+              </PermissionProtectedRoute>
+            ),
           },
         ],
       },
@@ -171,15 +243,27 @@ export const router = createBrowserRouter([
       // Direct Financial Routes (for backward compatibility)
       {
         path: 'purchases',
-        element: <PurchasesPage />,
+        element: (
+          <PermissionProtectedRoute>
+            <PurchasesPage />
+          </PermissionProtectedRoute>
+        ),
       },
       {
         path: 'expenses',
-        element: <ExpensesPage />,
+        element: (
+          <PermissionProtectedRoute>
+            <ExpensesPage />
+          </PermissionProtectedRoute>
+        ),
       },
       {
         path: 'cheques',
-        element: <ChequesPage />,
+        element: (
+          <PermissionProtectedRoute>
+            <ChequesPage />
+          </PermissionProtectedRoute>
+        ),
       },
       
       // User Management Routes
@@ -188,11 +272,19 @@ export const router = createBrowserRouter([
         children: [
           {
             path: 'preferences',
-            element: <PreferencesPage />,
+            element: (
+              <PermissionProtectedRoute>
+                <PreferencesPage />
+              </PermissionProtectedRoute>
+            ),
           },
           {
             path: 'users',
-            element: <UserManagementPage />,
+            element: (
+              <PermissionProtectedRoute>
+                <UserManagementPage />
+              </PermissionProtectedRoute>
+            ),
           },
         ],
       },
@@ -200,11 +292,19 @@ export const router = createBrowserRouter([
       // Direct User Management Routes (for backward compatibility)
       {
         path: 'preferences',
-        element: <PreferencesPage />,
+        element: (
+          <PermissionProtectedRoute>
+            <PreferencesPage />
+          </PermissionProtectedRoute>
+        ),
       },
       {
         path: 'users',
-        element: <UserManagementPage />,
+        element: (
+          <PermissionProtectedRoute>
+            <UserManagementPage />
+          </PermissionProtectedRoute>
+        ),
       },
     ],
   },

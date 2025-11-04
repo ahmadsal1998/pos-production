@@ -36,6 +36,7 @@ export const AR_LABELS = {
 
   // --- NEW AUTH LABELS ---
   login: 'تسجيل الدخول',
+  logout: 'تسجيل الخروج',
   welcomeBack: 'مرحباً بعودتك',
   emailOrUsername: 'البريد الإلكتروني أو اسم المستخدم',
   password: 'كلمة المرور',

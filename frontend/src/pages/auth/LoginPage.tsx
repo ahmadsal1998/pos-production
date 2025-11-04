@@ -7,6 +7,11 @@ import { AuthLayout } from '@/shared/components/layout/AuthLayout';
 const LoginPage = () => {
   const navigate = useNavigate();
   const { login, isLoading, error, clearError, isAuthenticated } = useAuthStore();
+  
+  // All hooks must be called before any conditional returns
+  const [emailOrUsername, setEmailOrUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
 
   // Redirect to dashboard if user is already authenticated
   useEffect(() => {
@@ -19,10 +24,6 @@ const LoginPage = () => {
   if (isAuthenticated) {
     return <Navigate to="/" replace />;
   }
-  
-  const [emailOrUsername, setEmailOrUsername] = useState('');
-  const [password, setPassword] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();

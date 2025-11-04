@@ -1,4 +1,5 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { User, SystemRole, ScreenPermission, ALL_PERMISSIONS } from '@/shared/types';
 import { 
   AR_LABELS, UUID, SearchIcon, PlusIcon, EditIcon, DeleteIcon
@@ -6,8 +7,9 @@ import {
 import { UsersIcon } from '@/shared/assets/icons';
 import { ToggleSwitch } from '@/shared/components/ui/ToggleSwitch';
 import CustomDropdown from '@/shared/components/ui/CustomDropdown/CustomDropdown';
+import { usersApi, ApiError } from '@/lib/api/client';
 
-// --- MOCK DATA ---
+// --- MOCK DATA (Fallback/Initial state) ---
 const createInitialUsers = (): User[] => [
     {
         id: UUID(),
@@ -51,9 +53,10 @@ const createInitialUsers = (): User[] => [
     },
 ];
 
-const EMPTY_USER: Omit<User, 'id' | 'createdAt' | 'lastLogin'> = {
+const EMPTY_USER: Omit<User, 'id' | 'createdAt' | 'lastLogin'> & { email?: string } = {
     fullName: '',
     username: '',
+    email: '',
     password: '',
     role: 'Cashier',
     permissions: [],
@@ -80,19 +83,20 @@ const PERMISSION_LABELS: Record<ScreenPermission, string> = {
 const UserFormModal: React.FC<{
   isOpen: boolean;
   onClose: () => void;
-  onSave: (user: User) => void;
+  onSave: (user: User & { email?: string }) => void;
   userToEdit: User | null;
   existingUsers: User[];
-}> = ({ isOpen, onClose, onSave, userToEdit, existingUsers }) => {
-    const [formData, setFormData] = useState<Omit<User, 'id' | 'createdAt' | 'lastLogin'>>(EMPTY_USER);
+  isSubmitting?: boolean;
+}> = ({ isOpen, onClose, onSave, userToEdit, existingUsers, isSubmitting = false }) => {
+    const [formData, setFormData] = useState<Omit<User, 'id' | 'createdAt' | 'lastLogin'> & { email?: string }>(EMPTY_USER);
     const [confirmPassword, setConfirmPassword] = useState('');
     const [errors, setErrors] = useState<Record<string, string>>({});
 
     const isEditMode = !!userToEdit;
 
     React.useEffect(() => {
-        if (isEditMode) {
-            setFormData({ ...userToEdit, password: '' });
+        if (isEditMode && userToEdit) {
+            setFormData({ ...userToEdit, password: '', email: '' });
         } else {
             setFormData(EMPTY_USER);
         }
@@ -106,6 +110,13 @@ const UserFormModal: React.FC<{
         if (!formData.username.trim()) newErrors.username = "اسم المستخدم مطلوب.";
         else if (existingUsers.some(u => u.username === formData.username && u.id !== userToEdit?.id)) {
             newErrors.username = "اسم المستخدم موجود بالفعل.";
+        }
+        
+        // Email validation (required for new users)
+        if (!isEditMode && !formData.email?.trim()) {
+            newErrors.email = "البريد الإلكتروني مطلوب.";
+        } else if (formData.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email)) {
+            newErrors.email = "البريد الإلكتروني غير صحيح.";
         }
 
         if (!isEditMode || formData.password) {
@@ -176,6 +187,18 @@ const UserFormModal: React.FC<{
                             />
                             {errors.username && <p className="text-red-500 text-xs mt-1">{errors.username}</p>}
                         </div>
+                        {!isEditMode && (
+                            <div className="space-y-2">
+                                <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300">البريد الإلكتروني</label>
+                                <input 
+                                    type="email" 
+                                    value={formData.email || ''} 
+                                    onChange={e => setFormData(f => ({...f, email: e.target.value}))} 
+                                    className="w-full border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-200 rounded-xl shadow-sm px-4 py-3 focus:outline-none focus:ring-2 focus:ring-orange-500/50 focus:border-orange-500 transition-all duration-200 hover:border-slate-400 dark:hover:border-slate-500"
+                                />
+                                {errors.email && <p className="text-red-500 text-xs mt-1">{errors.email}</p>}
+                            </div>
+                        )}
                         <div className="space-y-2">
                             <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300">{AR_LABELS.password}</label>
                             <input 
@@ -242,14 +265,19 @@ const UserFormModal: React.FC<{
                     <div className="flex justify-start gap-4 pt-4 border-t border-slate-200/50 dark:border-slate-700/50">
                         <button 
                             type="submit" 
-                            className="px-6 py-3 bg-gradient-to-r from-orange-500 to-amber-500 text-white font-semibold rounded-xl shadow-lg hover:shadow-xl focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-orange-500 transition-all duration-300 hover:scale-105 active:scale-95"
+                            disabled={isSubmitting}
+                            className="px-6 py-3 bg-gradient-to-r from-orange-500 to-amber-500 text-white font-semibold rounded-xl shadow-lg hover:shadow-xl focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-orange-500 transition-all duration-300 hover:scale-105 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100 flex items-center gap-2"
                         >
+                            {isSubmitting && (
+                                <div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent"></div>
+                            )}
                             {AR_LABELS.save}
                         </button>
                         <button 
                             type="button" 
-                            onClick={onClose} 
-                            className="px-6 py-3 bg-slate-200 dark:bg-slate-600 text-slate-800 dark:text-slate-200 font-semibold rounded-xl shadow-sm hover:shadow-md transition-all duration-200 hover:bg-slate-300 dark:hover:bg-slate-700"
+                            onClick={onClose}
+                            disabled={isSubmitting}
+                            className="px-6 py-3 bg-slate-200 dark:bg-slate-600 text-slate-800 dark:text-slate-200 font-semibold rounded-xl shadow-sm hover:shadow-md transition-all duration-200 hover:bg-slate-300 dark:hover:bg-slate-700 disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                             {AR_LABELS.cancel}
                         </button>
@@ -263,25 +291,137 @@ const UserFormModal: React.FC<{
 
 // --- MAIN PAGE COMPONENT ---
 const UserManagementPage: React.FC = () => {
-    const [users, setUsers] = useState<User[]>(createInitialUsers());
+    const navigate = useNavigate();
+    const [users, setUsers] = useState<User[]>([]);
     const [searchTerm, setSearchTerm] = useState('');
     const [filters, setFilters] = useState({ status: 'all', role: 'all' });
     const [modal, setModal] = useState<{ isOpen: boolean; data: User | null }>({ isOpen: false, data: null });
+    const [isLoading, setIsLoading] = useState(true);
+    const [error, setError] = useState<string | null>(null);
+    const [isSubmitting, setIsSubmitting] = useState(false);
 
-    const handleSaveUser = (userData: User) => {
-        setUsers(prev => {
-            const exists = prev.some(u => u.id === userData.id);
-            if (exists) {
-                return prev.map(u => u.id === userData.id ? { ...u, ...userData, password: '' } : u); // Never store password in state
+    // Fetch users from API
+    const fetchUsers = useCallback(async () => {
+        setIsLoading(true);
+        setError(null);
+        try {
+            const response = await usersApi.getUsers();
+            // The API client wraps the backend response
+            // Backend returns: { success: true, data: { users: [...] } }
+            // API client returns: { data: { success: true, data: { users: [...] } }, ... }
+            // So we access: response.data.data.users
+            const usersData = (response.data as any)?.data?.users || [];
+            
+            // Transform backend data to frontend User format
+            const transformedUsers: User[] = Array.isArray(usersData) ? usersData.map((user: any) => ({
+                id: user.id,
+                fullName: user.fullName,
+                username: user.username,
+                password: '', // Never include password in state
+                role: user.role,
+                permissions: user.permissions || [],
+                createdAt: user.createdAt || new Date().toISOString(),
+                lastLogin: user.lastLogin || null,
+                status: user.status,
+            })) : [];
+            
+            setUsers(transformedUsers);
+        } catch (err: any) {
+            const apiError = err as ApiError;
+            if (apiError.status === 401 || apiError.status === 403) {
+                // Unauthorized or Forbidden - redirect to login
+                navigate('/login', { replace: true });
+                return;
             }
-            return [{ ...userData, password: '' }, ...prev];
-        });
-        setModal({ isOpen: false, data: null });
+            setError(apiError.message || 'فشل تحميل المستخدمين. يرجى المحاولة مرة أخرى.');
+            console.error('Error fetching users:', err);
+        } finally {
+            setIsLoading(false);
+        }
+    }, [navigate]);
+
+    // Fetch users on component mount
+    useEffect(() => {
+        fetchUsers();
+    }, [fetchUsers]);
+
+    const handleSaveUser = async (userData: User) => {
+        setIsSubmitting(true);
+        setError(null);
+        try {
+            const isEditMode = !!userData.id && users.some(u => u.id === userData.id);
+            
+            // Prepare payload (exclude password if empty, exclude frontend-only fields)
+            const payload: any = {
+                fullName: userData.fullName,
+                username: userData.username,
+                role: userData.role,
+                permissions: userData.permissions,
+                status: userData.status,
+            };
+
+            // Only include password if it's provided (for new users or password updates)
+            if (userData.password && userData.password.trim()) {
+                payload.password = userData.password;
+            }
+
+            // Include email if available (required for new users)
+            if (!isEditMode) {
+                payload.email = (userData as any).email || userData.username + '@example.com';
+            } else if ((userData as any).email) {
+                // Include email in update if provided
+                payload.email = (userData as any).email;
+            }
+
+            let response;
+            if (isEditMode) {
+                // Update existing user
+                if (payload.password === undefined) {
+                    delete payload.password; // Don't send password if not provided
+                }
+                response = await usersApi.updateUser(userData.id, payload);
+            } else {
+                // Create new user
+                if (!payload.password) {
+                    throw new Error('كلمة المرور مطلوبة للمستخدمين الجدد');
+                }
+                response = await usersApi.createUser(payload);
+            }
+
+            // Refresh users list
+            await fetchUsers();
+            setModal({ isOpen: false, data: null });
+        } catch (err: any) {
+            const apiError = err as ApiError;
+            if (apiError.status === 401 || apiError.status === 403) {
+                navigate('/login', { replace: true });
+                return;
+            }
+            setError(apiError.message || 'فشل حفظ المستخدم. يرجى المحاولة مرة أخرى.');
+            console.error('Error saving user:', err);
+        } finally {
+            setIsSubmitting(false);
+        }
     };
 
-    const handleDeleteUser = (userId: string) => {
-        if (window.confirm('هل أنت متأكد من حذف هذا المستخدم؟')) {
-            setUsers(prev => prev.filter(u => u.id !== userId));
+    const handleDeleteUser = async (userId: string) => {
+        if (!window.confirm('هل أنت متأكد من حذف هذا المستخدم؟')) {
+            return;
+        }
+
+        setError(null);
+        try {
+            await usersApi.deleteUser(userId);
+            // Refresh users list
+            await fetchUsers();
+        } catch (err: any) {
+            const apiError = err as ApiError;
+            if (apiError.status === 401 || apiError.status === 403) {
+                navigate('/login', { replace: true });
+                return;
+            }
+            setError(apiError.message || 'فشل حذف المستخدم. يرجى المحاولة مرة أخرى.');
+            console.error('Error deleting user:', err);
         }
     };
 
@@ -349,6 +489,23 @@ const UserManagementPage: React.FC = () => {
                     </div>
                 </div>
 
+                {/* Error Display */}
+                {error && (
+                    <div 
+                        role="alert" 
+                        aria-live="assertive" 
+                        className="mb-6 rounded-xl border-2 border-red-200 bg-red-50 p-4 text-center text-sm text-red-700 animate-shake dark:border-red-900/40 dark:bg-red-900/20 dark:text-red-200"
+                    >
+                        {error}
+                        <button 
+                            onClick={() => setError(null)}
+                            className="mr-2 text-red-600 hover:text-red-800 underline"
+                        >
+                            إغلاق
+                        </button>
+                    </div>
+                )}
+
                 {/* Modern Toolbar */}
                 <div className="group relative mb-8">
                     <div className="absolute -inset-0.5 rounded-2xl bg-gradient-to-r from-slate-200 to-slate-300 opacity-0 blur transition-all duration-500 group-hover:opacity-100 dark:from-slate-700 dark:to-slate-600" />
@@ -409,20 +566,34 @@ const UserManagementPage: React.FC = () => {
                 <div className="group relative">
                     <div className="absolute -inset-0.5 rounded-2xl bg-gradient-to-r from-slate-200 to-slate-300 opacity-0 blur transition-all duration-500 group-hover:opacity-100 dark:from-slate-700 dark:to-slate-600" />
                     <div className="relative rounded-2xl bg-white/95 backdrop-blur-xl shadow-lg transition-all duration-500 hover:shadow-xl dark:bg-slate-900/95 border border-slate-200/50 dark:border-slate-700/50 overflow-hidden">
-                        <div className="overflow-x-auto">
-                            <table className="min-w-full divide-y divide-slate-200 dark:divide-slate-700 text-right">
-                                <thead className="bg-slate-50/50 dark:bg-slate-800/50">
-                                    <tr>
-                                        <th className="px-6 py-4 text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider">{AR_LABELS.fullName}</th>
-                                        <th className="px-6 py-4 text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider">{AR_LABELS.role}</th>
-                                        <th className="px-6 py-4 text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider">{AR_LABELS.permissions}</th>
-                                        <th className="px-6 py-4 text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider">{AR_LABELS.lastLogin}</th>
-                                        <th className="px-6 py-4 text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider">{AR_LABELS.status}</th>
-                                        <th className="px-6 py-4 text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider text-center">{AR_LABELS.actions}</th>
-                                    </tr>
-                                </thead>
-                                <tbody className="bg-white dark:bg-slate-900 divide-y divide-slate-200 dark:divide-slate-700">
-                                   {filteredUsers.map(user => (
+                        {isLoading ? (
+                            <div className="p-12 text-center">
+                                <div className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-orange-500 border-r-transparent"></div>
+                                <p className="mt-4 text-slate-600 dark:text-slate-400">جاري تحميل المستخدمين...</p>
+                            </div>
+                        ) : filteredUsers.length === 0 ? (
+                            <div className="p-12 text-center">
+                                <p className="text-slate-600 dark:text-slate-400">
+                                    {searchTerm || filters.status !== 'all' || filters.role !== 'all' 
+                                        ? 'لا توجد نتائج مطابقة للبحث' 
+                                        : 'لا يوجد مستخدمين'}
+                                </p>
+                            </div>
+                        ) : (
+                            <div className="overflow-x-auto">
+                                <table className="min-w-full divide-y divide-slate-200 dark:divide-slate-700 text-right">
+                                    <thead className="bg-slate-50/50 dark:bg-slate-800/50">
+                                        <tr>
+                                            <th className="px-6 py-4 text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider">{AR_LABELS.fullName}</th>
+                                            <th className="px-6 py-4 text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider">{AR_LABELS.role}</th>
+                                            <th className="px-6 py-4 text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider">{AR_LABELS.permissions}</th>
+                                            <th className="px-6 py-4 text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider">{AR_LABELS.lastLogin}</th>
+                                            <th className="px-6 py-4 text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider">{AR_LABELS.status}</th>
+                                            <th className="px-6 py-4 text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider text-center">{AR_LABELS.actions}</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="bg-white dark:bg-slate-900 divide-y divide-slate-200 dark:divide-slate-700">
+                                       {filteredUsers.map(user => (
                                        <tr key={user.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/50 transition-colors duration-150">
                                            <td className="px-6 py-4 whitespace-nowrap">
                                                 <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">{user.fullName}</div>
@@ -462,9 +633,10 @@ const UserManagementPage: React.FC = () => {
                                            </td>
                                        </tr>
                                    ))}
-                                </tbody>
-                            </table>
-                        </div>
+                                    </tbody>
+                                </table>
+                            </div>
+                        )}
                     </div>
                 </div>
             </div>
@@ -475,6 +647,7 @@ const UserManagementPage: React.FC = () => {
                 onSave={handleSaveUser}
                 userToEdit={modal.data}
                 existingUsers={users}
+                isSubmitting={isSubmitting}
             />
         </div>
     );

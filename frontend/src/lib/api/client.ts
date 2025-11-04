@@ -185,3 +185,21 @@ export const dashboardApi = {
   getProductPerformance: () =>
     apiClient.get('/dashboard/products/performance'),
 };
+
+// Users API endpoints
+export const usersApi = {
+  getUsers: () =>
+    apiClient.get<{ success: boolean; data: { users: any[] } }>('/users'),
+  
+  getUser: (id: string) =>
+    apiClient.get<{ success: boolean; data: { user: any } }>(`/users/${id}`),
+  
+  createUser: (user: any) =>
+    apiClient.post<{ success: boolean; data: { user: any } }>('/users', user),
+  
+  updateUser: (id: string, user: any) =>
+    apiClient.put<{ success: boolean; data: { user: any } }>(`/users/${id}`, user),
+  
+  deleteUser: (id: string) =>
+    apiClient.delete<{ success: boolean; message: string }>(`/users/${id}`),
+};
