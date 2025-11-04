@@ -3,13 +3,19 @@
 # Stage 1: Build stage
 FROM node:20-alpine AS builder
 
+# Clear any existing cache layers
+RUN rm -rf /var/cache/apk/* && \
+    rm -rf /tmp/* && \
+    rm -rf /var/tmp/*
+
 WORKDIR /app
 
-# Copy package files
+# Copy package files first for better caching
 COPY package*.json ./
 
-# Install dependencies
-RUN npm ci
+# Install dependencies with clean cache
+RUN npm ci --prefer-offline --no-audit && \
+    npm cache clean --force
 
 # Copy source code
 COPY . .
@@ -20,13 +26,19 @@ RUN npm run build
 # Stage 2: Production stage
 FROM node:20-alpine
 
+# Clear cache in production stage too
+RUN rm -rf /var/cache/apk/* && \
+    rm -rf /tmp/* && \
+    rm -rf /var/tmp/*
+
 WORKDIR /app
 
 # Copy package files
 COPY package*.json ./
 
-# Install only production dependencies
-RUN npm ci --only=production
+# Install only production dependencies with clean cache
+RUN npm ci --only=production --prefer-offline --no-audit && \
+    npm cache clean --force
 
 # Copy built files from builder stage
 COPY --from=builder /app/dist ./dist
