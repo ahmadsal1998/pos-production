@@ -112,6 +112,27 @@ export class ApiClient {
       status: response.status,
     };
   }
+  async download(endpoint: string, params?: any): Promise<Blob> {
+    const response = await this.client.get(endpoint, {
+      params,
+      responseType: 'blob',
+    });
+    return response.data as Blob;
+  }
+
+  async upload<T>(endpoint: string, data: FormData): Promise<ApiResponse<T>> {
+    const response = await this.client.post(endpoint, data, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    });
+    return {
+      data: response.data as T,
+      message: (response.data as any)?.message ?? 'Success',
+      success: true,
+      status: response.status,
+    };
+  }
 }
 
 // Create default instance
@@ -202,4 +223,42 @@ export const usersApi = {
   
   deleteUser: (id: string) =>
     apiClient.delete<{ success: boolean; message: string }>(`/users/${id}`),
+};
+
+export const categoriesApi = {
+  getCategories: () =>
+    apiClient.get<{ success: boolean; message: string; categories: any[] }>('/categories'),
+
+  createCategory: (category: { name: string; description?: string }) =>
+    apiClient.post<{ success: boolean; message: string; category: any }>('/categories', category),
+
+  exportCategories: () => apiClient.download('/categories/export'),
+
+  importCategories: (formData: FormData) =>
+    apiClient.upload<{
+      success: boolean;
+      message: string;
+      summary: { created: number; updated: number; failed: number };
+      errors: Array<{ row: number; message: string }>;
+      categories: any[];
+    }>('/categories/import', formData),
+};
+
+export const brandsApi = {
+  getBrands: () =>
+    apiClient.get<{ success: boolean; message: string; brands: any[] }>('/brands'),
+
+  createBrand: (brand: { name: string; description?: string }) =>
+    apiClient.post<{ success: boolean; message: string; brand: any }>('/brands', brand),
+
+  exportBrands: () => apiClient.download('/brands/export'),
+
+  importBrands: (formData: FormData) =>
+    apiClient.upload<{
+      success: boolean;
+      message: string;
+      summary: { created: number; updated: number; failed: number };
+      errors: Array<{ row: number; message: string }>;
+      brands: any[];
+    }>('/brands/import', formData),
 };

@@ -70,7 +70,9 @@ export interface Category {
   parentId: string | null; // null for top-level categories
   status: 'Active' | 'Inactive';
   createdAt: string; // ISO date string
+  updatedAt?: string;
   productCount: number; // Number of products in this category
+  imageUrl?: string;
 }
 
 // --- BRAND MANAGEMENT INTERFACES ---
