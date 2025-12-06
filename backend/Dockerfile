@@ -20,7 +20,9 @@ RUN npm ci --prefer-offline --no-audit && \
 # Copy source code
 COPY . .
 
-# Build TypeScript to JavaScript
+# Build TypeScript to JavaScript with increased memory
+# Set NODE_OPTIONS to increase heap size for TypeScript compilation
+ENV NODE_OPTIONS="--max-old-space-size=8192"
 RUN npm run build
 
 # Stage 2: Production stage
