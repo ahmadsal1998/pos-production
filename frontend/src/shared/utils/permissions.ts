@@ -47,6 +47,7 @@ export const routePermissions: Record<string, ScreenPermission | ScreenPermissio
 /**
  * Check if a user has access to a route
  * Admin users have access to all routes
+ * Manager users have access to user management routes
  */
 export const hasRoutePermission = (
   routePath: string,
@@ -56,6 +57,13 @@ export const hasRoutePermission = (
   // Admin users have access to everything
   if (userRole === 'Admin') {
     return true;
+  }
+
+  // Manager users have access to user management routes
+  if (userRole === 'Manager') {
+    if (routePath === '/users' || routePath === '/user-management/users') {
+      return true;
+    }
   }
 
   // If user has no permissions, deny access

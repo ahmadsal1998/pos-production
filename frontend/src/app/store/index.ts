@@ -10,6 +10,7 @@ export interface User {
   role: string;
   permissions: string[];
   fullName?: string;
+  storeId?: string | null; // null for system/admin users, string for store-specific users
 }
 
 export interface LoginCredentials {

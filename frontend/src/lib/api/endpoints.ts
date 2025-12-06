@@ -41,4 +41,8 @@ export const API_ENDPOINTS = {
     CHEQUES: '/financial/cheques',
     PAYMENT_METHODS: '/financial/payment-methods',
   },
+  ADMIN: {
+    STORES: '/admin/stores',
+    STORE: '/admin/stores/:id',
+  },
 } as const;

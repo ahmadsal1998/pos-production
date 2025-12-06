@@ -13,9 +13,9 @@ import { authenticate, authorize } from '../middleware/auth.middleware';
 const router = Router();
 
 // All user routes require authentication
-// Only Admin can manage users
+// Admin and Manager can manage users
 router.use(authenticate);
-router.use(authorize('Admin'));
+router.use(authorize('Admin', 'Manager'));
 
 // Get all users
 router.get('/', getUsers);

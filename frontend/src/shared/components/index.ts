@@ -4,7 +4,7 @@ export { Header } from './layout/Header';
 export { Sidebar } from './layout/Sidebar';
 
 // Route Components
-export { ProtectedRoute, PermissionProtectedRoute } from './ProtectedRoute';
+export { ProtectedRoute, PermissionProtectedRoute, AdminProtectedRoute } from './ProtectedRoute';
 
 // UI Components
 export { MetricCard } from './ui/MetricCard';

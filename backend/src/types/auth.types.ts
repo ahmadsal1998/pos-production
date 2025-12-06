@@ -10,6 +10,7 @@ export interface IUser {
   permissions: ScreenPermission[];
   status: 'Active' | 'Inactive';
   lastLogin?: Date;
+  storeId?: string | null; // null for system/admin users, string for store-specific users
   createdAt: Date;
   updatedAt: Date;
 }
@@ -42,6 +43,7 @@ export interface AuthTokenPayload {
   userId: string;
   email: string;
   role: SystemRole;
+  storeId?: string | null; // null for system/admin users, string for store-specific users
 }
 
 export interface AuthResponse {

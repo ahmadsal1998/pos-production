@@ -7,9 +7,13 @@ import {
   importBrands,
   validateCreateBrand
 } from '../controllers/brands.controller';
+import { authenticate } from '../middleware/auth.middleware';
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage() });
+
+// All brand routes require authentication
+router.use(authenticate);
 
 router.get('/', getBrands);
 router.post('/', validateCreateBrand, createBrand);

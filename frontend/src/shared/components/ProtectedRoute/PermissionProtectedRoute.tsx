@@ -29,6 +29,11 @@ export const PermissionProtectedRoute: React.FC<PermissionProtectedRouteProps> =
     return <>{children}</>;
   }
 
+  // Manager users have access to user management routes
+  if (user?.role === 'Manager' && (location.pathname === '/users' || location.pathname === '/user-management/users')) {
+    return <>{children}</>;
+  }
+
   // Check permissions
   const userPermissions = user?.permissions || [];
   const routePath = normalizeRoutePath(location.pathname);
@@ -54,10 +59,22 @@ export const PermissionProtectedRoute: React.FC<PermissionProtectedRouteProps> =
     );
   }
 
+  // Debug logging (remove in production)
+  if (process.env.NODE_ENV === 'development' && !hasAccess) {
+    console.log('[PermissionProtectedRoute] Access denied:', {
+      path: location.pathname,
+      normalizedPath: routePath,
+      userRole: user?.role,
+      userPermissions,
+      requiredPermission,
+      hasAccess
+    });
+  }
+
   if (!hasAccess) {
     // Redirect to first available route based on permissions
-    // Priority: POS Retail > POS Wholesale > Dashboard > POS Retail as fallback
-    let redirectPath = '/pos/1'; // Default fallback
+    // Priority: Dashboard > POS Retail > POS Wholesale > Dashboard as fallback
+    let redirectPath = '/'; // Default fallback to homepage
     
     if (userPermissions.includes('dashboard')) {
       redirectPath = '/';

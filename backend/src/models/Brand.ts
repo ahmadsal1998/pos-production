@@ -13,12 +13,11 @@ const brandSchema = new Schema<BrandDocument>(
       type: String,
       required: [true, 'Brand name is required'],
       trim: true,
-      unique: true
     },
     description: {
       type: String,
-      trim: true
-    }
+      trim: true,
+    },
   },
   {
     timestamps: true,
@@ -28,12 +27,12 @@ const brandSchema = new Schema<BrandDocument>(
         delete ret._id;
         delete ret.__v;
         return ret;
-      }
-    }
+      },
+    },
   }
 );
 
-brandSchema.index({ name: 1 }, { unique: true });
+// Note: Unique constraint is handled per-store in brandModel.ts
 
 const Brand: Model<BrandDocument> = mongoose.model<BrandDocument>('Brand', brandSchema);
 

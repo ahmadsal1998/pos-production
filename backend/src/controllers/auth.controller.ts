@@ -24,6 +24,47 @@ export const login = asyncHandler(
 
     const { emailOrUsername, password } = req.body;
 
+    // Check admin credentials first (from .env)
+    const adminUsername = process.env.ADMIN_USERNAME;
+    const adminPassword = process.env.ADMIN_PASSWORD;
+
+    if (adminUsername && adminPassword) {
+      if (
+        emailOrUsername.toLowerCase() === adminUsername.toLowerCase() &&
+        password === adminPassword
+      ) {
+        // Admin login successful
+        const tokenPayload = {
+          userId: 'admin',
+          email: adminUsername,
+          role: 'Admin' as const,
+          storeId: null, // Admin users don't have a store
+        };
+
+        const token = generateToken(tokenPayload);
+        const refreshToken = generateRefreshToken(tokenPayload);
+
+        return res.status(200).json({
+          success: true,
+          message: 'Admin login successful',
+          data: {
+            user: {
+              id: 'admin',
+              fullName: 'System Admin',
+              username: adminUsername,
+              email: adminUsername,
+              role: 'Admin',
+              permissions: [],
+              isAdmin: true,
+            },
+            token,
+            refreshToken,
+          },
+        });
+      }
+    }
+
+    // Continue with regular store user login
     // Find user by email or username
     const user = await User.findOne({
       $or: [
@@ -65,6 +106,7 @@ export const login = asyncHandler(
       userId: user._id.toString(),
       email: user.email,
       role: user.role,
+      storeId: user.storeId || null,
     };
 
     const token = generateToken(tokenPayload);
@@ -82,6 +124,7 @@ export const login = asyncHandler(
           email: user.email,
           role: user.role,
           permissions: user.permissions,
+          storeId: user.storeId || null,
         },
         token,
         refreshToken,

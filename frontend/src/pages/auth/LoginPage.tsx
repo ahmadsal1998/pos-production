@@ -6,7 +6,7 @@ import { AuthLayout } from '@/shared/components/layout/AuthLayout';
 
 const LoginPage = () => {
   const navigate = useNavigate();
-  const { login, isLoading, error, clearError, isAuthenticated } = useAuthStore();
+  const { login, isLoading, error, clearError, isAuthenticated, user } = useAuthStore();
   
   // All hooks must be called before any conditional returns
   const [emailOrUsername, setEmailOrUsername] = useState('');
@@ -35,7 +35,16 @@ const LoginPage = () => {
 
     try {
       await login({ emailOrUsername, password });
-      navigate('/');
+      
+      // Small delay to ensure state is updated
+      setTimeout(() => {
+        const authState = useAuthStore.getState();
+        if (authState.user && (authState.user.id === 'admin' || authState.user.role === 'Admin')) {
+          navigate('/admin/dashboard');
+        } else {
+          navigate('/');
+        }
+      }, 100);
     } catch (err) {
       // Error is handled by the store
     }

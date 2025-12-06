@@ -262,3 +262,21 @@ export const brandsApi = {
       brands: any[];
     }>('/brands/import', formData),
 };
+
+// Admin API endpoints
+export const adminApi = {
+  getStores: () =>
+    apiClient.get<{ success: boolean; data: { stores: any[] } }>('/admin/stores'),
+  
+  getStore: (id: string) =>
+    apiClient.get<{ success: boolean; data: { store: any } }>(`/admin/stores/${id}`),
+  
+  createStore: (store: { name: string; storeId: string; prefix: string }) =>
+    apiClient.post<{ success: boolean; message: string; data: { store: any } }>('/admin/stores', store),
+  
+  updateStore: (id: string, store: { name: string }) =>
+    apiClient.put<{ success: boolean; message: string; data: { store: any } }>(`/admin/stores/${id}`, store),
+  
+  deleteStore: (id: string) =>
+    apiClient.delete<{ success: boolean; message: string }>(`/admin/stores/${id}`),
+};

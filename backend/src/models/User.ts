@@ -9,7 +9,7 @@ export interface UserDocument extends Document, Omit<IUser, '_id'> {
 }
 
 // User Schema
-const userSchema = new Schema<UserDocument>(
+const userSchema = new Schema(
   {
     fullName: {
       type: String,
@@ -70,6 +70,14 @@ const userSchema = new Schema<UserDocument>(
     lastLogin: {
       type: Date,
     },
+    storeId: {
+      type: String,
+      required: false,
+      trim: true,
+      lowercase: true,
+      default: null,
+      // null means system/admin user, string means store-specific user
+    },
   },
   {
     timestamps: true,
@@ -93,7 +101,9 @@ userSchema.pre('save', async function (next) {
 
   try {
     const salt = await bcrypt.genSalt(12);
-    this.password = await bcrypt.hash(this.password, salt);
+    const user = this as any as UserDocument;
+    const currentPassword = user.password as string;
+    user.password = await bcrypt.hash(currentPassword, salt);
     next();
   } catch (error: any) {
     next(error);
@@ -104,11 +114,15 @@ userSchema.pre('save', async function (next) {
 userSchema.methods.comparePassword = async function (
   candidatePassword: string
 ): Promise<boolean> {
-  return bcrypt.compare(candidatePassword, this.password);
+  const user = this as any as UserDocument;
+  return bcrypt.compare(candidatePassword, user.password as string);
 };
 
 // Indexes (email and username already indexed by unique: true)
 userSchema.index({ role: 1 });
+userSchema.index({ storeId: 1 });
+// Compound index for store-specific username uniqueness
+userSchema.index({ storeId: 1, username: 1 }, { unique: true, partialFilterExpression: { storeId: { $ne: null } } });
 
 // Create model
 const User: Model<UserDocument> = mongoose.model<UserDocument>('User', userSchema);

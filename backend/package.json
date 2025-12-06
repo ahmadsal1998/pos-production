@@ -8,11 +8,12 @@
     "npm": ">=10.0.0"
   },
   "scripts": {
-    "dev": "nodemon src/server.ts",
-    "dev:ts": "ts-node src/server.ts",
+    "dev": "nodemon",
+    "dev:ts": "NODE_OPTIONS='--max-old-space-size=8192' ts-node --transpile-only src/server.ts",
     "build": "tsc",
     "start": "node dist/server.js",
-    "seed": "ts-node src/utils/seedDatabase.ts"
+    "seed": "ts-node src/utils/seedDatabase.ts",
+    "migrate:stores": "ts-node src/utils/migrateStores.ts"
   },
   "keywords": [
     "pos",

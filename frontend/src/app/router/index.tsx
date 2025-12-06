@@ -1,6 +1,6 @@
 import { createBrowserRouter } from 'react-router-dom';
-import { MainLayout } from '@/shared/components/layout';
-import { ProtectedRoute, PermissionProtectedRoute } from '@/shared/components';
+import { MainLayout, AdminLayout } from '@/shared/components/layout';
+import { ProtectedRoute, PermissionProtectedRoute, AdminProtectedRoute } from '@/shared/components';
 
 // Auth Pages
 import LoginPage from '@/pages/auth/LoginPage';
@@ -37,6 +37,9 @@ import PaymentMethodsPage from '@/pages/financial/PaymentMethodsPage';
 // User Management Pages
 import PreferencesPage from '@/pages/user-management/PreferencesPage';
 import UserManagementPage from '@/pages/user-management/UserManagementPage';
+
+// Admin Pages
+import { AdminDashboard } from '@/pages/admin';
 
 export const router = createBrowserRouter([
   // Auth Routes
@@ -305,6 +308,30 @@ export const router = createBrowserRouter([
             <UserManagementPage />
           </PermissionProtectedRoute>
         ),
+      },
+    ],
+  },
+  
+  // Admin Routes - Separate UI System
+  {
+    path: '/admin',
+    element: <AdminProtectedRoute><AdminLayout /></AdminProtectedRoute>,
+    children: [
+      {
+        path: 'dashboard',
+        element: <AdminDashboard />,
+      },
+      {
+        path: 'stores',
+        element: <AdminDashboard />, // For now, same page. Can be separated later
+      },
+      {
+        path: 'settings',
+        element: <AdminDashboard />, // Placeholder for settings page
+      },
+      {
+        path: 'users',
+        element: <AdminDashboard />, // Placeholder for users page
       },
     ],
   },

@@ -1,13 +1,32 @@
 import { Response, NextFunction } from 'express';
 import { body, validationResult } from 'express-validator';
 import User from '../models/User';
+import Store from '../models/Store';
 import { AuthenticatedRequest } from '../middleware/auth.middleware';
 import { asyncHandler } from '../middleware/error.middleware';
 
 // Get all users
 export const getUsers = asyncHandler(
   async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
-    const users = await User.find({}).sort({ createdAt: -1 });
+    const requesterRole = req.user?.role;
+    const requesterStoreId = req.user?.storeId;
+
+    // Build query filter based on role
+    let queryFilter: any = {};
+
+    // Non-admin users can only see users from their own store
+    if (requesterRole !== 'Admin') {
+      if (!requesterStoreId) {
+        return res.status(403).json({
+          success: false,
+          message: 'Access denied. Store ID is required for non-admin users.',
+        });
+      }
+      queryFilter.storeId = requesterStoreId.toLowerCase();
+    }
+    // Admin users can see all users (no filter)
+
+    const users = await User.find(queryFilter).sort({ createdAt: -1 });
 
     res.status(200).json({
       success: true,
@@ -20,6 +39,7 @@ export const getUsers = asyncHandler(
           role: user.role,
           permissions: user.permissions,
           status: user.status,
+          storeId: user.storeId, // Include storeId in response
           lastLogin: user.lastLogin,
           createdAt: user.createdAt,
           updatedAt: user.updatedAt,
@@ -33,6 +53,8 @@ export const getUsers = asyncHandler(
 export const getUserById = asyncHandler(
   async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
     const { id } = req.params;
+    const requesterRole = req.user?.role;
+    const requesterStoreId = req.user?.storeId;
 
     const user = await User.findById(id);
 
@@ -41,6 +63,23 @@ export const getUserById = asyncHandler(
         success: false,
         message: 'User not found',
       });
+    }
+
+    // Non-admin users can only access users from their own store
+    if (requesterRole !== 'Admin') {
+      if (!requesterStoreId) {
+        return res.status(403).json({
+          success: false,
+          message: 'Access denied. Store ID is required for non-admin users.',
+        });
+      }
+
+      if (user.storeId?.toLowerCase() !== requesterStoreId.toLowerCase()) {
+        return res.status(403).json({
+          success: false,
+          message: 'Access denied. You can only access users from your own store.',
+        });
+      }
     }
 
     res.status(200).json({
@@ -54,6 +93,7 @@ export const getUserById = asyncHandler(
           role: user.role,
           permissions: user.permissions,
           status: user.status,
+          storeId: user.storeId, // Include storeId in response
           lastLogin: user.lastLogin,
           createdAt: user.createdAt,
           updatedAt: user.updatedAt,
@@ -76,7 +116,53 @@ export const createUser = asyncHandler(
       });
     }
 
-    const { fullName, username, email, password, role, permissions, status } = req.body;
+    const { fullName, username, email, password, role, permissions, status, storeId } = req.body;
+    const requesterRole = req.user?.role;
+    const requesterStoreId = req.user?.storeId;
+
+    // Determine the storeId for the new user
+    let finalStoreId: string | null = null;
+
+    if (requesterRole === 'Admin') {
+      // Admin can create users for any store or system users (null storeId)
+      if (storeId) {
+        finalStoreId = storeId.toLowerCase();
+        // Validate that the store exists
+        const store = await Store.findOne({ 
+          $or: [
+            { storeId: finalStoreId },
+            { prefix: finalStoreId }
+          ]
+        });
+        if (!store) {
+          return res.status(400).json({
+            success: false,
+            message: `Store with ID "${storeId}" does not exist.`,
+          });
+        }
+        finalStoreId = store.storeId; // Use the canonical storeId
+      } else {
+        finalStoreId = null; // System/admin user
+      }
+    } else {
+      // Manager can only create users for their own store
+      if (!requesterStoreId) {
+        return res.status(403).json({
+          success: false,
+          message: 'Access denied. Store ID is required for non-admin users.',
+        });
+      }
+
+      // Manager must create users for their own store only
+      if (storeId && storeId.toLowerCase() !== requesterStoreId.toLowerCase()) {
+        return res.status(403).json({
+          success: false,
+          message: 'Access denied. You can only create users for your own store.',
+        });
+      }
+
+      finalStoreId = requesterStoreId.toLowerCase();
+    }
 
     // Check if username already exists
     const existingUsername = await User.findOne({ username: username.toLowerCase() });
@@ -105,6 +191,7 @@ export const createUser = asyncHandler(
       role: role || 'Cashier',
       permissions: permissions || [],
       status: status || 'Active',
+      storeId: finalStoreId,
     });
 
     res.status(201).json({
@@ -119,6 +206,7 @@ export const createUser = asyncHandler(
           role: user.role,
           permissions: user.permissions,
           status: user.status,
+          storeId: user.storeId, // Include storeId in response
           lastLogin: user.lastLogin,
           createdAt: user.createdAt,
           updatedAt: user.updatedAt,
@@ -142,7 +230,9 @@ export const updateUser = asyncHandler(
     }
 
     const { id } = req.params;
-    const { fullName, username, email, password, role, permissions, status } = req.body;
+    const { fullName, username, email, password, role, permissions, status, storeId } = req.body;
+    const requesterRole = req.user?.role;
+    const requesterStoreId = req.user?.storeId;
 
     const user = await User.findById(id);
 
@@ -151,6 +241,31 @@ export const updateUser = asyncHandler(
         success: false,
         message: 'User not found',
       });
+    }
+
+    // Non-admin users can only update users from their own store
+    if (requesterRole !== 'Admin') {
+      if (!requesterStoreId) {
+        return res.status(403).json({
+          success: false,
+          message: 'Access denied. Store ID is required for non-admin users.',
+        });
+      }
+
+      if (user.storeId?.toLowerCase() !== requesterStoreId.toLowerCase()) {
+        return res.status(403).json({
+          success: false,
+          message: 'Access denied. You can only update users from your own store.',
+        });
+      }
+
+      // Manager cannot change storeId to a different store
+      if (storeId !== undefined && storeId !== null && storeId.toLowerCase() !== requesterStoreId.toLowerCase()) {
+        return res.status(403).json({
+          success: false,
+          message: 'Access denied. You cannot change a user\'s store assignment.',
+        });
+      }
     }
 
     // Check if username is being changed and already exists
@@ -183,6 +298,32 @@ export const updateUser = asyncHandler(
     if (permissions !== undefined) user.permissions = permissions;
     if (status) user.status = status;
 
+    // Handle storeId update (only Admin can change it)
+    if (storeId !== undefined) {
+      if (requesterRole === 'Admin') {
+        if (storeId === null) {
+          user.storeId = null; // System/admin user
+        } else {
+          const normalizedStoreId = storeId.toLowerCase();
+          // Validate that the store exists
+          const store = await Store.findOne({ 
+            $or: [
+              { storeId: normalizedStoreId },
+              { prefix: normalizedStoreId }
+            ]
+          });
+          if (!store) {
+            return res.status(400).json({
+              success: false,
+              message: `Store with ID "${storeId}" does not exist.`,
+            });
+          }
+          user.storeId = store.storeId; // Use the canonical storeId
+        }
+      }
+      // For non-admin, storeId is already validated above and cannot be changed
+    }
+
     // Update password if provided
     if (password) {
       user.password = password; // Will be hashed by pre-save hook
@@ -202,6 +343,7 @@ export const updateUser = asyncHandler(
           role: user.role,
           permissions: user.permissions,
           status: user.status,
+          storeId: user.storeId, // Include storeId in response
           lastLogin: user.lastLogin,
           createdAt: user.createdAt,
           updatedAt: user.updatedAt,
@@ -215,6 +357,8 @@ export const updateUser = asyncHandler(
 export const deleteUser = asyncHandler(
   async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
     const { id } = req.params;
+    const requesterRole = req.user?.role;
+    const requesterStoreId = req.user?.storeId;
 
     // Prevent deleting the current user
     if (req.user?.userId === id) {
@@ -224,7 +368,7 @@ export const deleteUser = asyncHandler(
       });
     }
 
-    const user = await User.findByIdAndDelete(id);
+    const user = await User.findById(id);
 
     if (!user) {
       return res.status(404).json({
@@ -232,6 +376,25 @@ export const deleteUser = asyncHandler(
         message: 'User not found',
       });
     }
+
+    // Non-admin users can only delete users from their own store
+    if (requesterRole !== 'Admin') {
+      if (!requesterStoreId) {
+        return res.status(403).json({
+          success: false,
+          message: 'Access denied. Store ID is required for non-admin users.',
+        });
+      }
+
+      if (user.storeId?.toLowerCase() !== requesterStoreId.toLowerCase()) {
+        return res.status(403).json({
+          success: false,
+          message: 'Access denied. You can only delete users from your own store.',
+        });
+      }
+    }
+
+    await User.findByIdAndDelete(id);
 
     res.status(200).json({
       success: true,
