@@ -10,6 +10,8 @@ import usersRoutes from './routes/users.routes';
 import categoriesRoutes from './routes/categories.routes';
 import brandsRoutes from './routes/brands.routes';
 import adminRoutes from './routes/admin.routes';
+import paymentsRoutes from './routes/payments.routes';
+import merchantsRoutes from './routes/merchants.routes';
 
 // Load environment variables
 dotenv.config();
@@ -82,6 +84,8 @@ app.use('/api/users', usersRoutes);
 app.use('/api/categories', categoriesRoutes);
 app.use('/api/brands', brandsRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/payments', paymentsRoutes);
+app.use('/api/merchants', merchantsRoutes);
 
 // 404 handler
 app.use((req, res) => {

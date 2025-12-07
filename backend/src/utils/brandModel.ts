@@ -36,8 +36,9 @@ const brandSchema = new Schema(
   }
 );
 
-// Add unique index on name for each collection
+// Add indexes for performance
 brandSchema.index({ name: 1 }, { unique: true });
+brandSchema.index({ createdAt: -1 }); // For sorting by creation date
 
 /**
  * Get the store prefix from storeId

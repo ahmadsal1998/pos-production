@@ -1,10 +1,10 @@
 import mongoose, { Schema, Document, Model } from 'mongoose';
 
-// Terminal subdocument interface for embedded terminals
-export interface ITerminal {
-  _id?: mongoose.Types.ObjectId;
+export interface ITerminal extends Document {
+  merchantId?: mongoose.Types.ObjectId; // Optional: Reference to Merchant (for merchant-based terminals)
+  storeId?: string; // Optional: Direct store linkage (for store-based terminals)
+  merchantIdMid?: string; // MID - Merchant ID from payment processor (required if storeId is set, optional if merchantId is set)
   terminalId: string; // TID - Terminal ID from payment processor
-  merchantIdMid: string; // MID - Merchant ID from payment processor
   name: string; // Friendly name for the terminal
   host: string; // IP address or hostname
   port: number; // Port number (default: 12000)
@@ -15,39 +15,39 @@ export interface ITerminal {
   description?: string;
   lastConnected?: Date;
   lastError?: string;
-  createdAt?: Date;
-  updatedAt?: Date;
-}
-
-export interface IStore {
-  _id: mongoose.Types.ObjectId;
-  storeId: string;
-  name: string;
-  prefix: string;
-  databaseId: number; // Database ID (1-5) where this store's data is stored
-  terminals: ITerminal[]; // Array of terminals for this store
   createdAt: Date;
   updatedAt: Date;
 }
 
-export interface StoreDocument extends Document, Omit<IStore, '_id'> {
-  _id: mongoose.Types.ObjectId;
-}
-
-// Terminal subdocument schema
 const terminalSchema = new Schema<ITerminal>(
   {
+    merchantId: {
+      type: Schema.Types.ObjectId,
+      ref: 'Merchant',
+      required: false,
+      index: true,
+      default: null,
+    },
+    storeId: {
+      type: String,
+      trim: true,
+      lowercase: true,
+      index: true,
+      default: null,
+    },
+    merchantIdMid: {
+      type: String,
+      trim: true,
+      uppercase: true,
+      index: true,
+      default: null,
+    },
     terminalId: {
       type: String,
       required: [true, 'Terminal ID (TID) is required'],
       trim: true,
       uppercase: true,
-    },
-    merchantIdMid: {
-      type: String,
-      required: [true, 'Merchant ID (MID) is required'],
-      trim: true,
-      uppercase: true,
+      index: true,
     },
     name: {
       type: String,
@@ -83,10 +83,12 @@ const terminalSchema = new Schema<ITerminal>(
       type: String,
       enum: ['Active', 'Inactive', 'Maintenance'],
       default: 'Active',
+      index: true,
     },
     testMode: {
       type: Boolean,
       default: false,
+      index: true,
     },
     timeout: {
       type: Number,
@@ -106,71 +108,51 @@ const terminalSchema = new Schema<ITerminal>(
   },
   {
     timestamps: true,
-    _id: true, // Enable _id for terminal subdocuments
-  }
-);
-
-const storeSchema = new Schema<StoreDocument>(
-  {
-    storeId: {
-      type: String,
-      required: [true, 'Store ID is required'],
-      trim: true,
-      lowercase: true,
-    },
-    name: {
-      type: String,
-      required: [true, 'Store name is required'],
-      trim: true,
-    },
-    prefix: {
-      type: String,
-      required: [true, 'Store prefix is required'],
-      trim: true,
-      lowercase: true,
-      match: [/^[a-z0-9_]+$/, 'Prefix must contain only lowercase letters, numbers, and underscores'],
-    },
-    databaseId: {
-      type: Number,
-      required: [true, 'Database ID is required'],
-      min: 1,
-      max: 5, // Based on DATABASE_CONFIG.DATABASE_COUNT
-    },
-    terminals: {
-      type: [terminalSchema],
-      default: [],
-    },
-  },
-  {
-    timestamps: true,
     toJSON: {
       transform: function (doc, ret: any) {
         ret.id = ret._id;
         delete ret._id;
         delete ret.__v;
-        // Transform terminal _id to id
-        if (ret.terminals && Array.isArray(ret.terminals)) {
-          ret.terminals = ret.terminals.map((term: any) => {
-            if (term._id) {
-              term.id = term._id;
-              delete term._id;
-            }
-            return term;
-          });
-        }
         return ret;
       },
     },
   }
 );
 
-// Indexes
-storeSchema.index({ storeId: 1 });
-storeSchema.index({ prefix: 1 });
-storeSchema.index({ databaseId: 1 });
+// Pre-save validation: Ensure either merchantId OR (storeId + merchantIdMid) is provided
+terminalSchema.pre('save', async function (next) {
+  const terminal = this as ITerminal;
+  
+  // If merchantId is provided, that's valid (merchant-based terminal)
+  if (terminal.merchantId) {
+    return next();
+  }
+  
+  // If no merchantId, then storeId and merchantIdMid must be provided (store-based terminal)
+  if (!terminal.storeId || !terminal.merchantIdMid) {
+    return next(new Error('Either merchantId OR (storeId + merchantIdMid) must be provided'));
+  }
+  
+  next();
+});
 
-// Create model
-const Store: Model<StoreDocument> = mongoose.model<StoreDocument>('Store', storeSchema);
+// Compound indexes for unique terminal IDs
+// Unique terminal ID per merchant (for merchant-based terminals)
+terminalSchema.index({ merchantId: 1, terminalId: 1 }, { 
+  unique: true, 
+  partialFilterExpression: { merchantId: { $ne: null } } 
+});
 
-export default Store;
+// Unique terminal ID per store (for store-based terminals)
+terminalSchema.index({ storeId: 1, terminalId: 1 }, { 
+  unique: true, 
+  partialFilterExpression: { storeId: { $ne: null } } 
+});
+
+// Indexes for querying
+terminalSchema.index({ status: 1, testMode: 1 });
+terminalSchema.index({ merchantId: 1, status: 1 });
+terminalSchema.index({ storeId: 1, status: 1 });
+
+export const Terminal: Model<ITerminal> = mongoose.model<ITerminal>('Terminal', terminalSchema);
 

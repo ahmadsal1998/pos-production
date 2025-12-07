@@ -622,13 +622,16 @@ const UserManagementPage: React.FC = () => {
                                                     >
                                                         <EditIcon />
                                                     </button>
-                                                    <button 
-                                                        onClick={() => handleDeleteUser(user.id)} 
-                                                        className="p-2 text-red-600 hover:text-red-900 dark:text-red-400 dark:hover:text-red-300 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors duration-200" 
-                                                        aria-label={`Delete ${user.fullName}`}
-                                                    >
-                                                        <DeleteIcon />
-                                                    </button>
+                                                    {/* Hide delete button for Admin users - they can only be deleted from Super Admin Panel */}
+                                                    {user.role !== 'Admin' && (
+                                                        <button 
+                                                            onClick={() => handleDeleteUser(user.id)} 
+                                                            className="p-2 text-red-600 hover:text-red-900 dark:text-red-400 dark:hover:text-red-300 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors duration-200" 
+                                                            aria-label={`Delete ${user.fullName}`}
+                                                        >
+                                                            <DeleteIcon />
+                                                        </button>
+                                                    )}
                                                 </div>
                                            </td>
                                        </tr>

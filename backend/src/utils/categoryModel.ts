@@ -41,8 +41,9 @@ const categorySchema = new Schema(
   }
 );
 
-// Add unique index on name for each collection
+// Add indexes for performance
 categorySchema.index({ name: 1 }, { unique: true });
+categorySchema.index({ createdAt: -1 }); // For sorting by creation date
 
 /**
  * Get the store prefix from storeId

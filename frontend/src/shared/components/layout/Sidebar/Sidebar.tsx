@@ -4,8 +4,9 @@ import { NavItem } from '@/shared/constants';
 import { AR_LABELS, NAV_ITEMS, ChevronDownIcon } from '@/shared/constants';
 import { useAppStore, useAuthStore } from '@/app/store';
 import { useDropdown } from '@/shared/contexts/DropdownContext';
-import { LogoutIcon } from '@/shared/assets/icons';
+import { LogoutIcon, MobileRechargeIcon } from '@/shared/assets/icons';
 import { hasRoutePermission } from '@/shared/utils/permissions';
+import { RechargeModal } from '@/shared/components/ui';
 
 interface SidebarProps {
   activePath: string;
@@ -24,6 +25,7 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
   const [activePopoverId, setActivePopoverId] = useState<number | null>(null);
   const [popoverPosition, setPopoverPosition] = useState<Record<number, { top: number; right: number }>>({});
   const dropdownRefs = React.useRef<Record<number, HTMLElement | null>>({});
+  const [isRechargeModalOpen, setIsRechargeModalOpen] = useState(false);
 
   // Filter navigation items based on user permissions
   const filteredNavItems = useMemo(() => {
@@ -459,6 +461,30 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
           </ul>
         </nav>
 
+        {/* Recharge Mobile Balance Button */}
+        <div className="px-3 py-2 border-t border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 flex-shrink-0">
+          <button
+            onClick={() => {
+              setIsRechargeModalOpen(true);
+              onClose(); // Close sidebar on mobile after opening modal
+            }}
+            className={`group flex items-center ${isSidebarCollapsed ? 'justify-center' : 'justify-start'} gap-3 w-full px-3 py-2.5 rounded-lg transition-all duration-200 bg-blue-50 dark:bg-blue-950/20 hover:bg-blue-100 dark:hover:bg-blue-950/30 text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:focus:ring-offset-gray-900`}
+            title={isSidebarCollapsed ? AR_LABELS.rechargeMobileBalance : ''}
+            aria-label={AR_LABELS.rechargeMobileBalance}
+          >
+            <div className="transition-all duration-200 text-blue-600 dark:text-blue-400 group-hover:scale-110">
+              <MobileRechargeIcon className="h-5 w-5" />
+            </div>
+            <span
+              className={`text-sm font-medium transition-all duration-300 ${
+                isSidebarCollapsed ? 'opacity-0 w-0 overflow-hidden' : 'opacity-100'
+              }`}
+            >
+              {AR_LABELS.rechargeMobileBalance}
+            </span>
+          </button>
+        </div>
+
         {/* Logout Button - Fixed at bottom */}
         <div className="px-3 py-4 border-t border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 flex-shrink-0">
           <button
@@ -490,6 +516,11 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
         )}
       </aside>
 
+      {/* Recharge Modal */}
+      <RechargeModal
+        isOpen={isRechargeModalOpen}
+        onClose={() => setIsRechargeModalOpen(false)}
+      />
     </>
   );
 };

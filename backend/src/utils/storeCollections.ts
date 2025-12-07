@@ -102,22 +102,44 @@ export async function ensureCollectionExists(
 
 /**
  * Create all required collections for a store in a specific database
- * @param prefix - Store prefix
+ * @param prefix - Store prefix (used for products, orders, categories)
+ * @param storeId - Store ID (used for users collection to match user.storeId field)
  * @param databaseId - Database ID
  * @returns Promise<void>
  */
 export async function createStoreCollections(
   prefix: string,
-  databaseId: number
+  databaseId: number,
+  storeId?: string
 ): Promise<void> {
-  const collections = ['products', 'orders', 'categories', 'users'];
+  // Collections that use prefix (products, orders, categories)
+  const prefixCollections = ['products', 'orders', 'categories'];
   
-  for (const collectionType of collections) {
+  for (const collectionType of prefixCollections) {
     try {
       await ensureCollectionExists(prefix, collectionType, databaseId);
     } catch (error: any) {
       console.error(`❌ Error creating collection ${collectionType} for store ${prefix}:`, error.message);
       // Continue with other collections even if one fails
+    }
+  }
+  
+  // Users collection uses storeId to match the user.storeId field
+  if (storeId) {
+    try {
+      const usersCollectionName = `${storeId.toLowerCase()}_users`;
+      const db = await getDatabase(databaseId);
+      // Check if collection exists
+      const collections = await db.listCollections({ name: usersCollectionName }).toArray();
+      const exists = collections.length > 0;
+      if (!exists) {
+        await db.createCollection(usersCollectionName);
+        const dbName = getDatabaseName(databaseId);
+        console.log(`✅ Created collection: ${usersCollectionName} in database ${dbName}`);
+      }
+    } catch (error: any) {
+      console.error(`❌ Error creating users collection for store ${storeId}:`, error.message);
+      // Continue even if users collection creation fails - it will be created automatically when first user is inserted
     }
   }
   

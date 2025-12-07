@@ -45,4 +45,17 @@ export const API_ENDPOINTS = {
     STORES: '/admin/stores',
     STORE: '/admin/stores/:id',
   },
+  PAYMENTS: {
+    PROCESS: '/payments/process',
+    GET: '/payments/:id',
+    BY_INVOICE: '/payments/invoice/:invoiceId',
+    CANCEL: '/payments/:id/cancel',
+  },
+  MERCHANTS: {
+    LIST: '/merchants',
+    GET: '/merchants/:id',
+    CREATE: '/merchants',
+    UPDATE: '/merchants/:id',
+    DELETE: '/merchants/:id',
+  },
 } as const;

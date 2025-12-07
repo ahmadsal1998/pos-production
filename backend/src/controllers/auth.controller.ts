@@ -1,13 +1,13 @@
 import { Response, NextFunction } from 'express';
 import { body, validationResult } from 'express-validator';
-import User from '../models/User';
 import OTP from '../models/OTP';
 import { generateToken, generateRefreshToken } from '../utils/jwt';
 import { AuthenticatedRequest } from '../middleware/auth.middleware';
 import { asyncHandler } from '../middleware/error.middleware';
 import { generateOTP, getOTPExpiration } from '../utils/otp';
 import { sendOTPEmail } from '../utils/email';
-import bcrypt from 'bcryptjs';
+import { findUserAcrossStores, findUserByIdAcrossStores } from '../utils/userModel';
+import { cacheEmailToStore, cacheUsernameToStore } from '../utils/storeUserCache';
 
 // Login controller
 export const login = asyncHandler(
@@ -22,7 +22,7 @@ export const login = asyncHandler(
       });
     }
 
-    const { emailOrUsername, password } = req.body;
+    const { emailOrUsername, password, storeId } = req.body;
 
     // Check admin credentials first (from .env)
     const adminUsername = process.env.ADMIN_USERNAME;
@@ -65,13 +65,21 @@ export const login = asyncHandler(
     }
 
     // Continue with regular store user login
-    // Find user by email or username
-    const user = await User.findOne({
-      $or: [
-        { email: emailOrUsername.toLowerCase() },
-        { username: emailOrUsername.toLowerCase() },
-      ],
-    }).select('+password');
+    // If storeId is provided, use it as a hint to optimize the search
+    // This allows the system to search in the specific store first
+    const normalizedStoreId = storeId ? storeId.toLowerCase().trim() : undefined;
+    
+    // Find user by email or username across all store collections
+    // Pass storeId hint to optimize search if provided
+    const user = await findUserAcrossStores(
+      {
+        $or: [
+          { email: emailOrUsername.toLowerCase() },
+          { username: emailOrUsername.toLowerCase() },
+        ],
+      },
+      normalizedStoreId
+    );
 
     if (!user) {
       return res.status(401).json({
@@ -100,6 +108,14 @@ export const login = asyncHandler(
     // Update last login
     user.lastLogin = new Date();
     await user.save({ validateBeforeSave: false });
+
+    // Cache the user's email and username to storeId mapping for faster future logins
+    if (user.email) {
+      cacheEmailToStore(user.email, user.storeId);
+    }
+    if (user.username) {
+      cacheUsernameToStore(user.username, user.storeId);
+    }
 
     // Generate tokens
     const tokenPayload = {
@@ -136,7 +152,18 @@ export const login = asyncHandler(
 // Get current user
 export const getMe = asyncHandler(
   async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
-    const user = await User.findById(req.user?.userId);
+    const userId = req.user?.userId;
+    const storeId = req.user?.storeId;
+
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        message: 'User ID not found in token',
+      });
+    }
+
+    // Find user across all collections (or specific store if we know it)
+    const user = await findUserByIdAcrossStores(userId, storeId || undefined);
 
     if (!user) {
       return res.status(404).json({
@@ -186,12 +213,19 @@ export const forgotPassword = asyncHandler(
       });
     }
 
-    const { email } = req.body;
+    const { email, storeId } = req.body;
 
-    // Find user by email
-    const user = await User.findOne({
-      email: email.toLowerCase(),
-    });
+    // If storeId is provided, use it as a hint to optimize the search
+    const normalizedStoreId = storeId ? storeId.toLowerCase().trim() : undefined;
+    
+    // Find user by email across all store collections
+    // Pass storeId hint to optimize search if provided
+    const user = await findUserAcrossStores(
+      {
+        email: email.toLowerCase(),
+      },
+      normalizedStoreId
+    );
 
     if (!user) {
       // For security, don't reveal if email exists or not
@@ -308,12 +342,19 @@ export const resetPassword = asyncHandler(
       });
     }
 
-    const { email, newPassword } = req.body;
+    const { email, newPassword, storeId } = req.body;
 
-    // Find user by email
-    const user = await User.findOne({
-      email: email.toLowerCase(),
-    }).select('+password');
+    // If storeId is provided, use it as a hint to optimize the search
+    const normalizedStoreId = storeId ? storeId.toLowerCase().trim() : undefined;
+    
+    // Find user by email across all store collections
+    // Pass storeId hint to optimize search if provided
+    const user = await findUserAcrossStores(
+      {
+        email: email.toLowerCase(),
+      },
+      normalizedStoreId
+    );
 
     if (!user) {
       return res.status(404).json({
@@ -353,6 +394,14 @@ export const resetPassword = asyncHandler(
     
     // Save user (pre-save hook will hash the password)
     await user.save({ validateBeforeSave: false });
+
+    // Cache the user's email and username to storeId mapping for faster future logins
+    if (user.email) {
+      cacheEmailToStore(user.email, user.storeId);
+    }
+    if (user.username) {
+      cacheUsernameToStore(user.username, user.storeId);
+    }
 
     // Delete all OTP records for this email (used or expired)
     await OTP.deleteMany({ email: email.toLowerCase() });

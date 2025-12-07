@@ -36,3 +36,6 @@ export { default as UserManagementPage } from './user-management/UserManagementP
 export { default as AccountSettingsForm } from './user-management/AccountSettingsForm';
 export { default as ProfileBanner } from './user-management/ProfileBanner';
 export { default as ProfileCard } from './user-management/ProfileCard';
+
+// Payment Pages
+export * from './payments';

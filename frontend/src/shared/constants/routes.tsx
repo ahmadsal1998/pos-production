@@ -44,7 +44,9 @@ import {
   ReturnIcon,
   MinusIcon,
   GenerateBarcodeIcon,
-  AddPaymentIcon
+  AddPaymentIcon,
+  MobileRechargeIcon,
+  TerminalIcon
 } from '../../shared/assets/icons';
 
 // Define types locally to avoid circular dependencies
@@ -280,5 +282,7 @@ export {
   MinusIcon,
   GenerateBarcodeIcon,
   AddPaymentIcon,
-  AddProductIcon
+  AddProductIcon,
+  MobileRechargeIcon,
+  TerminalIcon
 };

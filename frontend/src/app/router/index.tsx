@@ -34,6 +34,7 @@ import ExpensesPage from '@/pages/financial/ExpensesPage';
 import ChequesPage from '@/pages/financial/ChequesPage';
 import PaymentMethodsPage from '@/pages/financial/PaymentMethodsPage';
 
+
 // User Management Pages
 import PreferencesPage from '@/pages/user-management/PreferencesPage';
 import UserManagementPage from '@/pages/user-management/UserManagementPage';

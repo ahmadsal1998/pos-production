@@ -1,9 +1,43 @@
+/**
+ * Users Controller
+ * 
+ * STORE-LEVEL ISOLATION RULES:
+ * 
+ * 1. User Creation (createUser):
+ *    - Admin users: Can create users for any store or system users (null storeId)
+ *    - Manager users: MUST create users for their own store only
+ *      * The storeId from request body is IGNORED for security
+ *      * The new user's storeId is ALWAYS set to the requester's storeId
+ *      * This ensures Managers cannot create users for other stores
+ * 
+ * 2. User Updates (updateUser):
+ *    - Admin users: Can change a user's storeId to any store
+ *    - Manager users: CANNOT change storeId at all
+ *      * Even if storeId matches their own store, it cannot be modified
+ *      * This prevents any potential security issues
+ * 
+ * 3. User Access (getUsers, getUserById):
+ *    - Admin users: Can see all users across all stores
+ *    - Manager users: Can only see users from their own store
+ * 
+ * 4. User Deletion (deleteUser):
+ *    - Admin users (role='Admin'): Can only be deleted by Super Admin (userId === 'admin')
+ *      * Admin accounts can ONLY be deleted from the Super Admin Panel
+ *      * Regular user management screens cannot delete Admin accounts
+ *      * This prevents accidental deletion of critical admin accounts
+ *    - Non-admin users: Can be deleted by Admin or Manager (with store restrictions)
+ *    - Manager users: Can only delete users from their own store
+ * 
+ * All store-level filtering is enforced at the controller level to ensure
+ * complete data isolation between stores.
+ */
+
 import { Response, NextFunction } from 'express';
 import { body, validationResult } from 'express-validator';
-import User from '../models/User';
 import Store from '../models/Store';
 import { AuthenticatedRequest } from '../middleware/auth.middleware';
 import { asyncHandler } from '../middleware/error.middleware';
+import { getUserModel, findUserByIdAcrossStores, UserDocument, invalidateUserCaches } from '../utils/userModel';
 
 // Get all users
 export const getUsers = asyncHandler(
@@ -11,27 +45,50 @@ export const getUsers = asyncHandler(
     const requesterRole = req.user?.role;
     const requesterStoreId = req.user?.storeId;
 
-    // Build query filter based on role
-    let queryFilter: any = {};
+    let allUsers: UserDocument[] = [];
 
-    // Non-admin users can only see users from their own store
-    if (requesterRole !== 'Admin') {
+    if (requesterRole === 'Admin') {
+      // Admin users can see all users across all stores
+      // Get all stores and fetch users from each store's collection
+      const stores = await Store.find({}).lean();
+      
+      // Also get system users (storeId = null)
+      try {
+        const systemUserModel = await getUserModel(null);
+        const systemUsers = await systemUserModel.find({}).sort({ createdAt: -1 });
+        allUsers.push(...systemUsers);
+      } catch (error) {
+        // System users collection might not exist yet, continue
+      }
+
+      // Get users from each store's collection
+      for (const store of stores) {
+        try {
+          const userModel = await getUserModel(store.storeId);
+          const storeUsers = await userModel.find({}).sort({ createdAt: -1 });
+          allUsers.push(...storeUsers);
+        } catch (error: any) {
+          console.warn(`⚠️ Could not fetch users from store ${store.storeId}: ${error.message}`);
+          continue;
+        }
+      }
+    } else {
+      // Non-admin users can only see users from their own store
       if (!requesterStoreId) {
         return res.status(403).json({
           success: false,
           message: 'Access denied. Store ID is required for non-admin users.',
         });
       }
-      queryFilter.storeId = requesterStoreId.toLowerCase();
-    }
-    // Admin users can see all users (no filter)
 
-    const users = await User.find(queryFilter).sort({ createdAt: -1 });
+      const userModel = await getUserModel(requesterStoreId);
+      allUsers = await userModel.find({}).sort({ createdAt: -1 });
+    }
 
     res.status(200).json({
       success: true,
       data: {
-        users: users.map((user) => ({
+        users: allUsers.map((user) => ({
           id: user._id.toString(),
           fullName: user.fullName,
           username: user.username,
@@ -56,7 +113,24 @@ export const getUserById = asyncHandler(
     const requesterRole = req.user?.role;
     const requesterStoreId = req.user?.storeId;
 
-    const user = await User.findById(id);
+    // Find user across all collections (or specific store if we know it)
+    let user: UserDocument | null = null;
+    
+    if (requesterRole === 'Admin') {
+      // Admin can access any user - search across all collections
+      user = await findUserByIdAcrossStores(id);
+    } else {
+      // Non-admin users can only access users from their own store
+      if (!requesterStoreId) {
+        return res.status(403).json({
+          success: false,
+          message: 'Access denied. Store ID is required for non-admin users.',
+        });
+      }
+
+      // Search only in the requester's store collection
+      user = await findUserByIdAcrossStores(id, requesterStoreId);
+    }
 
     if (!user) {
       return res.status(404).json({
@@ -65,15 +139,8 @@ export const getUserById = asyncHandler(
       });
     }
 
-    // Non-admin users can only access users from their own store
+    // Additional security check for non-admin users
     if (requesterRole !== 'Admin') {
-      if (!requesterStoreId) {
-        return res.status(403).json({
-          success: false,
-          message: 'Access denied. Store ID is required for non-admin users.',
-        });
-      }
-
       if (user.storeId?.toLowerCase() !== requesterStoreId.toLowerCase()) {
         return res.status(403).json({
           success: false,
@@ -145,27 +212,29 @@ export const createUser = asyncHandler(
         finalStoreId = null; // System/admin user
       }
     } else {
-      // Manager can only create users for their own store
+      // Non-admin users (Managers) MUST create users for their own store only
+      // The storeId from request body is IGNORED for security - always use requester's storeId
       if (!requesterStoreId) {
         return res.status(403).json({
           success: false,
-          message: 'Access denied. Store ID is required for non-admin users.',
+          message: 'Access denied. Store ID is required for non-admin users. Please ensure your account is associated with a store.',
         });
       }
 
-      // Manager must create users for their own store only
-      if (storeId && storeId.toLowerCase() !== requesterStoreId.toLowerCase()) {
-        return res.status(403).json({
-          success: false,
-          message: 'Access denied. You can only create users for your own store.',
-        });
-      }
-
+      // Always use the requester's storeId - ignore any storeId from request body
       finalStoreId = requesterStoreId.toLowerCase();
+      
+      // If a storeId was provided in the request, log a warning but still use requester's storeId
+      if (storeId && storeId.toLowerCase() !== requesterStoreId.toLowerCase()) {
+        console.warn(`⚠️ Security: Manager ${req.user?.userId} attempted to create user for different store. Using requester's storeId instead.`);
+      }
     }
 
-    // Check if username already exists
-    const existingUsername = await User.findOne({ username: username.toLowerCase() });
+    // Get the appropriate user model for the store
+    const userModel = await getUserModel(finalStoreId);
+
+    // Check if username already exists in this store's collection
+    const existingUsername = await userModel.findOne({ username: username.toLowerCase() });
     if (existingUsername) {
       return res.status(400).json({
         success: false,
@@ -173,8 +242,8 @@ export const createUser = asyncHandler(
       });
     }
 
-    // Check if email already exists
-    const existingEmail = await User.findOne({ email: email.toLowerCase() });
+    // Check if email already exists in this store's collection
+    const existingEmail = await userModel.findOne({ email: email.toLowerCase() });
     if (existingEmail) {
       return res.status(400).json({
         success: false,
@@ -182,8 +251,8 @@ export const createUser = asyncHandler(
       });
     }
 
-    // Create user
-    const user = await User.create({
+    // Create user in the store's collection
+    const user = await userModel.create({
       fullName,
       username: username.toLowerCase(),
       email: email.toLowerCase(),
@@ -193,6 +262,16 @@ export const createUser = asyncHandler(
       status: status || 'Active',
       storeId: finalStoreId,
     });
+
+    // Cache the user's email and username to storeId mapping for faster login
+    if (user.email) {
+      const { cacheEmailToStore } = await import('../utils/storeUserCache');
+      cacheEmailToStore(user.email, user.storeId);
+    }
+    if (user.username) {
+      const { cacheUsernameToStore } = await import('../utils/storeUserCache');
+      cacheUsernameToStore(user.username, user.storeId);
+    }
 
     res.status(201).json({
       success: true,
@@ -234,7 +313,21 @@ export const updateUser = asyncHandler(
     const requesterRole = req.user?.role;
     const requesterStoreId = req.user?.storeId;
 
-    const user = await User.findById(id);
+    // Find user across all collections
+    let user: UserDocument | null = null;
+    let currentStoreId: string | null = null;
+    
+    if (requesterRole === 'Admin') {
+      user = await findUserByIdAcrossStores(id);
+    } else {
+      if (!requesterStoreId) {
+        return res.status(403).json({
+          success: false,
+          message: 'Access denied. Store ID is required for non-admin users.',
+        });
+      }
+      user = await findUserByIdAcrossStores(id, requesterStoreId);
+    }
 
     if (!user) {
       return res.status(404).json({
@@ -242,6 +335,8 @@ export const updateUser = asyncHandler(
         message: 'User not found',
       });
     }
+
+    currentStoreId = user.storeId;
 
     // Non-admin users can only update users from their own store
     if (requesterRole !== 'Admin') {
@@ -259,18 +354,166 @@ export const updateUser = asyncHandler(
         });
       }
 
-      // Manager cannot change storeId to a different store
-      if (storeId !== undefined && storeId !== null && storeId.toLowerCase() !== requesterStoreId.toLowerCase()) {
-        return res.status(403).json({
-          success: false,
-          message: 'Access denied. You cannot change a user\'s store assignment.',
-        });
+      // Non-admin users cannot change storeId at all (even to their own store)
+      // The storeId must remain as it was when the user was created
+      if (storeId !== undefined) {
+        // If user tries to change storeId, reject it
+        if (storeId !== null && storeId.toLowerCase() !== user.storeId?.toLowerCase()) {
+          return res.status(403).json({
+            success: false,
+            message: 'Access denied. You cannot change a user\'s store assignment.',
+          });
+        }
+        // Even if storeId matches, non-admin users cannot modify it
+        // This prevents any potential security issues
       }
     }
 
+    // Determine the target storeId (if being changed by Admin)
+    let targetStoreId = currentStoreId;
+    if (storeId !== undefined && requesterRole === 'Admin') {
+      if (storeId === null) {
+        targetStoreId = null;
+      } else {
+        const normalizedStoreId = storeId.toLowerCase();
+        // Validate that the store exists
+        const store = await Store.findOne({ 
+          $or: [
+            { storeId: normalizedStoreId },
+            { prefix: normalizedStoreId }
+          ]
+        });
+        if (!store) {
+          return res.status(400).json({
+            success: false,
+            message: `Store with ID "${storeId}" does not exist.`,
+          });
+        }
+        targetStoreId = store.storeId;
+      }
+    }
+
+    // Get the user model for the current store (or target store if moving)
+    const currentUserModel = await getUserModel(currentStoreId);
+    
+    // If storeId is being changed, we need to move the user to a different collection
+    if (targetStoreId !== currentStoreId && requesterRole === 'Admin') {
+      // Get the target user model
+      const targetUserModel = await getUserModel(targetStoreId);
+      
+      // Check if username already exists in target collection
+      if (username && username.toLowerCase() !== user.username) {
+        const existingUsername = await targetUserModel.findOne({ username: username.toLowerCase() });
+        if (existingUsername) {
+          return res.status(400).json({
+            success: false,
+            message: 'Username already exists in target store',
+          });
+        }
+      } else if (username) {
+        // Check if username exists in target collection (even if not changing)
+        const existingUsername = await targetUserModel.findOne({ 
+          username: user.username,
+          _id: { $ne: user._id }
+        });
+        if (existingUsername) {
+          return res.status(400).json({
+            success: false,
+            message: 'Username already exists in target store',
+          });
+        }
+      }
+
+      // Check if email already exists in target collection
+      if (email && email.toLowerCase() !== user.email) {
+        const existingEmail = await targetUserModel.findOne({ email: email.toLowerCase() });
+        if (existingEmail) {
+          return res.status(400).json({
+            success: false,
+            message: 'Email already exists in target store',
+          });
+        }
+      } else if (email) {
+        // Check if email exists in target collection (even if not changing)
+        const existingEmail = await targetUserModel.findOne({ 
+          email: user.email,
+          _id: { $ne: user._id }
+        });
+        if (existingEmail) {
+          return res.status(400).json({
+            success: false,
+            message: 'Email already exists in target store',
+          });
+        }
+      }
+
+      // Create user in target collection with updated data
+      const userData: any = {
+        fullName: fullName || user.fullName,
+        username: (username || user.username).toLowerCase(),
+        email: (email || user.email).toLowerCase(),
+        role: role || user.role,
+        permissions: permissions !== undefined ? permissions : user.permissions,
+        status: status || user.status,
+        storeId: targetStoreId,
+        lastLogin: user.lastLogin,
+        createdAt: user.createdAt,
+        updatedAt: new Date(),
+      };
+
+      // Handle password update
+      if (password) {
+        userData.password = password; // Will be hashed by pre-save hook
+      } else {
+        // Copy password hash from original user
+        const originalUserWithPassword = await currentUserModel.findById(id).select('+password');
+        if (originalUserWithPassword) {
+          userData.password = originalUserWithPassword.password;
+        }
+      }
+
+      const newUser = await targetUserModel.create(userData);
+
+      // Delete user from old collection
+      await currentUserModel.findByIdAndDelete(id);
+
+      // Invalidate cache for old email/username
+      invalidateUserCaches(user.email, user.username);
+      // Cache new email/username if changed
+      if (newUser.email) {
+        const { cacheEmailToStore } = await import('../utils/storeUserCache');
+        cacheEmailToStore(newUser.email, newUser.storeId);
+      }
+      if (newUser.username) {
+        const { cacheUsernameToStore } = await import('../utils/storeUserCache');
+        cacheUsernameToStore(newUser.username, newUser.storeId);
+      }
+
+      return res.status(200).json({
+        success: true,
+        message: 'User updated and moved to new store successfully',
+        data: {
+          user: {
+            id: newUser._id.toString(),
+            fullName: newUser.fullName,
+            username: newUser.username,
+            email: newUser.email,
+            role: newUser.role,
+            permissions: newUser.permissions,
+            status: newUser.status,
+            storeId: newUser.storeId,
+            lastLogin: newUser.lastLogin,
+            createdAt: newUser.createdAt,
+            updatedAt: newUser.updatedAt,
+          },
+        },
+      });
+    }
+
+    // No store change - update in place
     // Check if username is being changed and already exists
     if (username && username.toLowerCase() !== user.username) {
-      const existingUsername = await User.findOne({ username: username.toLowerCase() });
+      const existingUsername = await currentUserModel.findOne({ username: username.toLowerCase() });
       if (existingUsername) {
         return res.status(400).json({
           success: false,
@@ -282,7 +525,7 @@ export const updateUser = asyncHandler(
 
     // Check if email is being changed and already exists
     if (email && email.toLowerCase() !== user.email) {
-      const existingEmail = await User.findOne({ email: email.toLowerCase() });
+      const existingEmail = await currentUserModel.findOne({ email: email.toLowerCase() });
       if (existingEmail) {
         return res.status(400).json({
           success: false,
@@ -298,38 +541,26 @@ export const updateUser = asyncHandler(
     if (permissions !== undefined) user.permissions = permissions;
     if (status) user.status = status;
 
-    // Handle storeId update (only Admin can change it)
-    if (storeId !== undefined) {
-      if (requesterRole === 'Admin') {
-        if (storeId === null) {
-          user.storeId = null; // System/admin user
-        } else {
-          const normalizedStoreId = storeId.toLowerCase();
-          // Validate that the store exists
-          const store = await Store.findOne({ 
-            $or: [
-              { storeId: normalizedStoreId },
-              { prefix: normalizedStoreId }
-            ]
-          });
-          if (!store) {
-            return res.status(400).json({
-              success: false,
-              message: `Store with ID "${storeId}" does not exist.`,
-            });
-          }
-          user.storeId = store.storeId; // Use the canonical storeId
-        }
-      }
-      // For non-admin, storeId is already validated above and cannot be changed
-    }
-
     // Update password if provided
     if (password) {
       user.password = password; // Will be hashed by pre-save hook
     }
 
     await user.save();
+
+    // Invalidate and update cache if email or username changed
+    const oldEmail = user.email;
+    const oldUsername = user.username;
+    invalidateUserCaches(oldEmail, oldUsername);
+    // Cache updated mappings
+    if (user.email) {
+      const { cacheEmailToStore } = await import('../utils/storeUserCache');
+      cacheEmailToStore(user.email, user.storeId);
+    }
+    if (user.username) {
+      const { cacheUsernameToStore } = await import('../utils/storeUserCache');
+      cacheUsernameToStore(user.username, user.storeId);
+    }
 
     res.status(200).json({
       success: true,
@@ -359,22 +590,51 @@ export const deleteUser = asyncHandler(
     const { id } = req.params;
     const requesterRole = req.user?.role;
     const requesterStoreId = req.user?.storeId;
+    const requesterUserId = req.user?.userId;
 
     // Prevent deleting the current user
-    if (req.user?.userId === id) {
+    if (requesterUserId === id) {
       return res.status(400).json({
         success: false,
         message: 'Cannot delete your own account',
       });
     }
 
-    const user = await User.findById(id);
+    // Find user across all collections
+    let user: UserDocument | null = null;
+    
+    if (requesterRole === 'Admin') {
+      user = await findUserByIdAcrossStores(id);
+    } else {
+      if (!requesterStoreId) {
+        return res.status(403).json({
+          success: false,
+          message: 'Access denied. Store ID is required for non-admin users.',
+        });
+      }
+      user = await findUserByIdAcrossStores(id, requesterStoreId);
+    }
 
     if (!user) {
       return res.status(404).json({
         success: false,
         message: 'User not found',
       });
+    }
+
+    // PROTECTION: Admin users can only be deleted from Super Admin Panel
+    // Admin accounts are critical and should only be deleted by the Super Admin
+    // This prevents accidental deletion from regular store management screens
+    if (user.role === 'Admin') {
+      // Only the super admin (userId === 'admin') can delete Admin users
+      // The Super Admin Panel is the only place where Admin deletion should occur
+      if (requesterUserId !== 'admin' || requesterRole !== 'Admin') {
+        return res.status(403).json({
+          success: false,
+          message: 'Access denied. Admin accounts can only be deleted from the Super Admin Panel. Regular store management screens cannot delete Admin users.',
+        });
+      }
+      // Super admin can delete Admin users - proceed with deletion
     }
 
     // Non-admin users can only delete users from their own store
@@ -394,7 +654,12 @@ export const deleteUser = asyncHandler(
       }
     }
 
-    await User.findByIdAndDelete(id);
+    // Get the user model for the store and delete
+    const userModel = await getUserModel(user.storeId);
+    await userModel.findByIdAndDelete(id);
+
+    // Invalidate cache for deleted user
+    invalidateUserCaches(user.email, user.username);
 
     res.status(200).json({
       success: true,

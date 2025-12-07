@@ -280,3 +280,84 @@ export const adminApi = {
   deleteStore: (id: string) =>
     apiClient.delete<{ success: boolean; message: string }>(`/admin/stores/${id}`),
 };
+
+// Payment API endpoints
+export interface ProcessPaymentRequest {
+  invoiceId: string;
+  amount: number;
+  currency?: string;
+  paymentMethod: 'Cash' | 'Card' | 'Credit';
+  description?: string;
+}
+
+export interface PaymentResponse {
+  success: boolean;
+  message: string;
+  data: {
+    payment: {
+      id: string;
+      invoiceId: string;
+      amount: number;
+      currency: string;
+      paymentMethod: string;
+      status: 'Pending' | 'Approved' | 'Declined' | 'Error' | 'Cancelled';
+      transactionId?: string;
+      authorizationCode?: string;
+      processedAt?: string;
+    };
+  };
+}
+
+export const paymentsApi = {
+  processPayment: (request: ProcessPaymentRequest) =>
+    apiClient.post<PaymentResponse>('/payments/process', request),
+  
+  getPayment: (id: string) =>
+    apiClient.get<{ success: boolean; data: { payment: any } }>(`/payments/${id}`),
+  
+  getPaymentsByInvoice: (invoiceId: string) =>
+    apiClient.get<{ success: boolean; data: { payments: any[] } }>(`/payments/invoice/${invoiceId}`),
+  
+  cancelPayment: (id: string) =>
+    apiClient.post<{ success: boolean; message: string; data: { payment: any } }>(`/payments/${id}/cancel`),
+};
+
+// Merchants API endpoints
+export interface Merchant {
+  id: string;
+  name: string;
+  merchantId: string;
+  storeId?: string;
+  status: 'Active' | 'Inactive';
+  description?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export const merchantsApi = {
+  getMerchants: () =>
+    apiClient.get<{ success: boolean; data: { merchants: Merchant[] } }>('/merchants'),
+  
+  getMerchant: (id: string) =>
+    apiClient.get<{ success: boolean; data: { merchant: Merchant; terminals: any[] } }>(`/merchants/${id}`),
+  
+  createMerchant: (merchant: {
+    name: string;
+    merchantId: string;
+    storeId?: string;
+    description?: string;
+    status?: 'Active' | 'Inactive';
+  }) =>
+    apiClient.post<{ success: boolean; message: string; data: { merchant: Merchant } }>('/merchants', merchant),
+  
+  updateMerchant: (id: string, merchant: {
+    name?: string;
+    merchantId?: string;
+    description?: string;
+    status?: 'Active' | 'Inactive';
+  }) =>
+    apiClient.put<{ success: boolean; message: string; data: { merchant: Merchant } }>(`/merchants/${id}`, merchant),
+  
+  deleteMerchant: (id: string) =>
+    apiClient.delete<{ success: boolean; message: string }>(`/merchants/${id}`),
+};

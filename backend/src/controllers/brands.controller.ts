@@ -4,7 +4,7 @@ import { parse } from 'csv-parse/sync';
 import { asyncHandler } from '../middleware/error.middleware';
 import { AuthenticatedRequest } from '../middleware/auth.middleware';
 import { getBrandModelForStore } from '../utils/brandModel';
-import User from '../models/User';
+import { findUserByIdAcrossStores } from '../utils/userModel';
 
 export const validateCreateBrand = [
   body('name')
@@ -44,7 +44,7 @@ export const createBrand = asyncHandler(async (req: AuthenticatedRequest, res: R
   // If storeId is not in token, try to get it from the user record
   if (!storeId && req.user?.userId && req.user.userId !== 'admin') {
     try {
-      const user = await User.findById(req.user.userId);
+      const user = await findUserByIdAcrossStores(req.user.userId, req.user.storeId || undefined);
       if (user && user.storeId) {
         storeId = user.storeId;
         console.log('✅ Create Brand - Found storeId from user record:', storeId);

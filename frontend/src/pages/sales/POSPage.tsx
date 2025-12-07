@@ -212,7 +212,13 @@ const POSPage: React.FC = () => {
             alert('المبلغ المدفوع لا يمكن أن يكون سالباً.');
             return;
         }
-        
+
+        // For all payment methods (Cash, Credit, Card), proceed directly
+        // Card payments are now handled without terminal integration
+        finalizeSaleWithoutTerminal();
+    };
+
+    const finalizeSaleWithoutTerminal = () => {
         // Deduct stock
         setProducts(prevProducts => {
             const newProducts = [...prevProducts];

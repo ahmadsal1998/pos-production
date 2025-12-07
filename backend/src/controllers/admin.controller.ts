@@ -1,11 +1,11 @@
 import { Response, NextFunction } from 'express';
 import { body, validationResult } from 'express-validator';
 import Store from '../models/Store';
-import User from '../models/User';
 import { AuthenticatedRequest } from '../middleware/auth.middleware';
 import { asyncHandler } from '../middleware/error.middleware';
 import { determineDatabaseForStore } from '../utils/databaseManager';
 import { createStoreCollections } from '../utils/storeCollections';
+import { getUserModel, findUserAcrossStores } from '../utils/userModel';
 
 // Get all stores
 export const getStores = asyncHandler(
@@ -92,7 +92,7 @@ export const createStore = asyncHandler(
 
     // Create collections for the new store in the assigned database
     try {
-      await createStoreCollections(prefix.toLowerCase(), databaseId);
+      await createStoreCollections(prefix.toLowerCase(), databaseId, store.storeId.toLowerCase());
       console.log(`✅ Successfully created all collections for store ${prefix} in database ${databaseId}`);
     } catch (error: any) {
       console.error(`❌ Error creating collections for store ${prefix}:`, error.message);
@@ -107,8 +107,8 @@ export const createStore = asyncHandler(
         // Generate a default username if not provided
         const defaultUsername = defaultAdminEmail.split('@')[0] + '_' + prefix;
         
-        // Check if username already exists
-        const existingUser = await User.findOne({
+        // Check if username or email already exists across all stores
+        const existingUser = await findUserAcrossStores({
           $or: [
             { username: defaultUsername.toLowerCase() },
             { email: defaultAdminEmail.toLowerCase() }
@@ -116,7 +116,10 @@ export const createStore = asyncHandler(
         });
 
         if (!existingUser) {
-          defaultAdmin = await User.create({
+          // Get the user model for this store's collection
+          const userModel = await getUserModel(store.storeId.toLowerCase());
+          
+          defaultAdmin = await userModel.create({
             fullName: defaultAdminName || `Store Admin - ${name}`,
             username: defaultUsername.toLowerCase(),
             email: defaultAdminEmail.toLowerCase(),
@@ -138,7 +141,7 @@ export const createStore = asyncHandler(
               'users',
             ],
             status: 'Active',
-            storeId: prefix.toLowerCase(), // Associate user with store prefix
+            storeId: store.storeId.toLowerCase(), // Associate user with store's storeId (canonical identifier)
           });
         }
       } catch (error: any) {
