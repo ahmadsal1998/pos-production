@@ -10,9 +10,9 @@
   "scripts": {
     "dev": "nodemon",
     "dev:ts": "NODE_OPTIONS='--max-old-space-size=1536' ts-node --transpile-only src/server.ts",
-    "build": "NODE_OPTIONS='--max-old-space-size=4096' tsc --incremental",
-    "build:clean": "rm -rf dist .tsbuildinfo && NODE_OPTIONS='--max-old-space-size=4096' tsc",
-    "build:low-memory": "NODE_OPTIONS='--max-old-space-size=2048' tsc --incremental",
+    "build": "NODE_OPTIONS='--max-old-space-size=6144' tsc --incremental --skipLibCheck",
+    "build:clean": "rm -rf dist .tsbuildinfo && NODE_OPTIONS='--max-old-space-size=6144' tsc --skipLibCheck",
+    "build:low-memory": "NODE_OPTIONS='--max-old-space-size=2048' tsc --incremental --skipLibCheck",
     "start": "node dist/index.js",
     "seed": "ts-node src/utils/seedDatabase.ts",
     "migrate:stores": "ts-node src/utils/migrateStores.ts"

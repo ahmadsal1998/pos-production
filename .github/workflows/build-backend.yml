@@ -12,6 +12,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # Use larger runner if available (requires GitHub Team/Enterprise)
+    # runs-on: ubuntu-latest-4-cores  # Alternative: use self-hosted runner with more memory
     permissions:
       contents: write # Required to commit and push dist/ folder
     
@@ -34,11 +36,25 @@ jobs:
         working-directory: ./backend
         run: npm ci
 
-      - name: Build backend
+      - name: Clean previous build
         working-directory: ./backend
-        run: npm run build
+        run: rm -rf dist .tsbuildinfo || true
+
+      - name: Build backend (optimized for memory)
+        working-directory: ./backend
+        run: |
+          # Try with maximum available memory (6GB)
+          export NODE_OPTIONS='--max-old-space-size=6144'
+          # Clean build cache first to avoid memory issues from stale cache
+          rm -f .tsbuildinfo || true
+          # Build with optimizations
+          npx tsc --incremental --skipLibCheck || {
+            echo "Build failed, trying clean build..."
+            rm -rf dist .tsbuildinfo
+            npx tsc --skipLibCheck
+          }
         env:
-          NODE_OPTIONS: '--max-old-space-size=4096'
+          NODE_OPTIONS: '--max-old-space-size=6144'
 
       - name: Verify build output
         working-directory: ./backend
