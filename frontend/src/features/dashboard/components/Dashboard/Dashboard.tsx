@@ -2,6 +2,7 @@ import React from 'react';
 import { AR_LABELS, METRIC_CARDS_DATA, QUICK_ACTIONS_DATA } from '@/shared/constants';
 import { MetricCard, QuickActionCard } from '@/shared/components';
 import ProductPerformanceCard from './ProductPerformanceCard';
+import { formatDate } from '@/shared/utils';
 
 const Dashboard = () => {
   return (
@@ -40,12 +41,7 @@ const Dashboard = () => {
                 <div className="text-right">
                   <p className="text-sm font-semibold text-slate-500 dark:text-slate-400 mb-2">اليوم</p>
                   <p className="text-xl font-bold text-slate-900 dark:text-white mb-3">
-                    {new Date().toLocaleDateString('ar-SA', {
-                      weekday: 'long',
-                      year: 'numeric',
-                      month: 'long',
-                      day: 'numeric',
-                    })}
+                    {formatDate(new Date())}
                   </p>
                   <div className="flex items-center justify-end space-x-2 space-x-reverse">
                     <div className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />

@@ -1,7 +1,12 @@
 export { default as ProductDashboard } from './ProductDashboard';
 export { default as ProductManagementPage } from './ProductManagementPage';
 export { default as AddMultiUnitProductPage } from './AddMultiUnitProductPage';
+export { default as AddNewProductPage } from './AddNewProductPage';
+export { default as AddAdditionalUnitsPage } from './AddAdditionalUnitsPage';
+export { default as AddProductPage } from './AddProductPage';
 export { default as ProductListPage } from './ProductListPage';
 export { default as ProductPage } from './ProductPage';
+export { default as ProductImportPage } from './ProductImportPage';
 export { default as BrandManagementPage } from './BrandManagementPage';
 export { default as CategoryManagementPage } from './CategoryManagementPage';
+export { default as UnitManagementPage } from './UnitManagementPage';

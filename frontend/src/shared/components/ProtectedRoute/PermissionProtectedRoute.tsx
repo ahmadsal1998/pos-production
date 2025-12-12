@@ -8,20 +8,28 @@ interface PermissionProtectedRouteProps {
 }
 
 /**
- * PermissionProtectedRoute component that checks both authentication and permissions.
+ * PermissionProtectedRoute component that checks both authentication, subscription status, and permissions.
  * If user is not authenticated, redirects to /login.
+ * If user is authenticated but subscription is expired, redirects to /subscription-expired.
  * If user is authenticated but lacks required permission, redirects to first allowed route or /pos/1.
  */
 export const PermissionProtectedRoute: React.FC<PermissionProtectedRouteProps> = ({ 
   children, 
   requiredPermission 
 }) => {
-  const { isAuthenticated, user } = useAuthStore();
+  const { isAuthenticated, user, subscriptionStatus } = useAuthStore();
   const location = useLocation();
 
   // Check authentication first
   if (!isAuthenticated) {
     return <Navigate to="/login" replace state={{ from: location }} />;
+  }
+
+  // Check subscription status for store users (not admins)
+  if (user && user.role !== 'Admin' && user.storeId) {
+    if (subscriptionStatus && (subscriptionStatus.subscriptionExpired || !subscriptionStatus.isActive)) {
+      return <Navigate to="/subscription-expired" replace />;
+    }
   }
 
   // Admin users have access to everything

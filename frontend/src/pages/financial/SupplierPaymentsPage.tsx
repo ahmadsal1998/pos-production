@@ -2,6 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { SupplierPayment, Supplier } from '@/features/financial/types';
 import { AR_LABELS, UUID, SearchIcon, PlusIcon, EditIcon, DeleteIcon } from '@/shared/constants';
 import { GridViewIcon, TableViewIcon } from '@/shared/constants';
+import { formatDate } from '@/shared/utils';
 
 type LayoutType = 'table' | 'grid';
 
@@ -126,7 +127,7 @@ const SupplierPaymentsPage: React.FC<SupplierPaymentsPageProps> = ({
                 {filteredPayments.map((payment) => (
                   <tr key={payment.id} className="hover:bg-gray-50 dark:hover:bg-gray-700/50">
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">{getSupplierName(payment.supplierId)}</td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">{new Date(payment.date).toLocaleDateString('ar-SA')}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">{formatDate(payment.date)}</td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-semibold text-green-600 dark:text-green-400">{payment.amount.toFixed(2)} ر.س</td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">{PAYMENT_METHOD_LABELS[payment.method] || payment.method}</td>
                     <td className="px-6 py-4 whitespace-nowrap text-center text-sm font-medium">
@@ -146,7 +147,7 @@ const SupplierPaymentsPage: React.FC<SupplierPaymentsPageProps> = ({
               <div className="flex justify-between items-start mb-2">
                 <h3 className="text-lg font-bold text-gray-800 dark:text-gray-100">{getSupplierName(payment.supplierId)}</h3>
               </div>
-              <p className="text-sm text-gray-600 dark:text-gray-300 mb-2">التاريخ: {new Date(payment.date).toLocaleDateString('ar-SA')}</p>
+              <p className="text-sm text-gray-600 dark:text-gray-300 mb-2">التاريخ: {formatDate(payment.date)}</p>
               <p className="text-lg font-semibold text-green-600 dark:text-green-400 mb-2">{payment.amount.toFixed(2)} ر.س</p>
               <p className="text-sm text-gray-600 dark:text-gray-300 mb-3">{PAYMENT_METHOD_LABELS[payment.method] || payment.method}</p>
               <div className="border-t dark:border-gray-700 pt-2 flex justify-end space-x-2 space-x-reverse">

@@ -13,6 +13,12 @@ export interface User {
   storeId?: string | null; // null for system/admin users, string for store-specific users
 }
 
+export interface SubscriptionStatus {
+  isActive: boolean;
+  subscriptionExpired: boolean;
+  subscriptionEndDate: Date | string;
+}
+
 export interface LoginCredentials {
   emailOrUsername: string;
   password: string;
@@ -25,12 +31,15 @@ interface AuthState {
   isAuthenticated: boolean;
   isLoading: boolean;
   error: string | null;
+  subscriptionStatus: SubscriptionStatus | null;
   
   // Actions
   login: (credentials: LoginCredentials) => Promise<void>;
   logout: () => void;
   clearError: () => void;
   setUser: (user: User) => void;
+  setSubscriptionStatus: (status: SubscriptionStatus | null) => void;
+  checkSubscriptionStatus: () => Promise<void>;
 }
 
 // Create axios instance
@@ -52,13 +61,14 @@ export const useAuthStore = create<AuthState>()(
       isAuthenticated: false,
       isLoading: false,
       error: null,
+      subscriptionStatus: null,
 
       login: async (credentials: LoginCredentials) => {
         set({ isLoading: true, error: null });
         
         try {
           const response = await api.post('/auth/login', credentials);
-          const { user, token } = response.data.data;
+          const { user, token, subscriptionStatus } = response.data.data;
 
           // Store token in localStorage for API calls
           if (token) {
@@ -70,10 +80,22 @@ export const useAuthStore = create<AuthState>()(
             token,
             isAuthenticated: true, 
             isLoading: false,
-            error: null 
+            error: null,
+            subscriptionStatus: subscriptionStatus || null,
           });
+
+          // Check if subscription is expired and redirect
+          if (subscriptionStatus && (subscriptionStatus.subscriptionExpired || !subscriptionStatus.isActive)) {
+            // Redirect to expired subscription page
+            if (typeof window !== 'undefined') {
+              window.location.href = '/subscription-expired';
+            }
+            return;
+          }
         } catch (error: any) {
-          const errorMessage = error.response?.data?.message || 'Login failed. Please check your credentials.';
+          const errorData = error.response?.data || {};
+          const errorMessage = errorData.message || 'Login failed. Please check your credentials.';
+          
           set({ 
             error: errorMessage,
             isLoading: false 
@@ -91,7 +113,8 @@ export const useAuthStore = create<AuthState>()(
             user: null, 
             token: null,
             isAuthenticated: false, 
-            error: null 
+            error: null,
+            subscriptionStatus: null,
           });
         } catch (error) {
           // Even if logout fails, clear local state
@@ -100,7 +123,8 @@ export const useAuthStore = create<AuthState>()(
             user: null, 
             token: null,
             isAuthenticated: false, 
-            error: null 
+            error: null,
+            subscriptionStatus: null,
           });
         }
       },
@@ -112,13 +136,53 @@ export const useAuthStore = create<AuthState>()(
       setUser: (user: User) => {
         set({ user, isAuthenticated: true });
       },
+
+      setSubscriptionStatus: (status: SubscriptionStatus | null) => {
+        set({ subscriptionStatus: status });
+      },
+
+      checkSubscriptionStatus: async () => {
+        try {
+          const response = await api.get('/auth/me');
+          const { subscriptionStatus } = response.data.data;
+          
+          set({ subscriptionStatus: subscriptionStatus || null });
+
+          // Check if subscription is expired and redirect
+          if (subscriptionStatus && (subscriptionStatus.subscriptionExpired || !subscriptionStatus.isActive)) {
+            // Redirect to expired subscription page
+            if (typeof window !== 'undefined') {
+              window.location.href = '/subscription-expired';
+            }
+          }
+        } catch (error: any) {
+          // If we get a 403 with SUBSCRIPTION_EXPIRED code, treat as expired
+          if (error.response?.status === 403 && error.response?.data?.code === 'SUBSCRIPTION_EXPIRED') {
+            set({ 
+              subscriptionStatus: {
+                isActive: false,
+                subscriptionExpired: true,
+                subscriptionEndDate: error.response?.data?.subscriptionEndDate || new Date(),
+              }
+            });
+            // Redirect to expired subscription page
+            if (typeof window !== 'undefined') {
+              window.location.href = '/subscription-expired';
+            }
+            return;
+          }
+          // If check fails for other reasons, don't block user (might be network issue)
+          console.error('Failed to check subscription status:', error);
+        }
+      },
     }),
     {
       name: 'auth-storage',
       partialize: (state) => ({ 
         user: state.user, 
         token: state.token,
-        isAuthenticated: state.isAuthenticated 
+        isAuthenticated: state.isAuthenticated,
+        subscriptionStatus: state.subscriptionStatus,
       }),
     }
   )

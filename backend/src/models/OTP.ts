@@ -31,6 +31,7 @@ const otpSchema = new Schema<OTPDocument>(
   },
   {
     timestamps: true,
+    autoCreate: false, // Prevent automatic collection creation - only create when data is inserted
   }
 );
 

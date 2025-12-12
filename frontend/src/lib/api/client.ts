@@ -40,6 +40,11 @@ export class ApiClient {
         if (token) {
           config.headers.Authorization = `Bearer ${token}`;
         }
+        // Remove Content-Type header for FormData - axios will set it automatically with boundary
+        if (config.data instanceof FormData) {
+          delete config.headers['Content-Type'];
+          delete config.headers.common?.['Content-Type'];
+        }
         return config;
       },
       (error) => Promise.reject(error)
@@ -52,12 +57,24 @@ export class ApiClient {
         return response;
       },
       (error: AxiosError) => {
+        const responseData = error.response?.data as any;
         const apiError: ApiError = {
-          message: (error.response?.data as any)?.message || error.message || 'An error occurred',
+          message: responseData?.message || error.message || 'An error occurred',
           status: error.response?.status || 500,
           code: error.code,
-          details: error.response?.data,
+          details: responseData,
         };
+
+        // Handle subscription expired error - redirect to expired subscription page
+        if (error.response?.status === 403 && responseData?.code === 'SUBSCRIPTION_EXPIRED') {
+          // Clear auth state
+          if (typeof window !== 'undefined') {
+            localStorage.removeItem('auth-token');
+            // Redirect to expired subscription page
+            window.location.href = '/subscription-expired';
+          }
+        }
+
         return Promise.reject(apiError);
       }
     );
@@ -121,17 +138,37 @@ export class ApiClient {
   }
 
   async upload<T>(endpoint: string, data: FormData): Promise<ApiResponse<T>> {
-    const response = await this.client.post(endpoint, data, {
-      headers: {
-        'Content-Type': 'multipart/form-data',
-      },
-    });
-    return {
-      data: response.data as T,
-      message: (response.data as any)?.message ?? 'Success',
-      success: true,
-      status: response.status,
-    };
+    try {
+      // For FormData, we need to ensure axios sets Content-Type automatically with boundary
+      const token = localStorage.getItem('auth-token');
+      const config: any = {
+        transformRequest: (data: any, headers: any) => {
+          // Remove Content-Type to let axios set it automatically for FormData
+          if (data instanceof FormData) {
+            delete headers['Content-Type'];
+          }
+          return data;
+        },
+      };
+      
+      // Set headers manually
+      if (token) {
+        config.headers = {
+          Authorization: `Bearer ${token}`,
+        };
+      }
+      
+      const response = await this.client.post(endpoint, data, config);
+      return {
+        data: response.data as T,
+        message: (response.data as any)?.message ?? 'Success',
+        success: true,
+        status: response.status,
+      };
+    } catch (error: any) {
+      // Re-throw to be handled by the caller
+      throw error;
+    }
   }
 }
 
@@ -157,15 +194,54 @@ export const authApi = {
   
   verifyEmail: (token: string) =>
     apiClient.post('/auth/verify-email', { token }),
+  
+  getContactNumber: () =>
+    apiClient.get<{ success: boolean; data: { contactNumber: string } }>('/auth/contact-number'),
 };
 
+// Product metrics interface
+export interface ProductMetrics {
+  totalValue: number;
+  totalCostValue: number;
+  totalSellingValue: number;
+  averageProfitMargin: number;
+  overallProfitMargin: number;
+  lowStockCount: number;
+  lowStockProducts: Array<{
+    id: string;
+    name: string;
+    stock: number;
+    lowStockAlert: number;
+    unit: string;
+  }>;
+  totalProducts: number;
+  productsWithStock: number;
+}
+
 // Products API endpoints
+export interface ProductsPaginationResponse {
+  success: boolean;
+  message: string;
+  products: any[];
+  pagination?: {
+    currentPage: number;
+    totalPages: number;
+    totalProducts: number;
+    limit: number;
+    hasNextPage: boolean;
+    hasPreviousPage: boolean;
+  };
+}
+
 export const productsApi = {
-  getProducts: (params?: any) =>
-    apiClient.get('/products', params),
+  getProducts: (params?: { page?: number; limit?: number; search?: string }) =>
+    apiClient.get<ProductsPaginationResponse>('/products', params),
   
   getProduct: (id: string) =>
     apiClient.get(`/products/${id}`),
+  
+  getProductMetrics: () =>
+    apiClient.get<{ success: boolean; message: string; data: ProductMetrics }>('/products/metrics'),
   
   createProduct: (product: any) =>
     apiClient.post('/products', product),
@@ -175,6 +251,25 @@ export const productsApi = {
   
   deleteProduct: (id: string) =>
     apiClient.delete(`/products/${id}`),
+  
+  importProducts: (formData: FormData) =>
+    apiClient.upload<{
+      success: boolean;
+      message: string;
+      summary: {
+        totalRows: number;
+        validProducts: number;
+        imported: number;
+        skipped: number;
+        duplicates: number;
+        errors?: string[];
+      };
+      data: {
+        imported: number;
+        skipped: number;
+        duplicates: number;
+      };
+    }>('/products/import', formData),
 };
 
 // Sales API endpoints
@@ -225,6 +320,18 @@ export const usersApi = {
     apiClient.delete<{ success: boolean; message: string }>(`/users/${id}`),
 };
 
+// Customers API endpoints
+export const customersApi = {
+  getCustomers: () =>
+    apiClient.get<{ success: boolean; message: string; data: { customers: any[] } }>('/customers'),
+  
+  getCustomer: (id: string) =>
+    apiClient.get<{ success: boolean; message: string; data: { customer: any } }>(`/customers/${id}`),
+  
+  createCustomer: (customer: { name?: string; phone: string; address?: string; previousBalance?: number }) =>
+    apiClient.post<{ success: boolean; message: string; data: { customer: any } }>('/customers', customer),
+};
+
 export const categoriesApi = {
   getCategories: () =>
     apiClient.get<{ success: boolean; message: string; categories: any[] }>('/categories'),
@@ -263,6 +370,62 @@ export const brandsApi = {
     }>('/brands/import', formData),
 };
 
+export const unitsApi = {
+  getUnits: () =>
+    apiClient.get<{ success: boolean; message: string; units: any[] }>('/units'),
+
+  getUnit: (id: string) =>
+    apiClient.get<{ success: boolean; message: string; unit: any }>(`/units/${id}`),
+
+  createUnit: (unit: { name: string; description?: string }) =>
+    apiClient.post<{ success: boolean; message: string; unit: any }>('/units', unit),
+
+  updateUnit: (id: string, unit: { name?: string; description?: string }) =>
+    apiClient.put<{ success: boolean; message: string; unit: any }>(`/units/${id}`, unit),
+
+  deleteUnit: (id: string) =>
+    apiClient.delete<{ success: boolean; message: string }>(`/units/${id}`),
+
+  exportUnits: () => apiClient.download('/units/export'),
+
+  importUnits: (formData: FormData) =>
+    apiClient.upload<{
+      success: boolean;
+      message: string;
+      summary: { created: number; updated: number; failed: number };
+      errors: Array<{ row: number; message: string }>;
+      units: any[];
+    }>('/units/import', formData),
+};
+
+export const warehousesApi = {
+  getWarehouses: () =>
+    apiClient.get<{ success: boolean; message: string; warehouses: any[] }>('/warehouses'),
+
+  getWarehouse: (id: string) =>
+    apiClient.get<{ success: boolean; message: string; warehouse: any }>(`/warehouses/${id}`),
+
+  createWarehouse: (warehouse: { name: string; description?: string; address?: string; status?: 'Active' | 'Inactive' }) =>
+    apiClient.post<{ success: boolean; message: string; warehouse: any }>('/warehouses', warehouse),
+
+  updateWarehouse: (id: string, warehouse: { name?: string; description?: string; address?: string; status?: 'Active' | 'Inactive' }) =>
+    apiClient.put<{ success: boolean; message: string; warehouse: any }>(`/warehouses/${id}`, warehouse),
+
+  deleteWarehouse: (id: string) =>
+    apiClient.delete<{ success: boolean; message: string }>(`/warehouses/${id}`),
+
+  exportWarehouses: () => apiClient.download('/warehouses/export'),
+
+  importWarehouses: (formData: FormData) =>
+    apiClient.upload<{
+      success: boolean;
+      message: string;
+      summary: { created: number; updated: number; failed: number };
+      errors: Array<{ row: number; message: string }>;
+      warehouses: any[];
+    }>('/warehouses/import', formData),
+};
+
 // Admin API endpoints
 export const adminApi = {
   getStores: () =>
@@ -271,14 +434,58 @@ export const adminApi = {
   getStore: (id: string) =>
     apiClient.get<{ success: boolean; data: { store: any } }>(`/admin/stores/${id}`),
   
-  createStore: (store: { name: string; storeId: string; prefix: string }) =>
-    apiClient.post<{ success: boolean; message: string; data: { store: any } }>('/admin/stores', store),
+  createStore: (store: { 
+    name: string; 
+    storeId: string; 
+    prefix: string;
+    subscriptionDuration?: '1month' | '2months' | '1year' | '2years';
+    subscriptionEndDate?: string;
+  }) =>
+    apiClient.post<{ success: boolean; message: string; data: { store: any; defaultAdmin?: { id: string; username: string; email: string; fullName: string } | null } }>('/admin/stores', store),
   
-  updateStore: (id: string, store: { name: string }) =>
+  updateStore: (id: string, store: { 
+    name?: string;
+    email?: string;
+    phone?: string;
+    address?: string;
+    city?: string;
+    country?: string;
+  }) =>
     apiClient.put<{ success: boolean; message: string; data: { store: any } }>(`/admin/stores/${id}`, store),
   
   deleteStore: (id: string) =>
     apiClient.delete<{ success: boolean; message: string }>(`/admin/stores/${id}`),
+  
+  renewSubscription: (id: string, data: {
+    subscriptionDuration?: '1month' | '2months' | '1year' | '2years';
+    subscriptionEndDate?: string;
+  }) =>
+    apiClient.post<{ success: boolean; message: string; data: { store: any } }>(`/admin/stores/${id}/renew-subscription`, data),
+  
+  toggleStoreStatus: (id: string, isActive: boolean) =>
+    apiClient.patch<{ success: boolean; message: string; data: { store: any } }>(`/admin/stores/${id}/status`, { isActive }),
+  
+  // Settings management (admin only)
+  getSettings: () =>
+    apiClient.get<{ success: boolean; data: { settings: Record<string, string>; settingsList: any[] } }>('/admin/settings'),
+  
+  getSetting: (key: string) =>
+    apiClient.get<{ success: boolean; data: { setting: any } }>(`/admin/settings/${key}`),
+  
+  updateSetting: (key: string, data: { value: string; description?: string }) =>
+    apiClient.put<{ success: boolean; message: string; data: { setting: any } }>(`/admin/settings/${key}`, data),
+};
+
+// Store Settings API endpoints (for store users)
+export const storeSettingsApi = {
+  getSettings: () =>
+    apiClient.get<{ success: boolean; data: { settings: Record<string, string>; settingsList: any[] } }>('/settings'),
+  
+  getSetting: (key: string) =>
+    apiClient.get<{ success: boolean; data: { setting: any } }>(`/settings/${key}`),
+  
+  updateSetting: (key: string, data: { value: string; description?: string }) =>
+    apiClient.put<{ success: boolean; message: string; data: { setting: any } }>(`/settings/${key}`, data),
 };
 
 // Payment API endpoints

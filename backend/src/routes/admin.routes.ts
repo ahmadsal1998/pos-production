@@ -5,8 +5,15 @@ import {
   createStore,
   updateStore,
   deleteStore,
+  renewSubscription,
+  toggleStoreStatus,
   validateCreateStore,
   validateUpdateStore,
+  validateRenewSubscription,
+  getSettings,
+  getSetting,
+  updateSetting,
+  validateUpdateSetting,
 } from '../controllers/admin.controller';
 import { authenticate, authorize } from '../middleware/auth.middleware';
 
@@ -35,6 +42,13 @@ router.get('/stores/:id', getStore);
 router.post('/stores', validateCreateStore, createStore);
 router.put('/stores/:id', validateUpdateStore, updateStore);
 router.delete('/stores/:id', deleteStore);
+router.post('/stores/:id/renew-subscription', validateRenewSubscription, renewSubscription);
+router.patch('/stores/:id/status', toggleStoreStatus);
+
+// Settings management routes
+router.get('/settings', getSettings);
+router.get('/settings/:key', getSetting);
+router.put('/settings/:key', validateUpdateSetting, updateSetting);
 
 export default router;
 

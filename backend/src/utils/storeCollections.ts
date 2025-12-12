@@ -112,8 +112,8 @@ export async function createStoreCollections(
   databaseId: number,
   storeId?: string
 ): Promise<void> {
-  // Collections that use prefix (products, orders, categories)
-  const prefixCollections = ['products', 'orders', 'categories'];
+  // Collections that use prefix (products, orders, categories, customers)
+  const prefixCollections = ['products', 'orders', 'categories', 'customers', 'settings'];
   
   for (const collectionType of prefixCollections) {
     try {

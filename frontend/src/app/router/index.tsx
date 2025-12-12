@@ -7,6 +7,7 @@ import LoginPage from '@/pages/auth/LoginPage';
 import ForgotPasswordPage from '@/pages/auth/ForgotPasswordPage';
 import ResetPasswordPage from '@/pages/auth/ResetPasswordPage';
 import VerificationPage from '@/pages/auth/VerificationPage';
+import ExpiredSubscriptionPage from '@/pages/auth/ExpiredSubscriptionPage';
 
 // Dashboard
 import DashboardPage from '@/pages/dashboard/Dashboard';
@@ -14,11 +15,15 @@ import DashboardPage from '@/pages/dashboard/Dashboard';
 // Product Pages
 import ProductDashboard from '@/pages/products/ProductDashboard';
 import AddMultiUnitProductPage from '@/pages/products/AddMultiUnitProductPage';
+import AddNewProductPage from '@/pages/products/AddNewProductPage';
+import AddAdditionalUnitsPage from '@/pages/products/AddAdditionalUnitsPage';
+import AddProductPage from '@/pages/products/AddProductPage';
 import ProductListPage from '@/pages/products/ProductListPage';
 import ProductManagementPage from '@/pages/products/ProductManagementPage';
 import ProductPage from '@/pages/products/ProductPage';
 import BrandManagementPage from '@/pages/products/BrandManagementPage';
 import CategoryManagementPage from '@/pages/products/CategoryManagementPage';
+import WarehouseManagementPage from '@/pages/products/WarehouseManagementPage';
 
 // Sales Pages
 import SalesPage from '@/pages/sales/SalesPage';
@@ -59,6 +64,10 @@ export const router = createBrowserRouter([
   {
     path: '/verification',
     element: <VerificationPage />,
+  },
+  {
+    path: '/subscription-expired',
+    element: <ExpiredSubscriptionPage />,
   },
   
   // Main Application Routes (Protected)
@@ -109,10 +118,34 @@ export const router = createBrowserRouter([
             ),
           },
           {
+            path: 'add',
+            element: (
+              <PermissionProtectedRoute>
+                <AddProductPage />
+              </PermissionProtectedRoute>
+            ),
+          },
+          {
+            path: 'edit/:id',
+            element: (
+              <PermissionProtectedRoute>
+                <AddProductPage />
+              </PermissionProtectedRoute>
+            ),
+          },
+          {
             path: 'add-multi-unit',
             element: (
               <PermissionProtectedRoute>
                 <AddMultiUnitProductPage />
+              </PermissionProtectedRoute>
+            ),
+          },
+          {
+            path: 'add-new',
+            element: (
+              <PermissionProtectedRoute>
+                <AddNewProductPage />
               </PermissionProtectedRoute>
             ),
           },
@@ -129,6 +162,22 @@ export const router = createBrowserRouter([
             element: (
               <PermissionProtectedRoute>
                 <BrandManagementPage />
+              </PermissionProtectedRoute>
+            ),
+          },
+          {
+            path: 'warehouses',
+            element: (
+              <PermissionProtectedRoute>
+                <WarehouseManagementPage />
+              </PermissionProtectedRoute>
+            ),
+          },
+          {
+            path: ':productId/add-units',
+            element: (
+              <PermissionProtectedRoute>
+                <AddAdditionalUnitsPage />
               </PermissionProtectedRoute>
             ),
           },

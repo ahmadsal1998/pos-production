@@ -1,6 +1,7 @@
 import mongoose from 'mongoose';
 import dotenv from 'dotenv';
 import User from '../models/User';
+import { ensureAdminDatabase } from '../config/database';
 
 // Load environment variables
 dotenv.config();
@@ -9,7 +10,12 @@ const seedDatabase = async () => {
   try {
     // Connect to MongoDB
     console.log('🔄 Connecting to MongoDB...');
-    await mongoose.connect(process.env.MONGODB_URI as string);
+    const mongoUri = process.env.MONGODB_URI as string;
+    if (!mongoUri) {
+      throw new Error('MONGODB_URI environment variable is not set');
+    }
+    const uriWithAdminDb = ensureAdminDatabase(mongoUri);
+    await mongoose.connect(uriWithAdminDb);
     console.log('✅ Connected to MongoDB');
 
     // Check if admin user already exists

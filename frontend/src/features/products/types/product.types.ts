@@ -85,6 +85,27 @@ export interface Brand {
   productCount: number;
 }
 
+// --- UNIT MANAGEMENT INTERFACES ---
+export interface Unit {
+  id: string;
+  nameAr: string;
+  description?: string;
+  createdAt: string; // ISO date string
+  updatedAt?: string;
+}
+
+// --- WAREHOUSE MANAGEMENT INTERFACES ---
+export interface Warehouse {
+  id: string;
+  nameAr: string;
+  description?: string;
+  address?: string;
+  status: 'Active' | 'Inactive';
+  createdAt: string; // ISO date string
+  updatedAt?: string;
+  productCount: number; // Number of products in this warehouse
+}
+
 // --- WHOLESALE POS INTERFACES ---
 
 export interface WholesaleProductUnit {

@@ -87,10 +87,7 @@ const MOCK_WHOLESALE_PRODUCTS: WholesaleProduct[] = [
   ]},
 ];
 
-const MOCK_WHOLESALE_CUSTOMERS: Customer[] = [
-  { id: UUID(), name: 'متجر بقالة المدينة', phone: '0501112222', previousBalance: 2500, companyName: 'شركة المدينة للتجارة', address: 'الرياض, شارع الملك فهد' },
-  { id: UUID(), name: 'سوبرماركت الواحة', phone: '0553334444', previousBalance: 0, companyName: 'مؤسسة الواحة', address: 'جدة, حي السلامة' },
-];
+// All dummy/fake wholesale customers have been removed. Customer list starts empty.
 
 const ALL_CATEGORIES = [...new Set(MOCK_WHOLESALE_PRODUCTS.map(p => p.category))];
 const ALL_BRANDS = [...new Set(MOCK_WHOLESALE_PRODUCTS.map(p => p.brand))];
@@ -109,6 +106,7 @@ const generateNewInvoice = (cashierName: string): WholesaleInvoice => ({
 
 const WholesalePOSPage: React.FC = () => {
     const [invoice, setInvoice] = useState<WholesaleInvoice>(generateNewInvoice(AR_LABELS.ahmadSai));
+    const [customers, setCustomers] = useState<Customer[]>([]); // Customer list - starts empty, no dummy customers
     const [searchTerm, setSearchTerm] = useState('');
     const [filters, setFilters] = useState({ category: 'all', brand: 'all' });
     const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
@@ -320,7 +318,7 @@ const WholesalePOSPage: React.FC = () => {
     };
     
     const handleSelectCustomer = (customerId: string) => {
-        const customer = MOCK_WHOLESALE_CUSTOMERS.find(c => c.id === customerId);
+        const customer = customers.find(c => c.id === customerId);
         setSelectedCustomer(customer || null);
         setInvoice(inv => ({...inv, customer: customer || null}));
     };
@@ -522,7 +520,7 @@ const WholesalePOSPage: React.FC = () => {
                             id="wholesale-customer-dropdown"
                             value={selectedCustomer?.id || ''}
                             onChange={(value) => handleSelectCustomer(value)}
-                            options={MOCK_WHOLESALE_CUSTOMERS.map(c => ({ value: c.id, label: `${c.name} (${c.companyName})` }))}
+                            options={customers.map(c => ({ value: c.id, label: `${c.name} (${c.companyName || ''})` }))}
                             placeholder={AR_LABELS.selectWholesaleCustomer}
                             className="w-full mb-3"
                         />

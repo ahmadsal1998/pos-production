@@ -4,7 +4,7 @@ import { NavItem } from '@/shared/constants';
 import { AR_LABELS, NAV_ITEMS, ChevronDownIcon } from '@/shared/constants';
 import { useAppStore, useAuthStore } from '@/app/store';
 import { useDropdown } from '@/shared/contexts/DropdownContext';
-import { LogoutIcon, MobileRechargeIcon } from '@/shared/assets/icons';
+import { LogoutIcon, MobileRechargeIcon, LinkPayIcon } from '@/shared/assets/icons';
 import { hasRoutePermission } from '@/shared/utils/permissions';
 import { RechargeModal } from '@/shared/components/ui';
 
@@ -270,7 +270,7 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
               className="group flex items-center justify-center w-9 h-9 rounded-xl text-gray-600 dark:text-gray-300 hover:bg-orange-50 dark:hover:bg-gray-800 hover:text-orange-600 dark:hover:text-orange-400 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-offset-2 dark:focus:ring-offset-gray-900 transition-all duration-200 flex-shrink-0"
               aria-label="Toggle sidebar"
               aria-expanded={!isSidebarCollapsed}
-              title={isSidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+              title={isSidebarCollapsed ? AR_LABELS.expandSidebar : AR_LABELS.collapseSidebar}
             >
               <svg
                 className="h-5 w-5 transition-transform duration-300 group-hover:scale-110"
@@ -461,6 +461,30 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
           </ul>
         </nav>
 
+        {/* LinkPay Button */}
+        <div className="px-3 py-2 border-t border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 flex-shrink-0">
+          <button
+            onClick={() => {
+              window.open('https://b1.linkpay.ps/login/', '_blank', 'noopener,noreferrer');
+              onClose(); // Close sidebar on mobile after opening link
+            }}
+            className={`group flex items-center ${isSidebarCollapsed ? 'justify-center' : 'justify-start'} gap-3 w-full px-3 py-2.5 rounded-lg transition-all duration-200 bg-green-50 dark:bg-green-950/20 hover:bg-green-100 dark:hover:bg-green-950/30 text-green-600 dark:text-green-400 hover:text-green-700 dark:hover:text-green-300 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 dark:focus:ring-offset-gray-900`}
+            title={isSidebarCollapsed ? AR_LABELS.linkPay : ''}
+            aria-label={AR_LABELS.linkPay}
+          >
+            <div className="transition-all duration-200 text-green-600 dark:text-green-400 group-hover:scale-110">
+              <LinkPayIcon className="h-5 w-5" />
+            </div>
+            <span
+              className={`text-sm font-medium transition-all duration-300 ${
+                isSidebarCollapsed ? 'opacity-0 w-0 overflow-hidden' : 'opacity-100'
+              }`}
+            >
+              {AR_LABELS.linkPay}
+            </span>
+          </button>
+        </div>
+
         {/* Recharge Mobile Balance Button */}
         <div className="px-3 py-2 border-t border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 flex-shrink-0">
           <button
@@ -509,8 +533,8 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
         {/* Copyright */}
         {!isSidebarCollapsed && (
           <div className="px-4 py-4 text-center text-xs text-gray-500 dark:text-gray-400 border-t border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-950/50 transition-all duration-300">
-            <p className="font-medium mb-1 text-gray-700 dark:text-gray-300">Brand Restaurant Admin</p>
-            <p className="text-gray-500 dark:text-gray-400">2023 All Rights Reserved</p>
+            <p className="font-medium mb-1 text-gray-700 dark:text-gray-300">{AR_LABELS.brandRestaurantAdmin}</p>
+            <p className="text-gray-500 dark:text-gray-400">2023 {AR_LABELS.allRightsReserved}</p>
             <p className="mt-1.5 opacity-75">{AR_LABELS.madeWithLove}</p>
           </div>
         )}

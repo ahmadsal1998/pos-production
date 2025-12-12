@@ -3,6 +3,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAppStore, useAuthStore } from '@/app/store';
 import { useDropdown } from '@/shared/contexts/DropdownContext';
 import { LogoutIcon } from '@/shared/assets/icons';
+import { AR_LABELS } from '@/shared/constants/ui';
 
 interface AdminSidebarProps {
   activePath: string;
@@ -15,7 +16,7 @@ interface AdminSidebarProps {
 const ADMIN_NAV_ITEMS = [
   {
     id: 1,
-    label: 'Dashboard',
+    label: AR_LABELS.adminDashboard,
     path: '/admin/dashboard',
     icon: (
       <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -25,7 +26,7 @@ const ADMIN_NAV_ITEMS = [
   },
   {
     id: 2,
-    label: 'Store Management',
+    label: AR_LABELS.storeManagement,
     path: '/admin/stores',
     icon: (
       <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -35,7 +36,7 @@ const ADMIN_NAV_ITEMS = [
   },
   {
     id: 3,
-    label: 'System Settings',
+    label: AR_LABELS.systemSettings,
     path: '/admin/settings',
     icon: (
       <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -46,7 +47,7 @@ const ADMIN_NAV_ITEMS = [
   },
   {
     id: 4,
-    label: 'Users & Permissions',
+    label: AR_LABELS.usersAndPermissions,
     path: '/admin/users',
     icon: (
       <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -136,7 +137,7 @@ const AdminSidebar: React.FC<AdminSidebarProps> = ({ isOpen, onClose }) => {
               className="group flex items-center justify-center w-9 h-9 rounded-xl text-slate-300 dark:text-slate-400 hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:focus:ring-offset-slate-900 transition-all duration-200 flex-shrink-0"
               aria-label="Toggle sidebar"
               aria-expanded={!isSidebarCollapsed}
-              title={isSidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+              title={isSidebarCollapsed ? AR_LABELS.expandSidebar : AR_LABELS.collapseSidebar}
             >
               <svg
                 className="h-5 w-5 transition-transform duration-300 group-hover:scale-110"
@@ -157,7 +158,7 @@ const AdminSidebar: React.FC<AdminSidebarProps> = ({ isOpen, onClose }) => {
             <span className={`text-xl sm:text-2xl font-bold bg-gradient-to-r from-blue-400 via-blue-500 to-blue-600 bg-clip-text text-transparent transition-all duration-300 whitespace-nowrap ${
               isSidebarCollapsed ? 'opacity-0 w-0 overflow-hidden' : 'opacity-100'
             }`}>
-              Admin Panel
+              {AR_LABELS.brandRestaurantAdmin}
             </span>
           </div>
         </div>
@@ -211,10 +212,10 @@ const AdminSidebar: React.FC<AdminSidebarProps> = ({ isOpen, onClose }) => {
               </div>
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-semibold text-white truncate">
-                  {user?.fullName || 'Admin User'}
+                  {user?.fullName || AR_LABELS.admin}
                 </p>
                 <p className="text-xs text-slate-400 truncate">
-                  System Administrator
+                  {AR_LABELS.admin}
                 </p>
               </div>
             </div>
@@ -226,8 +227,8 @@ const AdminSidebar: React.FC<AdminSidebarProps> = ({ isOpen, onClose }) => {
           <button
             onClick={handleLogout}
             className={`group flex items-center ${isSidebarCollapsed ? 'justify-center' : 'justify-start'} gap-3 w-full px-3 py-2.5 rounded-lg transition-all duration-200 bg-red-600/20 hover:bg-red-600/30 text-red-400 hover:text-red-300 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 dark:focus:ring-offset-slate-900`}
-            title={isSidebarCollapsed ? 'Logout' : ''}
-            aria-label="Logout"
+            title={isSidebarCollapsed ? AR_LABELS.logout : ''}
+            aria-label={AR_LABELS.logout}
           >
             <div className="transition-all duration-200 text-red-400 group-hover:scale-110">
               <LogoutIcon className="h-5 w-5" />
@@ -237,7 +238,7 @@ const AdminSidebar: React.FC<AdminSidebarProps> = ({ isOpen, onClose }) => {
                 isSidebarCollapsed ? 'opacity-0 w-0 overflow-hidden' : 'opacity-100'
               }`}
             >
-              Logout
+              {AR_LABELS.logout}
             </span>
           </button>
         </div>

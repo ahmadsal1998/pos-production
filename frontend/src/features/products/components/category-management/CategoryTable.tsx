@@ -1,6 +1,7 @@
 import React, { useCallback, useMemo, useState } from 'react';
 import { AR_LABELS, DeleteIcon, EditIcon, ViewIcon } from '@/shared/constants';
 import { Category } from '@/shared/types';
+import { formatDate } from '@/shared/utils';
 
 interface CategoryTableProps {
   categories: Category[];
@@ -85,7 +86,7 @@ const CategoryTableRow: React.FC<CategoryTableRowProps> = ({
           {category.productCount}
         </td>
         <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-500 dark:text-gray-400">
-          {new Date(category.createdAt).toLocaleDateString('ar-EG')}
+          {formatDate(category.createdAt)}
         </td>
         <td className="whitespace-nowrap px-6 py-4 text-sm">
           <span

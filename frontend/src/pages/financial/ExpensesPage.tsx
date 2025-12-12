@@ -5,6 +5,7 @@ import {
 } from '@/shared/constants';
 import { MetricCard } from '@/shared/components/ui/MetricCard';
 import CustomDropdown from '@/shared/components/ui/CustomDropdown/CustomDropdown';
+import { formatDate } from '@/shared/utils';
 
 // --- MOCK DATA ---
 const MOCK_EXPENSES: Expense[] = [
@@ -407,7 +408,7 @@ const ExpensesPage: React.FC = () => {
                                         <td className="px-6 py-4 text-sm text-gray-700 dark:text-gray-300 max-w-xs truncate">{e.description}</td>
                                         <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">{e.responsiblePerson}</td>
                                         <td className="px-6 py-4 whitespace-nowrap text-sm font-semibold text-red-600">{e.amount.toLocaleString('ar-SA', {style: 'currency', currency: 'SAR'})}</td>
-                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700 dark:text-gray-300">{new Date(e.date).toLocaleDateString('ar-SA')}</td>
+                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700 dark:text-gray-300">{formatDate(e.date)}</td>
                                         <td className="px-6 py-4 whitespace-nowrap text-sm">
                                             <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${e.status === 'Paid' ? 'bg-green-100 text-green-800 dark:bg-green-900/50 dark:text-green-300' : 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/50 dark:text-yellow-300'}`}>
                                                 {e.status === 'Paid' ? AR_LABELS.paid : AR_LABELS.unpaid}

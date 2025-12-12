@@ -3,6 +3,7 @@ import { PurchaseOrder, ChequeDetails, ChequeStatus } from '@/features/financial
 import { AR_LABELS, UUID, SearchIcon, GridViewIcon, TableViewIcon, ClockIcon, ChequesIcon, XIcon, CheckCircleIcon, EditIcon } from '@/shared/constants';
 import { MetricCard } from '@/shared/components/ui/MetricCard';
 import CustomDropdown, { DropdownOption } from '@/shared/components/ui/CustomDropdown/CustomDropdown';
+import { formatDate } from '@/shared/utils';
 
 // Replicating mock data locally as we can't import from other components
 const MOCK_SUPPLIERS_DATA = [
@@ -50,7 +51,7 @@ const ChequeDetailsModal: React.FC<{
                     <p><strong>{AR_LABELS.supplier}:</strong> {cheque.supplierName}</p>
                     <p><strong>{AR_LABELS.amount}:</strong> <span className="font-bold text-lg text-orange-600">{cheque.chequeAmount.toLocaleString('ar-SA', {style: 'currency', currency: 'SAR'})}</span></p>
                     <p><strong>{AR_LABELS.bankName}:</strong> {cheque.bankName || 'N/A'}</p>
-                    <p><strong>{AR_LABELS.dueDate}:</strong> {new Date(cheque.chequeDueDate).toLocaleDateString('ar-SA')}</p>
+                    <p><strong>{AR_LABELS.dueDate}:</strong> {formatDate(cheque.chequeDueDate)}</p>
                     <p><strong>{AR_LABELS.status}:</strong> <span className={`px-2 py-1 text-xs font-semibold rounded-full ${CHEQUE_STATUS_STYLES[cheque.status].bg} ${CHEQUE_STATUS_STYLES[cheque.status].text}`}>{CHEQUE_STATUS_STYLES[cheque.status].label}</span></p>
                 </div>
                 <div className="mt-4 pt-4 border-t dark:border-gray-700">
@@ -257,7 +258,7 @@ const ChequesPage: React.FC = () => {
                                             <td className="px-2 py-3 sm:px-4 sm:py-4 whitespace-nowrap text-xs sm:text-sm font-mono text-gray-800 dark:text-gray-200">{cheque.chequeNumber}</td>
                                             <td className="px-2 py-3 sm:px-4 sm:py-4 whitespace-nowrap text-xs sm:text-sm font-medium text-gray-900 dark:text-gray-100 truncate max-w-[120px] sm:max-w-none">{cheque.supplierName}</td>
                                             <td className="px-2 py-3 sm:px-4 sm:py-4 whitespace-nowrap text-xs sm:text-sm font-semibold text-orange-600">{cheque.chequeAmount.toLocaleString('ar-SA', {style: 'currency', currency: 'SAR'})}</td>
-                                            <td className="px-2 py-3 sm:px-4 sm:py-4 whitespace-nowrap text-xs sm:text-sm text-gray-700 dark:text-gray-300">{new Date(cheque.chequeDueDate).toLocaleDateString('ar-SA')}</td>
+                                            <td className="px-2 py-3 sm:px-4 sm:py-4 whitespace-nowrap text-xs sm:text-sm text-gray-700 dark:text-gray-300">{formatDate(cheque.chequeDueDate)}</td>
                                             <td className="px-2 py-3 sm:px-4 sm:py-4 whitespace-nowrap"><span className={`px-2 py-1 text-xs font-semibold rounded-full ${CHEQUE_STATUS_STYLES[cheque.status].bg} ${CHEQUE_STATUS_STYLES[cheque.status].text}`}>{CHEQUE_STATUS_STYLES[cheque.status].label}</span></td>
                                             <td className="px-2 py-3 sm:px-4 sm:py-4 whitespace-nowrap text-center text-xs sm:text-sm"><button onClick={() => setModalCheque(cheque)} className="text-indigo-600 hover:text-indigo-900 dark:text-indigo-400 dark:hover:text-indigo-300 p-1" title={AR_LABELS.edit}><EditIcon/></button></td>
                                         </tr>

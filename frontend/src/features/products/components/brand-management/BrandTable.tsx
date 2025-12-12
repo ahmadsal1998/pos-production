@@ -1,6 +1,7 @@
 import React from 'react';
 import { AR_LABELS, DeleteIcon, EditIcon, ViewIcon } from '@/shared/constants';
 import { Brand } from '@/shared/types';
+import { formatDate } from '@/shared/utils';
 
 interface BrandTableProps {
   brands: Brand[];
@@ -41,7 +42,7 @@ const BrandTable: React.FC<BrandTableProps> = ({ brands, onEdit, onDelete }) => 
                 {brand.productCount}
               </td>
               <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-500 dark:text-gray-400">
-                {new Date(brand.createdAt).toLocaleDateString('ar-EG')}
+                {formatDate(brand.createdAt)}
               </td>
               <td className="whitespace-nowrap px-6 py-4 text-sm">
                 <span

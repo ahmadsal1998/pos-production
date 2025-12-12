@@ -73,42 +73,7 @@ const ProductAnalytics: React.FC<ProductAnalyticsProps> = ({ onViewDetails }) =>
       {/* Time Filter */}
 
 
-      {/* Key Metrics */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <MetricCard
-          id={1}
-          title="إجمالي المنتجات"
-          value={analytics.totalProducts.toString()}
-          icon={<div className="w-6 h-6 bg-blue-500 rounded"></div>}
-          bgColor="bg-blue-100"
-          valueColor="text-blue-600"
-        />
-        <MetricCard
-          id={2}
-          title="القيمة الإجمالية"
-          value={`${analytics.totalValue.toFixed(2)} ر.س`}
-          icon={<div className="w-6 h-6 bg-green-500 rounded"></div>}
-          bgColor="bg-green-100"
-          valueColor="text-green-600"
-        />
-        <MetricCard
-          id={3}
-          title="هامش الربح"
-          value={`${analytics.profitMargin.toFixed(1)}%`}
-          icon={<div className="w-6 h-6 bg-purple-500 rounded"></div>}
-          bgColor="bg-purple-100"
-          valueColor="text-purple-600"
-        />
-        <MetricCard
-          id={4}
-          title="منتجات قليلة المخزون"
-          value={analytics.lowStockCount.toString()}
-          icon={<div className="w-6 h-6 bg-red-500 rounded"></div>}
-          bgColor="bg-red-100"
-          valueColor="text-red-600"
-        />
-      </div>
-
+  
       {/* Top Categories */}
 
 

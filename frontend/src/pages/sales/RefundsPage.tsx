@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useCallback } from 'react';
 import { RefundTransaction, RefundedItem, POSInvoice, POSCartItem } from '@/features/sales/types';
 import { AR_LABELS, UUID, SearchIcon, PlusIcon, ViewIcon, EditIcon, DeleteIcon } from '@/shared/constants';
+import { formatDate } from '@/shared/utils';
 
 // --- MOCK DATA ---
 // We need mock original invoices to search against. Let's create some.
@@ -168,7 +169,7 @@ const RefundModal: React.FC<{
                             <p><strong>{AR_LABELS.invoiceDetails}:</strong></p>
                             <p>{AR_LABELS.originalInvoiceNumber}: {foundInvoice.id}</p>
                             <p>{AR_LABELS.customerName}: {foundInvoice.customer?.name}</p>
-                            <p>{AR_LABELS.date}: {new Date(foundInvoice.date).toLocaleDateString('ar-EG')}</p>
+                            <p>{AR_LABELS.date}: {formatDate(foundInvoice.date)}</p>
                         </div>
 
                         {/* Step 2: Select Products */}
@@ -302,7 +303,7 @@ const RefundsPage: React.FC = () => {
                                         {refund.refundedItems.map(item => `${item.productName} (x${item.quantity})`).join(', ')}
                                     </td>
                                     <td className="px-6 py-4 whitespace-nowrap text-sm font-semibold text-red-600">{refund.totalRefundAmount.toFixed(2)} ر.س</td>
-                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700 dark:text-gray-300">{new Date(refund.refundDate).toLocaleDateString('ar-EG')}</td>
+                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700 dark:text-gray-300">{formatDate(refund.refundDate)}</td>
                                     <td className="px-6 py-4 whitespace-nowrap text-sm">
                                         <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${refund.status === 'Full' ? 'bg-red-100 text-red-800 dark:bg-red-900/50 dark:text-red-300' : 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/50 dark:text-yellow-300'}`}>
                                             {refund.status === 'Full' ? AR_LABELS.fullRefund : AR_LABELS.partialRefund}

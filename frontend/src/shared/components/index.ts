@@ -11,3 +11,5 @@ export { MetricCard } from './ui/MetricCard';
 export { CustomDropdown } from './ui/CustomDropdown';
 export { QuickActionCard } from './ui/QuickActionCard';
 export { ToggleSwitch } from './ui/ToggleSwitch';
+export { Pagination } from './ui/Pagination';
+export type { PaginationProps } from './ui/Pagination';

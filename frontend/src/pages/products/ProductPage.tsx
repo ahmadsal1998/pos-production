@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { AR_LABELS, EditIcon, DeleteIcon, SearchIcon } from '@/shared/constants';
 import { Product } from '@/shared/types';
+import { formatDate } from '@/shared/utils';
 
 interface ProductPageProps {}
 
@@ -100,7 +101,7 @@ const ProductPage: React.FC<ProductPageProps> = () => {
                       {product.stock}
                     </span>
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap"><div className="text-sm text-gray-700 dark:text-gray-300">{new Date(product.expiryDate).toLocaleDateString('ar-EG')}</div></td>
+                  <td className="px-6 py-4 whitespace-nowrap"><div className="text-sm text-gray-700 dark:text-gray-300">{formatDate(product.expiryDate)}</div></td>
                   <td className="px-6 py-4 whitespace-nowrap text-center text-sm font-medium">
                     <button onClick={() => handleEditProduct(product.id)} className="text-indigo-600 hover:text-indigo-900 dark:text-indigo-400 dark:hover:text-indigo-300 ml-4 p-2 rounded-full hover:bg-indigo-50 dark:hover:bg-gray-700 transition-colors duration-200" aria-label={`${AR_LABELS.edit} ${product.name}`}><EditIcon /></button>
                     <button onClick={() => handleDeleteProduct(product.id)} className="text-red-600 hover:text-red-900 dark:text-red-400 dark:hover:text-red-300 p-2 rounded-full hover:bg-red-50 dark:hover:bg-gray-700 transition-colors duration-200" aria-label={`${AR_LABELS.delete} ${product.name}`}><DeleteIcon /></button>

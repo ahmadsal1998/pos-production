@@ -4,17 +4,15 @@ import { SaleTransaction, Customer, CustomerPayment, CustomerAccountSummary, Sal
 import { AR_LABELS, UUID, SearchIcon, PlusIcon, EditIcon, DeleteIcon, PrintIcon, ViewIcon, ExportIcon, AddPaymentIcon } from '@/shared/constants';
 import { MetricCard } from '@/shared/components/ui/MetricCard';
 import CustomDropdown from '@/shared/components/ui/CustomDropdown/CustomDropdown';
+import { formatDate } from '@/shared/utils';
+import { customersApi, ApiError } from '@/lib/api/client';
 
 interface SalesPageProps {
   setActivePath?: (path: string) => void; // Make optional for backward compatibility
 }
 
 // --- MOCK DATA ---
-const MOCK_CUSTOMERS: Customer[] = [
-  { id: 'cust-1', name: 'علي محمد', phone: '0501234567', previousBalance: 0 },
-  { id: 'cust-2', name: 'فاطمة الزهراء', phone: '0557654321', previousBalance: 0 },
-  { id: 'cust-3', name: 'متجر بقالة المدينة', phone: '0501112222', previousBalance: 0, companyName: 'شركة المدينة للتجارة' },
-];
+// All dummy/fake customers have been removed. Customer list starts empty.
 
 const MOCK_USERS = [AR_LABELS.ahmadSai, 'موظف آخر'];
 
@@ -275,7 +273,7 @@ const CustomerDetailsModal: React.FC<{
                              <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
                                  {transactions.map((t, i) => (
                                      <tr key={i}>
-                                         <td className="p-2 text-sm">{new Date(t.date).toLocaleDateString('ar-SA')}</td>
+                                         <td className="p-2 text-sm">{formatDate(t.date)}</td>
                                          <td className="p-2 text-sm">{t.description}</td>
                                          <td className="p-2 text-sm text-left font-mono">{t.debit > 0 ? t.debit.toFixed(2) : '-'}</td>
                                          <td className="p-2 text-sm text-left font-mono text-green-600">{t.credit > 0 ? t.credit.toFixed(2) : '-'}</td>
@@ -297,11 +295,78 @@ const CustomerDetailsModal: React.FC<{
 
 // --- MAIN PAGE COMPONENT ---
 const SalesPage: React.FC<SalesPageProps> = ({ setActivePath }) => {
+    const navigate = useNavigate();
     const [activeTab, setActiveTab] = useState('sales'); // 'sales', 'reports', 'customers'
     const [sales, setSales] = useState(MOCK_SALES_DATA);
-    const [customers, setCustomers] = useState(MOCK_CUSTOMERS);
+    const [customers, setCustomers] = useState<Customer[]>([]);
     const [payments, setPayments] = useState(MOCK_PAYMENTS_DATA);
     const [viewingSale, setViewingSale] = useState<SaleTransaction | null>(null);
+    const [isLoadingCustomers, setIsLoadingCustomers] = useState(false);
+    const [customersError, setCustomersError] = useState<string | null>(null);
+
+    // Fetch customers from API
+    const fetchCustomers = useCallback(async () => {
+        setIsLoadingCustomers(true);
+        setCustomersError(null);
+        try {
+            const response = await customersApi.getCustomers();
+            console.log('Customers API Response:', response); // Debug log
+            
+            // The API client wraps the response, so response.data contains the backend response
+            // Backend response structure: { success: boolean, message: string, data: { customers: [] } }
+            const backendResponse = response.data;
+            
+            // Check backend's success field
+            if (backendResponse?.success) {
+                // Check if customers are in backendResponse.data.customers
+                const customersArray = backendResponse.data?.customers || [];
+                
+                if (Array.isArray(customersArray)) {
+                    // Transform API response to match Customer type
+                    const transformedCustomers: Customer[] = customersArray.map((c: any) => ({
+                        id: c.id,
+                        name: c.name,
+                        phone: c.phone,
+                        previousBalance: c.previousBalance || 0,
+                        ...(c.address && { address: c.address }),
+                    }));
+                    console.log(`Loaded ${transformedCustomers.length} customers from database`); // Debug log
+                    setCustomers(transformedCustomers);
+                } else {
+                    // Invalid response structure
+                    console.error('Invalid customers array format:', customersArray);
+                    setCustomers([]);
+                }
+            } else {
+                // Backend returned success: false
+                const errorMsg = backendResponse?.message || response.message || 'فشل تحميل قائمة العملاء';
+                setCustomersError(errorMsg);
+                console.error('Backend returned success: false', backendResponse);
+                setCustomers([]); // Clear customers on error
+            }
+        } catch (err: any) {
+            const apiError = err as ApiError;
+            console.error('Error fetching customers:', {
+                error: err,
+                message: apiError.message,
+                status: apiError.status,
+            });
+            
+            if (apiError.status === 401 || apiError.status === 403) {
+                navigate('/login', { replace: true });
+                return;
+            }
+            setCustomersError(apiError.message || 'فشل تحميل قائمة العملاء');
+            setCustomers([]); // Clear customers on error
+        } finally {
+            setIsLoadingCustomers(false);
+        }
+    }, [navigate]);
+
+    // Fetch customers on component mount
+    useEffect(() => {
+        fetchCustomers();
+    }, [fetchCustomers]);
 
     const summaryMetrics = useMemo(() => {
         const today = new Date().toISOString().slice(0, 10);
@@ -364,7 +429,52 @@ const SalesPage: React.FC<SalesPageProps> = ({ setActivePath }) => {
                 <div className="bg-white/95 dark:bg-gray-800/95 rounded-2xl shadow-sm p-6 backdrop-blur-xl border border-slate-200/50 dark:border-slate-700/50">
                     {activeTab === 'sales' && <SalesTableView sales={sales} setActivePath={setActivePath || (() => {})} onViewSale={setViewingSale} />}
                     {activeTab === 'reports' && <ReportsView sales={sales} customers={customers} payments={payments} />}
-                    {activeTab === 'customers' && <CustomerAccountsView sales={sales} customers={customers} payments={payments} setPayments={setPayments} />}
+                    {activeTab === 'customers' && (
+                        <CustomerAccountsView 
+                            sales={sales} 
+                            customers={customers} 
+                            payments={payments} 
+                            setPayments={setPayments}
+                            isLoadingCustomers={isLoadingCustomers}
+                            customersError={customersError}
+                            onRefreshCustomers={fetchCustomers}
+                            onSaveCustomer={async (customer: Customer) => {
+                                try {
+                                    // Save customer to API - extract customer data (name, phone, address)
+                                    const response = await customersApi.createCustomer({
+                                        name: customer.name,
+                                        phone: customer.phone,
+                                        address: customer.address,
+                                        previousBalance: customer.previousBalance || 0,
+                                    });
+
+                                    if (response.success && response.data?.customer) {
+                                        // Transform API response to match Customer type
+                                        const newCustomer: Customer = {
+                                            id: response.data.customer.id,
+                                            name: response.data.customer.name,
+                                            phone: response.data.customer.phone,
+                                            previousBalance: response.data.customer.previousBalance || 0,
+                                            ...(response.data.customer.address && { address: response.data.customer.address }),
+                                        };
+                                        
+                                        // Refresh customers from API to ensure consistency
+                                        await fetchCustomers();
+                                    }
+                                } catch (err: any) {
+                                    const apiError = err as ApiError;
+                                    if (apiError.status === 401 || apiError.status === 403) {
+                                        navigate('/login', { replace: true });
+                                        return;
+                                    }
+                                    const errorMessage = apiError.message || 'فشل حفظ العميل. يرجى المحاولة مرة أخرى.';
+                                    alert(errorMessage);
+                                    console.error('Error saving customer:', err);
+                                    throw err; // Re-throw to let modal handle it
+                                }
+                            }} 
+                        />
+                    )}
                 </div>
 
                 <SaleDetailsModal sale={viewingSale} onClose={() => setViewingSale(null)} />
@@ -444,7 +554,7 @@ const SalesTableRow: React.FC<{sale: SaleTransaction, onView: (s: SaleTransactio
     return (
         <tr className="hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors duration-150">
             <td className="px-6 py-4 whitespace-nowrap text-sm font-mono text-blue-600 dark:text-blue-400">{sale.id}</td>
-            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700 dark:text-gray-300">{new Date(sale.date).toLocaleDateString('ar-SA')}</td>
+            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700 dark:text-gray-300">{formatDate(sale.date)}</td>
             <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">{sale.customerName}</td>
             <td className="px-6 py-4 whitespace-nowrap text-sm font-semibold text-orange-600">{sale.totalAmount.toFixed(2)} ر.س</td>
             <td className="px-6 py-4 whitespace-nowrap text-sm text-green-600">{sale.paidAmount.toFixed(2)} ر.س</td>
@@ -642,16 +752,140 @@ const ReportsView: React.FC<{ sales: SaleTransaction[], customers: Customer[], p
     );
 };
 
+const AddCustomerModal: React.FC<{
+    onClose: () => void;
+    onSave: (customer: Customer) => Promise<void>;
+}> = ({ onClose, onSave }) => {
+    const [name, setName] = useState('');
+    const [phone, setPhone] = useState('');
+    const [address, setAddress] = useState('');
+    const [errors, setErrors] = useState<{ phone?: string }>({});
+    const [isSubmitting, setIsSubmitting] = useState(false);
+
+    const handleSave = async () => {
+        // Validate phone number (required)
+        if (!phone.trim()) {
+            setErrors({ phone: 'رقم الهاتف مطلوب' });
+            return;
+        }
+
+        // Clear errors
+        setErrors({});
+        setIsSubmitting(true);
+
+        try {
+            // Create customer data (without id - API will generate it)
+            const customerData: Omit<Customer, 'id'> = {
+                name: name.trim() || phone, // Use phone as name if name not provided
+                phone: phone.trim(),
+                previousBalance: 0,
+                ...(address.trim() && { address: address.trim() }),
+            };
+
+            // Create a temporary customer object for type compatibility
+            const tempCustomer: Customer = {
+                id: UUID(), // Temporary ID, will be replaced by API
+                ...customerData,
+            };
+
+            await onSave(tempCustomer);
+            
+            // Reset form only on success
+            setName('');
+            setPhone('');
+            setAddress('');
+        } catch (error) {
+            // Error is handled by parent component
+            console.error('Error saving customer:', error);
+        } finally {
+            setIsSubmitting(false);
+        }
+    };
+
+    return (
+        <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4" onClick={onClose}>
+            <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-md text-right" onClick={e => e.stopPropagation()}>
+                <div className="p-6 space-y-4">
+                    <h2 className="text-xl font-bold text-gray-900 dark:text-gray-100">{AR_LABELS.addNewCustomer}</h2>
+                    
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{AR_LABELS.customerName}</label>
+                        <input 
+                            type="text" 
+                            value={name} 
+                            onChange={e => setName(e.target.value)} 
+                            placeholder="اختياري"
+                            className="w-full p-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200 rounded-md text-right"
+                        />
+                    </div>
+
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                            {AR_LABELS.phone} <span className="text-red-500">*</span>
+                        </label>
+                        <input 
+                            type="tel" 
+                            value={phone} 
+                            onChange={e => {
+                                setPhone(e.target.value);
+                                if (errors.phone) setErrors({});
+                            }}
+                            className={`w-full p-2 border ${errors.phone ? 'border-red-500' : 'border-gray-300 dark:border-gray-600'} bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200 rounded-md text-right`}
+                            required
+                        />
+                        {errors.phone && <p className="text-red-500 text-xs mt-1">{errors.phone}</p>}
+                    </div>
+
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{AR_LABELS.address}</label>
+                        <textarea 
+                            value={address} 
+                            onChange={e => setAddress(e.target.value)} 
+                            placeholder="اختياري"
+                            rows={3}
+                            className="w-full p-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200 rounded-md text-right resize-none"
+                        />
+                    </div>
+                </div>
+                <div className="flex justify-start space-x-4 space-x-reverse p-4 bg-gray-50 dark:bg-gray-800/50 border-t dark:border-gray-700 rounded-b-lg">
+                    <button 
+                        onClick={handleSave} 
+                        disabled={isSubmitting}
+                        className="px-4 py-2 bg-orange-500 text-white rounded-md disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                        {isSubmitting ? 'جاري الحفظ...' : AR_LABELS.save}
+                    </button>
+                    <button 
+                        onClick={onClose} 
+                        disabled={isSubmitting}
+                        className="px-4 py-2 bg-gray-200 dark:bg-gray-600 text-gray-800 dark:text-gray-200 rounded-md disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                        {AR_LABELS.cancel}
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+};
+
 const CustomerAccountsView: React.FC<{
     sales: SaleTransaction[];
     customers: Customer[];
     payments: CustomerPayment[];
     setPayments: React.Dispatch<React.SetStateAction<CustomerPayment[]>>;
-}> = ({ sales, customers, payments, setPayments }) => {
+    setCustomers: React.Dispatch<React.SetStateAction<Customer[]>>;
+    onSaveCustomer: (customer: Customer) => Promise<void>;
+    isLoadingCustomers?: boolean;
+    customersError?: string | null;
+    onRefreshCustomers?: () => void;
+}> = ({ sales, customers, payments, setPayments, onSaveCustomer, isLoadingCustomers = false, customersError = null, onRefreshCustomers }) => {
     const [searchTerm, setSearchTerm] = useState('');
     const [balanceFilter, setBalanceFilter] = useState('all'); // 'all', 'has_balance', 'no_balance'
     const [paymentModalTarget, setPaymentModalTarget] = useState<CustomerAccountSummary | null>(null);
     const [statementModalTarget, setStatementModalTarget] = useState<CustomerAccountSummary | null>(null);
+    const [showAddCustomerModal, setShowAddCustomerModal] = useState(false);
+    const [sortField, setSortField] = useState<'name' | 'phone' | 'balance' | 'totalSales'>('name');
+    const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
 
     const customerSummaries = useMemo<CustomerAccountSummary[]>(() => {
         return customers.map(customer => {
@@ -669,31 +903,99 @@ const CustomerAccountsView: React.FC<{
                 totalSales,
                 totalPaid,
                 balance: totalSales - totalPaid,
-                lastPaymentDate: lastPayment ? new Date(lastPayment.date).toLocaleDateString('ar-SA') : null,
+                lastPaymentDate: lastPayment ? formatDate(lastPayment.date) : null,
             };
         });
     }, [customers, sales, payments]);
 
-    const filteredSummaries = useMemo(() => {
-        return customerSummaries.filter(c => {
-            const customerDetails = customers.find(cust => cust.id === c.customerId);
-            const matchesSearch = searchTerm ? c.customerName.toLowerCase().includes(searchTerm.toLowerCase()) || customerDetails?.phone.includes(searchTerm) : true;
+    const filteredAndSortedCustomers = useMemo(() => {
+        // Filter customers
+        let filtered = customers.filter(customer => {
+            const matchesSearch = searchTerm 
+                ? customer.name.toLowerCase().includes(searchTerm.toLowerCase()) 
+                  || customer.phone.includes(searchTerm)
+                  || (customer.address && customer.address.toLowerCase().includes(searchTerm.toLowerCase()))
+                : true;
+            
             if (!matchesSearch) return false;
             
-            if (balanceFilter === 'has_balance') return c.balance > 0;
-            if (balanceFilter === 'no_balance') return c.balance <= 0;
+            // Apply balance filter using summaries
+            const summary = customerSummaries.find(s => s.customerId === customer.id);
+            if (balanceFilter === 'has_balance' && summary) return summary.balance > 0;
+            if (balanceFilter === 'no_balance' && summary) return summary.balance <= 0;
+            
             return true;
         });
-    }, [customerSummaries, searchTerm, balanceFilter, customers]);
+
+        // Sort customers
+        filtered.sort((a, b) => {
+            let aValue: string | number;
+            let bValue: string | number;
+
+            switch (sortField) {
+                case 'name':
+                    aValue = a.name.toLowerCase();
+                    bValue = b.name.toLowerCase();
+                    break;
+                case 'phone':
+                    aValue = a.phone;
+                    bValue = b.phone;
+                    break;
+                case 'balance':
+                    const aSummary = customerSummaries.find(s => s.customerId === a.id);
+                    const bSummary = customerSummaries.find(s => s.customerId === b.id);
+                    aValue = aSummary?.balance || 0;
+                    bValue = bSummary?.balance || 0;
+                    break;
+                case 'totalSales':
+                    const aSales = customerSummaries.find(s => s.customerId === a.id);
+                    const bSales = customerSummaries.find(s => s.customerId === b.id);
+                    aValue = aSales?.totalSales || 0;
+                    bValue = bSales?.totalSales || 0;
+                    break;
+                default:
+                    aValue = a.name.toLowerCase();
+                    bValue = b.name.toLowerCase();
+            }
+
+            if (typeof aValue === 'string' && typeof bValue === 'string') {
+                return sortDirection === 'asc' 
+                    ? aValue.localeCompare(bValue)
+                    : bValue.localeCompare(aValue);
+            } else {
+                return sortDirection === 'asc'
+                    ? (aValue as number) - (bValue as number)
+                    : (bValue as number) - (aValue as number);
+            }
+        });
+
+        return filtered;
+    }, [customers, customerSummaries, searchTerm, balanceFilter, sortField, sortDirection]);
+
+    const handleSort = (field: 'name' | 'phone' | 'balance' | 'totalSales') => {
+        if (sortField === field) {
+            setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
+        } else {
+            setSortField(field);
+            setSortDirection('asc');
+        }
+    };
+
+    const SortIcon = ({ field }: { field: 'name' | 'phone' | 'balance' | 'totalSales' }) => {
+        if (sortField !== field) return null;
+        return sortDirection === 'asc' ? '↑' : '↓';
+    };
     
     const handleSavePayment = (payment: CustomerPayment) => {
         setPayments(prev => [payment, ...prev]);
         setPaymentModalTarget(null);
     };
 
+
     return (
         <div className="space-y-4">
             <div className="flex flex-col md:flex-row justify-between items-center gap-4">
+                <div className="flex items-center gap-4 flex-1">
                 <div className="relative flex-1 w-full md:w-auto">
                     <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400 dark:text-gray-500" />
                     <input 
@@ -703,8 +1005,20 @@ const CustomerAccountsView: React.FC<{
                         placeholder={AR_LABELS.searchByCustomerNameOrPhone} 
                         className="w-full pl-10 pr-4 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:border-transparent text-right"
                     />
+                    </div>
+                    <div className="text-sm text-gray-600 dark:text-gray-400 whitespace-nowrap">
+                        {filteredAndSortedCustomers.length} {filteredAndSortedCustomers.length === 1 ? 'عميل' : 'عميل'} 
+                        {customers.length !== filteredAndSortedCustomers.length && ` من ${customers.length}`}
+                    </div>
                 </div>
                  <div className="flex items-center gap-2">
+                    <button
+                        onClick={() => setShowAddCustomerModal(true)}
+                        className="group relative inline-flex items-center justify-center px-4 py-2 rounded-lg text-sm font-medium text-white bg-gradient-to-r from-blue-500 to-indigo-500 hover:from-blue-600 hover:to-indigo-600 shadow-lg shadow-blue-500/50 transition-all duration-300 hover:shadow-xl hover:scale-105"
+                    >
+                        <PlusIcon className="h-5 w-5 ml-2" />
+                        <span>{AR_LABELS.addNewCustomer}</span>
+                    </button>
                     <CustomDropdown
                         id="balance-filter-dropdown"
                         value={balanceFilter}
@@ -723,49 +1037,154 @@ const CustomerAccountsView: React.FC<{
                 <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700 text-right">
                     <thead className="bg-gray-50 dark:bg-gray-700">
                         <tr>
-                            <th className="px-6 py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">{AR_LABELS.customerName}</th>
-                            <th className="px-6 py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">{AR_LABELS.totalSales}</th>
+                            <th 
+                                className="px-6 py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-600 select-none"
+                                onClick={() => handleSort('name')}
+                            >
+                                <div className="flex items-center justify-end gap-2">
+                                    {AR_LABELS.customerName}
+                                    <span className="text-xs"><SortIcon field="name" /></span>
+                                </div>
+                            </th>
+                            <th 
+                                className="px-6 py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-600 select-none"
+                                onClick={() => handleSort('phone')}
+                            >
+                                <div className="flex items-center justify-end gap-2">
+                                    {AR_LABELS.phone}
+                                    <span className="text-xs"><SortIcon field="phone" /></span>
+                                </div>
+                            </th>
+                            <th className="px-6 py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">{AR_LABELS.address}</th>
+                            <th 
+                                className="px-6 py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-600 select-none"
+                                onClick={() => handleSort('balance')}
+                            >
+                                <div className="flex items-center justify-end gap-2">
+                                    {AR_LABELS.balance}
+                                    <span className="text-xs"><SortIcon field="balance" /></span>
+                                </div>
+                            </th>
+                            <th 
+                                className="px-6 py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-600 select-none"
+                                onClick={() => handleSort('totalSales')}
+                            >
+                                <div className="flex items-center justify-end gap-2">
+                                    {AR_LABELS.totalSales}
+                                    <span className="text-xs"><SortIcon field="totalSales" /></span>
+                                </div>
+                            </th>
                             <th className="px-6 py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">{AR_LABELS.totalPayments}</th>
-                            <th className="px-6 py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">{AR_LABELS.balance}</th>
                             <th className="px-6 py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">{AR_LABELS.lastPayment}</th>
                             <th className="px-6 py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider text-center">{AR_LABELS.actions}</th>
                         </tr>
                     </thead>
                     <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
-                        {filteredSummaries.map(c => (
-                            <tr key={c.customerId} className="hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors duration-150">
-                                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">{c.customerName}</td>
-                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700 dark:text-gray-300">{c.totalSales.toFixed(2)} ر.س</td>
-                                <td className="px-6 py-4 whitespace-nowrap text-sm text-green-600">{c.totalPaid.toFixed(2)} ر.س</td>
-                                <td className="px-6 py-4 whitespace-nowrap text-sm font-bold">
-                                    {c.balance > 0 ? <span className="text-red-600">{c.balance.toFixed(2)} ر.س</span> : <span className="text-green-600">{c.balance.toFixed(2)} ر.س</span>}
+                        {isLoadingCustomers ? (
+                            <tr>
+                                <td colSpan={8} className="px-6 py-8 text-center text-sm text-gray-500 dark:text-gray-400">
+                                    <div className="flex items-center justify-center gap-2">
+                                        <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-500"></div>
+                                        <span>جاري تحميل العملاء...</span>
+                                    </div>
                                 </td>
-                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700 dark:text-gray-300">{c.lastPaymentDate || 'N/A'}</td>
+                            </tr>
+                        ) : customersError ? (
+                            <tr>
+                                <td colSpan={8} className="px-6 py-8 text-center">
+                                    <div className="text-sm text-red-600 dark:text-red-400">
+                                        <p className="font-medium mb-2">خطأ في تحميل العملاء</p>
+                                        <p className="text-gray-600 dark:text-gray-400">{customersError}</p>
+                                        {onRefreshCustomers && (
+                                            <button
+                                                onClick={onRefreshCustomers}
+                                                className="mt-3 px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 text-sm"
+                                            >
+                                                إعادة المحاولة
+                                            </button>
+                                        )}
+                                    </div>
+                                </td>
+                            </tr>
+                        ) : filteredAndSortedCustomers.length === 0 ? (
+                            <tr>
+                                <td colSpan={8} className="px-6 py-8 text-center text-sm text-gray-500 dark:text-gray-400">
+                                    {customers.length === 0 
+                                        ? 'لا يوجد عملاء. ابدأ بإضافة عميل جديد.' 
+                                        : 'لا توجد نتائج تطابق معايير البحث.'}
+                                </td>
+                            </tr>
+                        ) : (
+                            filteredAndSortedCustomers.map(customer => {
+                                const summary = customerSummaries.find(s => s.customerId === customer.id);
+                                return (
+                                    <tr key={customer.id} className="hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors duration-150">
+                                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">
+                                            {customer.name}
+                                        </td>
+                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700 dark:text-gray-300">
+                                            {customer.phone}
+                                        </td>
+                                        <td className="px-6 py-4 text-sm text-gray-700 dark:text-gray-300 max-w-xs">
+                                            <div className="truncate" title={customer.address || ''}>
+                                                {customer.address || '-'}
+                                            </div>
+                                        </td>
+                                <td className="px-6 py-4 whitespace-nowrap text-sm font-bold">
+                                            {summary ? (
+                                                summary.balance > 0 ? (
+                                                    <span className="text-red-600">{summary.balance.toFixed(2)} ر.س</span>
+                                                ) : (
+                                                    <span className="text-green-600">{summary.balance.toFixed(2)} ر.س</span>
+                                                )
+                                            ) : (
+                                                <span className="text-gray-400">0.00 ر.س</span>
+                                            )}
+                                </td>
+                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700 dark:text-gray-300">
+                                            {summary ? `${summary.totalSales.toFixed(2)} ر.س` : '0.00 ر.س'}
+                                        </td>
+                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-green-600">
+                                            {summary ? `${summary.totalPaid.toFixed(2)} ر.س` : '0.00 ر.س'}
+                                        </td>
+                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700 dark:text-gray-300">
+                                            {summary?.lastPaymentDate || 'N/A'}
+                                        </td>
                                 <td className="px-6 py-4 whitespace-nowrap text-center text-sm">
+                                            {summary && (
                                     <div className="flex items-center justify-center gap-2">
                                         <button 
-                                            onClick={() => setPaymentModalTarget(c)} 
+                                                        onClick={() => setPaymentModalTarget(summary)} 
                                             className="p-2 text-green-600 hover:text-green-900 dark:text-green-400 dark:hover:text-green-300 rounded-lg hover:bg-green-50 dark:hover:bg-gray-700 transition-colors"
                                             title={AR_LABELS.addPayment}
                                         >
                                             <AddPaymentIcon/>
                                         </button>
                                         <button 
-                                            onClick={() => setStatementModalTarget(c)} 
+                                                        onClick={() => setStatementModalTarget(summary)} 
                                             className="p-2 text-blue-600 hover:text-blue-900 dark:text-blue-400 dark:hover:text-blue-300 rounded-lg hover:bg-blue-50 dark:hover:bg-gray-700 transition-colors"
                                             title={AR_LABELS.customerStatement}
                                         >
                                             <ViewIcon/>
                                         </button>
                                     </div>
+                                            )}
                                 </td>
                             </tr>
-                        ))}
+                                );
+                            })
+                        )}
                     </tbody>
                 </table>
             </div>
             <AddPaymentModal customerSummary={paymentModalTarget} onClose={() => setPaymentModalTarget(null)} onSave={handleSavePayment} />
             <CustomerDetailsModal summary={statementModalTarget} sales={sales} payments={payments} onClose={() => setStatementModalTarget(null)} />
+            {showAddCustomerModal && (
+                <AddCustomerModal 
+                    onClose={() => setShowAddCustomerModal(false)} 
+                    onSave={onSaveCustomer} 
+                />
+            )}
         </div>
     );
 };

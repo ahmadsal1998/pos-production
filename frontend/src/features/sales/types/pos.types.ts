@@ -16,6 +16,7 @@ export interface POSCartItem {
   unitPrice: number;
   total: number;
   discount: number; // Discount per item unit
+  conversionFactor?: number; // Number of this unit in 1 main unit (for conversions)
 }
 
 export interface POSInvoice {

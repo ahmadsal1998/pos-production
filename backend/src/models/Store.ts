@@ -21,11 +21,21 @@ export interface ITerminal {
 
 export interface IStore {
   _id: mongoose.Types.ObjectId;
+  storeNumber: number; // Sequential store number (1, 2, 3, 4, 5...)
   storeId: string;
   name: string;
   prefix: string;
   databaseId: number; // Database ID (1-5) where this store's data is stored
   terminals: ITerminal[]; // Array of terminals for this store
+  subscriptionStartDate: Date; // Subscription start date
+  subscriptionEndDate: Date; // Subscription end date
+  isActive: boolean; // Whether the store account is active (subscription status)
+  // Contact information
+  email?: string;
+  phone?: string;
+  address?: string;
+  city?: string;
+  country?: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -112,6 +122,12 @@ const terminalSchema = new Schema<ITerminal>(
 
 const storeSchema = new Schema<StoreDocument>(
   {
+    storeNumber: {
+      type: Number,
+      required: [true, 'Store number is required'],
+      unique: true,
+      min: [1, 'Store number must be at least 1'],
+    },
     storeId: {
       type: String,
       required: [true, 'Store ID is required'],
@@ -140,6 +156,47 @@ const storeSchema = new Schema<StoreDocument>(
       type: [terminalSchema],
       default: [],
     },
+    subscriptionStartDate: {
+      type: Date,
+      default: Date.now,
+    },
+    subscriptionEndDate: {
+      type: Date,
+      default: function() {
+        // Default to 1 year from now for existing stores without subscription data
+        const date = new Date();
+        date.setFullYear(date.getFullYear() + 1);
+        return date;
+      },
+    },
+    isActive: {
+      type: Boolean,
+      default: true,
+      index: true,
+    },
+    // Contact information
+    email: {
+      type: String,
+      trim: true,
+      lowercase: true,
+      match: [/^\S+@\S+\.\S+$/, 'Please provide a valid email'],
+    },
+    phone: {
+      type: String,
+      trim: true,
+    },
+    address: {
+      type: String,
+      trim: true,
+    },
+    city: {
+      type: String,
+      trim: true,
+    },
+    country: {
+      type: String,
+      trim: true,
+    },
   },
   {
     timestamps: true,
@@ -165,6 +222,7 @@ const storeSchema = new Schema<StoreDocument>(
 );
 
 // Indexes
+storeSchema.index({ storeNumber: 1 }, { unique: true });
 storeSchema.index({ storeId: 1 });
 storeSchema.index({ prefix: 1 });
 storeSchema.index({ databaseId: 1 });

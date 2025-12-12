@@ -2,6 +2,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { AR_LABELS } from '@/shared/constants';
 import { Product } from '@/shared/types';
 import { CustomDropdown } from '@/shared/components/ui/CustomDropdown';
+import { formatDate } from '@/shared/utils';
 
 // --- MOCK DATA FOR THIS COMPONENT ---
 const MOCK_PRODUCTS_WITH_COST: Product[] = [
@@ -195,10 +196,7 @@ const ProductPerformanceCard = () => {
     // Chart Data
     const chartData = filteredSales.reduce(
       (acc, sale) => {
-        const date = new Date(sale.date).toLocaleDateString('ar-SA', {
-          month: 'short',
-          day: 'numeric',
-        });
+        const date = formatDate(sale.date);
         if (!acc[date]) acc[date] = { count: 0, value: 0 };
         acc[date].count += sale.items.reduce((s, i) => s + i.quantity, 0);
         acc[date].value += sale.items.reduce((s, i) => s + i.total, 0);

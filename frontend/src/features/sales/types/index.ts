@@ -85,6 +85,7 @@ export interface POSCartItem {
   unitPrice: number;
   discount: number;
   totalPrice: number;
+  conversionFactor?: number;
 }
 
 export interface SaleTransaction {

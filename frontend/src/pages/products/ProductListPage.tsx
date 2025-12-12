@@ -1,55 +1,560 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { AR_LABELS, EditIcon, DeleteIcon, SearchIcon, GridViewIcon, TableViewIcon } from '@/shared/constants';
 import { Product } from '@/shared/types';
 import ProductAnalytics from '@/features/products/components/ProductAnalytics';
 import ProductQuickActions from '@/features/products/components/ProductQuickActions';
+import { formatDate } from '@/shared/utils';
+import { productsApi, categoriesApi } from '@/lib/api/client';
+import { Pagination } from '@/shared/components';
+import { useCurrency } from '@/shared/contexts/CurrencyContext';
+
+// Advanced search filter types
+interface AdvancedFilters {
+  stockSort: 'none' | 'highest' | 'lowest';
+  priceSort: 'none' | 'highest' | 'lowest';
+  expirySort: 'none' | 'nearest' | 'furthest';
+  categoryFilter: string; // categoryId or 'all'
+}
 
 interface ProductListPageProps {}
 
 type LayoutType = 'table' | 'grid';
 
-const sevenDaysAgo = new Date();
-sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-
-const initialMockProducts: Product[] = [
-  { id: 1, name: 'لابتوب Dell XPS 15', category: 'إلكترونيات', price: 1200.00, costPrice: 950.00, stock: 50, barcode: 'DELL-XPS15-12345', expiryDate: '2025-12-31', createdAt: '2023-01-15' },
-  { id: 2, name: 'هاتف Samsung Galaxy S23', category: 'إلكترونيات', price: 899.99, costPrice: 700.00, stock: 120, barcode: 'SAM-S23-67890', expiryDate: '2026-06-30', createdAt: new Date().toISOString() },
-  { id: 3, name: 'طاولة قهوة خشبية', category: 'أثاث', price: 150.50, costPrice: 100.00, stock: 30, barcode: 'FURN-CT-11223', expiryDate: '2099-12-31', createdAt: '2023-11-10' },
-  { id: 4, name: 'سماعات رأس Sony WH-1000XM5', category: 'إلكترونيات', price: 349.00, costPrice: 250.00, stock: 8, barcode: 'SONY-WH-44556', expiryDate: '2027-01-01', createdAt: '2023-09-01' },
-  { id: 5, name: 'حليب طازج', category: 'مشروبات', price: 5.50, costPrice: 3.50, stock: 20, barcode: 'MILK-FRESH-555', expiryDate: '2024-01-01', createdAt: '2023-12-25' },
-  { id: 6, name: 'كرسي مكتب مريح', category: 'أثاث', price: 299.00, costPrice: 180.00, stock: 25, barcode: 'FURN-OC-77889', expiryDate: '2099-12-31', createdAt: sevenDaysAgo.toISOString() },
-];
+// Backend product interface
+interface BackendProduct {
+  id: string;
+  _id?: string;
+  name: string;
+  barcode: string;
+  costPrice: number;
+  price: number;
+  stock: number;
+  categoryId?: string;
+  brandId?: string;
+  expiryDate?: string;
+  createdAt: string;
+  updatedAt: string;
+}
 
 const ProductListPage: React.FC<ProductListPageProps> = () => {
-  const [products, setProducts] = useState<Product[]>(initialMockProducts);
+  const navigate = useNavigate();
+  const { formatCurrency, currency } = useCurrency();
+  const [products, setProducts] = useState<Product[]>([]);
+  const [categories, setCategories] = useState<Record<string, string>>({});
   const [searchTerm, setSearchTerm] = useState('');
   const [layout, setLayout] = useState<LayoutType>('table');
+  const [loadingInitial, setLoadingInitial] = useState(true);
+  const [loadingProducts, setLoadingProducts] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [revealedCostPrices, setRevealedCostPrices] = useState<Set<number>>(new Set());
+
+  // Advanced search state
+  const [showAdvancedSearch, setShowAdvancedSearch] = useState(false);
+  const [advancedFilters, setAdvancedFilters] = useState<AdvancedFilters>({
+    stockSort: 'none',
+    priceSort: 'none',
+    expirySort: 'none',
+    categoryFilter: 'all',
+  });
+  const [allProducts, setAllProducts] = useState<Product[]>([]); // Store all products for advanced filtering
+  const [isAdvancedMode, setIsAdvancedMode] = useState(false);
+
+  // Pagination state
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage, setItemsPerPage] = useState(20);
+  const [totalPages, setTotalPages] = useState(1);
+  const [totalProducts, setTotalProducts] = useState(0);
 
   const LOW_STOCK_THRESHOLD = 10;
 
-  const filteredProducts = useMemo(() => {
-    // Apply search term filter
-    if (!searchTerm) {
-      return products;
+  // Store backend products with categoryId for mapping
+  const [backendProducts, setBackendProducts] = useState<BackendProduct[]>([]);
+  
+  // Store category list for dropdown
+  const [categoryList, setCategoryList] = useState<Array<{ id: string; name: string }>>([]);
+  
+  // Store all backend products for lookup (including from allProducts)
+  const [allBackendProducts, setAllBackendProducts] = useState<BackendProduct[]>([]);
+
+  // Helper function to convert MongoDB ObjectId or string to number
+  const idToNumber = (id: string | undefined): number => {
+    if (!id) return Date.now();
+    // If it's already a number string, parse it
+    if (/^\d+$/.test(id)) {
+      return parseInt(id, 10);
     }
-
-    const lowercasedSearchTerm = searchTerm.toLowerCase();
-    return products.filter(product =>
-      product.name.toLowerCase().includes(lowercasedSearchTerm) ||
-      product.barcode.toLowerCase().includes(lowercasedSearchTerm) ||
-      product.category.toLowerCase().includes(lowercasedSearchTerm)
-    );
-
-  }, [searchTerm, products]);
-
-  const handleEditProduct = (productId: number) => {
-    alert(AR_LABELS.edit + ` product ${productId}!`);
+    // For MongoDB ObjectIds or other strings, create a hash
+    let hash = 0;
+    for (let i = 0; i < id.length; i++) {
+      const char = id.charCodeAt(i);
+      hash = (hash << 5) - hash + char;
+      hash = hash & hash; // Convert to 32-bit integer
+    }
+    return Math.abs(hash) || Date.now();
   };
 
-  const handleDeleteProduct = (productId: number) => {
-    if (window.confirm(AR_LABELS.delete + ` product with ID ${productId}?`)) {
-      setProducts((prev) => prev.filter((p) => p.id !== productId));
+  // Fetch categories once (initial load)
+  useEffect(() => {
+    const loadCategories = async () => {
+      try {
+        setLoadingInitial(true);
+        const categoriesRes = await categoriesApi.getCategories();
+        const categoryMap: Record<string, string> = {};
+
+        if (categoriesRes.success) {
+          const categoriesData = (categoriesRes.data as any)?.categories || categoriesRes.data || [];
+          const categoryListData = categoriesData.map((cat: any) => ({
+            id: cat.id,
+            name: cat.nameAr || cat.name || 'غير محدد',
+          }));
+          categoriesData.forEach((cat: any) => {
+            categoryMap[cat.id] = cat.nameAr || cat.name || 'غير محدد';
+          });
+          setCategories(categoryMap);
+          setCategoryList(categoryListData);
+        }
+      } catch (err: any) {
+        console.error('Error fetching categories:', err);
+        setError(err.message || 'حدث خطأ أثناء تحميل الفئات');
+      } finally {
+        setLoadingInitial(false);
+      }
+    };
+
+    loadCategories();
+  }, []);
+
+  // Fetch products when filters/search/pagination change (without full page reload feel)
+  useEffect(() => {
+    const fetchProducts = async () => {
+      try {
+        setLoadingProducts(true);
+        setError(null);
+
+        const productsRes = await productsApi.getProducts({
+          page: currentPage,
+          limit: itemsPerPage,
+          search: (!isAdvancedMode && searchTerm) ? searchTerm.trim() : undefined,
+        });
+
+        if (productsRes.success) {
+          const responseData = productsRes.data as any;
+          const productsData = responseData?.products || [];
+          setBackendProducts(productsData);
+
+          // Update pagination info
+          if (responseData?.pagination) {
+            setTotalPages(responseData.pagination.totalPages);
+            setTotalProducts(responseData.pagination.totalProducts);
+          }
+
+          // Map backend products to frontend Product type with category names
+          const mappedProducts: (Product & { categoryId?: string; backendId?: string })[] = productsData.map((p: BackendProduct) => ({
+            id: idToNumber(p.id || p._id),
+            name: p.name,
+            category: p.categoryId ? categories[p.categoryId] || 'غير محدد' : 'غير محدد',
+            brand: p.brandId || '',
+            price: p.price || 0,
+            cost: p.costPrice || 0,
+            costPrice: p.costPrice || 0,
+            stock: p.stock || 0,
+            barcode: p.barcode || '',
+            expiryDate: p.expiryDate || '',
+            createdAt: p.createdAt || new Date().toISOString(),
+            updatedAt: p.updatedAt || new Date().toISOString(),
+            categoryId: p.categoryId, // Keep for filtering
+            backendId: p.id || p._id, // Store backend ID for editing
+          }));
+
+          setProducts(mappedProducts);
+        } else {
+          setError('فشل تحميل المنتجات');
+        }
+      } catch (err: any) {
+        console.error('Error fetching products:', err);
+        setError(err.message || 'حدث خطأ أثناء تحميل المنتجات');
+      } finally {
+        setLoadingProducts(false);
+      }
+    };
+
+    fetchProducts();
+  }, [currentPage, itemsPerPage, searchTerm, isAdvancedMode, categories]);
+
+  // Fetch all products for advanced search (with a reasonable limit)
+  const fetchAllProductsForAdvancedSearch = useCallback(async (categoryMap: Record<string, string>, searchTerm?: string) => {
+    try {
+      // Fetch a large batch (1000 items) for advanced filtering
+      // If search term is provided, use server-side search
+      const productsRes = await productsApi.getProducts({
+        page: 1,
+        limit: 1000,
+        search: searchTerm || undefined,
+      });
+
+      if (productsRes.success) {
+        const responseData = productsRes.data as any;
+        const productsData = responseData?.products || [];
+        
+        const mappedProducts: (Product & { categoryId?: string; backendId?: string })[] = productsData.map((p: BackendProduct) => ({
+          id: idToNumber(p.id || p._id),
+          name: p.name,
+          category: p.categoryId ? categoryMap[p.categoryId] || 'غير محدد' : 'غير محدد',
+          brand: p.brandId || '',
+          price: p.price || 0,
+          cost: p.costPrice || 0,
+          costPrice: p.costPrice || 0,
+          stock: p.stock || 0,
+          barcode: p.barcode || '',
+          expiryDate: p.expiryDate || '',
+          createdAt: p.createdAt || new Date().toISOString(),
+          updatedAt: p.updatedAt || new Date().toISOString(),
+          categoryId: p.categoryId, // Keep for filtering
+          backendId: p.id || p._id, // Store backend ID for editing
+        }));
+
+        setAllProducts(mappedProducts);
+        // Also store backend products for lookup
+        setAllBackendProducts(productsData);
+      }
+    } catch (err: any) {
+      console.error('Error fetching all products for advanced search:', err);
     }
+  }, []);
+
+  // Update category names when categories are loaded (for products that were loaded before categories)
+  useEffect(() => {
+    if (Object.keys(categories).length > 0 && backendProducts.length > 0) {
+      const mappedProducts: (Product & { categoryId?: string; backendId?: string })[] = backendProducts.map((p: BackendProduct) => ({
+        id: idToNumber(p.id || p._id),
+        name: p.name,
+        category: p.categoryId ? categories[p.categoryId] || 'غير محدد' : 'غير محدد',
+        brand: p.brandId || '',
+        price: p.price || 0,
+        cost: p.costPrice || 0,
+        costPrice: p.costPrice || 0,
+        stock: p.stock || 0,
+        barcode: p.barcode || '',
+        expiryDate: p.expiryDate || '',
+        createdAt: p.createdAt || new Date().toISOString(),
+        updatedAt: p.updatedAt || new Date().toISOString(),
+        categoryId: p.categoryId, // Keep for filtering
+        backendId: p.id || p._id, // Store backend ID for editing
+      }));
+      setProducts(mappedProducts);
+    }
+  }, [categories, backendProducts]);
+
+  // Fetch all products when advanced mode is enabled (but not if already fetched for search)
+  useEffect(() => {
+    if (isAdvancedMode && Object.keys(categories).length > 0 && allProducts.length === 0) {
+      fetchAllProductsForAdvancedSearch(categories, searchTerm.trim() || undefined);
+    }
+  }, [isAdvancedMode, categories, allProducts.length, fetchAllProductsForAdvancedSearch, searchTerm]);
+
+  // Reset to page 1 when search term changes
+  // With server-side search, we don't need to fetch all products for basic search
+  useEffect(() => {
+    if (searchTerm && searchTerm.trim()) {
+      if (currentPage !== 1) {
+        setCurrentPage(1);
+      }
+      // Only enable advanced mode if there are advanced filters active
+      // Otherwise, use server-side search which is more efficient
+      const hasFilters = advancedFilters.stockSort !== 'none' ||
+                        advancedFilters.priceSort !== 'none' ||
+                        advancedFilters.expirySort !== 'none' ||
+                        advancedFilters.categoryFilter !== 'all';
+      
+      if (hasFilters && !isAdvancedMode && Object.keys(categories).length > 0) {
+        // If advanced filters are active, fetch all products for client-side filtering
+        setIsAdvancedMode(true);
+        fetchAllProductsForAdvancedSearch(categories, searchTerm.trim());
+      } else if (hasFilters && isAdvancedMode && allProducts.length === 0 && Object.keys(categories).length > 0) {
+        // If advanced mode is already enabled but products aren't loaded, fetch them
+        fetchAllProductsForAdvancedSearch(categories, searchTerm.trim());
+      }
+    } else {
+      // If search is cleared and no advanced filters are active, disable advanced mode
+      const hasFilters = advancedFilters.stockSort !== 'none' ||
+                        advancedFilters.priceSort !== 'none' ||
+                        advancedFilters.expirySort !== 'none' ||
+                        advancedFilters.categoryFilter !== 'all';
+      if (!hasFilters) {
+        setIsAdvancedMode(false);
+        setAllProducts([]);
+      }
+    }
+  }, [searchTerm, isAdvancedMode, allProducts.length, categories, advancedFilters, currentPage, fetchAllProductsForAdvancedSearch]);
+
+  // Check if any advanced filter is active
+  const hasActiveAdvancedFilters = useMemo(() => {
+    return (
+      advancedFilters.stockSort !== 'none' ||
+      advancedFilters.priceSort !== 'none' ||
+      advancedFilters.expirySort !== 'none' ||
+      advancedFilters.categoryFilter !== 'all'
+    );
+  }, [advancedFilters]);
+
+  // Handle advanced filtering and sorting
+  const filteredProducts = useMemo(() => {
+    // When not in advanced mode, use products directly (already filtered by server-side search)
+    // When in advanced mode, use allProducts and apply client-side filters
+    if (!isAdvancedMode) {
+      // Server-side search is already applied, just return the products
+      return [...products];
+    }
+
+    // Advanced mode: use allProducts and apply client-side filters
+    let filtered: (Product & { categoryId?: string; backendId?: string })[] = 
+      allProducts.length > 0 ? [...allProducts] : [...products];
+
+    // Apply text search filter in advanced mode (when we have all products loaded)
+    if (searchTerm) {
+      const searchTermTrimmed = searchTerm.trim();
+      if (searchTermTrimmed) {
+        // Normalize Arabic text for better matching (remove diacritics, normalize spaces)
+        const normalizeText = (text: string): string => {
+          return text
+            .toLowerCase()
+            .trim()
+            .replace(/\s+/g, ' ') // Normalize multiple spaces
+            .replace(/[\u064B-\u065F\u0670]/g, ''); // Remove Arabic diacritics
+        };
+
+        const normalizedSearchTerm = normalizeText(searchTermTrimmed);
+        const lowercasedSearchTerm = searchTermTrimmed.toLowerCase();
+        
+        filtered = filtered.filter((product) => {
+          // Normalize and check
+          const normalizedName = normalizeText(product.name || '');
+          const normalizedBarcode = normalizeText(product.barcode || '');
+          const normalizedCategory = normalizeText(product.category || '');
+          
+          // Check normalized matches (handles Arabic diacritics)
+          const normalizedMatch = 
+            normalizedName.includes(normalizedSearchTerm) ||
+            normalizedBarcode.includes(normalizedSearchTerm) ||
+            normalizedCategory.includes(normalizedSearchTerm);
+          
+          // Also check direct lowercase matches (for exact matches and non-Arabic text)
+          const directMatch = 
+            (product.name && product.name.toLowerCase().includes(lowercasedSearchTerm)) ||
+            (product.barcode && product.barcode.toLowerCase().includes(lowercasedSearchTerm)) ||
+            (product.category && product.category.toLowerCase().includes(lowercasedSearchTerm));
+          
+          return normalizedMatch || directMatch;
+        });
+      }
+    }
+
+    // Apply category filter
+    if (advancedFilters.categoryFilter !== 'all') {
+      filtered = filtered.filter((product) => {
+        return product.categoryId === advancedFilters.categoryFilter;
+      });
+    }
+
+    // Apply stock sorting
+    if (advancedFilters.stockSort === 'highest') {
+      filtered.sort((a, b) => b.stock - a.stock);
+    } else if (advancedFilters.stockSort === 'lowest') {
+      filtered.sort((a, b) => a.stock - b.stock);
+    }
+
+    // Apply price sorting
+    if (advancedFilters.priceSort === 'highest') {
+      filtered.sort((a, b) => b.price - a.price);
+    } else if (advancedFilters.priceSort === 'lowest') {
+      filtered.sort((a, b) => a.price - b.price);
+    }
+
+    // Apply expiry date sorting
+    if (advancedFilters.expirySort === 'nearest') {
+      filtered.sort((a, b) => {
+        const dateA = a.expiryDate ? new Date(a.expiryDate).getTime() : Number.MAX_SAFE_INTEGER;
+        const dateB = b.expiryDate ? new Date(b.expiryDate).getTime() : Number.MAX_SAFE_INTEGER;
+        return dateA - dateB;
+      });
+    } else if (advancedFilters.expirySort === 'furthest') {
+      filtered.sort((a, b) => {
+        const dateA = a.expiryDate ? new Date(a.expiryDate).getTime() : 0;
+        const dateB = b.expiryDate ? new Date(b.expiryDate).getTime() : 0;
+        return dateB - dateA;
+      });
+    }
+
+    return filtered;
+  }, [searchTerm, products, allProducts, isAdvancedMode, advancedFilters]);
+
+  // Handle page change
+  const handlePageChange = (page: number) => {
+    setCurrentPage(page);
+    // Scroll to top when page changes
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  // Handle items per page change
+  const handleItemsPerPageChange = (newLimit: number) => {
+    setItemsPerPage(newLimit);
+    setCurrentPage(1); // Reset to first page when changing items per page
+  };
+
+  // Handle advanced filter changes
+  const handleAdvancedFilterChange = (filterType: keyof AdvancedFilters, value: string) => {
+    setAdvancedFilters((prev) => ({
+      ...prev,
+      [filterType]: value,
+    }));
+    
+    // Enable advanced mode if any filter is active
+    if (value !== 'none' && value !== 'all') {
+      if (!isAdvancedMode && Object.keys(categories).length > 0) {
+        setIsAdvancedMode(true);
+        // Fetch all products when enabling advanced mode
+        fetchAllProductsForAdvancedSearch(categories, searchTerm.trim() || undefined);
+      }
+    } else {
+      // Check if any other filter is still active
+      const newFilters = { ...advancedFilters, [filterType]: value };
+      const stillActive = newFilters.stockSort !== 'none' || 
+                         newFilters.priceSort !== 'none' || 
+                         newFilters.expirySort !== 'none' || 
+                         newFilters.categoryFilter !== 'all';
+      if (!stillActive) {
+        setIsAdvancedMode(false);
+        setAllProducts([]);
+      }
+    }
+    
+    setCurrentPage(1); // Reset to first page
+  };
+
+  // Clear all advanced filters
+  const clearAdvancedFilters = () => {
+    setAdvancedFilters({
+      stockSort: 'none',
+      priceSort: 'none',
+      expirySort: 'none',
+      categoryFilter: 'all',
+    });
+    setIsAdvancedMode(false);
+    setCurrentPage(1);
+  };
+
+  // Calculate pagination for filtered products
+  const paginatedProducts = useMemo(() => {
+    if (isAdvancedMode) {
+      // In advanced mode, paginate the filtered results
+      const startIndex = (currentPage - 1) * itemsPerPage;
+      const endIndex = startIndex + itemsPerPage;
+      return filteredProducts.slice(startIndex, endIndex);
+    }
+    return filteredProducts;
+  }, [filteredProducts, currentPage, itemsPerPage, isAdvancedMode]);
+
+  // Calculate total pages for filtered products
+  const calculatedTotalPages = useMemo(() => {
+    if (isAdvancedMode) {
+      return Math.max(1, Math.ceil(filteredProducts.length / itemsPerPage));
+    }
+    return totalPages;
+  }, [filteredProducts.length, itemsPerPage, isAdvancedMode, totalPages]);
+
+  // Calculate total products for filtered results
+  const calculatedTotalProducts = useMemo(() => {
+    if (isAdvancedMode) {
+      return filteredProducts.length;
+    }
+    return totalProducts;
+  }, [filteredProducts.length, isAdvancedMode, totalProducts]);
+
+  const handleEditProduct = (productId: number) => {
+    // First, try to find the product in the displayed products (filtered/paginated)
+    // This works for both regular and filtered results
+    const displayedProduct = paginatedProducts.find((p) => p.id === productId) ||
+                            filteredProducts.find((p) => p.id === productId) ||
+                            products.find((p) => p.id === productId) ||
+                            allProducts.find((p) => p.id === productId);
+
+    // If we found the product and it has a backendId, use it directly
+    if (displayedProduct && (displayedProduct as any).backendId) {
+      const productBackendId = (displayedProduct as any).backendId;
+      navigate(`/products/edit/${productBackendId}`);
+      return;
+    }
+
+    // Fallback: Find the backend product to get the actual MongoDB ID
+    // Check both backendProducts and allBackendProducts
+    const backendProduct = backendProducts.find(
+      (p) => idToNumber(p.id || p._id) === productId
+    ) || allBackendProducts.find(
+      (p) => idToNumber(p.id || p._id) === productId
+    );
+
+    if (!backendProduct) {
+      alert('المنتج غير موجود');
+      return;
+    }
+
+    const productBackendId = backendProduct.id || backendProduct._id || productId.toString();
+    navigate(`/products/edit/${productBackendId}`);
+  };
+
+  const handleDeleteProduct = async (productId: number) => {
+    if (!window.confirm(AR_LABELS.delete + ` product with ID ${productId}?`)) {
+      return;
+    }
+
+    try {
+      // Find the product to get its actual backend ID
+      const product = products.find((p) => p.id === productId);
+      if (!product) {
+        alert('المنتج غير موجود');
+        return;
+      }
+
+      // Find the backend product to get the actual MongoDB ID
+      const backendProduct = backendProducts.find(
+        (p) => idToNumber(p.id || p._id) === productId
+      );
+
+      if (!backendProduct) {
+        alert('المنتج غير موجود في قاعدة البيانات');
+        return;
+      }
+
+      const productBackendId = backendProduct.id || backendProduct._id || productId.toString();
+      const response = await productsApi.deleteProduct(productBackendId);
+
+      if (response.success) {
+        // Remove product from both local states
+        setProducts((prev) => prev.filter((p) => p.id !== productId));
+        setBackendProducts((prev) =>
+          prev.filter((p) => (p.id || p._id) !== productBackendId)
+        );
+        alert('تم حذف المنتج بنجاح');
+      } else {
+        alert('فشل حذف المنتج: ' + (response.message || 'خطأ غير معروف'));
+      }
+    } catch (error: any) {
+      console.error('Error deleting product:', error);
+      alert('حدث خطأ أثناء حذف المنتج: ' + (error.message || 'خطأ غير معروف'));
+    }
+  };
+
+  const toggleCostPriceVisibility = (productId: number) => {
+    setRevealedCostPrices((prev) => {
+      const newSet = new Set(prev);
+      if (newSet.has(productId)) {
+        newSet.delete(productId);
+      } else {
+        newSet.add(productId);
+      }
+      return newSet;
+    });
   };
 
   const handleQuickAction = (action: string) => {
@@ -75,6 +580,22 @@ const ProductListPage: React.FC<ProductListPageProps> = () => {
     }
   };
 
+  if (loadingInitial) {
+    return (
+      <div className="flex items-center justify-center min-h-[400px]">
+        <div className="text-lg text-gray-600 dark:text-gray-400">{AR_LABELS.loading}</div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="flex items-center justify-center min-h-[400px]">
+        <div className="text-lg text-red-600 dark:text-red-400">{error}</div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       {/* Analytics and Quick Actions */}
@@ -91,24 +612,151 @@ const ProductListPage: React.FC<ProductListPageProps> = () => {
 
       {/* Control Bar: Search */}
       <div className="bg-white dark:bg-gray-800 p-4 rounded-xl shadow-sm border border-slate-200/50 dark:border-slate-700/50">
-        <div className="flex flex-col md:flex-row justify-between items-center gap-4">
-          {/* Search Bar */}
-          <div className="relative w-full md:w-1/2 lg:w-1/3">
-            <input
-              type="text"
-              placeholder={AR_LABELS.searchPlaceholder}
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full pl-3 pr-10 py-2 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-orange-500 text-right"
-            />
-            <SearchIcon className="absolute top-1/2 left-3 -translate-y-1/2 h-5 w-5 text-gray-400 dark:text-gray-500" />
+        <div className="flex flex-col gap-4">
+          <div className="flex flex-col md:flex-row justify-between items-center gap-4">
+            {/* Search Bar */}
+            <div className="relative w-full md:w-1/2 lg:w-1/3">
+              <input
+                type="text"
+                placeholder={AR_LABELS.searchPlaceholder}
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full pl-3 pr-10 py-2 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-orange-500 text-right"
+              />
+              <SearchIcon className="absolute top-1/2 left-3 -translate-y-1/2 h-5 w-5 text-gray-400 dark:text-gray-500" />
+            </div>
+            {/* Layout Toggle and Items Per Page */}
+            <div className="flex items-center gap-2 w-full md:w-auto flex-wrap justify-end">
+              {/* Advanced Search Toggle */}
+              <button
+                onClick={() => {
+                  setShowAdvancedSearch(!showAdvancedSearch);
+                  if (!showAdvancedSearch && !isAdvancedMode && hasActiveAdvancedFilters) {
+                    setIsAdvancedMode(true);
+                  }
+                }}
+                className={`px-4 py-2 text-sm font-medium rounded-md border transition-colors ${
+                  showAdvancedSearch || hasActiveAdvancedFilters
+                    ? 'bg-orange-500 text-white border-orange-500'
+                    : 'bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-200 border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-600'
+                }`}
+              >
+                بحث متقدم
+                {hasActiveAdvancedFilters && (
+                  <span className="mr-2 inline-flex items-center justify-center w-5 h-5 text-xs font-bold text-orange-500 bg-white rounded-full">
+                    !
+                  </span>
+                )}
+              </button>
+              {/* Items Per Page Selector */}
+              <select
+                value={itemsPerPage}
+                onChange={(e) => handleItemsPerPageChange(Number(e.target.value))}
+                className="px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-orange-500"
+              >
+                <option value={10}>10 لكل صفحة</option>
+                <option value={20}>20 لكل صفحة</option>
+                <option value={30}>30 لكل صفحة</option>
+                <option value={50}>50 لكل صفحة</option>
+              </select>
+              <button onClick={() => setLayout(layout === 'table' ? 'grid' : 'table')} className="p-2 border dark:border-gray-600 rounded-md shadow-sm bg-gray-100 dark:bg-gray-700 dark:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-600">
+                {layout === 'table' ? <GridViewIcon/> : <TableViewIcon />}
+              </button>
+            </div>
           </div>
-          {/* Layout Toggle */}
-          <div className="flex items-center gap-2 w-full md:w-auto flex-wrap justify-end">
-            <button onClick={() => setLayout(layout === 'table' ? 'grid' : 'table')} className="p-2 border dark:border-gray-600 rounded-md shadow-sm bg-gray-100 dark:bg-gray-700 dark:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-600">
-              {layout === 'table' ? <GridViewIcon/> : <TableViewIcon />}
-            </button>
-          </div>
+
+          {/* Inline loading indicator for product fetches */}
+          {loadingProducts && (
+            <div className="text-sm text-gray-500 dark:text-gray-400 flex justify-end">
+              جاري تحميل المنتجات...
+            </div>
+          )}
+
+          {/* Advanced Search Panel */}
+          {showAdvancedSearch && (
+            <div className="border-t border-gray-200 dark:border-gray-700 pt-4 mt-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                {/* Stock Sort */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                    ترتيب حسب المخزون
+                  </label>
+                  <select
+                    value={advancedFilters.stockSort}
+                    onChange={(e) => handleAdvancedFilterChange('stockSort', e.target.value)}
+                    className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-orange-500"
+                  >
+                    <option value="none">بدون ترتيب</option>
+                    <option value="highest">أعلى مخزون</option>
+                    <option value="lowest">أقل مخزون</option>
+                  </select>
+                </div>
+
+                {/* Price Sort */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                    ترتيب حسب السعر
+                  </label>
+                  <select
+                    value={advancedFilters.priceSort}
+                    onChange={(e) => handleAdvancedFilterChange('priceSort', e.target.value)}
+                    className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-orange-500"
+                  >
+                    <option value="none">بدون ترتيب</option>
+                    <option value="highest">أعلى سعر</option>
+                    <option value="lowest">أقل سعر</option>
+                  </select>
+                </div>
+
+                {/* Expiry Sort */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                    ترتيب حسب تاريخ الانتهاء
+                  </label>
+                  <select
+                    value={advancedFilters.expirySort}
+                    onChange={(e) => handleAdvancedFilterChange('expirySort', e.target.value)}
+                    className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-orange-500"
+                  >
+                    <option value="none">بدون ترتيب</option>
+                    <option value="nearest">أقرب تاريخ انتهاء</option>
+                    <option value="furthest">أبعد تاريخ انتهاء</option>
+                  </select>
+                </div>
+
+                {/* Category Filter */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                    تصفية حسب الفئة
+                  </label>
+                  <select
+                    value={advancedFilters.categoryFilter}
+                    onChange={(e) => handleAdvancedFilterChange('categoryFilter', e.target.value)}
+                    className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-orange-500"
+                  >
+                    <option value="all">جميع الفئات</option>
+                    {categoryList.map((cat) => (
+                      <option key={cat.id} value={cat.id}>
+                        {cat.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {/* Clear Filters Button */}
+              {hasActiveAdvancedFilters && (
+                <div className="mt-4 flex justify-end">
+                  <button
+                    onClick={clearAdvancedFilters}
+                    className="px-4 py-2 text-sm font-medium text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 border border-red-300 dark:border-red-600 rounded-md hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+                  >
+                    مسح جميع الفلاتر
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
@@ -119,66 +767,126 @@ const ProductListPage: React.FC<ProductListPageProps> = () => {
             <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700 text-right">
               <thead className="bg-gray-50 dark:bg-gray-700/50">
                 <tr>
+                  <th scope="col" className="px-6 py-3 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider text-center">#</th>
                   <th scope="col" className="px-6 py-3 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">{AR_LABELS.productName}</th>
                   <th scope="col" className="px-6 py-3 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">{AR_LABELS.barcode}</th>
                   <th scope="col" className="px-6 py-3 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">{AR_LABELS.categoryName}</th>
-                  <th scope="col" className="px-6 py-3 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">{AR_LABELS.price}</th>
+                  <th scope="col" className="px-6 py-3 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">سعر التكلفة</th>
+                  <th scope="col" className="px-6 py-3 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">سعر البيع</th>
                   <th scope="col" className="px-6 py-3 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">{AR_LABELS.stock}</th>
                   <th scope="col" className="px-6 py-3 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">{AR_LABELS.expiryDate}</th>
                   <th scope="col" className="px-6 py-3 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider text-center">{AR_LABELS.actions}</th>
                 </tr>
               </thead>
               <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
-                {filteredProducts.length > 0 ? filteredProducts.map((product) => (
+                {paginatedProducts.length > 0 ? paginatedProducts.map((product, index) => {
+                  // Calculate row number based on current page and index
+                  const rowNumber = (currentPage - 1) * itemsPerPage + index + 1;
+                  return (
                   <tr key={product.id} className="hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors duration-150">
+                    <td className="px-6 py-4 whitespace-nowrap text-center"><div className="text-sm font-medium text-gray-500 dark:text-gray-400">{rowNumber}</div></td>
                     <td className="px-6 py-4 whitespace-nowrap"><div className="text-sm font-medium text-gray-900 dark:text-gray-100">{product.name}</div></td>
                     <td className="px-6 py-4 whitespace-nowrap"><div className="text-sm text-gray-700 dark:text-gray-300">{product.barcode}</div></td>
                     <td className="px-6 py-4 whitespace-nowrap"><div className="text-sm text-gray-700 dark:text-gray-300">{product.category}</div></td>
-                    <td className="px-6 py-4 whitespace-nowrap"><div className="text-sm text-gray-700 dark:text-gray-300">{product.price.toFixed(2)} ر.س</div></td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <button
+                        onClick={() => toggleCostPriceVisibility(product.id)}
+                        className="text-sm text-gray-700 dark:text-gray-300 hover:text-orange-600 dark:hover:text-orange-400 transition-colors duration-200 cursor-pointer font-mono"
+                        title={revealedCostPrices.has(product.id) ? 'انقر لإخفاء سعر التكلفة' : 'انقر لإظهار سعر التكلفة'}
+                      >
+                        {revealedCostPrices.has(product.id) 
+                          ? formatCurrency(product.costPrice, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                          : `•••• ${currency.symbol}`
+                        }
+                      </button>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap"><div className="text-sm text-gray-700 dark:text-gray-300">{formatCurrency(product.price, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div></td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <span className={`text-sm font-semibold ${product.stock < LOW_STOCK_THRESHOLD ? 'text-red-600 dark:text-red-400' : 'text-gray-700 dark:text-gray-300'}`}>
                         {product.stock}
                       </span>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap"><div className="text-sm text-gray-700 dark:text-gray-300">{new Date(product.expiryDate).toLocaleDateString('ar-EG')}</div></td>
+                    <td className="px-6 py-4 whitespace-nowrap"><div className="text-sm text-gray-700 dark:text-gray-300">{formatDate(product.expiryDate)}</div></td>
                     <td className="px-6 py-4 whitespace-nowrap text-center text-sm font-medium">
                       <button onClick={() => handleEditProduct(product.id)} className="text-indigo-600 hover:text-indigo-900 dark:text-indigo-400 dark:hover:text-indigo-300 ml-4 p-2 rounded-full hover:bg-indigo-50 dark:hover:bg-gray-700 transition-colors duration-200" aria-label={`${AR_LABELS.edit} ${product.name}`}><EditIcon /></button>
                       <button onClick={() => handleDeleteProduct(product.id)} className="text-red-600 hover:text-red-900 dark:text-red-400 dark:hover:text-red-300 p-2 rounded-full hover:bg-red-50 dark:hover:bg-gray-700 transition-colors duration-200" aria-label={`${AR_LABELS.delete} ${product.name}`}><DeleteIcon /></button>
                     </td>
                   </tr>
-                )) : (
+                  );
+                }) : (
                   <tr>
-                    <td colSpan={7} className="px-6 py-10 text-center text-gray-500 dark:text-gray-400">{AR_LABELS.noSalesFound}</td>
+                    <td colSpan={9} className="px-6 py-10 text-center text-gray-500 dark:text-gray-400">{AR_LABELS.noSalesFound}</td>
                   </tr>
                 )}
               </tbody>
             </table>
           </div>
+          
+          {/* Pagination */}
+          {calculatedTotalPages > 1 && (
+            <div className="px-6 py-4 border-t border-gray-200 dark:border-gray-700">
+              <Pagination
+                currentPage={currentPage}
+                totalPages={calculatedTotalPages}
+                totalItems={calculatedTotalProducts}
+                itemsPerPage={itemsPerPage}
+                onPageChange={handlePageChange}
+              />
+            </div>
+          )}
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-          {filteredProducts.length > 0 ? filteredProducts.map((product) => (
-            <div key={product.id} className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-slate-200/50 dark:border-slate-700/50 p-6 space-y-3 flex flex-col justify-between hover:shadow-md transition-all duration-300 group">
-              <div>
-                <div className="flex justify-between items-start mb-2">
-                  <h3 className="text-lg font-bold text-gray-800 dark:text-gray-100">{product.name}</h3>
-                  <span className={`text-xs font-semibold ${product.stock < LOW_STOCK_THRESHOLD ? 'text-red-600 dark:text-red-400' : 'text-gray-700 dark:text-gray-300'}`}>
-                    {product.stock}
-                  </span>
+        <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-slate-200/50 dark:border-slate-700/50 overflow-hidden">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 p-6">
+            {paginatedProducts.length > 0 ? paginatedProducts.map((product) => (
+              <div key={product.id} className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-slate-200/50 dark:border-slate-700/50 p-6 space-y-3 flex flex-col justify-between hover:shadow-md transition-all duration-300 group">
+                <div>
+                  <div className="flex justify-between items-start mb-2">
+                    <h3 className="text-lg font-bold text-gray-800 dark:text-gray-100">{product.name}</h3>
+                    <span className={`text-xs font-semibold ${product.stock < LOW_STOCK_THRESHOLD ? 'text-red-600 dark:text-red-400' : 'text-gray-700 dark:text-gray-300'}`}>
+                      {product.stock}
+                    </span>
+                  </div>
+                  <p className="text-sm text-gray-500 dark:text-gray-400">{AR_LABELS.barcode}: {product.barcode}</p>
+                  <p className="text-sm text-gray-600 dark:text-gray-300">{AR_LABELS.categoryName}: {product.category}</p>
+                  <p className="text-sm text-gray-600 dark:text-gray-300">
+                    سعر التكلفة:{' '}
+                  <button
+                    onClick={() => toggleCostPriceVisibility(product.id)}
+                    className="hover:text-orange-600 dark:hover:text-orange-400 transition-colors duration-200 cursor-pointer font-mono"
+                    title={revealedCostPrices.has(product.id) ? 'انقر لإخفاء سعر التكلفة' : 'انقر لإظهار سعر التكلفة'}
+                  >
+                    {revealedCostPrices.has(product.id) 
+                      ? formatCurrency(product.costPrice, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                      : `•••• ${currency.symbol}`
+                    }
+                  </button>
+                </p>
+                <p className="text-sm text-gray-600 dark:text-gray-300">سعر البيع: {formatCurrency(product.price, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                  <p className="text-sm text-gray-600 dark:text-gray-300">{AR_LABELS.expiryDate}: {formatDate(product.expiryDate)}</p>
                 </div>
-                <p className="text-sm text-gray-500 dark:text-gray-400">{AR_LABELS.barcode}: {product.barcode}</p>
-                <p className="text-sm text-gray-600 dark:text-gray-300">{AR_LABELS.categoryName}: {product.category}</p>
-                <p className="text-sm text-gray-600 dark:text-gray-300">{AR_LABELS.price}: {product.price.toFixed(2)} ر.س</p>
-                <p className="text-sm text-gray-600 dark:text-gray-300">{AR_LABELS.expiryDate}: {new Date(product.expiryDate).toLocaleDateString('ar-EG')}</p>
+                <div className="border-t dark:border-gray-700 pt-2 flex justify-end space-x-2 space-x-reverse">
+                  <button onClick={() => handleEditProduct(product.id)} className="text-indigo-600 hover:text-indigo-900 dark:text-indigo-400 dark:hover:text-indigo-300 p-1"><EditIcon /></button>
+                  <button onClick={() => handleDeleteProduct(product.id)} className="text-red-600 hover:text-red-900 dark:text-red-400 dark:hover:text-red-300 p-1"><DeleteIcon /></button>
+                </div>
               </div>
-              <div className="border-t dark:border-gray-700 pt-2 flex justify-end space-x-2 space-x-reverse">
-                <button onClick={() => handleEditProduct(product.id)} className="text-indigo-600 hover:text-indigo-900 dark:text-indigo-400 dark:hover:text-indigo-300 p-1"><EditIcon /></button>
-                <button onClick={() => handleDeleteProduct(product.id)} className="text-red-600 hover:text-red-900 dark:text-red-400 dark:hover:text-red-300 p-1"><DeleteIcon /></button>
-              </div>
-            </div>
-          )) : (
-            <div className="col-span-full text-center text-gray-500 dark:text-gray-400 py-10">{AR_LABELS.noSalesFound}</div>
-          )}
+            )) : (
+              <div className="col-span-full text-center text-gray-500 dark:text-gray-400 py-10">{AR_LABELS.noSalesFound}</div>
+            )}
+          </div>
+          
+        {/* Pagination for Grid View */}
+        {calculatedTotalPages > 1 && (
+          <div className="px-6 py-4 border-t border-gray-200 dark:border-gray-700">
+            <Pagination
+              currentPage={currentPage}
+              totalPages={calculatedTotalPages}
+              totalItems={calculatedTotalProducts}
+              itemsPerPage={itemsPerPage}
+              onPageChange={handlePageChange}
+            />
+          </div>
+        )}
         </div>
       )}
     </div>

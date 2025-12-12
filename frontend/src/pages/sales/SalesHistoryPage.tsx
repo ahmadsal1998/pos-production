@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { AR_LABELS, PrintIcon, ViewIcon } from '@/shared/constants';
 import { SaleTransaction } from '@/shared/types';
+import { formatDate } from '@/shared/utils';
 
 // Mock data for historical sales
 // FIX: Corrected mock data to match the SaleTransaction interface and use valid enum values.
@@ -96,7 +97,7 @@ const SalesHistoryPage: React.FC = () => {
               {filteredSales.length > 0 ? filteredSales.map((sale) => (
                 <tr key={sale.id} className="hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors duration-150">
                   <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">{sale.id}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700 dark:text-gray-300">{new Date(sale.date).toLocaleDateString('ar-EG')}</td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700 dark:text-gray-300">{formatDate(sale.date)}</td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700 dark:text-gray-300">{sale.customerName}</td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700 dark:text-gray-300">{sale.totalAmount.toFixed(2)} ر.س</td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700 dark:text-gray-300">{sale.paymentMethod}</td>

@@ -1,6 +1,7 @@
 import { Response, NextFunction } from 'express';
 import { body, validationResult } from 'express-validator';
 import OTP from '../models/OTP';
+import Settings from '../models/Settings';
 import { generateToken, generateRefreshToken } from '../utils/jwt';
 import { AuthenticatedRequest } from '../middleware/auth.middleware';
 import { asyncHandler } from '../middleware/error.middleware';
@@ -8,6 +9,7 @@ import { generateOTP, getOTPExpiration } from '../utils/otp';
 import { sendOTPEmail } from '../utils/email';
 import { findUserAcrossStores, findUserByIdAcrossStores } from '../utils/userModel';
 import { cacheEmailToStore, cacheUsernameToStore } from '../utils/storeUserCache';
+import { checkAndUpdateStoreSubscription } from '../utils/subscriptionManager';
 
 // Login controller
 export const login = asyncHandler(
@@ -96,6 +98,18 @@ export const login = asyncHandler(
       });
     }
 
+    // Check store subscription status if user belongs to a store
+    // Note: We allow login even if subscription expired, but include status in response
+    let subscriptionStatus = null;
+    if (user.storeId) {
+      try {
+        subscriptionStatus = await checkAndUpdateStoreSubscription(user.storeId);
+      } catch (error: any) {
+        // If store not found, log but continue (shouldn't happen in normal flow)
+        console.error(`Error checking subscription for store ${user.storeId}:`, error.message);
+      }
+    }
+
     // Verify password
     const isPasswordValid = await user.comparePassword(password);
     if (!isPasswordValid) {
@@ -144,6 +158,11 @@ export const login = asyncHandler(
         },
         token,
         refreshToken,
+        subscriptionStatus: subscriptionStatus ? {
+          isActive: subscriptionStatus.isActive,
+          subscriptionExpired: subscriptionStatus.subscriptionExpired,
+          subscriptionEndDate: subscriptionStatus.subscriptionEndDate,
+        } : null,
       },
     });
   }
@@ -172,6 +191,17 @@ export const getMe = asyncHandler(
       });
     }
 
+    // Check store subscription status if user belongs to a store
+    let subscriptionStatus = null;
+    if (user.storeId) {
+      try {
+        subscriptionStatus = await checkAndUpdateStoreSubscription(user.storeId);
+      } catch (error: any) {
+        // If store not found, log but continue (shouldn't happen in normal flow)
+        console.error(`Error checking subscription for store ${user.storeId}:`, error.message);
+      }
+    }
+
     res.status(200).json({
       success: true,
       data: {
@@ -185,6 +215,11 @@ export const getMe = asyncHandler(
           status: user.status,
           lastLogin: user.lastLogin,
         },
+        subscriptionStatus: subscriptionStatus ? {
+          isActive: subscriptionStatus.isActive,
+          subscriptionExpired: subscriptionStatus.subscriptionExpired,
+          subscriptionEndDate: subscriptionStatus.subscriptionEndDate,
+        } : null,
       },
     });
   }
@@ -196,6 +231,23 @@ export const logout = asyncHandler(
     res.status(200).json({
       success: true,
       message: 'Logged out successfully',
+    });
+  }
+);
+
+// Get contact number for expired subscription page (public endpoint)
+export const getContactNumber = asyncHandler(
+  async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+    const setting = await Settings.findOne({ key: 'subscription_contact_number' });
+    
+    // Default contact number if not set
+    const contactNumber = setting?.value || '0593202029';
+
+    res.status(200).json({
+      success: true,
+      data: {
+        contactNumber,
+      },
     });
   }
 );

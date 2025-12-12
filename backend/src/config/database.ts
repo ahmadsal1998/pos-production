@@ -1,13 +1,70 @@
 import mongoose from 'mongoose';
 
 /**
+ * Ensure the MongoDB URI includes the admin_db database name
+ * @param uri - Original MongoDB URI
+ * @returns MongoDB URI with admin_db as the database name
+ */
+export function ensureAdminDatabase(uri: string): string {
+  const ADMIN_DB_NAME = 'admin_db';
+  
+  // Handle MongoDB Atlas SRV format: mongodb+srv://user:pass@cluster.net/dbname?options
+  // Handle standard format: mongodb://user:pass@host:port/dbname?options
+  
+  // Find the last slash before query parameters (this separates host from database)
+  const queryIndex = uri.indexOf('?');
+  const uriWithoutQuery = queryIndex > 0 ? uri.substring(0, queryIndex) : uri;
+  const queryString = queryIndex > 0 ? uri.substring(queryIndex) : '';
+  
+  // Find the protocol (mongodb:// or mongodb+srv://)
+  const protocolIndex = uriWithoutQuery.indexOf('://');
+  if (protocolIndex === -1) {
+    throw new Error('Invalid MongoDB URI format: missing protocol');
+  }
+  
+  // Extract everything after the protocol
+  const afterProtocol = uriWithoutQuery.substring(protocolIndex + 3);
+  
+  // Find the first slash after the protocol (this separates host from database)
+  const hostEndIndex = afterProtocol.indexOf('/');
+  
+  if (hostEndIndex === -1) {
+    // No database specified in URI, append database name
+    return `${uriWithoutQuery}/${ADMIN_DB_NAME}${queryString}`;
+  }
+  
+  // Extract the protocol and host part (everything before the first slash after protocol)
+  const protocolAndHost = uriWithoutQuery.substring(0, protocolIndex + 3 + hostEndIndex);
+  
+  // Remove any trailing slashes from protocol and host
+  const cleanProtocolAndHost = protocolAndHost.replace(/\/+$/, '');
+  
+  // Construct the new URI with the admin_db database name
+  // Ensure exactly one slash between host and database name
+  return `${cleanProtocolAndHost}/${ADMIN_DB_NAME}${queryString}`;
+}
+
+/**
  * Connect to the main database (for Store model and other shared data)
  * This is separate from the distributed databases used for store-specific data
  * Note: Distributed databases are connected lazily when needed
  */
 const connectDB = async (): Promise<void> => {
   try {
-    const conn = await mongoose.connect(process.env.MONGODB_URI as string);
+    const mongoUri = process.env.MONGODB_URI as string;
+    if (!mongoUri) {
+      throw new Error('MONGODB_URI environment variable is not set');
+    }
+    
+    // Ensure the connection string uses admin_db as the database name
+    const uriWithAdminDb = ensureAdminDatabase(mongoUri);
+    
+    // Connect with options to prevent automatic collection creation
+    // Individual models can override this with autoCreate: false in their schema options
+    const conn = await mongoose.connect(uriWithAdminDb, {
+      autoCreate: true, // Allow auto-creation (models can override with autoCreate: false)
+      autoIndex: true, // Create indexes automatically for better query performance
+    });
     console.log(`✅ Main MongoDB Connected: ${conn.connection.host}`);
     console.log(`📊 Database: ${conn.connection.name}`);
     

@@ -8,6 +8,7 @@ import PurchaseAnalytics from '@/features/financial/components/PurchaseAnalytics
 import PurchaseQuickActions from '@/features/financial/components/PurchaseQuickActions';
 import SuppliersAnalytics from '@/features/financial/components/SuppliersAnalytics';
 import SuppliersQuickActions from '@/features/financial/components/SuppliersQuickActions';
+import { formatDate } from '@/shared/utils';
 import PaymentsAnalytics from '@/features/financial/components/PaymentsAnalytics';
 import PaymentsQuickActions from '@/features/financial/components/PaymentsQuickActions';
 import QuickReports from '@/features/financial/components/QuickReports';
@@ -195,7 +196,7 @@ const SupplierStatementModal: React.FC<{ summary: SupplierAccountSummary | null;
                 <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
                     {transactions.map((t, i) => (
                         <tr key={i}>
-                            <td className="p-2 text-sm">{new Date(t.date).toLocaleDateString('ar-SA')}</td>
+                            <td className="p-2 text-sm">{formatDate(t.date)}</td>
                             <td className="p-2 text-sm">{t.description}</td>
                             <td className="p-2 text-sm text-left font-mono">{t.debit > 0 ? t.debit.toFixed(2) : '-'}</td>
                             <td className="p-2 text-sm text-left font-mono text-green-600">{t.credit > 0 ? t.credit.toFixed(2) : '-'}</td>
@@ -537,7 +538,7 @@ const PurchaseOrdersView: React.FC<{
                                 {filteredPurchases.length > 0 ? filteredPurchases.map((purchase) => (
                                     <tr key={purchase.id} className="hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors duration-150">
                                         <td className="px-2 py-3 sm:px-4 sm:py-4 whitespace-nowrap"><div className="text-xs sm:text-sm font-medium text-blue-600 dark:text-blue-400">{purchase.id}</div></td>
-                                        <td className="px-2 py-3 sm:px-4 sm:py-4 whitespace-nowrap"><div className="text-xs sm:text-sm text-gray-700 dark:text-gray-300">{new Date(purchase.purchaseDate).toLocaleDateString('ar-SA')}</div></td>
+                                        <td className="px-2 py-3 sm:px-4 sm:py-4 whitespace-nowrap"><div className="text-xs sm:text-sm text-gray-700 dark:text-gray-300">{formatDate(purchase.purchaseDate)}</div></td>
                                         <td className="px-2 py-3 sm:px-4 sm:py-4 whitespace-nowrap"><div className="text-xs sm:text-sm font-medium text-gray-900 dark:text-gray-100 truncate max-w-[120px] sm:max-w-none" title={purchase.supplierName}>{purchase.supplierName}</div></td>
                                         <td className="px-2 py-3 sm:px-4 sm:py-4 whitespace-nowrap"><div className="text-xs sm:text-sm font-semibold text-orange-600">{purchase.totalAmount.toFixed(2)} ر.س</div></td>
                                         <td className="px-2 py-3 sm:px-4 sm:py-4 whitespace-nowrap"><div className="text-xs sm:text-sm text-gray-700 dark:text-gray-300">{PAYMENT_METHOD_LABELS[purchase.paymentMethod]}</div></td>
@@ -573,7 +574,7 @@ const PurchaseOrdersView: React.FC<{
                                 </div>
                                 <div className="space-y-2 text-sm text-gray-600 dark:text-gray-400">
                                     <p><span className="font-medium">{AR_LABELS.supplier}:</span> {purchase.supplierName}</p>
-                                    <p><span className="font-medium">{AR_LABELS.purchaseDate}:</span> {new Date(purchase.purchaseDate).toLocaleDateString('ar-SA')}</p>
+                                    <p><span className="font-medium">{AR_LABELS.purchaseDate}:</span> {formatDate(purchase.purchaseDate)}</p>
                                     <p><span className="font-medium">{AR_LABELS.totalAmount}:</span> <span className="font-bold text-orange-600">{purchase.totalAmount.toFixed(2)} ر.س</span></p>
                                     <p><span className="font-medium">{AR_LABELS.paymentMethod}:</span> {PAYMENT_METHOD_LABELS[purchase.paymentMethod]}</p>
                                 </div>

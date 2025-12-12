@@ -17,6 +17,7 @@ import mongoose from 'mongoose';
 import dotenv from 'dotenv';
 import Store from '../models/Store';
 import { DATABASE_CONFIG } from './databaseManager';
+import { ensureAdminDatabase } from '../config/database';
 
 dotenv.config();
 
@@ -25,7 +26,12 @@ const migrateExistingStores = async () => {
     console.log('🔄 Starting store migration...\n');
 
     // Connect to main database
-    await mongoose.connect(process.env.MONGODB_URI as string);
+    const mongoUri = process.env.MONGODB_URI as string;
+    if (!mongoUri) {
+      throw new Error('MONGODB_URI environment variable is not set');
+    }
+    const uriWithAdminDb = ensureAdminDatabase(mongoUri);
+    await mongoose.connect(uriWithAdminDb);
     console.log('✅ Connected to main database\n');
 
     // Find all stores

@@ -137,7 +137,7 @@ export const TOP_NAV_ITEMS: TopNavItem[] = [
   { id: 1, label: AR_LABELS.dashboard, path: '/' },
   { id: 2, label: AR_LABELS.pointOfSales, path: '/pos/1' },
   { id: 3, label: AR_LABELS.products, path: '/products' },
-  { id: 4, label: 'التقارير', path: '/reports' },
+  { id: 4, label: AR_LABELS.reports, path: '/reports' },
   { id: 5, label: AR_LABELS.users, path: '/users' },
   { id: 6, label: AR_LABELS.settings, path: '/settings' },
 ];
@@ -214,8 +214,8 @@ export const QUICK_ACTIONS_DATA: QuickActionProps[] = [
     title: AR_LABELS.addProduct,
     icon: <AddProductIcon />,
     colorClass: 'bg-gray-200 hover:bg-gray-300 text-gray-800',
-    path: '/products/add-multi-unit',
-  }, // Updated path
+    path: '/products/add-new',
+  }, // Updated path to new simplified product entry
   {
     id: 3,
     title: AR_LABELS.viewCustomers,

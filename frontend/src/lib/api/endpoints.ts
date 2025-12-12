@@ -14,8 +14,10 @@ export const API_ENDPOINTS = {
     CREATE: '/products',
     UPDATE: '/products/:id',
     DELETE: '/products/:id',
+    METRICS: '/products/metrics',
     CATEGORIES: '/products/categories',
     BRANDS: '/products/brands',
+    WAREHOUSES: '/warehouses',
   },
   SALES: {
     LIST: '/sales',
@@ -44,6 +46,11 @@ export const API_ENDPOINTS = {
   ADMIN: {
     STORES: '/admin/stores',
     STORE: '/admin/stores/:id',
+  },
+  CUSTOMERS: {
+    LIST: '/customers',
+    CREATE: '/customers',
+    GET: '/customers/:id',
   },
   PAYMENTS: {
     PROCESS: '/payments/process',

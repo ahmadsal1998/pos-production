@@ -6,6 +6,7 @@ import {
   forgotPassword,
   verifyOTP,
   resetPassword,
+  getContactNumber,
   validateLogin,
   validateForgotPassword,
   validateVerifyOTP,
@@ -18,6 +19,7 @@ const router = Router();
 // Public routes
 router.post('/login', validateLogin, login);
 router.post('/logout', authenticate, logout);
+router.get('/contact-number', getContactNumber); // Public endpoint for expired subscription page
 
 // Password reset flow routes
 router.post('/forgot-password', validateForgotPassword, forgotPassword);

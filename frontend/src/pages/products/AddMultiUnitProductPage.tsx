@@ -2,7 +2,6 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   AR_LABELS,
-  PRODUCT_CATEGORIES,
   AddProductIcon,
   CancelIcon,
   GenerateBarcodeIcon,
@@ -16,6 +15,10 @@ import {
   MultiUnitProduct,
   CustomUnitInput,
 } from '@/shared/types';
+import { categoriesApi } from '@/lib/api/client';
+import CategoryFormModal from '@/features/products/components/category-management/CategoryFormModal';
+import { Category } from '@/shared/types';
+import { ApiError } from '@/lib/api/client';
 
 interface AddMultiUnitProductPageProps {}
 
@@ -24,9 +27,13 @@ const MOCK_EXISTING_BARCODES = new Set(['123456000001', 'BARCODE007']);
 
 const AddMultiUnitProductPage: React.FC<AddMultiUnitProductPageProps> = () => {
   const navigate = useNavigate();
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [loadingCategories, setLoadingCategories] = useState(true);
+  const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
+  
   const [formData, setFormData] = useState<MultiUnitProductFormInput>({
     productName: '',
-    category: PRODUCT_CATEGORIES[0] || '',
+    category: '',
     initialQuantityHighestUnit: 0,
     totalPurchasePrice: 0,
     unitLevels: [
@@ -44,6 +51,45 @@ const AddMultiUnitProductPage: React.FC<AddMultiUnitProductPageProps> = () => {
   >({});
   const [barcodeErrors, setBarcodeErrors] = useState<Record<string, string>>({});
   const [showSummary, setShowSummary] = useState(false);
+
+  // Load categories from API
+  useEffect(() => {
+    const loadCategories = async () => {
+      try {
+        setLoadingCategories(true);
+        const response = await categoriesApi.getCategories();
+        
+        if (response.success) {
+          const categoriesData = (response.data as any)?.categories || response.data || [];
+          const mappedCategories = Array.isArray(categoriesData) ? categoriesData.map((cat: any) => ({
+            id: cat.id || cat._id?.toString() || cat._id,
+            nameAr: cat.name || cat.nameAr,
+            description: cat.description || '',
+            parentId: cat.parentId || null,
+            status: cat.status || 'Active',
+            createdAt: cat.createdAt || new Date().toISOString(),
+            productCount: cat.productCount || 0,
+          })) : [];
+          
+          setCategories(mappedCategories);
+          
+          // Set default category if available
+          if (mappedCategories.length > 0 && !formData.category) {
+            setFormData(prev => ({
+              ...prev,
+              category: mappedCategories[0].nameAr,
+            }));
+          }
+        }
+      } catch (error) {
+        console.error('Error loading categories:', error);
+      } finally {
+        setLoadingCategories(false);
+      }
+    };
+
+    loadCategories();
+  }, []);
 
   const calculateValues = useCallback(() => {
     const newCalculated: MultiUnitProductCalculatedFields = {};
@@ -87,12 +133,101 @@ const AddMultiUnitProductPage: React.FC<AddMultiUnitProductPageProps> = () => {
     calculateValues();
   }, [calculateValues]);
 
+  const handleCategorySave = async (categoryDraft: { nameAr: string; description?: string; parentId?: string | null; status: 'Active' | 'Inactive'; id?: string }) => {
+    try {
+      const payload = {
+        name: categoryDraft.nameAr.trim(),
+        description: categoryDraft.description?.trim() || undefined,
+        parentId: categoryDraft.parentId || undefined,
+      };
+
+      console.log('Creating category with payload:', payload);
+      const response = await categoriesApi.createCategory(payload);
+      console.log('Category creation response:', response);
+
+      const backendResponse = response.data as any;
+      
+      if (backendResponse?.success !== false) {
+        let createdCategory = null;
+        
+        if (backendResponse?.category) {
+          createdCategory = backendResponse.category;
+        } else if (backendResponse && typeof backendResponse === 'object' && 'name' in backendResponse) {
+          createdCategory = backendResponse;
+        }
+
+        if (createdCategory) {
+          const categoryId = createdCategory.id || createdCategory._id?.toString() || createdCategory._id;
+          const categoryName = createdCategory.name || createdCategory.nameAr;
+          
+          if (!categoryId) {
+            throw new Error('فشل إنشاء الفئة: لم يتم العثور على معرف الفئة');
+          }
+
+          let createdAt = new Date().toISOString();
+          if (createdCategory.createdAt) {
+            if (typeof createdCategory.createdAt === 'string') {
+              createdAt = createdCategory.createdAt;
+            } else if (createdCategory.createdAt instanceof Date) {
+              createdAt = createdCategory.createdAt.toISOString();
+            } else if (createdCategory.createdAt.toISOString) {
+              createdAt = createdCategory.createdAt.toISOString();
+            }
+          }
+
+          const newCategory: Category = {
+            id: categoryId.toString(),
+            nameAr: categoryName,
+            description: createdCategory.description || '',
+            parentId: createdCategory.parentId || null,
+            status: categoryDraft.status,
+            createdAt: createdAt,
+            productCount: 0,
+          };
+
+          setCategories(prev => {
+            const exists = prev.some(c => c.id === newCategory.id);
+            if (exists) {
+              return prev.map(c => c.id === newCategory.id ? newCategory : c);
+            }
+            return [...prev, newCategory];
+          });
+
+          // Select the newly created category
+          setFormData(prev => ({
+            ...prev,
+            category: newCategory.nameAr,
+          }));
+
+          setIsCategoryModalOpen(false);
+        } else {
+          throw new Error('فشل إنشاء الفئة: لم يتم العثور على بيانات الفئة في الاستجابة');
+        }
+      } else {
+        const errorMessage = backendResponse?.message || 'فشل إنشاء الفئة';
+        throw new Error(errorMessage);
+      }
+    } catch (error) {
+      const apiError = error as ApiError;
+      const errorMessage = apiError?.message || 'تعذر إنشاء الفئة. يرجى المحاولة مرة أخرى.';
+      window.alert(errorMessage);
+      throw error;
+    }
+  };
+
   const handleChange = (
     e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>,
     unitId?: string,
     field?: keyof CustomUnitInput
   ) => {
     const { name, value, type } = e.target;
+    
+    // Handle category selection - check if "Add Category" option was selected
+    if (name === 'category' && value === '__add_category__') {
+      setIsCategoryModalOpen(true);
+      return; // Don't update formData, just open modal
+    }
+    
     const parsedValue = type === 'number' ? parseFloat(value) : value;
 
     if (unitId && field) {
@@ -434,16 +569,29 @@ const AddMultiUnitProductPage: React.FC<AddMultiUnitProductPageProps> = () => {
                   name="category"
                   value={formData.category}
                   onChange={handleChange}
+                  disabled={loadingCategories}
                   className={`mt-1 block w-full h-10 border ${
                     errors.category ? 'border-red-500' : 'border-gray-300 dark:border-gray-600'
-                  } rounded-md shadow-sm py-2.5 px-3.5 pr-10 focus:outline-none focus:ring-orange-500 focus:border-orange-500 text-black dark:text-gray-200 text-right appearance-none bg-white dark:bg-gray-800`}
+                  } rounded-md shadow-sm py-2.5 px-3.5 pr-10 focus:outline-none focus:ring-orange-500 focus:border-orange-500 text-black dark:text-gray-200 text-right appearance-none bg-white dark:bg-gray-800 ${
+                    loadingCategories ? 'opacity-50 cursor-not-allowed' : ''
+                  }`}
                   required
                 >
-                  {PRODUCT_CATEGORIES.map((cat) => (
-                    <option key={cat} value={cat}>
-                      {cat}
-                    </option>
-                  ))}
+                  {loadingCategories ? (
+                    <option value="">جاري التحميل...</option>
+                  ) : (
+                    <>
+                      <option value="">اختر فئة</option>
+                      {categories.map((cat) => (
+                        <option key={cat.id} value={cat.nameAr}>
+                          {cat.nameAr}
+                        </option>
+                      ))}
+                      <option value="__add_category__" className="text-orange-600 font-semibold">
+                        + إضافة فئة جديدة
+                      </option>
+                    </>
+                  )}
                 </select>
                 <svg className="absolute top-1/2 left-3 -translate-y-1/2 h-5 w-5 text-gray-400 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"/></svg>
               </div>
@@ -527,6 +675,21 @@ const AddMultiUnitProductPage: React.FC<AddMultiUnitProductPageProps> = () => {
           </div>
         </form>
       </div>
+
+      {/* Category Form Modal */}
+      <CategoryFormModal
+        isOpen={isCategoryModalOpen}
+        onClose={() => {
+          setIsCategoryModalOpen(false);
+          // Reset category if it was set to the add category option
+          if (formData.category === '__add_category__') {
+            setFormData(prev => ({ ...prev, category: '' }));
+          }
+        }}
+        onSave={handleCategorySave}
+        categoryToEdit={null}
+        allCategories={categories}
+      />
     </div>
   );
 };

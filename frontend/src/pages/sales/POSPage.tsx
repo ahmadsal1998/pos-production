@@ -4,9 +4,28 @@ import { Product, Customer, POSInvoice, POSCartItem, SaleTransaction } from '@/s
 import { AR_LABELS, UUID, SearchIcon, DeleteIcon, PlusIcon, HandIcon, CancelIcon, PrintIcon, CheckCircleIcon, ReturnIcon } from '@/shared/constants';
 import { ToggleSwitch } from '@/shared/components/ui/ToggleSwitch';
 import CustomDropdown from '@/shared/components/ui/CustomDropdown/CustomDropdown';
+import { customersApi, productsApi, storeSettingsApi, ApiError } from '@/lib/api/client';
+import { useCurrency } from '@/shared/contexts/CurrencyContext';
+// PaymentProcessingModal removed - using simple payment flow
+
+// Local POS product type with optional units
+type POSProduct = Product & {
+    units?: Array<{
+        unitName: string;
+        barcode?: string;
+        sellingPrice: number;
+        conversionFactor: number;
+    }>;
+    cost?: number;
+    costPrice?: number;
+    updatedAt?: string;
+    description?: string;
+    showInQuickProducts?: boolean;
+    status?: string;
+};
 
 // --- MOCK DATA ---
-const MOCK_PRODUCTS_DATA: Product[] = [
+const MOCK_PRODUCTS_DATA: POSProduct[] = [
   { id: 1, name: 'لابتوب Dell XPS 15', category: 'إلكترونيات', price: 1200.00, costPrice: 950.00, stock: 50, barcode: '629100100001', expiryDate: '2025-12-31', createdAt: '2023-01-15' },
   { id: 2, name: 'هاتف Samsung S23', category: 'إلكترونيات', price: 899.99, costPrice: 700.00, stock: 120, barcode: '629100100002', expiryDate: '2026-06-30', createdAt: new Date().toISOString() },
   { id: 3, name: 'كوكا كولا', category: 'مشروبات', price: 2.50, costPrice: 1.50, stock: 200, barcode: '629100100003', expiryDate: '2024-12-01', createdAt: '2023-12-01' },
@@ -49,19 +68,13 @@ const MOCK_ORIGINAL_INVOICES: POSInvoice[] = [
     }
 ];
 
-const MOCK_CUSTOMERS: Customer[] = [
-  { id: UUID(), name: 'علي محمد', phone: '0501234567', previousBalance: 0 },
-  { id: UUID(), name: 'فاطمة الزهراء', phone: '0557654321', previousBalance: 150.75 },
-  { id: UUID(), name: 'عميل نقدي', phone: 'N/A', previousBalance: 0 },
-];
-
-const QUICK_PRODUCTS = MOCK_PRODUCTS_DATA.slice(2, 6); // Coke, Water, Lays, Sony Headphones
+// All dummy/fake customers have been removed. Customer list starts empty.
 
 const generateNewInvoice = (cashierName: string): POSInvoice => ({
   id: `INV-${new Date().getFullYear()}-${Math.random().toString(36).substr(2, 5).toUpperCase()}`,
   date: new Date(),
   cashier: cashierName,
-  customer: MOCK_CUSTOMERS.find(c => c.name === 'عميل نقدي') || null,
+  customer: null, // No default dummy customer
   items: [],
   subtotal: 0,
   totalItemDiscount: 0,
@@ -71,9 +84,36 @@ const generateNewInvoice = (cashierName: string): POSInvoice => ({
   paymentMethod: null,
 });
 
+// Helper function to filter out dummy/test customers
+const isDummyCustomer = (customer: Customer): boolean => {
+    const name = customer.name?.toLowerCase() || '';
+    const phone = customer.phone?.toLowerCase() || '';
+    
+    // Common patterns for dummy/test customers
+    const dummyPatterns = [
+        'test', 'dummy', 'fake', 'example', 'sample', 'demo',
+        'اختبار', 'تجريبي', 'مثال', 'وهمي'
+    ];
+    
+    // Check if name or phone contains dummy patterns
+    const isDummyName = dummyPatterns.some(pattern => name.includes(pattern));
+    const isDummyPhone = phone.length < 5 || /^(000|111|123|999)/.test(phone.replace(/\D/g, ''));
+    
+    return isDummyName || isDummyPhone;
+};
+
 // --- MAIN POS COMPONENT ---
 const POSPage: React.FC = () => {
-    const [products, setProducts] = useState<Product[]>(MOCK_PRODUCTS_DATA);
+    const { formatCurrency } = useCurrency();
+    const [products, setProducts] = useState<POSProduct[]>(MOCK_PRODUCTS_DATA);
+    const [quickProducts, setQuickProducts] = useState<POSProduct[]>([]);
+    const [isLoadingQuickProducts, setIsLoadingQuickProducts] = useState(false);
+    const [productSuggestionsOpen, setProductSuggestionsOpen] = useState(false);
+    const [customers, setCustomers] = useState<Customer[]>([]); // Customer list - starts empty, no dummy customers
+    const [allCustomers, setAllCustomers] = useState<Customer[]>([]); // All customers from API
+    const [customerSearchTerm, setCustomerSearchTerm] = useState(''); // Search term for customers
+    const [isCustomerDropdownOpen, setIsCustomerDropdownOpen] = useState(false);
+    const [isLoadingCustomers, setIsLoadingCustomers] = useState(false);
     const [currentInvoice, setCurrentInvoice] = useState<POSInvoice>(() => generateNewInvoice(AR_LABELS.ahmadSai));
     const [heldInvoices, setHeldInvoices] = useState<POSInvoice[]>([]);
     const [searchTerm, setSearchTerm] = useState('');
@@ -83,22 +123,235 @@ const POSPage: React.FC = () => {
     const [creditPaidAmount, setCreditPaidAmount] = useState(0);
     const [autoPrintEnabled, setAutoPrintEnabled] = useState(true);
     const [isReturnModalOpen, setReturnModalOpen] = useState(false);
+    const [isAddCustomerModalOpen, setIsAddCustomerModalOpen] = useState(false);
+    const [taxRate, setTaxRate] = useState<number>(0.15); // default 15% until settings load
+    
+    // Fetch tax rate from system settings (store settings)
+    const fetchTaxRate = useCallback(async () => {
+        try {
+            const response = await storeSettingsApi.getSettings();
+            const settings = (response.data as any)?.data?.settings || (response.data as any)?.settings || {};
+            // Build a case-insensitive map of settings
+            const settingsMap: Record<string, any> = {};
+            Object.keys(settings || {}).forEach((k) => {
+                settingsMap[k.toLowerCase()] = settings[k];
+            });
+
+            const get = (key: string) => settings[key] ?? settingsMap[key.toLowerCase()];
+
+            // Accept several possible keys (lower/upper/underscored), and strip % if present
+            const rawTax =
+                get('taxRate') ??
+                get('vatPercentage') ??
+                get('vatRate') ??
+                get('vat') ??
+                get('tax') ??
+                get('vat_percentage') ??
+                get('tax_percentage') ??
+                get('vatpercent') ??
+                get('taxpercent') ??
+                get('TAX_RATE') ??
+                get('VAT_PERCENTAGE') ??
+                get('VAT_RATE') ??
+                get('VAT_PERCENT') ??
+                get('TAX') ??
+                get('VAT');
+            if (rawTax !== undefined && rawTax !== null) {
+                const cleaned = typeof rawTax === 'string' ? rawTax.replace('%', '').trim() : rawTax;
+                const parsed = parseFloat(cleaned);
+                if (!isNaN(parsed)) {
+                    // If value looks like a whole number (> 1), treat as percentage (e.g., 15 => 0.15)
+                    const normalized = parsed > 1 ? parsed / 100 : parsed;
+                    setTaxRate(normalized);
+                    return;
+                }
+            }
+            // If nothing usable, keep default
+            console.warn('Tax rate setting missing or invalid, using default 15%');
+        } catch (err) {
+            console.error('Failed to fetch tax rate from settings:', err);
+        }
+    }, []);
     
     const calculateTotals = useCallback((items: POSCartItem[], invoiceDiscount: number): Pick<POSInvoice, 'subtotal' | 'totalItemDiscount' | 'tax' | 'grandTotal'> => {
         const subtotal = items.reduce((acc, item) => acc + item.total, 0);
         const totalItemDiscount = items.reduce((acc, item) => acc + item.discount * item.quantity, 0);
         const totalDiscountValue = totalItemDiscount + invoiceDiscount;
-        // Assuming 15% tax for demonstration
-        const tax = (subtotal - totalDiscountValue) * 0.15;
-        const grandTotal = subtotal - totalDiscountValue + tax;
+        const taxableAmount = Math.max(0, subtotal - totalDiscountValue);
+        const tax = taxableAmount * taxRate;
+        const grandTotal = taxableAmount + tax;
         return { subtotal, totalItemDiscount, tax, grandTotal };
-    }, []);
+    }, [taxRate]);
 
     useEffect(() => {
         const newTotals = calculateTotals(currentInvoice.items, currentInvoice.invoiceDiscount);
         setCurrentInvoice(inv => ({ ...inv, ...newTotals }));
     }, [currentInvoice.items, currentInvoice.invoiceDiscount, calculateTotals]);
     
+    // Fetch customers from API - made as useCallback so it can be called after customer creation
+    const fetchCustomers = useCallback(async () => {
+        setIsLoadingCustomers(true);
+        try {
+            const response = await customersApi.getCustomers();
+            const customersData = (response.data as any)?.data?.customers || [];
+            
+            // Transform backend data to frontend Customer format and filter out dummy customers
+            const transformedCustomers: Customer[] = Array.isArray(customersData)
+                ? customersData
+                    .map((customer: any) => ({
+                        id: customer.id,
+                        name: customer.name || customer.phone,
+                        phone: customer.phone,
+                        address: customer.address,
+                        previousBalance: customer.previousBalance || 0,
+                    }))
+                    .filter((customer: Customer) => !isDummyCustomer(customer))
+                : [];
+            
+            setAllCustomers(transformedCustomers);
+            setCustomers(transformedCustomers);
+        } catch (err: any) {
+            const apiError = err as ApiError;
+            console.error('Error fetching customers:', apiError);
+            // Don't show error to user, just log it - customers list will remain empty
+        } finally {
+            setIsLoadingCustomers(false);
+        }
+    }, []);
+
+    // Fetch quick products from API
+    const fetchQuickProducts = useCallback(async () => {
+        setIsLoadingQuickProducts(true);
+        try {
+            // Fetch all products - fetch multiple pages if needed to get all products
+            let allProductsData: any[] = [];
+            let currentPage = 1;
+            let hasMorePages = true;
+            const pageSize = 1000; // Max allowed by backend
+            
+            // Fetch all pages of products
+            while (hasMorePages) {
+                const response = await productsApi.getProducts({ page: currentPage, limit: pageSize });
+                if (response.success) {
+                    const productsData = (response.data as any)?.products || (response.data as any)?.data?.products || [];
+                    allProductsData = [...allProductsData, ...productsData];
+                    
+                    // Check if there are more pages
+                    const pagination = (response.data as any)?.pagination;
+                    if (pagination) {
+                        hasMorePages = pagination.hasNextPage === true;
+                        currentPage++;
+                    } else {
+                        // If no pagination info, stop after first page
+                        hasMorePages = false;
+                    }
+                } else {
+                    hasMorePages = false;
+                }
+            }
+            
+            if (allProductsData.length > 0) {
+                // Helper to normalize a backend product into our Product shape
+                const normalizeProduct = (p: any): POSProduct => {
+                    // Handle ID - can be string (MongoDB ObjectId) or number
+                    let productId: number;
+                    if (typeof p.id === 'string') {
+                        // Try to parse as number, if fails use hash of string
+                        const parsed = parseInt(p.id);
+                        if (!isNaN(parsed) && parsed > 0) {
+                            productId = parsed;
+                        } else {
+                            // Use hash of string ID to get consistent numeric ID
+                            productId = p.id.split('').reduce((acc: number, char: string) => {
+                                return ((acc << 5) - acc) + char.charCodeAt(0);
+                            }, 0);
+                            // Ensure positive number
+                            productId = Math.abs(productId);
+                        }
+                    } else if (typeof p._id === 'string') {
+                        // Fallback to _id if id doesn't exist
+                        const parsed = parseInt(p._id);
+                        productId = !isNaN(parsed) && parsed > 0 ? parsed : Math.abs(p._id.split('').reduce((acc: number, char: string) => {
+                            return ((acc << 5) - acc) + char.charCodeAt(0);
+                        }, 0));
+                    } else {
+                        productId = parseInt(p.id) || parseInt(p._id) || Date.now() + Math.random();
+                    }
+                    
+                    return {
+                        id: productId,
+                        name: p.name || '',
+                        category: p.categoryId || '',
+                        price: parseFloat(p.price) || 0,
+                        costPrice: parseFloat(p.costPrice) || 0,
+                        cost: parseFloat(p.costPrice) || 0,
+                        stock: parseInt(p.stock) || 0,
+                        barcode: p.barcode || '',
+                        units: Array.isArray(p.units)
+                            ? p.units.map((u: any) => ({
+                                unitName: u.unitName || u.name || '',
+                                barcode: u.barcode || '',
+                                sellingPrice: parseFloat(u.sellingPrice) || parseFloat(p.price) || 0,
+                                conversionFactor: parseFloat(u.conversionFactor) || 1,
+                              }))
+                            : undefined,
+                        expiryDate: p.expiryDate ? new Date(p.expiryDate).toISOString().split('T')[0] : '',
+                        createdAt: p.createdAt || new Date().toISOString(),
+                        updatedAt: p.updatedAt || new Date().toISOString(),
+                        brand: p.brandId || '',
+                        description: p.description,
+                        showInQuickProducts: p.showInQuickProducts === true,
+                        status: p.status || 'active', // Store status for reference
+                    };
+                };
+
+                // Filter products that have showInQuickProducts enabled and are active for quick products
+                const quickProductsList = allProductsData
+                    .filter((p: any) => p.showInQuickProducts === true && (p.status === 'active' || !p.status))
+                    .map((p: any) => normalizeProduct(p));
+                
+                setQuickProducts(quickProductsList);
+                
+                // Update the main products list with ALL products (regardless of status) for search functionality
+                // This ensures all products in the database are searchable in POS
+                const allProductsList = allProductsData.map((p: any) => normalizeProduct(p));
+                setProducts(allProductsList);
+                
+                console.log(`Loaded ${allProductsList.length} products for POS (${quickProductsList.length} quick products)`);
+            } else {
+                console.warn('No products found in API response');
+            }
+        } catch (err: any) {
+            console.error('Error fetching quick products:', err);
+            // Keep using mock data on error
+        } finally {
+            setIsLoadingQuickProducts(false);
+        }
+    }, []);
+
+    // Fetch customers and quick products on mount
+    useEffect(() => {
+        fetchCustomers();
+        fetchTaxRate();
+        fetchQuickProducts();
+    }, [fetchCustomers, fetchQuickProducts, fetchTaxRate]);
+
+    // Filter customers based on search term
+    useEffect(() => {
+        if (!customerSearchTerm.trim()) {
+            setCustomers(allCustomers);
+            return;
+        }
+        
+        const searchLower = customerSearchTerm.toLowerCase();
+        const filtered = allCustomers.filter(customer => 
+            customer.name?.toLowerCase().includes(searchLower) ||
+            customer.phone?.includes(searchLower) ||
+            customer.address?.toLowerCase().includes(searchLower)
+        );
+        setCustomers(filtered);
+    }, [customerSearchTerm, allCustomers]);
+
     useEffect(() => {
         if ((saleCompleted || returnCompleted) && autoPrintEnabled) {
             const timer = setTimeout(() => window.print(), 300); // Small delay to ensure render
@@ -106,58 +359,179 @@ const POSPage: React.FC = () => {
         }
     }, [saleCompleted, returnCompleted, autoPrintEnabled]);
 
-    const handleAddProduct = (product: Product, unit = 'قطعة') => {
-        const p = products.find(prod => prod.id === product.id);
-        const existingItem = currentInvoice.items.find(item => item.productId === product.id);
-        
-        if (p && p.stock <= (existingItem?.quantity || 0)) {
-            alert('المنتج غير متوفر في المخزون.');
-            return;
-        }
+    const getPiecesPerMainUnit = useCallback((product?: POSProduct): number => {
+        if (!product?.units || product.units.length === 0) return 1;
+        // Use the largest conversion factor to represent the smallest sub-unit (pieces per main unit)
+        const maxFactor = Math.max(...product.units.map(u => (u.conversionFactor && u.conversionFactor > 0 ? u.conversionFactor : 0)));
+        return maxFactor > 0 ? maxFactor : 1;
+    }, []);
 
-        if (existingItem) {
-            handleUpdateQuantity(product.id, existingItem.quantity + 1);
-        } else {
+    const getUnitConversionFactor = useCallback((product: POSProduct | undefined, unitName?: string): number => {
+        if (!product) return 1;
+        const normalizedUnit = unitName?.toLowerCase().trim();
+        const matched = product.units?.find(
+            (u) =>
+                !!u.unitName &&
+                !!normalizedUnit &&
+                u.unitName.toLowerCase() === normalizedUnit
+        );
+        const factor = matched?.conversionFactor;
+        return factor && factor > 0 ? factor : 1;
+    }, []);
+
+    const handleAddProduct = (product: POSProduct, unit = 'قطعة', unitPriceOverride?: number, conversionFactorOverride?: number, piecesPerUnitOverride?: number) => {
+        const productFromState = products.find(prod => prod.id === product.id) || product;
+        const piecesPerMainUnit = getPiecesPerMainUnit(productFromState);
+        const conversionFactor = conversionFactorOverride && conversionFactorOverride > 0
+            ? conversionFactorOverride
+            : getUnitConversionFactor(productFromState, unit);
+
+        // piecesPerUnit determines how many pieces to add for this scan
+        const piecesPerUnit = piecesPerUnitOverride && piecesPerUnitOverride > 0
+            ? piecesPerUnitOverride
+            : unit === 'قطعة'
+                ? 1
+                : piecesPerMainUnit;
+
+        // Price we receive should be per-piece to keep totals accurate
+        const incomingUnitPrice = unitPriceOverride ?? (piecesPerUnit > 0 ? (productFromState.price / piecesPerMainUnit) : productFromState.price);
+
+        setCurrentInvoice(inv => {
+            const existingItem = inv.items.find(item => item.productId === product.id);
+            const currentQuantity = existingItem?.quantity || 0;
+            const newQuantity = currentQuantity + piecesPerUnit;
+
+            // Stock check using piece-based quantities
+            const availablePieces = productFromState ? productFromState.stock * piecesPerMainUnit : Infinity;
+            if (newQuantity > availablePieces) {
+                alert(`الكمية المطلوبة (${newQuantity}) تتجاوز المخزون المتوفر (${availablePieces}).`);
+                return inv;
+            }
+
+            if (existingItem) {
+                const updatedQuantity = newQuantity;
+                const updatedTotal = (existingItem.total ?? (existingItem.unitPrice * existingItem.quantity)) + (incomingUnitPrice * piecesPerUnit);
+                const averagedUnitPrice = updatedQuantity > 0 ? updatedTotal / updatedQuantity : existingItem.unitPrice;
+
+                return {
+                    ...inv,
+                    items: inv.items.map(item =>
+                        item.productId === product.id
+                            ? {
+                                  ...item,
+                                  quantity: updatedQuantity,
+                                  total: updatedTotal,
+                                  unitPrice: averagedUnitPrice,
+                                  conversionFactor: item.conversionFactor || conversionFactor || piecesPerMainUnit,
+                              }
+                            : item
+                    ),
+                };
+            }
+
+            const initialQuantity = piecesPerUnit;
+            const initialTotal = incomingUnitPrice * piecesPerUnit;
+
             const newItem: POSCartItem = {
                 productId: product.id,
                 name: product.name,
                 unit: unit,
-                quantity: 1,
-                unitPrice: product.price,
-                total: product.price,
+                quantity: initialQuantity,
+                unitPrice: incomingUnitPrice,
+                total: initialTotal,
                 discount: 0,
+                conversionFactor: conversionFactor || piecesPerMainUnit,
             };
-            setCurrentInvoice(inv => ({ ...inv, items: [...inv.items, newItem] }));
-        }
+            return { ...inv, items: [...inv.items, newItem] };
+        });
+
+        setSearchTerm('');
+        setProductSuggestionsOpen(false);
     };
     
+    type SearchMatch = { product: POSProduct; unitName: string; unitPrice: number; barcode?: string; conversionFactor?: number; piecesPerUnit?: number };
+
+    const resolveSearchMatches = useCallback((term: string): SearchMatch[] => {
+        const trimmed = term.trim();
+        if (!trimmed) return [];
+        const lower = trimmed.toLowerCase();
+        const results: SearchMatch[] = [];
+
+        products.forEach((p) => {
+            const piecesPerMainUnit = getPiecesPerMainUnit(p);
+
+            // Barcode exact match on product
+            if (p.barcode && (p.barcode === trimmed || p.barcode.toLowerCase() === lower)) {
+                const perPiecePrice = piecesPerMainUnit > 0 ? p.price / piecesPerMainUnit : p.price;
+                results.push({ product: p, unitName: 'كرتون', unitPrice: perPiecePrice, barcode: p.barcode, conversionFactor: piecesPerMainUnit, piecesPerUnit: piecesPerMainUnit });
+            }
+            // Barcode match on units
+            if (p.units) {
+                for (const u of p.units) {
+                    if (u.barcode && (u.barcode === trimmed || u.barcode.toLowerCase() === lower)) {
+                        const perPiecePrice = u.sellingPrice || (piecesPerMainUnit > 0 ? p.price / piecesPerMainUnit : p.price);
+                        // Secondary units are counted as 1 piece per scan
+                        results.push({ product: p, unitName: u.unitName || 'قطعة', unitPrice: perPiecePrice, barcode: u.barcode, conversionFactor: u.conversionFactor || piecesPerMainUnit, piecesPerUnit: 1 });
+                    }
+                }
+            }
+            // Name contains
+            if (p.name && p.name.toLowerCase().includes(lower)) {
+                const perPiecePrice = piecesPerMainUnit > 0 ? p.price / piecesPerMainUnit : p.price;
+                results.push({ product: p, unitName: 'كرتون', unitPrice: perPiecePrice, barcode: p.barcode, conversionFactor: piecesPerMainUnit, piecesPerUnit: piecesPerMainUnit });
+            }
+        });
+
+        // Deduplicate exact same product+unit combination
+        const seen = new Set<string>();
+        return results.filter((r) => {
+            const key = `${r.product.id}-${r.unitName}-${r.barcode || ''}`;
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+        });
+    }, [products]);
+
     const handleSearch = (e: React.FormEvent) => {
         e.preventDefault();
-        if (!searchTerm) return;
-        const foundProduct = products.find(p => p.barcode === searchTerm || p.name.toLowerCase().includes(searchTerm.toLowerCase()));
-        if (foundProduct) {
-            handleAddProduct(foundProduct);
-            setSearchTerm('');
-        } else {
+        const matches = resolveSearchMatches(searchTerm);
+        if (matches.length === 0) {
             alert('المنتج غير موجود');
+            return;
+        }
+        if (matches.length === 1) {
+            const match = matches[0];
+            handleAddProduct(match.product, match.unitName, match.unitPrice, match.conversionFactor, match.piecesPerUnit);
+        } else {
+            // Show all matches for the cashier to pick
+            setProductSuggestionsOpen(true);
         }
     };
 
+    const productSuggestions = useMemo(() => {
+        const matches = resolveSearchMatches(searchTerm);
+        return matches.slice(0, 12);
+    }, [searchTerm, resolveSearchMatches]);
+
     const handleUpdateQuantity = (productId: number, quantity: number) => {
+        const normalizedQuantity = Number.isFinite(quantity) ? quantity : 0;
+        const roundedQuantity = Math.max(0, Math.round(normalizedQuantity));
         const p = products.find(prod => prod.id === productId);
-        if (p && quantity > p.stock) {
-            alert(`الكمية المطلوبة (${quantity}) تتجاوز المخزون المتوفر (${p.stock}). لا يمكنك إضافة المزيد.`);
+        const piecesPerMainUnit = getPiecesPerMainUnit(p);
+        const availablePieces = p ? p.stock * piecesPerMainUnit : Infinity;
+        if (p && roundedQuantity > availablePieces) {
+            alert(`الكمية المطلوبة (${roundedQuantity}) تتجاوز المخزون المتوفر (${availablePieces}). لا يمكنك إضافة المزيد.`);
             return;
         }
 
-        if (quantity < 1) {
+        if (roundedQuantity < 1) {
             handleRemoveItem(productId);
             return;
         }
         setCurrentInvoice(inv => ({
             ...inv,
             items: inv.items.map(item =>
-                item.productId === productId ? { ...item, quantity: quantity, total: item.unitPrice * quantity } : item
+                item.productId === productId ? { ...item, quantity: roundedQuantity, total: item.unitPrice * roundedQuantity } : item
             ),
         }));
     };
@@ -203,7 +577,7 @@ const POSPage: React.FC = () => {
     const handleFinalizePayment = () => {
         if (currentInvoice.items.length === 0) return;
 
-        if (selectedPaymentMethod === 'Credit' && (!currentInvoice.customer || currentInvoice.customer.name === 'عميل نقدي')) {
+        if (selectedPaymentMethod === 'Credit' && !currentInvoice.customer) {
             alert(AR_LABELS.selectRegisteredCustomerForCredit);
             return;
         }
@@ -214,7 +588,7 @@ const POSPage: React.FC = () => {
         }
 
         // For all payment methods (Cash, Credit, Card), proceed directly
-        // Card payments are now handled without terminal integration
+        // Card payments are handled without terminal integration
         finalizeSaleWithoutTerminal();
     };
 
@@ -236,6 +610,7 @@ const POSPage: React.FC = () => {
         setCurrentInvoice(finalInvoice);
         setSaleCompleted(true);
     };
+
 
     const handleConfirmReturn = (returnInvoice: SaleTransaction) => {
         // Quantities in returnInvoice.items are negative, so this adds stock back.
@@ -290,8 +665,8 @@ const POSPage: React.FC = () => {
                                 <tr key={item.productId} className="border-b border-dashed border-gray-300 dark:border-gray-600">
                                     <td className="py-1 px-1 sm:px-2">{item.name}</td>
                                     <td className="py-1 text-center px-1 sm:px-2">{Math.abs(item.quantity)}</td>
-                                    <td className="py-1 text-center px-1 sm:px-2">{item.unitPrice.toFixed(2)}</td>
-                                    <td className="py-1 text-left px-1 sm:px-2">{Math.abs(item.total - item.discount * item.quantity).toFixed(2)}</td>
+                                    <td className="py-1 text-center px-1 sm:px-2">{formatCurrency(item.unitPrice)}</td>
+                                    <td className="py-1 text-left px-1 sm:px-2">{formatCurrency(Math.abs(item.total - item.discount * item.quantity))}</td>
                                 </tr>
                             ))}
                         </tbody>
@@ -299,10 +674,10 @@ const POSPage: React.FC = () => {
                 </div>
 
                 <div className="mt-3 sm:mt-4 text-xs space-y-1">
-                    <div className="flex justify-between"><span className="text-gray-600 dark:text-gray-400">{AR_LABELS.subtotal}:</span><span>{Math.abs(invoice.subtotal).toFixed(2)} ر.س</span></div>
-                    <div className="flex justify-between"><span className="text-gray-600 dark:text-gray-400">{AR_LABELS.totalDiscount}:</span><span>{Math.abs(invoice.totalItemDiscount + invoice.invoiceDiscount).toFixed(2)} ر.س</span></div>
-                    <div className="flex justify-between"><span className="text-gray-600 dark:text-gray-400">{AR_LABELS.tax}:</span><span>{Math.abs(invoice.tax).toFixed(2)} ر.س</span></div>
-                    <div className="flex justify-between font-bold text-sm sm:text-base border-t dark:border-gray-600 pt-1 mt-1"><span className="text-gray-800 dark:text-gray-100">{isReturn ? AR_LABELS.totalReturnValue : AR_LABELS.grandTotal}:</span><span className={isReturn ? 'text-red-600' : 'text-orange-600'}>{Math.abs('grandTotal' in invoice ? invoice.grandTotal : invoice.totalAmount).toFixed(2)} ر.س</span></div>
+                    <div className="flex justify-between"><span className="text-gray-600 dark:text-gray-400">{AR_LABELS.subtotal}:</span><span>{formatCurrency(Math.abs(invoice.subtotal))}</span></div>
+                    <div className="flex justify-between"><span className="text-gray-600 dark:text-gray-400">{AR_LABELS.totalDiscount}:</span><span>{formatCurrency(Math.abs(invoice.totalItemDiscount + invoice.invoiceDiscount))}</span></div>
+                    <div className="flex justify-between"><span className="text-gray-600 dark:text-gray-400">{AR_LABELS.tax}:</span><span>{formatCurrency(Math.abs(invoice.tax))}</span></div>
+                    <div className="flex justify-between font-bold text-sm sm:text-base border-t dark:border-gray-600 pt-1 mt-1"><span className="text-gray-800 dark:text-gray-100">{isReturn ? AR_LABELS.totalReturnValue : AR_LABELS.grandTotal}:</span><span className={isReturn ? 'text-red-600' : 'text-orange-600'}>{formatCurrency(Math.abs('grandTotal' in invoice ? invoice.grandTotal : invoice.totalAmount))}</span></div>
                 </div>
                 <p className="text-center text-xs mt-4 sm:mt-6 text-gray-500 dark:text-gray-400">شكراً لتعاملكم معنا!</p>
             </div>
@@ -352,23 +727,105 @@ const POSPage: React.FC = () => {
                    {/* Column 1: Customer & Quick Products (25%) */}
                     <div className="flex flex-col gap-3 sm:gap-4 min-h-0 min-w-0">
                         {/* Customer & Held Invoices */}
-                        <div className="bg-white/95 dark:bg-gray-800/95 rounded-xl sm:rounded-2xl shadow-sm p-4 sm:p-6 backdrop-blur-xl border border-slate-200/50 dark:border-slate-700/50 space-y-3 sm:space-y-4">
-                            <h3 className="font-bold text-sm sm:text-base text-gray-700 dark:text-gray-200 text-right mb-2">{AR_LABELS.customerName}</h3>
-                            <CustomDropdown
-                                id="pos-customer-dropdown"
-                                value={currentInvoice.customer?.id || ''}
-                                onChange={(value) => {
-                                    const customer = MOCK_CUSTOMERS.find(c => c.id === value);
-                                    setCurrentInvoice(inv => ({...inv, customer: customer || null}));
-                                }}
-                                options={MOCK_CUSTOMERS.map(c => ({ value: c.id, label: c.name }))}
-                                placeholder={AR_LABELS.customerName}
-                                className="w-full"
-                            />
-                            <button className="w-full text-center text-xs sm:text-sm text-orange-600 hover:text-orange-700 dark:text-orange-400 font-medium transition-colors py-1.5">{AR_LABELS.addNewCustomer}</button>
+                        <div className="bg-white/95 dark:bg-gray-800/95 rounded-xl sm:rounded-2xl shadow-sm p-4 sm:p-6 backdrop-blur-xl border border-slate-200/50 dark:border-slate-700/50 space-y-3 sm:space-y-4 flex flex-col min-h-0">
+                            <div className="flex-shrink-0">
+                                <h3 className="font-bold text-sm sm:text-base text-gray-700 dark:text-gray-200 text-right mb-2">{AR_LABELS.customerName}</h3>
+                                
+                                {/* Customer Search Input */}
+                                <div className="relative mb-2">
+                                    <SearchIcon className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 dark:text-gray-500" />
+                                    <input
+                                        type="text"
+                                        value={customerSearchTerm}
+                                        onChange={(e) => {
+                                            setCustomerSearchTerm(e.target.value);
+                                            setIsCustomerDropdownOpen(true);
+                                        }}
+                                        onFocus={() => setIsCustomerDropdownOpen(true)}
+                                        placeholder="ابحث عن عميل..."
+                                        className="w-full pl-8 pr-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-orange-500 focus:border-transparent text-right"
+                                    />
+                                </div>
+
+                                {/* Selected Customer Display */}
+                                {currentInvoice.customer && (
+                                    <div className="mb-2 p-2 bg-orange-50 dark:bg-orange-900/20 rounded-lg border border-orange-200 dark:border-orange-800">
+                                        <div className="flex justify-between items-start">
+                                            <button
+                                                onClick={() => setCurrentInvoice(inv => ({...inv, customer: null}))}
+                                                className="text-red-500 hover:text-red-700 text-xs"
+                                            >
+                                                ✕
+                                            </button>
+                                            <div className="flex-1 text-right">
+                                                <p className="font-semibold text-sm text-gray-900 dark:text-gray-100">{currentInvoice.customer.name}</p>
+                                                <p className="text-xs text-gray-600 dark:text-gray-400">{currentInvoice.customer.phone}</p>
+                                                {currentInvoice.customer.address && (
+                                                    <p className="text-xs text-gray-500 dark:text-gray-500 mt-1">{currentInvoice.customer.address}</p>
+                                                )}
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Customer List Dropdown */}
+                                {isCustomerDropdownOpen && (
+                                    <>
+                                        {/* Click outside to close dropdown */}
+                                        <div
+                                            className="fixed inset-0 z-[5]"
+                                            onClick={() => setIsCustomerDropdownOpen(false)}
+                                        />
+                                        <div className="relative z-[10]">
+                                            <div className="absolute w-full mt-1 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg shadow-xl max-h-60 overflow-y-auto">
+                                                {isLoadingCustomers ? (
+                                                    <div className="p-4 text-center text-sm text-gray-500 dark:text-gray-400">جاري التحميل...</div>
+                                                ) : customers.length === 0 ? (
+                                                    <div className="p-4 text-center text-sm text-gray-500 dark:text-gray-400">
+                                                        {customerSearchTerm ? 'لا توجد نتائج' : 'لا يوجد عملاء'}
+                                                    </div>
+                                                ) : (
+                                                    <div className="max-h-60 overflow-y-auto">
+                                                        {customers.map((customer) => (
+                                                            <button
+                                                                key={customer.id}
+                                                                type="button"
+                                                                onClick={(e) => {
+                                                                    e.stopPropagation();
+                                                                    setCurrentInvoice(inv => ({...inv, customer}));
+                                                                    setIsCustomerDropdownOpen(false);
+                                                                    setCustomerSearchTerm('');
+                                                                }}
+                                                                className={`w-full text-right p-3 hover:bg-orange-50 dark:hover:bg-gray-700 transition-colors border-b border-gray-100 dark:border-gray-700 last:border-b-0 ${
+                                                                    currentInvoice.customer?.id === customer.id ? 'bg-orange-100 dark:bg-orange-900/30' : ''
+                                                                }`}
+                                                            >
+                                                                <div className="flex flex-col items-end">
+                                                                    <p className="font-semibold text-sm text-gray-900 dark:text-gray-100">{customer.name}</p>
+                                                                    <p className="text-xs text-gray-600 dark:text-gray-400 mt-1">{customer.phone}</p>
+                                                                    {customer.address && (
+                                                                        <p className="text-xs text-gray-500 dark:text-gray-500 mt-1 truncate w-full">{customer.address}</p>
+                                                                    )}
+                                                                </div>
+                                                            </button>
+                                                        ))}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </div>
+                                    </>
+                                )}
+
+                                <button 
+                                    onClick={() => setIsAddCustomerModalOpen(true)}
+                                    className="w-full text-center text-xs sm:text-sm text-orange-600 hover:text-orange-700 dark:text-orange-400 font-medium transition-colors py-1.5 mt-2"
+                                >
+                                    {AR_LABELS.addNewCustomer}
+                                </button>
+                            </div>
                             
                             {heldInvoices.length > 0 && (
-                                <div className="border-t border-gray-200 dark:border-gray-700 pt-3 sm:pt-4">
+                                <div className="border-t border-gray-200 dark:border-gray-700 pt-3 sm:pt-4 flex-shrink-0">
                                     <h3 className="font-bold text-sm sm:text-base text-gray-700 dark:text-gray-200 text-right mb-2">{AR_LABELS.heldInvoices}</h3>
                                     <div className="space-y-2 max-h-20 sm:max-h-24 overflow-y-auto">
                                         {heldInvoices.map(inv => (
@@ -384,18 +841,32 @@ const POSPage: React.FC = () => {
                         {/* Quick Products */}
                         <div className="bg-white/95 dark:bg-gray-800/95 rounded-xl sm:rounded-2xl shadow-sm p-4 sm:p-6 backdrop-blur-xl border border-slate-200/50 dark:border-slate-700/50 flex-grow overflow-y-auto">
                             <h3 className="font-bold text-sm sm:text-base text-gray-900 dark:text-gray-100 text-right mb-3 sm:mb-4">{AR_LABELS.quickProducts}</h3>
-                            <div className="grid grid-cols-2 gap-2 sm:gap-3">
-                                {QUICK_PRODUCTS.map(p => (
-                                    <button 
-                                        key={p.id} 
-                                        onClick={() => handleAddProduct(p)} 
-                                        className="group p-3 sm:p-4 border border-gray-200 dark:border-gray-700 rounded-lg sm:rounded-xl text-center hover:bg-orange-50 dark:hover:bg-gray-700 hover:border-orange-300 dark:hover:border-orange-600 transition-all duration-200 hover:shadow-md active:scale-95"
-                                    >
-                                        <span className="block text-xs sm:text-sm font-semibold text-gray-800 dark:text-gray-200 mb-1">{p.name}</span>
-                                        <span className="block text-xs font-bold text-orange-600">{p.price.toFixed(2)} ر.س</span>
-                                    </button>
-                                ))}
-                            </div>
+                            {isLoadingQuickProducts ? (
+                                <div className="text-center py-4 text-sm text-gray-500 dark:text-gray-400">
+                                    جاري التحميل...
+                                </div>
+                            ) : quickProducts.length === 0 ? (
+                                <div className="text-center py-4 text-sm text-gray-500 dark:text-gray-400">
+                                    لا توجد منتجات سريعة. قم بتمكين المنتجات من إعدادات المنتج.
+                                </div>
+                            ) : (
+                                <div className="grid grid-cols-2 gap-2 sm:gap-3">
+                                    {quickProducts.map(p => (
+                                        <button 
+                                            key={p.id} 
+                                            onClick={() => handleAddProduct(p)} 
+                                            disabled={p.stock <= 0}
+                                            className="group p-3 sm:p-4 border border-gray-200 dark:border-gray-700 rounded-lg sm:rounded-xl text-center hover:bg-orange-50 dark:hover:bg-gray-700 hover:border-orange-300 dark:hover:border-orange-600 transition-all duration-200 hover:shadow-md active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+                                        >
+                                            <span className="block text-xs sm:text-sm font-semibold text-gray-800 dark:text-gray-200 mb-1">{p.name}</span>
+                                            <span className="block text-xs font-bold text-orange-600">{formatCurrency(p.price)}</span>
+                                            {p.stock <= 0 && (
+                                                <span className="block text-xs text-red-500 mt-1">نفد المخزون</span>
+                                            )}
+                                        </button>
+                                    ))}
+                                </div>
+                            )}
                         </div>
                     </div>
 
@@ -413,10 +884,31 @@ const POSPage: React.FC = () => {
                                 <input 
                                     type="text" 
                                     value={searchTerm} 
-                                    onChange={e => setSearchTerm(e.target.value)} 
+                                    onChange={e => {
+                                        setSearchTerm(e.target.value);
+                                        setProductSuggestionsOpen(true);
+                                    }} 
+                                    onFocus={() => setProductSuggestionsOpen(true)}
                                     placeholder={AR_LABELS.searchProductPlaceholder} 
                                     className="w-full pl-8 sm:pl-10 pr-3 sm:pr-4 py-2 sm:py-2.5 text-sm sm:text-base rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-orange-500 focus:border-transparent text-right"
                                 />
+                                {productSuggestionsOpen && productSuggestions.length > 0 && (
+                                    <div className="absolute z-20 mt-2 w-full bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg max-h-60 overflow-y-auto">
+                                        {productSuggestions.map((s, idx) => (
+                                            <button
+                                                key={`${s.product.id}-${s.unitName}-${idx}`}
+                                                type="button"
+                                                onClick={() => handleAddProduct(s.product, s.unitName, s.unitPrice, s.conversionFactor, s.piecesPerUnit)}
+                                                className="w-full text-right px-3 py-2 text-sm hover:bg-orange-50 dark:hover:bg-gray-700 border-b border-gray-100 dark:border-gray-700 last:border-b-0"
+                                            >
+                                                <div className="font-semibold text-gray-800 dark:text-gray-100">{s.product.name}</div>
+                                                <div className="text-xs text-gray-500 dark:text-gray-400">
+                                                    {s.unitName} • {s.barcode || s.product.barcode || 'بدون باركود'} • {formatCurrency(s.unitPrice)}
+                                                </div>
+                                            </button>
+                                        ))}
+                                    </div>
+                                )}
                             </div>
                         </form>
                         {/* Cart */}
@@ -445,11 +937,14 @@ const POSPage: React.FC = () => {
                                                 <input 
                                                     type="number" 
                                                     value={item.quantity} 
-                                                    onChange={e => handleUpdateQuantity(item.productId, parseInt(e.target.value, 10) || 1)} 
+                                                        onChange={e => {
+                                                            const value = parseFloat(e.target.value);
+                                                            handleUpdateQuantity(item.productId, isNaN(value) ? item.quantity : value);
+                                                        }} 
                                                     className="w-full max-w-[60px] text-xs sm:text-sm text-center border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent py-1 sm:py-1.5"
                                                 />
                                             </td>
-                                            <td className="px-2 sm:px-3 py-3 sm:py-4 text-xs sm:text-sm text-gray-700 dark:text-gray-300 whitespace-nowrap">{item.unitPrice.toFixed(2)} ر.س</td>
+                                            <td className="px-2 sm:px-3 py-3 sm:py-4 text-xs sm:text-sm text-gray-700 dark:text-gray-300 whitespace-nowrap">{formatCurrency(item.unitPrice)}</td>
                                             <td className="px-2 sm:px-3 py-3 sm:py-4">
                                                 <input 
                                                     type="number" 
@@ -458,7 +953,7 @@ const POSPage: React.FC = () => {
                                                     className="w-full max-w-[60px] text-xs sm:text-sm text-center border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent py-1 sm:py-1.5"
                                                 />
                                             </td>
-                                            <td className="px-2 sm:px-3 py-3 sm:py-4 text-xs sm:text-sm font-semibold text-orange-600 whitespace-nowrap">{(item.total - (item.discount * item.quantity)).toFixed(2)} ر.س</td>
+                                            <td className="px-2 sm:px-3 py-3 sm:py-4 text-xs sm:text-sm font-semibold text-orange-600 whitespace-nowrap">{formatCurrency(item.total - (item.discount * item.quantity))}</td>
                                             <td className="px-2 sm:px-3 py-3 sm:py-4">
                                                 <button 
                                                     onClick={() => handleRemoveItem(item.productId)} 
@@ -515,7 +1010,7 @@ const POSPage: React.FC = () => {
                                 <div className="bg-white/80 dark:bg-gray-800/80 rounded-xl p-4 border border-gray-200/50 dark:border-gray-700/50 backdrop-blur-sm space-y-3">
                                     <div className="flex justify-between items-center">
                                         <span className="text-xs sm:text-sm text-gray-600 dark:text-gray-400">{AR_LABELS.subtotal}:</span>
-                                        <span className="text-sm sm:text-base font-semibold text-gray-900 dark:text-gray-100">{currentInvoice.subtotal.toFixed(2)} ر.س</span>
+                                        <span className="text-sm sm:text-base font-semibold text-gray-900 dark:text-gray-100">{formatCurrency(currentInvoice.subtotal)}</span>
                                     </div>
                                     <div className="flex items-center justify-end gap-2">
                                         <label htmlFor="invoiceDiscount" className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 whitespace-nowrap">{AR_LABELS.invoiceDiscount}:</label>
@@ -529,16 +1024,16 @@ const POSPage: React.FC = () => {
                                     </div>
                                     <div className="flex justify-between items-center">
                                         <span className="text-xs sm:text-sm text-gray-600 dark:text-gray-400">{AR_LABELS.totalDiscount}:</span>
-                                        <span className="text-sm sm:text-base font-semibold text-red-600">{(currentInvoice.totalItemDiscount + currentInvoice.invoiceDiscount).toFixed(2)} ر.س</span>
+                                        <span className="text-sm sm:text-base font-semibold text-red-600">{formatCurrency(currentInvoice.totalItemDiscount + currentInvoice.invoiceDiscount)}</span>
                                     </div>
                                     <div className="flex justify-between items-center">
-                                        <span className="text-xs sm:text-sm text-gray-600 dark:text-gray-400">{AR_LABELS.tax} (15%):</span>
-                                        <span className="text-sm sm:text-base font-semibold text-gray-900 dark:text-gray-100">{currentInvoice.tax.toFixed(2)} ر.س</span>
+                                        <span className="text-xs sm:text-sm text-gray-600 dark:text-gray-400">{AR_LABELS.tax} ({(taxRate * 100).toFixed(2)}%):</span>
+                                        <span className="text-sm sm:text-base font-semibold text-gray-900 dark:text-gray-100">{formatCurrency(currentInvoice.tax)}</span>
                                     </div>
                                     <div className="border-t-2 border-orange-300 dark:border-orange-700 pt-3 mt-2">
                                         <div className="flex justify-between items-center">
                                             <span className="text-base sm:text-lg font-bold text-gray-800 dark:text-gray-200">{AR_LABELS.grandTotal}:</span>
-                                            <span className="text-xl sm:text-2xl font-bold text-orange-600 dark:text-orange-400">{currentInvoice.grandTotal.toFixed(2)} ر.س</span>
+                                            <span className="text-xl sm:text-2xl font-bold text-orange-600 dark:text-orange-400">{formatCurrency(currentInvoice.grandTotal)}</span>
                                         </div>
                                     </div>
                                 </div>
@@ -614,7 +1109,179 @@ const POSPage: React.FC = () => {
                     </div>
                 </div>
             </div>
-            <ReturnModal isOpen={isReturnModalOpen} onClose={() => setReturnModalOpen(false)} onConfirm={handleConfirmReturn} />
+            <ReturnModal 
+                isOpen={isReturnModalOpen} 
+                onClose={() => setReturnModalOpen(false)}
+                onConfirm={handleConfirmReturn}
+                products={products}
+                taxRate={taxRate}
+            />
+            <AddCustomerModal 
+                isOpen={isAddCustomerModalOpen} 
+                onClose={() => setIsAddCustomerModalOpen(false)}
+                onSave={async (customer: Customer) => {
+                    try {
+                        // Save customer to API
+                        const response = await customersApi.createCustomer({
+                            name: customer.name,
+                            phone: customer.phone,
+                            address: customer.address,
+                            previousBalance: customer.previousBalance || 0,
+                        });
+
+                        if (response.data && (response.data as any).data?.customer) {
+                            // Refresh customers list to include the new customer
+                            await fetchCustomers();
+                            
+                            // Optionally select the newly created customer
+                            const newCustomerData = (response.data as any).data.customer;
+                            const newCustomer: Customer = {
+                                id: newCustomerData.id,
+                                name: newCustomerData.name || newCustomerData.phone,
+                                phone: newCustomerData.phone,
+                                address: newCustomerData.address,
+                                previousBalance: newCustomerData.previousBalance || 0,
+                            };
+                            
+                            // Only select if it's not a dummy customer
+                            if (!isDummyCustomer(newCustomer)) {
+                                setCurrentInvoice(inv => ({...inv, customer: newCustomer}));
+                            }
+                            
+                            setIsAddCustomerModalOpen(false);
+                        }
+                    } catch (err: any) {
+                        const apiError = err as ApiError;
+                        if (apiError.status === 401 || apiError.status === 403) {
+                            // Handle auth errors if needed
+                            console.error('Authentication error:', apiError);
+                        }
+                        const errorMessage = apiError.message || 'فشل حفظ العميل. يرجى المحاولة مرة أخرى.';
+                        alert(errorMessage);
+                        throw err; // Re-throw to let modal handle it
+                    }
+                }}
+            />
+        </div>
+    );
+};
+
+// Add Customer Modal Component
+const AddCustomerModal: React.FC<{
+    isOpen: boolean;
+    onClose: () => void;
+    onSave: (customer: Customer) => Promise<void>;
+}> = ({ isOpen, onClose, onSave }) => {
+    const [name, setName] = useState('');
+    const [phone, setPhone] = useState('');
+    const [address, setAddress] = useState('');
+    const [errors, setErrors] = useState<{ phone?: string }>({});
+    const [isSubmitting, setIsSubmitting] = useState(false);
+
+    const handleSave = async () => {
+        // Validate phone number (required)
+        if (!phone.trim()) {
+            setErrors({ phone: 'رقم الهاتف مطلوب' });
+            return;
+        }
+
+        // Clear errors
+        setErrors({});
+        setIsSubmitting(true);
+
+        try {
+            // Create customer data (without id - API will generate it)
+            const customerData: Omit<Customer, 'id'> = {
+                name: name.trim() || phone, // Use phone as name if name not provided
+                phone: phone.trim(),
+                previousBalance: 0,
+                ...(address.trim() && { address: address.trim() }),
+            };
+
+            // Create a temporary customer object for type compatibility
+            const tempCustomer: Customer = {
+                id: UUID(), // Temporary ID, will be replaced by API
+                ...customerData,
+            };
+
+            await onSave(tempCustomer);
+            
+            // Reset form only on success
+            setName('');
+            setPhone('');
+            setAddress('');
+        } catch (error) {
+            // Error is handled by parent component
+            console.error('Error saving customer:', error);
+        } finally {
+            setIsSubmitting(false);
+        }
+    };
+
+    if (!isOpen) return null;
+
+    return (
+        <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4" onClick={onClose}>
+            <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-md text-right" onClick={e => e.stopPropagation()}>
+                <div className="p-6 space-y-4">
+                    <h2 className="text-xl font-bold text-gray-900 dark:text-gray-100">{AR_LABELS.addNewCustomer}</h2>
+                    
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{AR_LABELS.customerName}</label>
+                        <input 
+                            type="text" 
+                            value={name} 
+                            onChange={e => setName(e.target.value)} 
+                            placeholder="اختياري"
+                            className="w-full p-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200 rounded-md text-right"
+                        />
+                    </div>
+
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                            {AR_LABELS.phone} <span className="text-red-500">*</span>
+                        </label>
+                        <input 
+                            type="tel" 
+                            value={phone} 
+                            onChange={e => {
+                                setPhone(e.target.value);
+                                if (errors.phone) setErrors({});
+                            }}
+                            className={`w-full p-2 border ${errors.phone ? 'border-red-500' : 'border-gray-300 dark:border-gray-600'} bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200 rounded-md text-right`}
+                            required
+                        />
+                        {errors.phone && <p className="text-red-500 text-xs mt-1">{errors.phone}</p>}
+                    </div>
+
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{AR_LABELS.address}</label>
+                        <textarea 
+                            value={address} 
+                            onChange={e => setAddress(e.target.value)} 
+                            placeholder="اختياري"
+                            rows={3}
+                            className="w-full p-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200 rounded-md text-right resize-none"
+                        />
+                    </div>
+                </div>
+                <div className="flex justify-start space-x-4 space-x-reverse p-4 bg-gray-50 dark:bg-gray-800/50 border-t dark:border-gray-700 rounded-b-lg">
+                    <button 
+                        onClick={handleSave} 
+                        disabled={isSubmitting}
+                        className="px-4 py-2 bg-orange-500 text-white rounded-md disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                        {isSubmitting ? 'جاري الحفظ...' : AR_LABELS.save}
+                    </button>
+                    <button 
+                        onClick={onClose} 
+                        disabled={isSubmitting}
+                        className="px-4 py-2 bg-gray-200 dark:bg-gray-600 text-gray-800 dark:text-gray-200 rounded-md disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                        {AR_LABELS.cancel}
+                    </button>
+                </div>
+            </div>
         </div>
     );
 };
@@ -623,16 +1290,37 @@ const ReturnModal: React.FC<{
     isOpen: boolean;
     onClose: () => void;
     onConfirm: (returnInvoice: SaleTransaction) => void;
-}> = ({ isOpen, onClose, onConfirm }) => {
+    products: POSProduct[];
+    taxRate: number;
+}> = ({ isOpen, onClose, onConfirm, products, taxRate }) => {
     const [searchTerm, setSearchTerm] = useState('');
     const [returnItems, setReturnItems] = useState<POSCartItem[]>([]);
     const [reason, setReason] = useState('');
     const [refundMethod, setRefundMethod] = useState<'Cash' | 'Card' | 'Credit'>('Cash');
+    const { formatCurrency } = useCurrency();
 
     const handleSearch = (e: React.FormEvent) => {
         e.preventDefault();
         if (!searchTerm) return;
-        const foundProduct = MOCK_PRODUCTS_DATA.find(p => p.barcode === searchTerm || p.name.toLowerCase().includes(searchTerm.toLowerCase()));
+        const trimmed = searchTerm.trim();
+        const lower = trimmed.toLowerCase();
+        
+        // Search in products by barcode or name (case-insensitive)
+        const foundProduct = products.find(p => {
+            // Exact barcode match
+            if (p.barcode && (p.barcode === trimmed || p.barcode.toLowerCase() === lower)) {
+                return true;
+            }
+            // Name contains search term
+            if (p.name && p.name.toLowerCase().includes(lower)) {
+                return true;
+            }
+            // Check units barcodes
+            if (p.units) {
+                return p.units.some(u => u.barcode && (u.barcode === trimmed || u.barcode.toLowerCase() === lower));
+            }
+            return false;
+        });
         
         if (foundProduct) {
             setReturnItems(prevItems => {
@@ -684,7 +1372,7 @@ const ReturnModal: React.FC<{
         }));
         
         const subtotal = returnTransactionItems.reduce((acc, item) => acc + item.total, 0);
-        const tax = subtotal * 0.15;
+        const tax = subtotal * taxRate;
         const totalAmount = subtotal + tax;
 
         const returnInvoice: SaleTransaction = {
@@ -736,7 +1424,7 @@ const ReturnModal: React.FC<{
                         <div className="space-y-2 max-h-40 sm:max-h-48 overflow-y-auto border rounded-md p-2 dark:border-gray-700">
                             {returnItems.length > 0 ? returnItems.map(item => (
                                 <div key={item.productId} className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 p-2 rounded">
-                                    <span className="text-xs sm:text-sm">{item.name} <span className="text-xs text-gray-500">({item.unitPrice.toFixed(2)} ر.س)</span></span>
+                                    <span className="text-xs sm:text-sm">{item.name} <span className="text-xs text-gray-500">({formatCurrency(item.unitPrice)})</span></span>
                                     <div className="flex items-center gap-2 w-full sm:w-auto">
                                         <label className="text-xs sm:text-sm whitespace-nowrap">{AR_LABELS.returnQuantity}:</label>
                                         <input type="number" value={item.quantity} onChange={e => handleQuantityChange(item.productId, e.target.value)} min="1" className="w-16 sm:w-20 text-xs sm:text-sm text-center border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 rounded-md py-1"/>
@@ -764,7 +1452,7 @@ const ReturnModal: React.FC<{
                             className="w-full"
                         />
                     </div>
-                    <div className="text-left text-lg sm:text-xl font-bold"><span>{AR_LABELS.totalReturnValue}: </span><span className="text-red-600">{totalReturnValue.toFixed(2)} ر.س</span></div>
+                    <div className="text-left text-lg sm:text-xl font-bold"><span>{AR_LABELS.totalReturnValue}: </span><span className="text-red-600">{formatCurrency(totalReturnValue)}</span></div>
                     <div className="flex flex-col sm:flex-row justify-start gap-2 sm:gap-4 sm:space-x-4 sm:space-x-reverse pt-3 sm:pt-4">
                         <button onClick={handleConfirm} className="px-4 py-2 text-sm sm:text-base bg-green-500 text-white rounded-md hover:bg-green-600 transition-colors">{AR_LABELS.confirmReturn}</button>
                         <button onClick={handleClose} className="px-4 py-2 text-sm sm:text-base bg-gray-200 dark:bg-gray-600 text-gray-800 dark:text-gray-200 rounded-md hover:bg-gray-300 dark:hover:bg-gray-500 transition-colors">{AR_LABELS.cancel}</button>

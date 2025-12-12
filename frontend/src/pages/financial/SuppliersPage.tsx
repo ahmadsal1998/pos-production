@@ -2,6 +2,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { Supplier, PurchaseOrder, SupplierPayment } from '@/features/financial/types';
 import { AR_LABELS, UUID, SearchIcon, EditIcon, DeleteIcon, ViewIcon, PlusIcon } from '@/shared/constants';
 import { GridViewIcon, TableViewIcon } from '@/shared/constants';
+import { formatDate } from '@/shared/utils';
 
 type LayoutType = 'table' | 'grid';
 
@@ -386,7 +387,7 @@ const SupplierDetailsModal: React.FC<{
                 {supplierPurchases.map((purchase) => (
                   <tr key={purchase.id}>
                     <td className="px-4 py-2 text-sm">{purchase.id}</td>
-                    <td className="px-4 py-2 text-sm">{new Date(purchase.purchaseDate).toLocaleDateString('ar-SA')}</td>
+                    <td className="px-4 py-2 text-sm">{formatDate(purchase.purchaseDate)}</td>
                     <td className="px-4 py-2 text-sm">{purchase.totalAmount.toFixed(2)} ر.س</td>
                     <td className="px-4 py-2 text-sm">
                       <span className={`px-2 py-1 text-xs rounded-full ${purchase.status === 'Completed' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'}`}>
@@ -415,7 +416,7 @@ const SupplierDetailsModal: React.FC<{
               <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
                 {supplierPayments.map((payment) => (
                   <tr key={payment.id}>
-                    <td className="px-4 py-2 text-sm">{new Date(payment.date).toLocaleDateString('ar-SA')}</td>
+                    <td className="px-4 py-2 text-sm">{formatDate(payment.date)}</td>
                     <td className="px-4 py-2 text-sm">{payment.amount.toFixed(2)} ر.س</td>
                     <td className="px-4 py-2 text-sm">{payment.method}</td>
                   </tr>

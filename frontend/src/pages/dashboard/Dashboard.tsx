@@ -1,16 +1,86 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AR_LABELS, METRIC_CARDS_DATA, QUICK_ACTIONS_DATA } from '@/shared/constants';
 import { MetricCard } from '@/shared/components/ui/MetricCard';
 import { QuickActionCard } from '@/shared/components/ui/QuickActionCard';
 import CustomDropdown, { DropdownOption } from '@/shared/components/ui/CustomDropdown/CustomDropdown';
+import { formatDate } from '@/shared/utils';
+import { productsApi, ProductMetrics } from '@/lib/api/client';
+import { useCurrency } from '@/shared/contexts/CurrencyContext';
+import {
+  DollarIcon,
+  PackageIcon,
+  ChartLineIcon,
+  ShoppingCartIcon,
+} from '@/shared/assets/icons';
 
 const DashboardPage: React.FC = () => {
   const navigate = useNavigate();
+  const { formatCurrency } = useCurrency();
+  const [productMetrics, setProductMetrics] = useState<ProductMetrics | null>(null);
+  const [loadingMetrics, setLoadingMetrics] = useState(true);
+
+  useEffect(() => {
+    const fetchMetrics = async () => {
+      try {
+        setLoadingMetrics(true);
+        const response = await productsApi.getProductMetrics();
+        if (response.data.success && response.data.data) {
+          setProductMetrics(response.data.data);
+        }
+      } catch (error) {
+        console.error('Error fetching product metrics:', error);
+      } finally {
+        setLoadingMetrics(false);
+      }
+    };
+
+    fetchMetrics();
+  }, []);
 
   const handleQuickAction = (path: string) => {
     navigate(path);
   };
+
+  // Create real product metrics cards
+  const realProductMetrics = useMemo(() => {
+    if (!productMetrics) return [];
+
+    return [
+      {
+        id: 'total-value',
+        title: 'إجمالي قيمة المنتجات',
+        value: formatCurrency(productMetrics.totalValue),
+        icon: <DollarIcon />,
+        bgColor: 'bg-emerald-100 dark:bg-emerald-900/30',
+        valueColor: 'text-emerald-600 dark:text-emerald-400',
+      },
+      {
+        id: 'profit-margin',
+        title: 'هامش الربح الحقيقي',
+        value: `${productMetrics.overallProfitMargin.toFixed(2)}%`,
+        icon: <ChartLineIcon />,
+        bgColor: 'bg-blue-100 dark:bg-blue-900/30',
+        valueColor: 'text-blue-600 dark:text-blue-400',
+      },
+      {
+        id: 'low-stock',
+        title: 'منتجات مخزون منخفض',
+        value: productMetrics.lowStockCount.toString(),
+        icon: <PackageIcon />,
+        bgColor: 'bg-red-100 dark:bg-red-900/30',
+        valueColor: 'text-red-600 dark:text-red-400',
+      },
+      {
+        id: 'total-products',
+        title: 'إجمالي المنتجات',
+        value: productMetrics.totalProducts.toString(),
+        icon: <ShoppingCartIcon />,
+        bgColor: 'bg-purple-100 dark:bg-purple-900/30',
+        valueColor: 'text-purple-600 dark:text-purple-400',
+      },
+    ];
+  }, [productMetrics]);
 
   return (
     <div className="relative min-h-screen overflow-hidden">
@@ -48,12 +118,7 @@ const DashboardPage: React.FC = () => {
                 <div className="text-right">
                   <p className="text-sm font-semibold text-slate-500 dark:text-slate-400 mb-2">اليوم</p>
                   <p className="text-xl font-bold text-slate-900 dark:text-white mb-3">
-                    {new Date().toLocaleDateString('ar-SA', {
-                      weekday: 'long',
-                      year: 'numeric',
-                      month: 'long',
-                      day: 'numeric',
-                    })}
+                    {formatDate(new Date())}
                   </p>
                   <div className="flex items-center justify-end space-x-2 space-x-reverse">
                     <div className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
@@ -65,8 +130,150 @@ const DashboardPage: React.FC = () => {
           </div>
         </div>
 
-        {/* Modern Metric Cards */}
+        {/* Real Product Metrics Section */}
         <div className="mb-12">
+          <div className="mb-6">
+            <h2 className="text-2xl font-bold text-slate-900 dark:text-white mb-2">
+              مقاييس المنتجات الحقيقية
+            </h2>
+            <p className="text-slate-600 dark:text-slate-400">
+              بيانات دقيقة عن المخزون والربحية
+            </p>
+          </div>
+          {loadingMetrics ? (
+            <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
+              {[1, 2, 3, 4].map((i) => (
+                <div
+                  key={i}
+                  className="rounded-2xl bg-white/95 p-6 shadow-lg dark:bg-slate-900/95 border border-slate-200/50 dark:border-slate-700/50 animate-pulse"
+                >
+                  <div className="h-4 bg-slate-200 dark:bg-slate-700 rounded w-3/4 mb-4"></div>
+                  <div className="h-8 bg-slate-200 dark:bg-slate-700 rounded w-1/2"></div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
+              {realProductMetrics.map((metric, index) => (
+                <div
+                  key={metric.id}
+                  className="group relative"
+                  style={{ animationDelay: `${index * 100}ms` }}
+                >
+                  <div className="absolute -inset-0.5 rounded-2xl bg-gradient-to-r from-slate-200 to-slate-300 opacity-0 blur transition-all duration-500 group-hover:opacity-100 dark:from-slate-700 dark:to-slate-600" />
+                  <div className="relative overflow-hidden rounded-2xl bg-white/95 p-6 shadow-lg backdrop-blur-xl transition-all duration-500 hover:shadow-xl dark:bg-slate-900/95 border border-slate-200/50 dark:border-slate-700/50">
+                    <div className="flex items-start justify-between">
+                      <div className="flex-1 space-y-3">
+                        <p className="text-sm font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                          {metric.title}
+                        </p>
+                        <p className={`text-2xl font-bold ${metric.valueColor} transition-all duration-300 group-hover:scale-105`}>
+                          {metric.value}
+                        </p>
+                        {productMetrics && metric.id === 'profit-margin' && (
+                          <div className="flex items-center space-x-2 space-x-reverse">
+                            <div className="h-1 w-6 rounded-full bg-gradient-to-r from-blue-400 to-blue-500" />
+                            <span className="text-xs font-medium text-blue-600 dark:text-blue-400">
+                              متوسط: {productMetrics.averageProfitMargin.toFixed(2)}%
+                            </span>
+                          </div>
+                        )}
+                        {productMetrics && metric.id === 'low-stock' && productMetrics.lowStockCount > 0 && (
+                          <div className="flex items-center space-x-2 space-x-reverse">
+                            <div className="h-1 w-6 rounded-full bg-gradient-to-r from-red-400 to-red-500" />
+                            <span className="text-xs font-medium text-red-600 dark:text-red-400">
+                              يحتاج إعادة تموين
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                      <div className={`relative rounded-xl p-3 ${metric.bgColor} transition-all duration-500 group-hover:scale-110 group-hover:rotate-3`}>
+                        <div className="absolute inset-0 rounded-xl bg-white/20 opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
+                        {metric.icon}
+                      </div>
+                    </div>
+                    
+                    {/* Subtle animated border */}
+                    <div className="absolute inset-0 rounded-2xl border border-transparent bg-gradient-to-r from-transparent via-white/10 to-transparent opacity-0 transition-opacity duration-500 group-hover:opacity-100" />
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Low Stock Products List */}
+        {productMetrics && productMetrics.lowStockProducts.length > 0 && (
+          <div className="mb-12">
+            <div className="relative">
+              <div className="absolute -inset-0.5 rounded-2xl bg-gradient-to-r from-red-500/20 to-orange-500/20 opacity-0 blur transition-all duration-500 hover:opacity-100" />
+              <div className="relative overflow-hidden rounded-2xl bg-white/95 p-8 shadow-xl backdrop-blur-xl transition-all duration-500 hover:shadow-2xl dark:bg-slate-900/95 border border-slate-200/50 dark:border-slate-700/50">
+                <div className="mb-6">
+                  <h2 className="text-2xl font-bold text-slate-900 dark:text-white mb-2">
+                    منتجات مخزون منخفض
+                  </h2>
+                  <p className="text-slate-600 dark:text-slate-400">
+                    المنتجات التي تحتاج إلى إعادة تموين
+                  </p>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-right text-sm">
+                    <thead className="bg-gradient-to-r from-slate-50 to-slate-100 dark:from-slate-800 dark:to-slate-700">
+                      <tr>
+                        <th className="px-4 py-3 font-semibold text-slate-700 dark:text-slate-200">اسم المنتج</th>
+                        <th className="px-4 py-3 font-semibold text-slate-700 dark:text-slate-200">المخزون الحالي</th>
+                        <th className="px-4 py-3 font-semibold text-slate-700 dark:text-slate-200">حد التنبيه</th>
+                        <th className="px-4 py-3 font-semibold text-slate-700 dark:text-slate-200">الحالة</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
+                      {productMetrics.lowStockProducts.slice(0, 10).map((product) => (
+                        <tr
+                          key={product.id}
+                          className="transition-all duration-300 hover:bg-gradient-to-r hover:from-red-50/50 hover:to-orange-50/50 dark:hover:from-red-950/20 dark:hover:to-orange-950/20 cursor-pointer"
+                          onClick={() => navigate(`/products`)}
+                        >
+                          <td className="px-4 py-3 font-semibold text-slate-900 dark:text-white">
+                            {product.name}
+                          </td>
+                          <td className="px-4 py-3 text-slate-600 dark:text-slate-300">
+                            {product.stock} {product.unit}
+                          </td>
+                          <td className="px-4 py-3 text-slate-600 dark:text-slate-300">
+                            {product.lowStockAlert} {product.unit}
+                          </td>
+                          <td className="px-4 py-3">
+                            <span className="inline-flex items-center rounded-full bg-red-100 px-3 py-1 text-xs font-medium text-red-800 dark:bg-red-900/30 dark:text-red-400">
+                              منخفض
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {productMetrics.lowStockProducts.length > 10 && (
+                    <div className="mt-4 text-center">
+                      <button
+                        onClick={() => navigate('/products')}
+                        className="text-sm font-medium text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300"
+                      >
+                        عرض جميع المنتجات ({productMetrics.lowStockProducts.length})
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Standard Metric Cards */}
+        <div className="mb-12">
+          <div className="mb-6">
+            <h2 className="text-2xl font-bold text-slate-900 dark:text-white mb-2">
+              مقاييس عامة
+            </h2>
+          </div>
           <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
             {METRIC_CARDS_DATA.map((metric, index) => (
               <div

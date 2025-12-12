@@ -33,8 +33,8 @@ const paymentSchema = new Schema<IPayment>(
     merchantId: {
       type: Schema.Types.ObjectId,
       ref: 'Merchant',
-      index: true,
       default: null,
+      index: false, // Explicitly disable automatic index - we use compound indexes instead
     },
     terminalId: {
       type: Schema.Types.ObjectId,
@@ -66,7 +66,6 @@ const paymentSchema = new Schema<IPayment>(
     },
     transactionId: {
       type: String,
-      index: true,
     },
     authorizationCode: {
       type: String,
@@ -83,6 +82,7 @@ const paymentSchema = new Schema<IPayment>(
   },
   {
     timestamps: true,
+    autoCreate: false, // Prevent automatic collection creation - only create when data is inserted
     toJSON: {
       transform: function (doc, ret: any) {
         ret.id = ret._id;
@@ -98,6 +98,8 @@ const paymentSchema = new Schema<IPayment>(
 paymentSchema.index({ invoiceId: 1, storeId: 1 });
 paymentSchema.index({ status: 1, createdAt: -1 });
 paymentSchema.index({ transactionId: 1 });
+// Compound indexes for merchantId queries
+// MongoDB can use these for queries on merchantId alone (prefix matching)
 paymentSchema.index({ merchantId: 1, terminalId: 1 });
 paymentSchema.index({ merchantId: 1, status: 1 });
 

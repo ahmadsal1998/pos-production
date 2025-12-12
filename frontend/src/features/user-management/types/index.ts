@@ -33,6 +33,7 @@ export type ScreenPermission =
 
 export interface SystemPreferences {
   businessName: string;
+  logoUrl: string;
   defaultCurrency: string;
   dateFormat: string;
   timeFormat: string;
@@ -50,6 +51,9 @@ export interface SystemPreferences {
   allowCash: boolean;
   allowCard: boolean;
   allowCredit: boolean;
+  enableOverdueNotifications: boolean;
+  enableAutoNotifications: boolean;
+  interfaceMode: 'light' | 'dark';
 }
 
 export interface ProfileFormFields {

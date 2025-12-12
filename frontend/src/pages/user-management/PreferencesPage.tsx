@@ -1,8 +1,12 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { SystemPreferences } from '@/features/user-management/types';
 import { AR_LABELS } from '@/shared/constants';
 import { PreferencesIcon } from '@/shared/assets/icons';
 import { ToggleSwitch } from '@/shared/components/ui/ToggleSwitch';
+import { useCurrency } from '@/shared/contexts/CurrencyContext';
+import { CURRENCIES, CurrencyConfig } from '@/shared/utils/currency';
+import CustomDropdown from '@/shared/components/ui/CustomDropdown/CustomDropdown';
+import { storeSettingsApi } from '@/lib/api/client';
 
 const initialPreferences: SystemPreferences = {
   // General
@@ -36,9 +40,34 @@ const initialPreferences: SystemPreferences = {
   interfaceMode: 'light',
 };
 
+// Helpers to parse settings
+const parseBoolean = (value: any, fallback: boolean) => {
+  if (value === undefined || value === null || value === '') return fallback;
+  if (typeof value === 'boolean') return value;
+  const lower = String(value).toLowerCase();
+  return ['true', '1', 'yes', 'on'].includes(lower);
+};
+
+const parseNumber = (value: any, fallback: number) => {
+  if (value === undefined || value === null || value === '') return fallback;
+  const parsed = Number(value);
+  return isNaN(parsed) ? fallback : parsed;
+};
+
 const PreferencesPage: React.FC = () => {
+  const { currency, updateCurrency, loading: currencyLoading } = useCurrency();
   const [prefs, setPrefs] = useState<SystemPreferences>(initialPreferences);
   const [logoPreview, setLogoPreview] = useState<string | null>(null);
+  const [selectedCurrencyCode, setSelectedCurrencyCode] = useState<string>(currency.code);
+  const [saving, setSaving] = useState(false);
+  const [loading, setLoading] = useState(true);
+
+  // Update selected currency when currency context changes
+  useEffect(() => {
+    if (!currencyLoading) {
+      setSelectedCurrencyCode(currency.code);
+    }
+  }, [currency, currencyLoading]);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
     const { name, value, type } = e.target;
@@ -67,9 +96,122 @@ const PreferencesPage: React.FC = () => {
       }
   };
 
-  const handleSaveChanges = () => {
-    console.log('Saving preferences:', prefs);
-    alert(AR_LABELS.changesSavedSuccessfully);
+  // Load preferences from backend settings
+  useEffect(() => {
+    const loadSettings = async () => {
+      try {
+        setLoading(true);
+        const response = await storeSettingsApi.getSettings();
+        const settings = (response.data as any)?.data?.settings || {};
+        const settingsMap: Record<string, any> = {};
+        Object.keys(settings || {}).forEach((k) => {
+          settingsMap[k.toLowerCase()] = settings[k];
+        });
+        const get = (key: string) => settings[key] ?? settingsMap[key.toLowerCase()];
+
+        const updated: SystemPreferences = {
+          ...initialPreferences,
+          businessName: get('businessName') || initialPreferences.businessName,
+          logoUrl: get('logoUrl') || initialPreferences.logoUrl,
+          defaultCurrency: get('defaultCurrency') || initialPreferences.defaultCurrency,
+          dateFormat: (get('dateFormat') as any) || initialPreferences.dateFormat,
+          timeFormat: (get('timeFormat') as any) || initialPreferences.timeFormat,
+          defaultLanguage: (get('defaultLanguage') as any) || initialPreferences.defaultLanguage,
+          vatPercentage: parseNumber(get('vatPercentage'), initialPreferences.vatPercentage),
+          invoiceNumberFormat: get('invoiceNumberFormat') || initialPreferences.invoiceNumberFormat,
+          invoiceFooterText: get('invoiceFooterText') || initialPreferences.invoiceFooterText,
+          autoPrintInvoice: parseBoolean(get('autoPrintInvoice'), initialPreferences.autoPrintInvoice),
+          sellWithoutStock: parseBoolean(get('sellWithoutStock'), initialPreferences.sellWithoutStock),
+          sessionDuration: parseNumber(get('sessionDuration'), initialPreferences.sessionDuration),
+          allowUserCreation: parseBoolean(get('allowUserCreation'), initialPreferences.allowUserCreation),
+          defaultUnits: get('defaultUnits') || initialPreferences.defaultUnits,
+          minStockLevel: parseNumber(get('minStockLevel'), initialPreferences.minStockLevel),
+          enableLowStockNotifications: parseBoolean(get('enableLowStockNotifications'), initialPreferences.enableLowStockNotifications),
+          allowCash: parseBoolean(get('allowCash'), initialPreferences.allowCash),
+          allowCard: parseBoolean(get('allowCard'), initialPreferences.allowCard),
+          allowCredit: parseBoolean(get('allowCredit'), initialPreferences.allowCredit),
+          enableOverdueNotifications: parseBoolean(get('enableOverdueNotifications'), initialPreferences.enableOverdueNotifications),
+          enableAutoNotifications: parseBoolean(get('enableAutoNotifications'), initialPreferences.enableAutoNotifications),
+          interfaceMode: (get('interfaceMode') as any) || initialPreferences.interfaceMode,
+        };
+
+        setPrefs(updated);
+
+        // If currency in settings differs, sync selector
+        if (updated.defaultCurrency) {
+          const match = Object.values(CURRENCIES).find(c => c.symbol === updated.defaultCurrency || c.code === updated.defaultCurrency);
+          if (match) {
+            setSelectedCurrencyCode(match.code);
+          }
+        }
+      } catch (err) {
+        console.error('Failed to load preferences settings:', err);
+        // keep defaults on error
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadSettings();
+  }, []);
+
+  const handleSaveChanges = async () => {
+    try {
+      setSaving(true);
+      
+      // Update currency if changed
+      if (selectedCurrencyCode !== currency.code) {
+        const selectedCurrency = CURRENCIES[selectedCurrencyCode] || currency;
+        await updateCurrency(selectedCurrency);
+      }
+
+      // Save other preferences to store settings
+      const entries: Array<[string, any]> = [
+        ['businessName', prefs.businessName],
+        // Avoid sending empty logoUrl to bypass validation when no logo is set
+        ...(prefs.logoUrl ? [['logoUrl', prefs.logoUrl] as [string, any]] : []),
+        ['defaultCurrency', prefs.defaultCurrency],
+        ['dateFormat', prefs.dateFormat],
+        ['timeFormat', prefs.timeFormat],
+        ['defaultLanguage', prefs.defaultLanguage],
+        ['vatPercentage', prefs.vatPercentage],
+        ['invoiceNumberFormat', prefs.invoiceNumberFormat],
+        ['invoiceFooterText', prefs.invoiceFooterText],
+        ['autoPrintInvoice', prefs.autoPrintInvoice],
+        ['sellWithoutStock', prefs.sellWithoutStock],
+        ['sessionDuration', prefs.sessionDuration],
+        ['allowUserCreation', prefs.allowUserCreation],
+        ['defaultUnits', prefs.defaultUnits],
+        ['minStockLevel', prefs.minStockLevel],
+        ['enableLowStockNotifications', prefs.enableLowStockNotifications],
+        ['allowCash', prefs.allowCash],
+        ['allowCard', prefs.allowCard],
+        ['allowCredit', prefs.allowCredit],
+        ['enableOverdueNotifications', prefs.enableOverdueNotifications],
+        ['enableAutoNotifications', prefs.enableAutoNotifications],
+        ['interfaceMode', prefs.interfaceMode],
+      ];
+
+      await Promise.all(
+        entries.map(([key, value]) =>
+          storeSettingsApi.updateSetting(key, {
+            value: value,
+            description: undefined,
+          })
+        )
+      );
+      
+      alert(AR_LABELS.changesSavedSuccessfully);
+    } catch (error) {
+      console.error('Error saving preferences:', error);
+      alert('حدث خطأ أثناء حفظ الإعدادات. يرجى المحاولة مرة أخرى.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleCurrencyChange = (value: string) => {
+    setSelectedCurrencyCode(value);
   };
   
   const renderSection = (title: string, children: React.ReactNode, icon?: React.ReactNode) => (
@@ -223,7 +365,28 @@ const PreferencesPage: React.FC = () => {
                     </label>
                   </div>
                 </div>
-                {renderField(AR_LABELS.defaultCurrency, 'defaultCurrency', 'text')}
+                <div className="space-y-2">
+                  <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300">
+                    {AR_LABELS.defaultCurrency}
+                  </label>
+                  <CustomDropdown
+                    id="currency-selector"
+                    value={selectedCurrencyCode}
+                    onChange={handleCurrencyChange}
+                    options={Object.values(CURRENCIES).map((curr) => ({
+                      value: curr.code,
+                      label: `${curr.symbol} - ${curr.name} (${curr.code})`,
+                    }))}
+                    placeholder="اختر العملة"
+                    className="w-full"
+                  />
+                  {selectedCurrencyCode && CURRENCIES[selectedCurrencyCode] && (
+                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                      الرمز: {CURRENCIES[selectedCurrencyCode].symbol} | 
+                      الكود: {CURRENCIES[selectedCurrencyCode].code}
+                    </p>
+                  )}
+                </div>
                 {renderSelect(AR_LABELS.dateFormat, 'dateFormat', [{value: 'DD/MM/YYYY', label: 'DD/MM/YYYY'}, {value: 'MM/DD/YYYY', label: 'MM/DD/YYYY'}])}
                 {renderSelect(AR_LABELS.timeFormat, 'timeFormat', [{value: '12-hour', label: '12 ساعة'}, {value: '24-hour', label: '24 ساعة'}])}
                 {renderSelect(AR_LABELS.defaultLanguage, 'defaultLanguage', [{value: 'ar', label: 'العربية'}, {value: 'en', label: 'English'}])}
@@ -282,13 +445,22 @@ const PreferencesPage: React.FC = () => {
             <div className="absolute -inset-1 rounded-2xl bg-gradient-to-r from-orange-500 to-amber-500 opacity-20 blur transition-all duration-300 group-hover:opacity-30" />
             <button
               onClick={handleSaveChanges}
-              className="relative px-8 py-4 bg-gradient-to-r from-orange-500 to-amber-500 text-white font-semibold rounded-2xl shadow-lg hover:shadow-xl focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-orange-500 transition-all duration-300 hover:scale-105 active:scale-95"
+              disabled={saving || currencyLoading || loading}
+              className="relative px-8 py-4 bg-gradient-to-r from-orange-500 to-amber-500 text-white font-semibold rounded-2xl shadow-lg hover:shadow-xl focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-orange-500 transition-all duration-300 hover:scale-105 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100"
             >
               <span className="relative flex items-center gap-2">
-                {AR_LABELS.saveChanges}
-                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                </svg>
+                {saving ? 'جاري الحفظ...' : AR_LABELS.saveChanges}
+                {!saving && (
+                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                  </svg>
+                )}
+                {saving && (
+                  <svg className="animate-spin h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                )}
               </span>
             </button>
           </div>

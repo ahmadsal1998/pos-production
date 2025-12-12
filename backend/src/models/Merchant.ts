@@ -43,6 +43,7 @@ const merchantSchema = new Schema<IMerchant>(
   },
   {
     timestamps: true,
+    autoCreate: false, // Prevent automatic collection creation - only create when data is inserted
     toJSON: {
       transform: function (doc, ret: any) {
         ret.id = ret._id;

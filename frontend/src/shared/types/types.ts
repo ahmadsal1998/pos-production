@@ -62,7 +62,14 @@ export interface Product {
   barcode: string;
   description?: string;
   image?: string;
+  units?: Array<{
+    unitName: string;
+    barcode?: string;
+    sellingPrice: number;
+    conversionFactor: number;
+  }>;
   expiryDate?: string;
   createdAt: string;
   updatedAt: string;
+  showInQuickProducts?: boolean;
 }

@@ -2,6 +2,7 @@ import { RouterProvider } from 'react-router-dom';
 import { router } from './router';
 import { useAuthStore } from './store';
 import { useEffect } from 'react';
+import { AppProvider } from './providers/AppProvider';
 
 const App = () => {
   const { isAuthenticated, user } = useAuthStore();
@@ -12,7 +13,11 @@ const App = () => {
     // For now, we'll rely on the persisted state
   }, []);
 
-  return <RouterProvider router={router} />;
+  return (
+    <AppProvider>
+      <RouterProvider router={router} />
+    </AppProvider>
+  );
 };
 
 export default App;

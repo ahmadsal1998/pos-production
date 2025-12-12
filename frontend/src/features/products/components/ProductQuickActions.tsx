@@ -27,7 +27,7 @@ const ProductQuickActions: React.FC<ProductQuickActionsProps> = ({
       title: 'إضافة منتج جديد',
       icon: <AddProductIcon />,
       colorClass: 'bg-orange-500 hover:bg-orange-600 text-white',
-      onClick: () => navigate('/products/add-multi-unit')
+      onClick: () => navigate('/products/add')
     },
     {
       id: 2,
