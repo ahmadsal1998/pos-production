@@ -9,9 +9,10 @@
   },
   "scripts": {
     "dev": "nodemon",
-    "dev:ts": "NODE_OPTIONS='--max-old-space-size=1536' ts-node --transpile-only src/server.ts",
-    "build": "NODE_OPTIONS='--max-old-space-size=1536' tsc --incremental --skipLibCheck",
-    "build:clean": "rm -rf dist .tsbuildinfo && NODE_OPTIONS='--max-old-space-size=1536' tsc --skipLibCheck",
+    "dev:ts": "NODE_OPTIONS='--max-old-space-size=4096' ts-node --transpile-only src/server.ts",
+    "build": "node build.js",
+    "build:tsc": "NODE_OPTIONS='--max-old-space-size=8192' tsc --incremental --skipLibCheck",
+    "build:clean": "rm -rf dist .tsbuildinfo && npm run build",
     "build:low-memory": "NODE_OPTIONS='--max-old-space-size=1536' tsc --incremental --skipLibCheck",
     "start": "node dist/index.js",
     "seed": "ts-node src/utils/seedDatabase.ts",
@@ -47,6 +48,8 @@
   },
   "devDependencies": {
     "@types/mongoose": "^5.11.96",
-    "@types/multer": "^1.4.13"
+    "@types/multer": "^1.4.13",
+    "esbuild": "^0.27.1",
+    "glob": "^13.0.0"
   }
 }

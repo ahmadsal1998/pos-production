@@ -1,37 +1,11 @@
-# Multi-stage build for optimized production image
+# Production image using pre-built artifacts
+# This Dockerfile expects the dist/ folder to be built locally before deployment
+# Build locally: npm install && npm run build
 
-# Stage 1: Build stage
-FROM node:20-alpine AS builder
-
-# Clear any existing cache layers
-RUN rm -rf /var/cache/apk/* && \
-    rm -rf /tmp/* && \
-    rm -rf /var/tmp/*
-
-WORKDIR /app
-
-# Copy package files first for better caching
-COPY package*.json ./
-
-# Install dependencies with clean cache
-# Using npm ci for faster, reliable, reproducible builds
-RUN npm ci --prefer-offline --no-audit && \
-    npm cache clean --force
-
-# Copy source code
-COPY . .
-
-# Build with optimized memory settings
-# Set NODE_OPTIONS to increase heap size for Vite build
-# Using 2GB (2048MB) for free plan compatibility
-ENV NODE_OPTIONS="--max-old-space-size=2048"
-RUN npm run build
-
-# Stage 2: Production stage with nginx
 FROM nginx:alpine
 
-# Copy built files from builder stage
-COPY --from=builder /app/dist /usr/share/nginx/html
+# Copy pre-built dist/ folder (must be built locally before deployment)
+COPY dist /usr/share/nginx/html
 
 # Copy nginx configuration (optional - create if needed)
 # COPY nginx.conf /etc/nginx/conf.d/default.conf
