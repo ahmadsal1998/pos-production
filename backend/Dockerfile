@@ -13,17 +13,20 @@ WORKDIR /app
 # Copy package files first for better caching
 COPY package*.json ./
 
-# Install dependencies with clean cache
-RUN npm ci --prefer-offline --no-audit && \
-    npm cache clean --force
+# Install dependencies with clean cache and memory optimization
+# Using --no-optional to skip optional dependencies and reduce memory usage
+RUN NODE_OPTIONS="--max-old-space-size=2048" npm ci --prefer-offline --no-audit --no-optional && \
+    npm cache clean --force && \
+    rm -rf /tmp/* /var/tmp/*
 
 # Copy source code
 COPY . .
 
 # Build TypeScript to JavaScript with optimized memory
 # Set NODE_OPTIONS to increase heap size for TypeScript compilation
-# Using 6144MB (6GB) instead of 8GB to be more conservative and work better on Render
-ENV NODE_OPTIONS="--max-old-space-size=6144"
+# Using 2048MB (2GB) for free plan compatibility - Render free tier has limited memory
+ENV NODE_OPTIONS="--max-old-space-size=2048"
+# Build with incremental compilation to reduce memory usage
 RUN npm run build
 
 # Stage 2: Production stage
@@ -40,8 +43,9 @@ WORKDIR /app
 COPY package*.json ./
 
 # Install only production dependencies with clean cache
-RUN npm ci --only=production --prefer-offline --no-audit && \
-    npm cache clean --force
+RUN NODE_OPTIONS="--max-old-space-size=2048" npm ci --only=production --prefer-offline --no-audit --no-optional && \
+    npm cache clean --force && \
+    rm -rf /tmp/* /var/tmp/*
 
 # Copy built files from builder stage
 COPY --from=builder /app/dist ./dist

@@ -22,7 +22,7 @@ This is **REQUIRED** for the OOM fix to work properly.
 4. **Enter the Following**:
    ```
    Key:   NODE_OPTIONS
-   Value: --max-old-space-size=6144
+   Value: --max-old-space-size=2048
    ```
 
 5. **Save Changes**
@@ -50,7 +50,7 @@ The `render.yaml` file has been updated with optimized build commands. Verify in
 1. Go to **Settings** tab
 2. Check **Build Command** should show:
    ```
-   NODE_OPTIONS="--max-old-space-size=6144" npm ci && NODE_OPTIONS="--max-old-space-size=6144" npm run build
+   NODE_OPTIONS="--max-old-space-size=2048" npm ci && NODE_OPTIONS="--max-old-space-size=2048" npm run build
    ```
 
 If it doesn't match, you can manually update it in the dashboard or ensure your `render.yaml` is properly synced.

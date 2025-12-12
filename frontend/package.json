@@ -5,13 +5,13 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "NODE_OPTIONS='--max-old-space-size=6144' vite build",
+    "build": "NODE_OPTIONS='--max-old-space-size=2048' vite build",
     "preview": "vite preview",
     "format": "prettier --write \"src/**/*.{ts,tsx,js,jsx,json,css}\" \"*.{ts,tsx,js,jsx,json}\"",
     "format:check": "prettier --check \"src/**/*.{ts,tsx,js,jsx,json,css}\" \"*.{ts,tsx,js,jsx,json}\"",
     "lint": "eslint . --ext .ts,.tsx",
     "lint:fix": "eslint . --ext .ts,.tsx --fix",
-    "type-check": "NODE_OPTIONS='--max-old-space-size=6144' tsc --noEmit",
+    "type-check": "NODE_OPTIONS='--max-old-space-size=2048' tsc --noEmit",
     "prepare": "husky"
   },
   "dependencies": {

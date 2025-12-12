@@ -11,9 +11,10 @@ The OOM error occurs when the build process exceeds the available memory on Rend
 ### 1. Codebase Optimizations ✅
 
 #### Backend Optimizations
-- **Memory Limit Adjustment**: Reduced Node.js heap size from 8GB to 6GB (6144MB) in build scripts
-- **Build Script Updates**: Updated `package.json` to include `NODE_OPTIONS` in build commands
-- **Dockerfile Optimization**: Updated multi-stage Dockerfile with optimized memory settings
+- **Memory Limit Adjustment**: Reduced Node.js heap size to 2GB (2048MB) for free plan compatibility
+- **Build Script Updates**: Updated `package.json` to include `NODE_OPTIONS` in build commands with incremental compilation
+- **Dockerfile Optimization**: Updated multi-stage Dockerfile with optimized memory settings and --no-optional flag
+- **TypeScript Optimization**: Added `isolatedModules` and optimized `tsconfig.json` for better memory efficiency
 
 #### Frontend Optimizations
 - **Vite Build Configuration**: 
@@ -32,7 +33,7 @@ The OOM error occurs when the build process exceeds the available memory on Rend
 4. Click **Add Environment Variable**
 5. Add the following:
    - **Key**: `NODE_OPTIONS`
-   - **Value**: `--max-old-space-size=6144`
+   - **Value**: `--max-old-space-size=2048`
 6. Click **Save Changes**
 
 **Important**: This environment variable must be set for the build process to use the increased memory allocation.
@@ -61,12 +62,16 @@ If you have a Team plan:
 - Added `NODE_OPTIONS` as an environment variable in the configuration
 
 #### `backend/package.json`
-- Updated build script: `"build": "NODE_OPTIONS='--max-old-space-size=6144' tsc"`
-- Updated dev script: `"dev:ts": "NODE_OPTIONS='--max-old-space-size=6144' ts-node --transpile-only src/server.ts"`
+- Updated build script: `"build": "NODE_OPTIONS='--max-old-space-size=2048' tsc --incremental"`
+- Updated dev script: `"dev:ts": "NODE_OPTIONS='--max-old-space-size=2048' ts-node --transpile-only src/server.ts"`
 
 #### `frontend/package.json`
-- Updated build script: `"build": "NODE_OPTIONS='--max-old-space-size=6144' vite build"`
-- Updated type-check script: `"type-check": "NODE_OPTIONS='--max-old-space-size=6144' tsc --noEmit"`
+- Updated build script: `"build": "NODE_OPTIONS='--max-old-space-size=2048' vite build"`
+- Updated type-check script: `"type-check": "NODE_OPTIONS='--max-old-space-size=2048' tsc --noEmit"`
+
+#### `backend/tsconfig.json`
+- Added `isolatedModules: true` for better memory efficiency
+- Added `tsBuildInfoFile` for incremental build cache
 
 #### `frontend/vite.config.ts`
 - Added manual chunk splitting for vendor libraries
@@ -123,28 +128,49 @@ After implementing changes:
 
 ### 6. Troubleshooting
 
-#### If OOM errors persist:
+#### Error: "FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory"
 
-1. **Check Render Build Logs**:
-   - Look for actual memory usage
-   - Identify which step fails (npm install, build, etc.)
+This error indicates the build process is still exceeding memory limits. Here's how to resolve it:
 
-2. **Reduce Memory Allocation Further**:
-   - Try `--max-old-space-size=4096` (4GB) instead of 6144MB
+1. **Verify Environment Variable is Set**:
+   - Check Render Dashboard → Environment tab
+   - Ensure `NODE_OPTIONS=--max-old-space-size=2048` is set
+   - If missing, add it and redeploy
+
+2. **Current Memory Settings (Updated for Free Plan)**:
+   - All configurations now use **2GB (2048MB)** instead of 6GB
+   - This is more compatible with Render's free tier limitations
+   - Updated in: `render.yaml`, `package.json`, `Dockerfile`
+
+3. **If Still Failing, Try Even Lower**:
+   - Reduce to `--max-old-space-size=1536` (1.5GB)
    - Update in all locations: `render.yaml`, `package.json` files, `Dockerfile`
+   - Update the environment variable in Render Dashboard
 
-3. **Optimize Dependencies**:
+4. **Check Build Logs for Specific Step**:
+   - Identify which step fails: `npm ci`, `npm run build`, or TypeScript compilation
+   - If `npm ci` fails: The issue is dependency installation, not compilation
+   - If `npm run build` fails: The issue is TypeScript compilation
+
+5. **Optimize Dependencies**:
    - Review `package.json` for unnecessary dependencies
    - Remove unused packages
    - Consider using lighter alternatives
+   - The Dockerfile now uses `--no-optional` to skip optional dependencies
 
-4. **Split Build Process**:
+6. **TypeScript Incremental Builds**:
+   - The build script now uses `--incremental` flag
+   - This reduces memory usage by reusing previous compilation results
+   - Ensure `tsconfig.json` has `incremental: true` and `isolatedModules: true`
+
+7. **Split Build Process**:
    - Build backend and frontend separately
    - Deploy as separate services on Render
 
-5. **Upgrade Service Plan**:
-   - Free plan has severe memory limitations
-   - Consider upgrading to at least Starter or Standard plan
+8. **Upgrade Service Plan**:
+   - Free plan has severe memory limitations (typically 512MB-1GB)
+   - Consider upgrading to at least **Starter Plan** ($7/month) or **Standard Plan** ($25/month)
+   - Standard Plan provides 2GB RAM which should be sufficient
 
 ### 7. Best Practices for Future
 

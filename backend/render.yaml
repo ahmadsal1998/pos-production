@@ -4,17 +4,18 @@ services:
     env: node
     plan: free
     # Optimized build command with memory limits to prevent OOM errors
-    buildCommand: NODE_OPTIONS="--max-old-space-size=6144" npm ci && NODE_OPTIONS="--max-old-space-size=6144" npm run build
+    # Using 2GB (2048MB) for free plan compatibility
+    buildCommand: NODE_OPTIONS="--max-old-space-size=2048" npm ci && NODE_OPTIONS="--max-old-space-size=2048" npm run build
     startCommand: npm start
     envVars:
       - key: NODE_ENV
         value: production
       - key: PORT
         value: 10000
-      # Memory optimization: Set Node.js heap size to 6GB (6144MB) to prevent OOM
+      # Memory optimization: Set Node.js heap size to 2GB (2048MB) for free plan compatibility
       # This should be set in Render Dashboard as well for redundancy
       - key: NODE_OPTIONS
-        value: --max-old-space-size=6144
+        value: --max-old-space-size=2048
       - key: MONGODB_URI
         sync: false
       - key: JWT_SECRET

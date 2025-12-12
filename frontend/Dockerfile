@@ -23,7 +23,8 @@ COPY . .
 
 # Build with optimized memory settings
 # Set NODE_OPTIONS to increase heap size for Vite build
-ENV NODE_OPTIONS="--max-old-space-size=6144"
+# Using 2GB (2048MB) for free plan compatibility
+ENV NODE_OPTIONS="--max-old-space-size=2048"
 RUN npm run build
 
 # Stage 2: Production stage with nginx

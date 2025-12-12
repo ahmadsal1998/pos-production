@@ -16,7 +16,9 @@
     "declaration": false,
     "declarationMap": false,
     "sourceMap": false,
-    "incremental": true
+    "incremental": true,
+    "isolatedModules": true,
+    "tsBuildInfoFile": "./dist/.tsbuildinfo"
   },
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist"]
