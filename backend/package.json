@@ -2,7 +2,7 @@
   "name": "pos-backend",
   "version": "1.0.0",
   "description": "POS System Backend API",
-  "main": "dist/server.js",
+  "main": "dist/index.js",
   "engines": {
     "node": ">=20.0.0",
     "npm": ">=10.0.0"
@@ -10,8 +10,9 @@
   "scripts": {
     "dev": "nodemon",
     "dev:ts": "NODE_OPTIONS='--max-old-space-size=1536' ts-node --transpile-only src/server.ts",
-    "build": "NODE_OPTIONS='--max-old-space-size=1536' tsc --incremental",
-    "start": "node dist/server.js",
+    "build": "tsc --incremental",
+    "build:clean": "rm -rf dist .tsbuildinfo && tsc",
+    "start": "node dist/index.js",
     "seed": "ts-node src/utils/seedDatabase.ts",
     "migrate:stores": "ts-node src/utils/migrateStores.ts"
   },

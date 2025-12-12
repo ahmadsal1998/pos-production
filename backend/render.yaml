@@ -3,10 +3,11 @@ services:
     name: pos-backend
     env: node
     plan: free
-    # Optimized build command with memory limits to prevent OOM errors
-    # Using 1.5GB (1536MB) for free plan compatibility - reduced from 2GB due to OOM errors
-    buildCommand: NODE_OPTIONS="--max-old-space-size=1536" npm ci && NODE_OPTIONS="--max-old-space-size=1536" npm run build
-    startCommand: npm start
+    # No build command - using pre-built dist/ folder from GitHub Actions
+    # GitHub Actions builds on every push to main and commits dist/ folder
+    # Render runs the pre-built JavaScript directly - no TypeScript compilation
+    buildCommand: echo "Using pre-built artifacts from GitHub Actions - no build needed"
+    startCommand: node dist/index.js
     envVars:
       - key: NODE_ENV
         value: production
