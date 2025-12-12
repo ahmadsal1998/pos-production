@@ -9,8 +9,8 @@
   },
   "scripts": {
     "dev": "nodemon",
-    "dev:ts": "NODE_OPTIONS='--max-old-space-size=8192' ts-node --transpile-only src/server.ts",
-    "build": "NODE_OPTIONS='--max-old-space-size=8192' tsc",
+    "dev:ts": "NODE_OPTIONS='--max-old-space-size=6144' ts-node --transpile-only src/server.ts",
+    "build": "NODE_OPTIONS='--max-old-space-size=6144' tsc",
     "start": "node dist/server.js",
     "seed": "ts-node src/utils/seedDatabase.ts",
     "migrate:stores": "ts-node src/utils/migrateStores.ts"

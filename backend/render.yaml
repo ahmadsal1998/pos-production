@@ -3,13 +3,18 @@ services:
     name: pos-backend
     env: node
     plan: free
-    buildCommand: npm install && npm run build
+    # Optimized build command with memory limits to prevent OOM errors
+    buildCommand: NODE_OPTIONS="--max-old-space-size=6144" npm ci && NODE_OPTIONS="--max-old-space-size=6144" npm run build
     startCommand: npm start
     envVars:
       - key: NODE_ENV
         value: production
       - key: PORT
         value: 10000
+      # Memory optimization: Set Node.js heap size to 6GB (6144MB) to prevent OOM
+      # This should be set in Render Dashboard as well for redundancy
+      - key: NODE_OPTIONS
+        value: --max-old-space-size=6144
       - key: MONGODB_URI
         sync: false
       - key: JWT_SECRET

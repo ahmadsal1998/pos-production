@@ -30,5 +30,23 @@ export default defineConfig(({ mode }) => {
         '@/pages': path.resolve(__dirname, 'src/pages'),
       },
     },
+    build: {
+      // Optimize build for memory efficiency
+      chunkSizeWarningLimit: 1000,
+      rollupOptions: {
+        output: {
+          // Manual chunk splitting to reduce memory pressure during build
+          manualChunks: {
+            'react-vendor': ['react', 'react-dom', 'react-router-dom'],
+            'ui-vendor': ['@headlessui/react'],
+            'utils-vendor': ['axios', 'zustand'],
+          },
+        },
+      },
+      // Reduce memory usage during minification
+      minify: 'esbuild', // esbuild is faster and uses less memory than terser
+      // Limit sourcemap generation in production to save memory
+      sourcemap: mode === 'development',
+    },
   };
 });
