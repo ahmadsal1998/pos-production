@@ -234,7 +234,7 @@ export interface ProductsPaginationResponse {
 }
 
 export const productsApi = {
-  getProducts: (params?: { page?: number; limit?: number; search?: string }) =>
+  getProducts: (params?: { page?: number; limit?: number; search?: string; showInQuickProducts?: boolean; status?: string }) =>
     apiClient.get<ProductsPaginationResponse>('/products', params),
   
   getProduct: (id: string) =>
@@ -277,6 +277,9 @@ export const salesApi = {
   getSales: (params?: any) =>
     apiClient.get('/sales', params),
   
+  getNextInvoiceNumber: () =>
+    apiClient.get<{ success: boolean; message: string; data: { invoiceNumber: string; number: number } }>('/sales/next-invoice-number'),
+  
   createSale: (sale: any) =>
     apiClient.post('/sales', sale),
   
@@ -288,6 +291,24 @@ export const salesApi = {
   
   deleteSale: (id: string) =>
     apiClient.delete(`/sales/${id}`),
+  
+  processReturn: (returnData: {
+    originalInvoiceId?: string; // Optional - for linking purposes
+    returnItems: Array<{
+      productId: string;
+      quantity: number;
+      unitPrice?: number;
+      totalPrice?: number;
+      productName?: string;
+      unit?: string;
+      discount?: number;
+      conversionFactor?: number;
+    }>;
+    reason?: string;
+    refundMethod?: 'cash' | 'card' | 'credit';
+    seller?: string;
+  }) =>
+    apiClient.post('/sales/return', returnData),
 };
 
 // Dashboard API endpoints
@@ -330,6 +351,20 @@ export const customersApi = {
   
   createCustomer: (customer: { name?: string; phone: string; address?: string; previousBalance?: number }) =>
     apiClient.post<{ success: boolean; message: string; data: { customer: any } }>('/customers', customer),
+  
+  // Customer payment endpoints
+  getCustomerPayments: (params?: { customerId?: string }) =>
+    apiClient.get<{ success: boolean; message: string; data: { payments: any[] } }>('/customers/payments/list', params),
+  
+  createCustomerPayment: (payment: {
+    customerId: string;
+    amount: number;
+    method: 'Cash' | 'Bank Transfer' | 'Cheque';
+    date?: string;
+    invoiceId?: string;
+    notes?: string;
+  }) =>
+    apiClient.post<{ success: boolean; message: string; data: { payment: any } }>('/customers/payments', payment),
 };
 
 export const categoriesApi = {

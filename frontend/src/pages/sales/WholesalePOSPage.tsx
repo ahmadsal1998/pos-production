@@ -3,6 +3,7 @@ import { Customer, WholesaleInvoice, WholesalePOSCartItem } from '@/features/sal
 import { WholesaleProduct, WholesaleProductUnit } from '@/features/products/types/product.types';
 import { AR_LABELS, UUID, SearchIcon, DeleteIcon, PlusIcon, CancelIcon, PrintIcon, CheckCircleIcon } from '@/shared/constants';
 import CustomDropdown from '@/shared/components/ui/CustomDropdown/CustomDropdown';
+import { useAuthStore } from '@/app/store';
 
 // --- MOCK DATA ---
 const MOCK_WHOLESALE_PRODUCTS: WholesaleProduct[] = [
@@ -105,7 +106,9 @@ const generateNewInvoice = (cashierName: string): WholesaleInvoice => ({
 });
 
 const WholesalePOSPage: React.FC = () => {
-    const [invoice, setInvoice] = useState<WholesaleInvoice>(generateNewInvoice(AR_LABELS.ahmadSai));
+    const { user } = useAuthStore();
+    const currentUserName = user?.fullName || user?.username || 'Unknown';
+    const [invoice, setInvoice] = useState<WholesaleInvoice>(generateNewInvoice(currentUserName));
     const [customers, setCustomers] = useState<Customer[]>([]); // Customer list - starts empty, no dummy customers
     const [searchTerm, setSearchTerm] = useState('');
     const [filters, setFilters] = useState({ category: 'all', brand: 'all' });
@@ -353,7 +356,7 @@ const WholesalePOSPage: React.FC = () => {
     
     const startNewSale = () => {
         setSaleCompleted(false);
-        setInvoice(generateNewInvoice(AR_LABELS.ahmadSai));
+        setInvoice(generateNewInvoice(currentUserName));
         setSelectedCustomer(null);
         setDueDate('');
         setSelectedProduct(null);

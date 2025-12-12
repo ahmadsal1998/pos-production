@@ -1,7 +1,9 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { AR_LABELS, PlusIcon, SearchIcon, FilterIcon, GridViewIcon, TableViewIcon, EditIcon, DeleteIcon, ViewIcon } from '../../shared/constants';
 import { Product } from '../../shared/types';
 import { MetricCard } from '../../shared/components/ui/MetricCard';
+import { productsApi, ApiError } from '@/lib/api/client';
 
 // Enhanced Product interface with image and status
 interface EnhancedProduct extends Product {
@@ -11,106 +13,16 @@ interface EnhancedProduct extends Product {
   sku?: string;
 }
 
-// Mock data for products with enhanced properties
-const mockProducts: EnhancedProduct[] = [
-  { 
-    id: 1, 
-    name: 'لابتوب Dell XPS 15', 
-    category: 'إلكترونيات', 
-    price: 1200.00, 
-    costPrice: 950.00, 
-    stock: 50, 
-    barcode: 'DELL-XPS15-12345', 
-    expiryDate: '2025-12-31', 
-    createdAt: '2023-01-15',
-    image: 'https://images.unsplash.com/photo-1496181133206-80ce9b88a853?w=300&h=200&fit=crop',
-    status: 'available',
-    description: 'لابتوب عالي الأداء للعمل والألعاب',
-    sku: 'DELL-XPS15-001'
-  },
-  { 
-    id: 2, 
-    name: 'هاتف Samsung Galaxy S23', 
-    category: 'إلكترونيات', 
-    price: 899.99, 
-    costPrice: 700.00, 
-    stock: 120, 
-    barcode: 'SAM-S23-67890', 
-    expiryDate: '2026-06-30', 
-    createdAt: new Date().toISOString(),
-    image: 'https://images.unsplash.com/photo-1511707171634-5f897ff02aa9?w=300&h=200&fit=crop',
-    status: 'available',
-    description: 'هاتف ذكي بمواصفات عالية',
-    sku: 'SAM-S23-001'
-  },
-  { 
-    id: 3, 
-    name: 'طاولة قهوة خشبية', 
-    category: 'أثاث', 
-    price: 150.50, 
-    costPrice: 100.00, 
-    stock: 30, 
-    barcode: 'FURN-CT-11223', 
-    expiryDate: '2099-12-31', 
-    createdAt: '2023-11-10',
-    image: 'https://images.unsplash.com/photo-1586023492125-27b2c045efd7?w=300&h=200&fit=crop',
-    status: 'available',
-    description: 'طاولة قهوة أنيقة من الخشب الطبيعي',
-    sku: 'FURN-CT-001'
-  },
-  { 
-    id: 4, 
-    name: 'سماعات رأس Sony WH-1000XM5', 
-    category: 'إلكترونيات', 
-    price: 349.00, 
-    costPrice: 250.00, 
-    stock: 8, 
-    barcode: 'SONY-WH-44556', 
-    expiryDate: '2027-01-01', 
-    createdAt: '2023-09-01',
-    image: 'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=300&h=200&fit=crop',
-    status: 'low_stock',
-    description: 'سماعات رأس لاسلكية بتقنية إلغاء الضوضاء',
-    sku: 'SONY-WH-001'
-  },
-  { 
-    id: 5, 
-    name: 'حليب طازج', 
-    category: 'مشروبات', 
-    price: 5.50, 
-    costPrice: 3.50, 
-    stock: 0, 
-    barcode: 'MILK-FRESH-555', 
-    expiryDate: '2024-01-01', 
-    createdAt: '2023-12-25',
-    image: 'https://images.unsplash.com/photo-1550583724-b2692b85b150?w=300&h=200&fit=crop',
-    status: 'out_of_stock',
-    description: 'حليب طازج من مزرعة محلية',
-    sku: 'MILK-FRESH-001'
-  },
-  { 
-    id: 6, 
-    name: 'كرسي مكتب مريح', 
-    category: 'أثاث', 
-    price: 299.00, 
-    costPrice: 180.00, 
-    stock: 25, 
-    barcode: 'FURN-OC-77889', 
-    expiryDate: '2099-12-31', 
-    createdAt: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
-    image: 'https://images.unsplash.com/photo-1592078615290-033ee584e267?w=300&h=200&fit=crop',
-    status: 'available',
-    description: 'كرسي مكتب مريح للعمل لساعات طويلة',
-    sku: 'FURN-OC-001'
-  },
-];
-
 interface ProductsPageProps {
   onAddProduct?: () => void;
   onProductClick?: (product: EnhancedProduct) => void;
 }
 
 const ProductsPage: React.FC<ProductsPageProps> = ({ onAddProduct, onProductClick }) => {
+  const navigate = useNavigate();
+  const [products, setProducts] = useState<EnhancedProduct[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [selectedStatus, setSelectedStatus] = useState('all');
@@ -118,11 +30,73 @@ const ProductsPage: React.FC<ProductsPageProps> = ({ onAddProduct, onProductClic
   const [sortBy, setSortBy] = useState<'name' | 'price' | 'stock' | 'createdAt'>('name');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
 
+  // Fetch products from API
+  const fetchProducts = useCallback(async () => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const response = await productsApi.getProducts();
+      const backendResponse = response.data;
+      
+      if (backendResponse?.success && Array.isArray(backendResponse.products)) {
+        // Transform API products to EnhancedProduct format
+        const transformedProducts: EnhancedProduct[] = backendResponse.products.map((p: any) => {
+          // Determine status based on stock
+          let status: 'available' | 'out_of_stock' | 'low_stock' = 'available';
+          const stock = p.stock || p.quantity || 0;
+          if (stock === 0) {
+            status = 'out_of_stock';
+          } else if (stock < (p.lowStockAlert || 10)) {
+            status = 'low_stock';
+          }
+
+          return {
+            id: typeof p.id === 'string' ? parseInt(p.id) || 0 : p.id || 0,
+            name: p.name || '',
+            category: p.category?.nameAr || p.category || '',
+            price: p.retailSellingPrice || p.sellingPrice || p.price || 0,
+            costPrice: p.costPrice || p.cost || 0,
+            stock: stock,
+            barcode: p.primaryBarcode || p.barcode || '',
+            expiryDate: p.expiryDate || '',
+            createdAt: p.createdAt || new Date().toISOString(),
+            image: p.imageUrl || p.image || undefined,
+            status: status,
+            description: p.description || undefined,
+            sku: p.internalSKU || p.sku || undefined,
+          };
+        });
+        
+        setProducts(transformedProducts);
+        console.log(`Loaded ${transformedProducts.length} products from database`);
+      } else {
+        setProducts([]);
+        console.log('No products found in database');
+      }
+    } catch (err: any) {
+      const apiError = err as ApiError;
+      console.error('Error fetching products:', apiError);
+      if (apiError.status === 401 || apiError.status === 403) {
+        navigate('/login', { replace: true });
+        return;
+      }
+      setError(apiError.message || 'فشل تحميل المنتجات');
+      setProducts([]);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [navigate]);
+
+  // Fetch products on mount
+  useEffect(() => {
+    fetchProducts();
+  }, [fetchProducts]);
+
   // Get unique categories and statuses
   const categories = useMemo(() => {
-    const uniqueCategories = Array.from(new Set(mockProducts.map(p => p.category)));
+    const uniqueCategories = Array.from(new Set(products.map(p => p.category)));
     return ['all', ...uniqueCategories];
-  }, []);
+  }, [products]);
 
   const statuses = useMemo(() => [
     { value: 'all', label: 'جميع الحالات' },
@@ -133,7 +107,7 @@ const ProductsPage: React.FC<ProductsPageProps> = ({ onAddProduct, onProductClic
 
   // Filter and sort products
   const filteredAndSortedProducts = useMemo(() => {
-    let filtered = mockProducts.filter(product => {
+    let filtered = products.filter(product => {
       const matchesSearch = product.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
                            product.barcode.toLowerCase().includes(searchTerm.toLowerCase()) ||
                            product.sku?.toLowerCase().includes(searchTerm.toLowerCase());
@@ -176,23 +150,23 @@ const ProductsPage: React.FC<ProductsPageProps> = ({ onAddProduct, onProductClic
     });
 
     return filtered;
-  }, [searchTerm, selectedCategory, selectedStatus, sortBy, sortOrder]);
+  }, [products, searchTerm, selectedCategory, selectedStatus, sortBy, sortOrder]);
 
   // Calculate metrics
   const metrics = useMemo(() => {
-    const lowStockCount = mockProducts.filter(p => p.stock < 10).length;
-    const outOfStockCount = mockProducts.filter(p => p.stock === 0).length;
-    const totalValue = mockProducts.reduce((sum, p) => sum + (p.price * p.stock), 0);
-    const totalCost = mockProducts.reduce((sum, p) => sum + (p.costPrice * p.stock), 0);
+    const lowStockCount = products.filter(p => p.stock < 10).length;
+    const outOfStockCount = products.filter(p => p.stock === 0).length;
+    const totalValue = products.reduce((sum, p) => sum + (p.price * p.stock), 0);
+    const totalCost = products.reduce((sum, p) => sum + (p.costPrice * p.stock), 0);
     const profitMargin = totalValue > 0 ? ((totalValue - totalCost) / totalValue) * 100 : 0;
 
     return [
-      { id: 1, title: 'إجمالي المنتجات', value: mockProducts.length.toString(), icon: <div className="w-6 h-6 bg-blue-500 rounded"></div>, bgColor: 'bg-blue-100', valueColor: 'text-blue-600' },
+      { id: 1, title: 'إجمالي المنتجات', value: products.length.toString(), icon: <div className="w-6 h-6 bg-blue-500 rounded"></div>, bgColor: 'bg-blue-100', valueColor: 'text-blue-600' },
       { id: 2, title: 'منتجات قليلة المخزون', value: lowStockCount.toString(), icon: <div className="w-6 h-6 bg-yellow-500 rounded"></div>, bgColor: 'bg-yellow-100', valueColor: 'text-yellow-600' },
       { id: 3, title: 'نفد المخزون', value: outOfStockCount.toString(), icon: <div className="w-6 h-6 bg-red-500 rounded"></div>, bgColor: 'bg-red-100', valueColor: 'text-red-600' },
       { id: 4, title: 'القيمة الإجمالية', value: `${totalValue.toFixed(2)} ر.س`, icon: <div className="w-6 h-6 bg-green-500 rounded"></div>, bgColor: 'bg-green-100', valueColor: 'text-green-600' },
     ];
-  }, []);
+  }, [products]);
 
   const handleAddProduct = () => {
     if (onAddProduct) {
@@ -552,10 +526,29 @@ const ProductsPage: React.FC<ProductsPageProps> = ({ onAddProduct, onProductClic
         )}
       </div>
 
+      {/* Error Display */}
+      {error && (
+        <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4">
+          <p className="text-sm text-red-800 dark:text-red-200">{error}</p>
+        </div>
+      )}
+
+      {/* Loading State */}
+      {isLoading && (
+        <div className="flex items-center justify-center py-12">
+          <div className="flex flex-col items-center gap-4">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-orange-500"></div>
+            <p className="text-sm text-gray-600 dark:text-gray-400">جاري تحميل المنتجات...</p>
+          </div>
+        </div>
+      )}
+
       {/* Results Summary */}
-      <div className="text-center text-sm text-gray-600 dark:text-gray-400">
-        عرض {filteredAndSortedProducts.length} من أصل {mockProducts.length} منتج
-      </div>
+      {!isLoading && (
+        <div className="text-center text-sm text-gray-600 dark:text-gray-400">
+          عرض {filteredAndSortedProducts.length} من أصل {products.length} منتج
+        </div>
+      )}
     </div>
   );
 };

@@ -1,15 +1,19 @@
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
-import { Product, Customer, POSInvoice, POSCartItem, SaleTransaction } from '@/shared/types';
+import { Product, Customer, POSInvoice, POSCartItem, SaleTransaction, SaleStatus, SalePaymentMethod } from '@/shared/types';
 
-import { AR_LABELS, UUID, SearchIcon, DeleteIcon, PlusIcon, HandIcon, CancelIcon, PrintIcon, CheckCircleIcon, ReturnIcon } from '@/shared/constants';
+import { AR_LABELS, UUID, SearchIcon, DeleteIcon, PlusIcon, HandIcon, CancelIcon, PrintIcon, CheckCircleIcon } from '@/shared/constants';
 import { ToggleSwitch } from '@/shared/components/ui/ToggleSwitch';
 import CustomDropdown from '@/shared/components/ui/CustomDropdown/CustomDropdown';
-import { customersApi, productsApi, storeSettingsApi, ApiError } from '@/lib/api/client';
+import { customersApi, productsApi, salesApi, ApiError } from '@/lib/api/client';
 import { useCurrency } from '@/shared/contexts/CurrencyContext';
+import { saveSale } from '@/shared/utils/salesStorage';
+import { loadSettings } from '@/shared/utils/settingsStorage';
+import { useAuthStore } from '@/app/store';
 // PaymentProcessingModal removed - using simple payment flow
 
 // Local POS product type with optional units
 type POSProduct = Product & {
+    originalId?: string; // Store original backend ID (MongoDB ObjectId) for API calls
     units?: Array<{
         unitName: string;
         barcode?: string;
@@ -24,57 +28,13 @@ type POSProduct = Product & {
     status?: string;
 };
 
-// --- MOCK DATA ---
-const MOCK_PRODUCTS_DATA: POSProduct[] = [
-  { id: 1, name: 'لابتوب Dell XPS 15', category: 'إلكترونيات', price: 1200.00, costPrice: 950.00, stock: 50, barcode: '629100100001', expiryDate: '2025-12-31', createdAt: '2023-01-15' },
-  { id: 2, name: 'هاتف Samsung S23', category: 'إلكترونيات', price: 899.99, costPrice: 700.00, stock: 120, barcode: '629100100002', expiryDate: '2026-06-30', createdAt: new Date().toISOString() },
-  { id: 3, name: 'كوكا كولا', category: 'مشروبات', price: 2.50, costPrice: 1.50, stock: 200, barcode: '629100100003', expiryDate: '2024-12-01', createdAt: '2023-12-01' },
-  { id: 4, name: 'ماء (صغير)', category: 'مشروبات', price: 1.00, costPrice: 0.50, stock: 500, barcode: '629100100004', expiryDate: '2025-01-01', createdAt: '2023-11-01' },
-  { id: 5, name: 'ليز بالملح', category: 'وجبات خفيفة', price: 3.00, costPrice: 1.80, stock: 150, barcode: '629100100005', expiryDate: '2024-08-01', createdAt: '2023-12-10' },
-  { id: 6, name: 'سماعات Sony XM5', category: 'إلكترونيات', price: 349.00, costPrice: 250.00, stock: 8, barcode: '629100100006', expiryDate: '2027-01-01', createdAt: '2023-09-01' },
-];
-
-const MOCK_ORIGINAL_INVOICES: POSInvoice[] = [
-    {
-        id: 'INV-2024-ABCDE',
-        date: new Date('2024-07-20T10:30:00Z'),
-        cashier: AR_LABELS.ahmadSai,
-        customer: { id: 'CUST-1', name: 'علي محمد', phone: '0501234567', previousBalance: 0 },
-        items: [
-            { productId: 3, name: 'كوكا كولا', unit: 'قطعة', quantity: 10, unitPrice: 2.50, total: 25.00, discount: 0 },
-            { productId: 5, name: 'ليز بالملح', unit: 'قطعة', quantity: 5, unitPrice: 3.00, total: 15.00, discount: 1 },
-        ],
-        subtotal: 40.00,
-        totalItemDiscount: 5,
-        invoiceDiscount: 0,
-        tax: 5.25,
-        grandTotal: 40.25,
-        paymentMethod: 'Cash',
-    },
-    {
-        id: 'INV-2024-FGHIJ',
-        date: new Date('2024-07-18T15:00:00Z'),
-        cashier: AR_LABELS.ahmadSai,
-        customer: { id: 'CUST-2', name: 'فاطمة الزهراء', phone: '0557654321', previousBalance: 150.75 },
-        items: [
-            { productId: 6, name: 'سماعات Sony XM5', unit: 'قطعة', quantity: 1, unitPrice: 349.00, total: 349.00, discount: 0 },
-        ],
-        subtotal: 349.00,
-        totalItemDiscount: 0,
-        invoiceDiscount: 0,
-        tax: 52.35,
-        grandTotal: 401.35,
-        paymentMethod: 'Card',
-    }
-];
-
 // All dummy/fake customers have been removed. Customer list starts empty.
 
-const generateNewInvoice = (cashierName: string): POSInvoice => ({
-  id: `INV-${new Date().getFullYear()}-${Math.random().toString(36).substr(2, 5).toUpperCase()}`,
+const generateNewInvoice = (cashierName: string, invoiceNumber: string = 'INV-1', isReturn: boolean = false, originalInvoiceId?: string): POSInvoice => ({
+  id: invoiceNumber,
   date: new Date(),
   cashier: cashierName,
-  customer: null, // No default dummy customer
+  customer: null,
   items: [],
   subtotal: 0,
   totalItemDiscount: 0,
@@ -82,6 +42,7 @@ const generateNewInvoice = (cashierName: string): POSInvoice => ({
   tax: 0,
   grandTotal: 0,
   paymentMethod: null,
+  originalInvoiceId: originalInvoiceId,
 });
 
 // Helper function to filter out dummy/test customers
@@ -105,7 +66,9 @@ const isDummyCustomer = (customer: Customer): boolean => {
 // --- MAIN POS COMPONENT ---
 const POSPage: React.FC = () => {
     const { formatCurrency } = useCurrency();
-    const [products, setProducts] = useState<POSProduct[]>(MOCK_PRODUCTS_DATA);
+    const { user } = useAuthStore();
+    const currentUserName = user?.fullName || user?.username || 'Unknown';
+    const [products, setProducts] = useState<POSProduct[]>([]);
     const [quickProducts, setQuickProducts] = useState<POSProduct[]>([]);
     const [isLoadingQuickProducts, setIsLoadingQuickProducts] = useState(false);
     const [productSuggestionsOpen, setProductSuggestionsOpen] = useState(false);
@@ -114,63 +77,66 @@ const POSPage: React.FC = () => {
     const [customerSearchTerm, setCustomerSearchTerm] = useState(''); // Search term for customers
     const [isCustomerDropdownOpen, setIsCustomerDropdownOpen] = useState(false);
     const [isLoadingCustomers, setIsLoadingCustomers] = useState(false);
-    const [currentInvoice, setCurrentInvoice] = useState<POSInvoice>(() => generateNewInvoice(AR_LABELS.ahmadSai));
+    const [currentInvoice, setCurrentInvoice] = useState<POSInvoice>(() => generateNewInvoice(currentUserName, 'INV-1'));
     const [heldInvoices, setHeldInvoices] = useState<POSInvoice[]>([]);
     const [searchTerm, setSearchTerm] = useState('');
     const [saleCompleted, setSaleCompleted] = useState(false);
-    const [returnCompleted, setReturnCompleted] = useState<SaleTransaction | null>(null);
     const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<string>('Cash');
     const [creditPaidAmount, setCreditPaidAmount] = useState(0);
     const [autoPrintEnabled, setAutoPrintEnabled] = useState(true);
-    const [isReturnModalOpen, setReturnModalOpen] = useState(false);
     const [isAddCustomerModalOpen, setIsAddCustomerModalOpen] = useState(false);
-    const [taxRate, setTaxRate] = useState<number>(0.15); // default 15% until settings load
     
-    // Fetch tax rate from system settings (store settings)
-    const fetchTaxRate = useCallback(async () => {
+    // Helper function to get tax rate from settings (synchronous for initial state)
+    // This is a regular function (not useCallback) so it can be used in useState initializer
+    const getTaxRateFromSettings = (): number => {
         try {
-            const response = await storeSettingsApi.getSettings();
-            const settings = (response.data as any)?.data?.settings || (response.data as any)?.settings || {};
-            // Build a case-insensitive map of settings
-            const settingsMap: Record<string, any> = {};
-            Object.keys(settings || {}).forEach((k) => {
-                settingsMap[k.toLowerCase()] = settings[k];
-            });
-
-            const get = (key: string) => settings[key] ?? settingsMap[key.toLowerCase()];
-
-            // Accept several possible keys (lower/upper/underscored), and strip % if present
-            const rawTax =
-                get('taxRate') ??
-                get('vatPercentage') ??
-                get('vatRate') ??
-                get('vat') ??
-                get('tax') ??
-                get('vat_percentage') ??
-                get('tax_percentage') ??
-                get('vatpercent') ??
-                get('taxpercent') ??
-                get('TAX_RATE') ??
-                get('VAT_PERCENTAGE') ??
-                get('VAT_RATE') ??
-                get('VAT_PERCENT') ??
-                get('TAX') ??
-                get('VAT');
-            if (rawTax !== undefined && rawTax !== null) {
-                const cleaned = typeof rawTax === 'string' ? rawTax.replace('%', '').trim() : rawTax;
-                const parsed = parseFloat(cleaned);
-                if (!isNaN(parsed)) {
-                    // If value looks like a whole number (> 1), treat as percentage (e.g., 15 => 0.15)
-                    const normalized = parsed > 1 ? parsed / 100 : parsed;
-                    setTaxRate(normalized);
-                    return;
+            const settings = loadSettings(null);
+            
+            // Check if settings exist and vatPercentage is defined (including 0)
+            if (settings && settings.vatPercentage !== undefined && settings.vatPercentage !== null) {
+                let vatPercentage = settings.vatPercentage;
+                
+                // Handle string values that might come from form inputs
+                if (typeof vatPercentage === 'string') {
+                    vatPercentage = parseFloat(vatPercentage);
+                    if (isNaN(vatPercentage)) {
+                        console.warn('Invalid vatPercentage value (string), using 0');
+                        return 0;
+                    }
                 }
+                
+                // Ensure it's a number
+                if (typeof vatPercentage !== 'number' || isNaN(vatPercentage)) {
+                    console.warn('Invalid vatPercentage value, using 0');
+                    return 0;
+                }
+                
+                // Handle the value - it could be stored as a percentage (15) or decimal (0.15)
+                // If value is > 1, treat as percentage and convert to decimal (e.g., 15 => 0.15)
+                // If value is <= 1, treat as decimal (e.g., 0.15 => 0.15, 0 => 0)
+                const normalized = vatPercentage > 1 
+                    ? vatPercentage / 100 
+                    : vatPercentage;
+                
+                return normalized;
             }
-            // If nothing usable, keep default
-            console.warn('Tax rate setting missing or invalid, using default 15%');
         } catch (err) {
-            console.error('Failed to fetch tax rate from settings:', err);
+            console.error('Failed to load tax rate from localStorage:', err);
         }
+        
+        // Default to 0 if no settings found (not 15% - removed hardcoded default)
+        return 0;
+    };
+    
+    // Initialize tax rate from settings synchronously (no hardcoded 0.15)
+    // This ensures the correct tax rate is used from the start, even if it's 0%
+    const [taxRate, setTaxRate] = useState<number>(() => getTaxRateFromSettings());
+    
+    // Fetch tax rate from localStorage settings (for updates when settings change)
+    const fetchTaxRate = useCallback(() => {
+        const newTaxRate = getTaxRateFromSettings();
+        setTaxRate(newTaxRate);
+        console.log('Tax rate loaded from localStorage:', newTaxRate, '(', (newTaxRate * 100).toFixed(2), '%)');
     }, []);
     
     const calculateTotals = useCallback((items: POSCartItem[], invoiceDiscount: number): Pick<POSInvoice, 'subtotal' | 'totalItemDiscount' | 'tax' | 'grandTotal'> => {
@@ -188,6 +154,29 @@ const POSPage: React.FC = () => {
         setCurrentInvoice(inv => ({ ...inv, ...newTotals }));
     }, [currentInvoice.items, currentInvoice.invoiceDiscount, calculateTotals]);
     
+    // Fetch next invoice number from API
+    const fetchNextInvoiceNumber = useCallback(async (): Promise<string> => {
+        try {
+            const response = await salesApi.getNextInvoiceNumber();
+            const invoiceNumber = (response.data as any)?.data?.invoiceNumber || 'INV-1';
+            return invoiceNumber;
+        } catch (err: any) {
+            const apiError = err as ApiError;
+            console.error('Error fetching next invoice number:', apiError);
+            // Fallback to INV-1 if API fails
+            return 'INV-1';
+        }
+    }, []);
+
+    // Fetch initial invoice number on mount
+    useEffect(() => {
+        const initializeInvoiceNumber = async () => {
+            const nextInvoiceNumber = await fetchNextInvoiceNumber();
+            setCurrentInvoice(inv => ({ ...inv, id: nextInvoiceNumber }));
+        };
+        initializeInvoiceNumber();
+    }, [fetchNextInvoiceNumber]);
+
     // Fetch customers from API - made as useCallback so it can be called after customer creation
     const fetchCustomers = useCallback(async () => {
         setIsLoadingCustomers(true);
@@ -219,9 +208,150 @@ const POSPage: React.FC = () => {
         }
     }, []);
 
-    // Fetch quick products from API
+    // Helper to normalize a backend product into our Product shape
+    const normalizeProduct = useCallback((p: any): POSProduct => {
+        // Store original backend ID for API calls
+        const originalId = p.id || p._id || '';
+        
+        // Handle ID - can be string (MongoDB ObjectId) or number
+        let productId: number;
+        if (typeof p.id === 'string') {
+            // Try to parse as number, if fails use hash of string
+            const parsed = parseInt(p.id);
+            if (!isNaN(parsed) && parsed > 0) {
+                productId = parsed;
+            } else {
+                // Use hash of string ID to get consistent numeric ID
+                productId = p.id.split('').reduce((acc: number, char: string) => {
+                    return ((acc << 5) - acc) + char.charCodeAt(0);
+                }, 0);
+                // Ensure positive number
+                productId = Math.abs(productId);
+            }
+        } else if (typeof p._id === 'string') {
+            // Fallback to _id if id doesn't exist
+            const parsed = parseInt(p._id);
+            productId = !isNaN(parsed) && parsed > 0 ? parsed : Math.abs(p._id.split('').reduce((acc: number, char: string) => {
+                return ((acc << 5) - acc) + char.charCodeAt(0);
+            }, 0));
+        } else {
+            productId = parseInt(p.id) || parseInt(p._id) || Date.now() + Math.random();
+        }
+        
+        return {
+            id: productId,
+            originalId: originalId, // Store original backend ID
+            name: p.name || '',
+            category: p.categoryId || '',
+            price: parseFloat(p.price) || 0,
+            costPrice: parseFloat(p.costPrice) || 0,
+            cost: parseFloat(p.costPrice) || 0,
+            stock: parseInt(p.stock) || 0,
+            barcode: p.barcode || '',
+            units: Array.isArray(p.units)
+                ? p.units.map((u: any) => ({
+                    unitName: u.unitName || u.name || '',
+                    barcode: u.barcode || '',
+                    sellingPrice: parseFloat(u.sellingPrice) || parseFloat(p.price) || 0,
+                    conversionFactor: parseFloat(u.conversionFactor) || 1,
+                  }))
+                : undefined,
+            expiryDate: p.expiryDate ? new Date(p.expiryDate).toISOString().split('T')[0] : '',
+            createdAt: p.createdAt || new Date().toISOString(),
+            updatedAt: p.updatedAt || new Date().toISOString(),
+            brand: p.brandId || '',
+            description: p.description,
+            showInQuickProducts: p.showInQuickProducts === true,
+            status: p.status || 'active', // Store status for reference
+        };
+    }, []);
+
+    // Fetch quick products from API with caching and backend filtering
     const fetchQuickProducts = useCallback(async () => {
+        const CACHE_KEY = 'pos_quick_products_cache';
+        const CACHE_TIMESTAMP_KEY = 'pos_quick_products_cache_timestamp';
+        const CACHE_TTL = 5 * 60 * 1000; // 5 minutes cache TTL
+        
+        // Check cache first
+        try {
+            const cachedData = localStorage.getItem(CACHE_KEY);
+            const cachedTimestamp = localStorage.getItem(CACHE_TIMESTAMP_KEY);
+            
+            if (cachedData && cachedTimestamp) {
+                const timestamp = parseInt(cachedTimestamp, 10);
+                const now = Date.now();
+                
+                // If cache is still valid, use it
+                if (now - timestamp < CACHE_TTL) {
+                    const quickProductsList = JSON.parse(cachedData);
+                    setQuickProducts(quickProductsList);
+                    setIsLoadingQuickProducts(false);
+                    console.log(`Loaded ${quickProductsList.length} quick products from cache`);
+                    return;
+                }
+            }
+        } catch (cacheError) {
+            console.warn('Error reading cache, fetching from API:', cacheError);
+        }
+
         setIsLoadingQuickProducts(true);
+        try {
+            // Use backend filtering to only fetch quick products - much more efficient!
+            // Fetch with higher limit since quick products are typically few
+            const response = await productsApi.getProducts({ 
+                page: 1, 
+                limit: 100, // Should be enough for quick products
+                showInQuickProducts: true,
+                status: 'active'
+            });
+            
+            if (response.success) {
+                const productsData = (response.data as any)?.products || (response.data as any)?.data?.products || [];
+                
+                if (productsData.length > 0) {
+                    // Normalize and set quick products
+                    const quickProductsList = productsData.map((p: any) => normalizeProduct(p));
+                    setQuickProducts(quickProductsList);
+                    
+                    // Cache the results
+                    try {
+                        localStorage.setItem(CACHE_KEY, JSON.stringify(quickProductsList));
+                        localStorage.setItem(CACHE_TIMESTAMP_KEY, Date.now().toString());
+                    } catch (cacheError) {
+                        console.warn('Error caching quick products:', cacheError);
+                    }
+                    
+                    console.log(`Loaded ${quickProductsList.length} quick products from API`);
+                } else {
+                    setQuickProducts([]);
+                    console.log('No quick products found');
+                }
+            } else {
+                console.warn('API response was not successful');
+                setQuickProducts([]);
+            }
+        } catch (err: any) {
+            console.error('Error fetching quick products:', err);
+            // Try to use cached data as fallback even if expired
+            try {
+                const cachedData = localStorage.getItem(CACHE_KEY);
+                if (cachedData) {
+                    const quickProductsList = JSON.parse(cachedData);
+                    setQuickProducts(quickProductsList);
+                    console.log('Using expired cache as fallback');
+                } else {
+                    setQuickProducts([]);
+                }
+            } catch (fallbackError) {
+                setQuickProducts([]);
+            }
+        } finally {
+            setIsLoadingQuickProducts(false);
+        }
+    }, [normalizeProduct]);
+
+    // Fetch all products for search functionality (lazy load in background)
+    const fetchAllProducts = useCallback(async () => {
         try {
             // Fetch all products - fetch multiple pages if needed to get all products
             let allProductsData: any[] = [];
@@ -251,90 +381,57 @@ const POSPage: React.FC = () => {
             }
             
             if (allProductsData.length > 0) {
-                // Helper to normalize a backend product into our Product shape
-                const normalizeProduct = (p: any): POSProduct => {
-                    // Handle ID - can be string (MongoDB ObjectId) or number
-                    let productId: number;
-                    if (typeof p.id === 'string') {
-                        // Try to parse as number, if fails use hash of string
-                        const parsed = parseInt(p.id);
-                        if (!isNaN(parsed) && parsed > 0) {
-                            productId = parsed;
-                        } else {
-                            // Use hash of string ID to get consistent numeric ID
-                            productId = p.id.split('').reduce((acc: number, char: string) => {
-                                return ((acc << 5) - acc) + char.charCodeAt(0);
-                            }, 0);
-                            // Ensure positive number
-                            productId = Math.abs(productId);
-                        }
-                    } else if (typeof p._id === 'string') {
-                        // Fallback to _id if id doesn't exist
-                        const parsed = parseInt(p._id);
-                        productId = !isNaN(parsed) && parsed > 0 ? parsed : Math.abs(p._id.split('').reduce((acc: number, char: string) => {
-                            return ((acc << 5) - acc) + char.charCodeAt(0);
-                        }, 0));
-                    } else {
-                        productId = parseInt(p.id) || parseInt(p._id) || Date.now() + Math.random();
-                    }
-                    
-                    return {
-                        id: productId,
-                        name: p.name || '',
-                        category: p.categoryId || '',
-                        price: parseFloat(p.price) || 0,
-                        costPrice: parseFloat(p.costPrice) || 0,
-                        cost: parseFloat(p.costPrice) || 0,
-                        stock: parseInt(p.stock) || 0,
-                        barcode: p.barcode || '',
-                        units: Array.isArray(p.units)
-                            ? p.units.map((u: any) => ({
-                                unitName: u.unitName || u.name || '',
-                                barcode: u.barcode || '',
-                                sellingPrice: parseFloat(u.sellingPrice) || parseFloat(p.price) || 0,
-                                conversionFactor: parseFloat(u.conversionFactor) || 1,
-                              }))
-                            : undefined,
-                        expiryDate: p.expiryDate ? new Date(p.expiryDate).toISOString().split('T')[0] : '',
-                        createdAt: p.createdAt || new Date().toISOString(),
-                        updatedAt: p.updatedAt || new Date().toISOString(),
-                        brand: p.brandId || '',
-                        description: p.description,
-                        showInQuickProducts: p.showInQuickProducts === true,
-                        status: p.status || 'active', // Store status for reference
-                    };
-                };
-
-                // Filter products that have showInQuickProducts enabled and are active for quick products
-                const quickProductsList = allProductsData
-                    .filter((p: any) => p.showInQuickProducts === true && (p.status === 'active' || !p.status))
-                    .map((p: any) => normalizeProduct(p));
-                
-                setQuickProducts(quickProductsList);
-                
                 // Update the main products list with ALL products (regardless of status) for search functionality
                 // This ensures all products in the database are searchable in POS
                 const allProductsList = allProductsData.map((p: any) => normalizeProduct(p));
                 setProducts(allProductsList);
                 
-                console.log(`Loaded ${allProductsList.length} products for POS (${quickProductsList.length} quick products)`);
-            } else {
-                console.warn('No products found in API response');
+                console.log(`Loaded ${allProductsList.length} products for POS search`);
             }
         } catch (err: any) {
-            console.error('Error fetching quick products:', err);
-            // Keep using mock data on error
-        } finally {
-            setIsLoadingQuickProducts(false);
+            console.error('Error fetching all products for search:', err);
+            // Don't show error to user, search will just be limited
         }
-    }, []);
+    }, [normalizeProduct]);
 
     // Fetch customers and quick products on mount
     useEffect(() => {
         fetchCustomers();
         fetchTaxRate();
-        fetchQuickProducts();
-    }, [fetchCustomers, fetchQuickProducts, fetchTaxRate]);
+        fetchQuickProducts(); // Fast - uses backend filtering and cache
+        
+        // Load all products for search in background (non-blocking)
+        // Use setTimeout to defer this so quick products load first
+        const timer = setTimeout(() => {
+            fetchAllProducts();
+        }, 100);
+        
+        return () => clearTimeout(timer);
+    }, [fetchCustomers, fetchQuickProducts, fetchTaxRate, fetchAllProducts]);
+
+    // Reload tax rate when page becomes visible (in case settings were changed in another tab)
+    useEffect(() => {
+        const handleVisibilityChange = () => {
+            if (!document.hidden) {
+                fetchTaxRate();
+            }
+        };
+        
+        const handleStorageChange = (e: StorageEvent) => {
+            // Reload tax rate if settings were changed
+            if (e.key && e.key.startsWith('pos_settings_')) {
+                fetchTaxRate();
+            }
+        };
+
+        document.addEventListener('visibilitychange', handleVisibilityChange);
+        window.addEventListener('storage', handleStorageChange);
+
+        return () => {
+            document.removeEventListener('visibilitychange', handleVisibilityChange);
+            window.removeEventListener('storage', handleStorageChange);
+        };
+    }, [fetchTaxRate]);
 
     // Filter customers based on search term
     useEffect(() => {
@@ -353,11 +450,11 @@ const POSPage: React.FC = () => {
     }, [customerSearchTerm, allCustomers]);
 
     useEffect(() => {
-        if ((saleCompleted || returnCompleted) && autoPrintEnabled) {
+        if (saleCompleted && autoPrintEnabled) {
             const timer = setTimeout(() => window.print(), 300); // Small delay to ensure render
             return () => clearTimeout(timer);
         }
-    }, [saleCompleted, returnCompleted, autoPrintEnabled]);
+    }, [saleCompleted, autoPrintEnabled]);
 
     const getPiecesPerMainUnit = useCallback((product?: POSProduct): number => {
         if (!product?.units || product.units.length === 0) return 1;
@@ -380,11 +477,21 @@ const POSPage: React.FC = () => {
     }, []);
 
     const handleAddProduct = (product: POSProduct, unit = 'قطعة', unitPriceOverride?: number, conversionFactorOverride?: number, piecesPerUnitOverride?: number) => {
-        const productFromState = products.find(prod => prod.id === product.id) || product;
-        const piecesPerMainUnit = getPiecesPerMainUnit(productFromState);
+        // Use the passed product directly to ensure we use the correct price (avoids hash collision issues)
+        // Only use productFromState for additional properties like units if needed
+        const productFromState = products.find(prod => prod.id === product.id);
+        
+        // Prefer the passed product's data, but merge with state product for units if available
+        const finalProduct: POSProduct = {
+            ...product,
+            // Use units from state if available and passed product doesn't have them
+            units: product.units || productFromState?.units,
+        };
+        
+        const piecesPerMainUnit = getPiecesPerMainUnit(finalProduct);
         const conversionFactor = conversionFactorOverride && conversionFactorOverride > 0
             ? conversionFactorOverride
-            : getUnitConversionFactor(productFromState, unit);
+            : getUnitConversionFactor(finalProduct, unit);
 
         // piecesPerUnit determines how many pieces to add for this scan
         const piecesPerUnit = piecesPerUnitOverride && piecesPerUnitOverride > 0
@@ -393,11 +500,33 @@ const POSPage: React.FC = () => {
                 ? 1
                 : piecesPerMainUnit;
 
-        // Price we receive should be per-piece to keep totals accurate
-        const incomingUnitPrice = unitPriceOverride ?? (piecesPerUnit > 0 ? (productFromState.price / piecesPerMainUnit) : productFromState.price);
+        // Calculate the unit price
+        // Priority: unitPriceOverride > product price (for base unit or no units) > calculated per-piece price
+        let incomingUnitPrice: number;
+        if (unitPriceOverride !== undefined && unitPriceOverride > 0) {
+            incomingUnitPrice = unitPriceOverride;
+        } else if (finalProduct.units && finalProduct.units.length > 0 && unit !== 'قطعة') {
+            // Product has units and we're using a specific unit - calculate per-piece price
+            incomingUnitPrice = piecesPerMainUnit > 0 ? (finalProduct.price / piecesPerMainUnit) : finalProduct.price;
+        } else {
+            // Product without units or using base unit - use product price directly
+            incomingUnitPrice = finalProduct.price;
+        }
+        
+        // Final safety check: ensure we have a valid price
+        if (!incomingUnitPrice || incomingUnitPrice <= 0 || !isFinite(incomingUnitPrice)) {
+            console.warn('Invalid price calculated, using product price:', { product, incomingUnitPrice, finalProduct });
+            incomingUnitPrice = product.price || 0;
+        }
 
         setCurrentInvoice(inv => {
-            const existingItem = inv.items.find(item => item.productId === product.id);
+            // Check for existing item using productId AND name AND unit to avoid hash collision issues
+            // Only update quantity if it's truly the same product (same ID, name, and unit)
+            const existingItem = inv.items.find(item => 
+                item.productId === product.id && 
+                item.name === product.name && 
+                item.unit === unit
+            );
             const currentQuantity = existingItem?.quantity || 0;
             const newQuantity = currentQuantity + piecesPerUnit;
 
@@ -409,31 +538,45 @@ const POSPage: React.FC = () => {
             }
 
             if (existingItem) {
+                // Same product, same unit - update quantity
                 const updatedQuantity = newQuantity;
                 const updatedTotal = (existingItem.total ?? (existingItem.unitPrice * existingItem.quantity)) + (incomingUnitPrice * piecesPerUnit);
                 const averagedUnitPrice = updatedQuantity > 0 ? updatedTotal / updatedQuantity : existingItem.unitPrice;
 
+                // If existing item doesn't have cartItemId, generate one for backward compatibility
+                const itemCartItemId = existingItem.cartItemId || `${existingItem.productId}-${existingItem.name}-${existingItem.unit}-${Date.now()}-${Math.random()}`;
+
                 return {
                     ...inv,
-                    items: inv.items.map(item =>
-                        item.productId === product.id
+                    items: inv.items.map(item => {
+                        // Match by cartItemId if available, otherwise fall back to productId + name + unit
+                        const isMatch = existingItem.cartItemId 
+                            ? item.cartItemId === existingItem.cartItemId
+                            : (item.productId === product.id && item.name === product.name && item.unit === unit);
+                        
+                        return isMatch
                             ? {
                                   ...item,
+                                  cartItemId: itemCartItemId, // Ensure cartItemId exists
+                                  originalId: item.originalId || product.originalId, // Preserve or set originalId
                                   quantity: updatedQuantity,
                                   total: updatedTotal,
                                   unitPrice: averagedUnitPrice,
                                   conversionFactor: item.conversionFactor || conversionFactor || piecesPerMainUnit,
                               }
-                            : item
-                    ),
+                            : item;
+                    }),
                 };
             }
 
+            // New product or different unit - add as new item
             const initialQuantity = piecesPerUnit;
             const initialTotal = incomingUnitPrice * piecesPerUnit;
 
             const newItem: POSCartItem = {
+                cartItemId: `${product.id}-${product.name}-${unit}-${Date.now()}-${Math.random()}`, // Unique ID for this cart item
                 productId: product.id,
+                originalId: product.originalId, // Store backend ID for stock updates
                 name: product.name,
                 unit: unit,
                 quantity: initialQuantity,
@@ -513,10 +656,15 @@ const POSPage: React.FC = () => {
         return matches.slice(0, 12);
     }, [searchTerm, resolveSearchMatches]);
 
-    const handleUpdateQuantity = (productId: number, quantity: number) => {
+    const handleUpdateQuantity = (cartItemId: string, quantity: number) => {
         const normalizedQuantity = Number.isFinite(quantity) ? quantity : 0;
         const roundedQuantity = Math.max(0, Math.round(normalizedQuantity));
-        const p = products.find(prod => prod.id === productId);
+        
+        // Find the item to get product info for stock check
+        const item = currentInvoice.items.find(i => i.cartItemId === cartItemId);
+        if (!item) return;
+        
+        const p = products.find(prod => prod.id === item.productId);
         const piecesPerMainUnit = getPiecesPerMainUnit(p);
         const availablePieces = p ? p.stock * piecesPerMainUnit : Infinity;
         if (p && roundedQuantity > availablePieces) {
@@ -525,37 +673,38 @@ const POSPage: React.FC = () => {
         }
 
         if (roundedQuantity < 1) {
-            handleRemoveItem(productId);
+            handleRemoveItem(cartItemId);
             return;
         }
         setCurrentInvoice(inv => ({
             ...inv,
             items: inv.items.map(item =>
-                item.productId === productId ? { ...item, quantity: roundedQuantity, total: item.unitPrice * roundedQuantity } : item
+                item.cartItemId === cartItemId ? { ...item, quantity: roundedQuantity, total: item.unitPrice * roundedQuantity } : item
             ),
         }));
     };
 
-    const handleUpdateItemDiscount = (productId: number, discount: number) => {
+    const handleUpdateItemDiscount = (cartItemId: string, discount: number) => {
         setCurrentInvoice(inv => ({
             ...inv,
             items: inv.items.map(item =>
-                item.productId === productId ? { ...item, discount: Math.max(0, discount) } : item
+                item.cartItemId === cartItemId ? { ...item, discount: Math.max(0, discount) } : item
             ),
         }));
     };
 
-    const handleRemoveItem = (productId: number) => {
+    const handleRemoveItem = (cartItemId: string) => {
         setCurrentInvoice(inv => ({
             ...inv,
-            items: inv.items.filter(item => item.productId !== productId),
+            items: inv.items.filter(item => item.cartItemId !== cartItemId),
         }));
     };
 
-    const handleHoldSale = () => {
+    const handleHoldSale = async () => {
         if (currentInvoice.items.length === 0) return;
         setHeldInvoices(prev => [...prev, currentInvoice]);
-        setCurrentInvoice(generateNewInvoice(AR_LABELS.ahmadSai));
+        const nextInvoiceNumber = await fetchNextInvoiceNumber();
+        setCurrentInvoice(generateNewInvoice(currentUserName, nextInvoiceNumber));
     };
 
     const handleRestoreSale = (invoiceId: string) => {
@@ -566,13 +715,261 @@ const POSPage: React.FC = () => {
         }
     };
     
-    const startNewSale = () => {
+    const startNewSale = async () => {
         setSaleCompleted(false);
-        setReturnCompleted(null);
-        setCurrentInvoice(generateNewInvoice(AR_LABELS.ahmadSai));
+        const nextInvoiceNumber = await fetchNextInvoiceNumber();
+        setCurrentInvoice(generateNewInvoice(currentUserName, nextInvoiceNumber));
         setSelectedPaymentMethod('Cash');
         setCreditPaidAmount(0);
     }
+    
+    const handleReturn = async () => {
+        if (currentInvoice.items.length === 0) {
+            alert('يرجى إضافة منتجات للإرجاع');
+            return;
+        }
+        
+        // Fetch next invoice number for return (returns use same sequential format)
+        const nextInvoiceNumber = await fetchNextInvoiceNumber();
+        
+        // Create a return invoice with current cart items
+        const returnInvoice = generateNewInvoice(currentUserName, nextInvoiceNumber, true);
+        returnInvoice.customer = currentInvoice.customer;
+        
+        // Copy items to return invoice (quantities will be positive for returns)
+        returnInvoice.items = currentInvoice.items.map(item => ({
+            ...item,
+            quantity: Math.abs(item.quantity), // Ensure positive quantity for returns
+            total: Math.abs(item.total), // Ensure positive total for returns
+        }));
+        
+        // Recalculate totals for return invoice
+        const totals = calculateTotals(returnInvoice.items, returnInvoice.invoiceDiscount);
+        returnInvoice.subtotal = totals.subtotal;
+        returnInvoice.totalItemDiscount = totals.totalItemDiscount;
+        returnInvoice.tax = totals.tax;
+        returnInvoice.grandTotal = totals.grandTotal;
+        
+        // Process the return
+        processReturnInvoice(returnInvoice);
+    }
+    
+    const processReturnInvoice = async (returnInvoice: POSInvoice) => {
+        const finalInvoice = { ...returnInvoice, paymentMethod: 'Cash' }; // Returns are typically cash
+        
+        // Update stock - ADD stock back for returns
+        const stockUpdateResults: Array<{ success: boolean; productName: string; productId: string | number; error?: string }> = [];
+        
+        try {
+            for (const item of returnInvoice.items) {
+                if (!item || !item.productId || item.quantity <= 0) {
+                    continue;
+                }
+
+                const invoiceItemProductId = item.productId;
+                const invoiceItemName = item.name;
+                
+                let productIdToUpdate: string | undefined = item.originalId;
+                let product: POSProduct | undefined;
+                
+                if (productIdToUpdate) {
+                    console.log(`[Return Stock Update] Using originalId from cart item: ${productIdToUpdate}`);
+                } else {
+                    const matchingProducts = products.filter(p => String(p.id) === String(invoiceItemProductId));
+                    if (matchingProducts.length === 0) {
+                        stockUpdateResults.push({ 
+                            success: false, 
+                            productName: invoiceItemName, 
+                            productId: invoiceItemProductId,
+                            error: `Product not found for return`
+                        });
+                        continue;
+                    }
+                    product = matchingProducts[0];
+                    productIdToUpdate = product.originalId;
+                }
+
+                if (!productIdToUpdate) {
+                    stockUpdateResults.push({ 
+                        success: false, 
+                        productName: invoiceItemName, 
+                        productId: invoiceItemProductId,
+                        error: `Missing originalId for return`
+                    });
+                    continue;
+                }
+
+                // Calculate stock addition for returns
+                let piecesPerMainUnit = 1;
+                if (product) {
+                    piecesPerMainUnit = getPiecesPerMainUnit(product);
+                } else if (item.conversionFactor && item.conversionFactor > 0) {
+                    piecesPerMainUnit = item.conversionFactor;
+                }
+                
+                let stockAddition: number;
+                if (item.conversionFactor && item.conversionFactor > 0 && piecesPerMainUnit > 1) {
+                    stockAddition = item.quantity / item.conversionFactor;
+                } else {
+                    stockAddition = item.quantity;
+                }
+                stockAddition = Math.ceil(stockAddition);
+
+                const productIdToUpdateString = String(productIdToUpdate);
+                
+                try {
+                    const currentProductResponse = await productsApi.getProduct(productIdToUpdateString);
+                    const currentProduct = (currentProductResponse.data as any)?.data?.product || (currentProductResponse.data as any)?.product;
+                    
+                    if (!currentProduct) {
+                        throw new Error('Product data not found');
+                    }
+
+                    const currentStock = currentProduct.stock || 0;
+                    const newStock = currentStock + stockAddition; // ADD stock for returns
+                    
+                    await productsApi.updateProduct(productIdToUpdateString, {
+                        ...currentProduct,
+                        stock: newStock,
+                    });
+                    
+                    console.log(`✓ Return: Stock added for "${invoiceItemName}": ${currentStock} -> ${newStock} (+${stockAddition})`);
+                    stockUpdateResults.push({ 
+                        success: true, 
+                        productName: invoiceItemName,
+                        productId: invoiceItemProductId
+                    });
+                } catch (error: any) {
+                    console.error(`✗ Failed to update stock for return:`, error);
+                    stockUpdateResults.push({ 
+                        success: false, 
+                        productName: invoiceItemName, 
+                        productId: invoiceItemProductId,
+                        error: error?.message || 'Unknown error'
+                    });
+                }
+            }
+        } catch (error) {
+            console.error('Error updating stock for return:', error);
+        }
+
+        // Update local product state
+        setProducts(prevProducts => {
+            const newProducts = [...prevProducts];
+            returnInvoice.items.forEach(item => {
+                const productIndex = newProducts.findIndex(p => String(p.id) === String(item.productId));
+                if (productIndex !== -1) {
+                    const product = newProducts[productIndex];
+                    const piecesPerMainUnit = getPiecesPerMainUnit(product);
+                    const stockAddition = item.conversionFactor && item.conversionFactor > 0 
+                        ? Math.ceil(item.quantity / item.conversionFactor)
+                        : item.quantity;
+                    newProducts[productIndex].stock = product.stock + stockAddition;
+                }
+            });
+            return newProducts;
+        });
+
+            // Save return as a new sale with "refunded" status (backend enum value)
+            try {
+                const customerName = returnInvoice.customer?.name || 'عميل نقدي';
+                const customerId = returnInvoice.customer?.id || 'walk-in-customer';
+                
+                // Prepare sale data for backend API (as a return invoice)
+                const saleData = {
+                    invoiceNumber: returnInvoice.id,
+                    date: returnInvoice.date instanceof Date 
+                        ? returnInvoice.date.toISOString() 
+                        : new Date().toISOString(),
+                    customerId: customerId !== 'walk-in-customer' ? customerId : undefined,
+                    customerName: customerName,
+                    items: returnInvoice.items.map(item => {
+                        // Use originalId from cart item if available, otherwise try to find product
+                        let backendProductId: string;
+                        if (item.originalId) {
+                            backendProductId = item.originalId;
+                        } else {
+                            // Fallback: find product to get original backend ID
+                            const product = products.find(p => p.id === item.productId);
+                            backendProductId = product?.originalId || String(item.productId);
+                        }
+                        return {
+                            productId: backendProductId, // Use original backend ID
+                            productName: item.name,
+                            quantity: item.quantity,
+                            unitPrice: -Math.abs(item.unitPrice), // Negative for returns
+                            totalPrice: -(item.total - (item.discount * item.quantity)), // Negative for returns
+                            unit: item.unit,
+                            discount: item.discount,
+                            conversionFactor: item.conversionFactor,
+                        };
+                    }),
+                    subtotal: -Math.abs(returnInvoice.subtotal), // Negative for returns
+                    totalItemDiscount: -Math.abs(returnInvoice.totalItemDiscount), // Negative for returns
+                    invoiceDiscount: -Math.abs(returnInvoice.invoiceDiscount), // Negative for returns
+                    tax: -Math.abs(returnInvoice.tax), // Negative for returns
+                    total: -Math.abs(returnInvoice.grandTotal), // Negative for returns
+                    paidAmount: -Math.abs(returnInvoice.grandTotal), // Negative for returns
+                    remainingAmount: 0, // Always 0 for returns (fully refunded)
+                    paymentMethod: 'cash', // Returns are typically cash
+                    status: 'refunded', // Use 'refunded' status (valid enum value in backend)
+                    isReturn: true, // Mark as return invoice
+                    seller: returnInvoice.cashier,
+                };
+
+                // Save return sale to database
+                const saleResponse = await salesApi.createSale(saleData);
+                console.log('Return sale saved to database:', saleResponse);
+                
+                // Create SaleTransaction for return (with negative values)
+                const returnTransaction: SaleTransaction = {
+                    id: returnInvoice.id,
+                    date: returnInvoice.date instanceof Date 
+                        ? returnInvoice.date.toISOString() 
+                        : new Date().toISOString(),
+                    customerName: customerName,
+                    customerId: customerId,
+                    totalAmount: -Math.abs(returnInvoice.grandTotal), // Negative for returns
+                    paidAmount: -Math.abs(returnInvoice.grandTotal), // Negative for returns
+                    remainingAmount: 0, // Always 0 for returns (fully refunded)
+                    paymentMethod: 'Cash' as SalePaymentMethod,
+                    status: 'Returned' as SaleStatus,
+                    seller: returnInvoice.cashier,
+                    items: returnInvoice.items.map(item => ({
+                        productId: item.productId,
+                        name: item.name,
+                        unit: item.unit,
+                        quantity: item.quantity,
+                        unitPrice: -Math.abs(item.unitPrice), // Negative for returns
+                        total: -Math.abs(item.total), // Negative for returns
+                        discount: item.discount,
+                        conversionFactor: item.conversionFactor,
+                    })),
+                    subtotal: -Math.abs(returnInvoice.subtotal), // Negative for returns
+                    totalItemDiscount: -Math.abs(returnInvoice.totalItemDiscount), // Negative for returns
+                    invoiceDiscount: -Math.abs(returnInvoice.invoiceDiscount), // Negative for returns
+                    tax: -Math.abs(returnInvoice.tax), // Negative for returns
+                };
+
+                // Update transaction ID if provided by backend
+                if (saleResponse.data && (saleResponse.data as any).data?.sale) {
+                    const savedSale = (saleResponse.data as any).data.sale;
+                    returnTransaction.id = savedSale.id || savedSale._id || returnTransaction.id;
+                }
+
+                // Save to localStorage
+                saveSale(returnTransaction);
+                console.log('Return transaction saved:', returnTransaction);
+                
+                // Show success and reset
+                setCurrentInvoice(returnInvoice);
+                setSaleCompleted(true);
+            } catch (error: any) {
+                const apiError = error as ApiError;
+                console.error('Failed to save return:', apiError);
+                alert(`تم إرجاع المنتجات، لكن حدث خطأ في حفظ الفاتورة: ${apiError.message || 'خطأ غير معروف'}`);
+            }
+        }
     
     const handleFinalizePayment = () => {
         if (currentInvoice.items.length === 0) return;
@@ -592,46 +989,487 @@ const POSPage: React.FC = () => {
         finalizeSaleWithoutTerminal();
     };
 
-    const finalizeSaleWithoutTerminal = () => {
-        // Deduct stock
+    const finalizeSaleWithoutTerminal = async () => {
+        const finalInvoice = { ...currentInvoice, paymentMethod: selectedPaymentMethod };
+        
+        // Check if this is a return (should not happen here, but safety check)
+        if (finalInvoice.originalInvoiceId) {
+            console.warn('Attempted to finalize a return invoice through sale flow. Use processReturnInvoice instead.');
+            return;
+        }
+        
+        // CRITICAL: Only update stock for products in the invoice items
+        // Ensure we're iterating ONLY over currentInvoice.items, not all products
+        const invoiceItems = currentInvoice.items || [];
+        
+        if (invoiceItems.length === 0) {
+            console.warn('No items in invoice, skipping stock update');
+        } else {
+            console.log(`Updating stock for ${invoiceItems.length} product(s) in invoice:`, 
+                invoiceItems.map(item => ({ productId: item.productId, name: item.name, quantity: item.quantity })));
+        }
+        
+        // Update stock in backend for each product IN THE INVOICE ONLY
+        const stockUpdateResults: Array<{ success: boolean; productName: string; productId: string | number; error?: string }> = [];
+        
+        try {
+            // CRITICAL FIX: Explicitly iterate only over invoice items, not all products
+            // Process items sequentially to avoid race conditions and ensure correct productId mapping
+            for (const item of invoiceItems) {
+                // Validate that item has required fields
+                if (!item || !item.productId || item.quantity <= 0) {
+                    const errorMsg = `Invalid invoice item: missing productId or invalid quantity`;
+                    console.warn(errorMsg, item);
+                    stockUpdateResults.push({ 
+                        success: false, 
+                        productName: item?.name || 'Unknown', 
+                        productId: item?.productId || 'unknown',
+                        error: errorMsg 
+                    });
+                    continue;
+                }
+
+                // Store the invoice item's productId to ensure we use the correct one
+                const invoiceItemProductId = item.productId;
+                const invoiceItemName = item.name;
+                
+                // CRITICAL FIX: Use originalId from cart item if available, otherwise try to find product
+                let productIdToUpdate: string | undefined = item.originalId;
+                let product: POSProduct | undefined;
+                
+                if (productIdToUpdate) {
+                    // We have the originalId directly from the cart item - use it!
+                    console.log(`[Stock Update] Using originalId from cart item: ${productIdToUpdate} for product "${invoiceItemName}"`);
+                } else {
+                    // Fallback: Try to find product in products array to get originalId
+                    console.warn(`[Stock Update] originalId not found in cart item, searching in products array for productId: ${invoiceItemProductId}`);
+                    const matchingProducts = products.filter(p => String(p.id) === String(invoiceItemProductId));
+                    
+                    if (matchingProducts.length === 0) {
+                        const errorMsg = `Product not found in products list and no originalId in cart item for productId: ${invoiceItemProductId}, name: ${invoiceItemName}`;
+                        console.error(errorMsg, { 
+                            invoiceItemProductId, 
+                            invoiceItemName, 
+                            availableProductIds: products.map(p => ({ id: p.id, name: p.name })) 
+                        });
+                        stockUpdateResults.push({ 
+                            success: false, 
+                            productName: invoiceItemName, 
+                            productId: invoiceItemProductId,
+                            error: errorMsg 
+                        });
+                        continue;
+                    }
+
+                    // If multiple products match (shouldn't happen, but handle it), use the first one
+                    if (matchingProducts.length > 1) {
+                        console.warn(`Multiple products found with same ID: ${invoiceItemProductId}. Using first match.`, matchingProducts);
+                    }
+
+                    product = matchingProducts[0];
+
+                    // CRITICAL VALIDATION: Ensure product ID matches invoice item ID
+                    if (String(product.id) !== String(invoiceItemProductId)) {
+                        const errorMsg = `Product ID mismatch: product.id (${product.id}) !== item.productId (${invoiceItemProductId})`;
+                        console.error(errorMsg, { product, item });
+                        stockUpdateResults.push({ 
+                            success: false, 
+                            productName: invoiceItemName, 
+                            productId: invoiceItemProductId,
+                            error: errorMsg 
+                        });
+                        continue;
+                    }
+
+                    // Validate product name matches (additional safety check)
+                    if (product.name !== invoiceItemName) {
+                        console.warn(`Product name mismatch: product.name (${product.name}) !== item.name (${invoiceItemName}). Continuing anyway.`);
+                    }
+
+                    if (!product.originalId) {
+                        const errorMsg = `Product missing originalId for productId: ${invoiceItemProductId}, name: ${invoiceItemName}`;
+                        console.error(errorMsg, { product });
+                        stockUpdateResults.push({ 
+                            success: false, 
+                            productName: invoiceItemName, 
+                            productId: invoiceItemProductId,
+                            error: errorMsg 
+                        });
+                        continue;
+                    }
+                    
+                    productIdToUpdate = product.originalId;
+                }
+
+                // Calculate the stock change considering conversion factors
+                // For sales, we SUBTRACT stock
+                const itemQuantity = item.quantity;
+                
+                // The quantity in the cart is in pieces, we need to convert to base units for stock
+                // Get piecesPerMainUnit from product if available, otherwise use conversionFactor
+                let piecesPerMainUnit = 1;
+                if (product) {
+                    piecesPerMainUnit = getPiecesPerMainUnit(product);
+                } else if (item.conversionFactor && item.conversionFactor > 0) {
+                    piecesPerMainUnit = item.conversionFactor;
+                }
+                
+                let stockChange: number;
+                
+                if (item.conversionFactor && item.conversionFactor > 0 && piecesPerMainUnit > 1) {
+                    // If we're selling in a sub-unit (e.g., pieces), convert to base unit (e.g., cartons)
+                    // Example: 24 pieces with conversionFactor 24 = 1 carton
+                    stockChange = itemQuantity / item.conversionFactor;
+                } else {
+                    // Direct quantity (already in base units)
+                    stockChange = itemQuantity;
+                }
+                
+                // Round up to ensure we don't under-deduct stock
+                stockChange = Math.ceil(stockChange);
+
+                // CRITICAL: Use the specific product's originalId to update ONLY that product
+                // Store in a const to prevent accidental modification
+                const productIdToUpdateString = String(productIdToUpdate);
+                
+                // Final validation: ensure productIdToUpdate is valid
+                if (!productIdToUpdate || productIdToUpdate === 'undefined' || productIdToUpdate === 'null') {
+                    const errorMsg = `Invalid originalId for product: ${invoiceItemProductId}, originalId: ${productIdToUpdate}`;
+                    console.error(errorMsg, { item, product });
+                    stockUpdateResults.push({ 
+                        success: false, 
+                        productName: invoiceItemName, 
+                        productId: invoiceItemProductId,
+                        error: errorMsg 
+                    });
+                    continue;
+                }
+
+                // Log the update attempt with full context
+                console.log(`[Stock Update] Processing item:`, {
+                    invoiceItemProductId,
+                    invoiceItemName,
+                    productId: product?.id || 'N/A',
+                    productName: product?.name || invoiceItemName,
+                    productIdToUpdate: productIdToUpdateString,
+                    quantity: item.quantity,
+                    stockChange,
+                });
+                
+                // Get current product data to update stock
+                try {
+                    const currentProductResponse = await productsApi.getProduct(productIdToUpdateString);
+                    const currentProduct = (currentProductResponse.data as any)?.data?.product || (currentProductResponse.data as any)?.product;
+                    
+                    if (!currentProduct) {
+                        throw new Error('Product data not found in response');
+                    }
+
+                    // CRITICAL VALIDATION: Verify we got the correct product from the API
+                    const responseProductId = String(currentProduct.id || currentProduct._id);
+                    if (responseProductId !== productIdToUpdateString) {
+                        const errorMsg = `Product ID mismatch in API response: expected ${productIdToUpdateString}, got ${responseProductId}. Aborting update to prevent wrong product update.`;
+                        console.error(errorMsg, { 
+                            productIdToUpdate: productIdToUpdateString, 
+                            responseProductId, 
+                            currentProduct,
+                            invoiceItemProductId,
+                            invoiceItemName
+                        });
+                        throw new Error(errorMsg);
+                    }
+
+                    // Additional validation: verify product name matches
+                    const expectedName = product?.name || invoiceItemName;
+                    if (currentProduct.name !== expectedName) {
+                        console.warn(`Product name mismatch in API response: expected "${expectedName}", got "${currentProduct.name}". Continuing with update.`);
+                    }
+
+                    const currentStock = currentProduct.stock || 0;
+                    // For sales, subtract stock
+                    const newStock = Math.max(0, currentStock - stockChange);
+                    
+                    // CRITICAL FIX: Update ONLY the specific product using its productId
+                    // Ensure we're passing the correct productId in the URL
+                    // Double-check productIdToUpdate before making the API call
+                    console.log(`[Stock Update] Calling API: PUT /products/${productIdToUpdateString}`, {
+                        productIdToUpdate: productIdToUpdateString,
+                        invoiceItemProductId,
+                        productName: expectedName,
+                        currentStock,
+                        newStock,
+                        stockChange: `-${stockChange}`,
+                        operation: 'SALE (subtracting stock)',
+                    });
+                    
+                    await productsApi.updateProduct(productIdToUpdateString, {
+                        ...currentProduct,
+                        stock: newStock,
+                    });
+                    
+                    console.log(`✓ Stock updated for product "${expectedName}" (Frontend ID: ${invoiceItemProductId}, Backend ID: ${productIdToUpdateString}): ${currentStock} -> ${newStock} (reduced by ${stockChange})`);
+                    stockUpdateResults.push({ 
+                        success: true, 
+                        productName: expectedName,
+                        productId: invoiceItemProductId
+                    });
+                } catch (error: any) {
+                    const errorMsg = error?.message || 'Unknown error';
+                    const productName = product?.name || invoiceItemName;
+                    console.error(`✗ Failed to update stock for product "${productName}" (Frontend ID: ${invoiceItemProductId}, Backend ID: ${productIdToUpdateString}):`, error);
+                    stockUpdateResults.push({ 
+                        success: false, 
+                        productName: productName, 
+                        productId: invoiceItemProductId,
+                        error: errorMsg 
+                    });
+                    // Continue with other products even if one fails
+                }
+            }
+
+            // Stock updates are processed sequentially above
+            // Log summary of stock updates
+            const successful = stockUpdateResults.filter(r => r.success).length;
+            const failed = stockUpdateResults.filter(r => !r.success).length;
+            console.log(`Stock updates completed: ${successful} successful, ${failed} failed`);
+            
+            if (failed > 0) {
+                const failedProducts = stockUpdateResults
+                    .filter(r => !r.success)
+                    .map(r => `${r.productName} (ID: ${r.productId})`)
+                    .join(', ');
+                console.warn(`Failed to update stock for: ${failedProducts}`);
+            }
+
+            // CRITICAL: Verify we only updated products in the invoice
+            const updatedProductIds = stockUpdateResults
+                .filter(r => r.success)
+                .map(r => r.productId);
+            const invoiceProductIds = invoiceItems.map(item => item.productId);
+            // Compare as strings to handle type differences
+            const extraUpdates = updatedProductIds.filter(id => {
+                const idStr = String(id);
+                return !invoiceProductIds.some(invId => String(invId) === idStr);
+            });
+            if (extraUpdates.length > 0) {
+                console.error(`CRITICAL ERROR: Updated products not in invoice!`, extraUpdates);
+            }
+        } catch (error) {
+            console.error('Error updating stock:', error);
+            // Continue with sale creation even if stock update fails
+        }
+
+        // Update local state (optimistic update)
+        // CRITICAL: Only update products that are in the invoice items
         setProducts(prevProducts => {
             const newProducts = [...prevProducts];
-            currentInvoice.items.forEach(item => {
-                const productIndex = newProducts.findIndex(p => p.id === item.productId);
-                if (productIndex !== -1) {
-                    newProducts[productIndex].stock -= item.quantity;
+            const invoiceItemsForStateUpdate = currentInvoice.items || [];
+            
+            // CRITICAL FIX: Only iterate over invoice items, not all products
+            invoiceItemsForStateUpdate.forEach(item => {
+                // Validate item has required fields
+                if (!item || !item.productId || item.quantity <= 0) {
+                    console.warn('Skipping invalid invoice item in local state update:', item);
+                    return;
                 }
+
+                // Store the invoice item's productId to ensure we use the correct one
+                const invoiceItemProductId = item.productId;
+                const invoiceItemName = item.name;
+
+                // Find the product by matching productId - use filter to find all matches first
+                const matchingProducts = newProducts.filter(p => String(p.id) === String(invoiceItemProductId));
+                
+                if (matchingProducts.length === 0) {
+                    console.warn(`Product not found in local state for productId: ${invoiceItemProductId}, name: ${invoiceItemName}`);
+                    return;
+                }
+
+                // If multiple products match (shouldn't happen, but handle it), use the first one
+                if (matchingProducts.length > 1) {
+                    console.warn(`Multiple products found with same ID in local state: ${invoiceItemProductId}. Using first match.`);
+                }
+
+                // Find the index of the matching product
+                const productIndex = newProducts.findIndex(p => String(p.id) === String(invoiceItemProductId));
+                
+                if (productIndex === -1) {
+                    console.error(`Product index not found despite filter match for productId: ${invoiceItemProductId}`);
+                    return;
+                }
+
+                const product = newProducts[productIndex];
+                
+                // CRITICAL VALIDATION: Ensure we found the correct product
+                if (String(product.id) !== String(invoiceItemProductId)) {
+                    console.error(`Product ID mismatch in local state update: product.id (${product.id}) !== item.productId (${invoiceItemProductId})`);
+                    return;
+                }
+
+                // Additional validation: verify product name matches
+                if (product.name !== invoiceItemName) {
+                    console.warn(`Product name mismatch in local state update: product.name (${product.name}) !== item.name (${invoiceItemName}). Continuing anyway.`);
+                }
+
+                // Calculate stock reduction
+                const piecesPerMainUnit = getPiecesPerMainUnit(product);
+                const stockReduction = item.conversionFactor && item.conversionFactor > 0 
+                    ? Math.ceil(item.quantity / item.conversionFactor)
+                    : item.quantity;
+
+                // Update stock for this specific product only
+                const oldStock = product.stock;
+                const newStock = Math.max(0, product.stock - stockReduction);
+                newProducts[productIndex].stock = newStock;
+
+                console.log(`Local state: Updated stock for product "${product.name}" (ID: ${invoiceItemProductId}): ${oldStock} -> ${newStock} (reduced by ${stockReduction})`);
             });
+            
             return newProducts;
         });
         
-        const finalInvoice = { ...currentInvoice, paymentMethod: selectedPaymentMethod };
         console.log('Sale Finalized:', finalInvoice);
         setCurrentInvoice(finalInvoice);
         setSaleCompleted(true);
+
+        // Create SaleTransaction and save to localStorage
+        const customerName = finalInvoice.customer?.name || 'عميل نقدي';
+        const customerId = finalInvoice.customer?.id || 'walk-in-customer';
+        
+        // Calculate paid and remaining amounts based on payment method
+        let paidAmount = 0;
+        let remainingAmount = 0;
+        let status: SaleStatus = 'Paid';
+        
+        if (selectedPaymentMethod === 'Cash' || selectedPaymentMethod === 'Card') {
+            // Full payment for cash and card
+            paidAmount = finalInvoice.grandTotal;
+            remainingAmount = 0;
+            status = 'Paid';
+        } else if (selectedPaymentMethod === 'Credit') {
+            // Credit payment - use the paid amount if specified
+            paidAmount = creditPaidAmount;
+            remainingAmount = finalInvoice.grandTotal - creditPaidAmount;
+            
+            if (remainingAmount <= 0) {
+                status = 'Paid';
+                remainingAmount = 0;
+            } else if (paidAmount > 0) {
+                status = 'Partial';
+            } else {
+                status = 'Due';
+            }
+        }
+
+        // Convert POSInvoice to SaleTransaction
+        let saleTransaction: SaleTransaction = {
+            id: finalInvoice.id,
+            date: finalInvoice.date instanceof Date 
+                ? finalInvoice.date.toISOString() 
+                : new Date().toISOString(),
+            customerName: customerName,
+            customerId: customerId,
+            totalAmount: finalInvoice.grandTotal,
+            paidAmount: paidAmount,
+            remainingAmount: remainingAmount,
+            paymentMethod: selectedPaymentMethod as SalePaymentMethod,
+            status: status,
+            seller: finalInvoice.cashier,
+            items: finalInvoice.items.map(item => ({
+                productId: item.productId,
+                name: item.name,
+                unit: item.unit,
+                quantity: item.quantity,
+                unitPrice: item.unitPrice,
+                total: item.total,
+                discount: item.discount,
+                conversionFactor: item.conversionFactor,
+            })),
+            subtotal: finalInvoice.subtotal,
+            totalItemDiscount: finalInvoice.totalItemDiscount,
+            invoiceDiscount: finalInvoice.invoiceDiscount,
+            tax: finalInvoice.tax,
+        };
+
+        // Save to database via API (if endpoint exists)
+        try {
+            // Regular sale - Prepare sale data for backend API
+            const saleData = {
+                invoiceNumber: finalInvoice.id,
+                date: finalInvoice.date instanceof Date 
+                    ? finalInvoice.date.toISOString() 
+                    : new Date().toISOString(),
+                customerId: customerId !== 'walk-in-customer' ? customerId : undefined,
+                customerName: customerName,
+                items: finalInvoice.items.map(item => {
+                    // Use originalId from cart item if available, otherwise try to find product
+                    let backendProductId: string;
+                    if (item.originalId) {
+                        backendProductId = item.originalId;
+                    } else {
+                        // Fallback: find product to get original backend ID
+                        const product = products.find(p => p.id === item.productId);
+                        backendProductId = product?.originalId || String(item.productId);
+                    }
+                    return {
+                        productId: backendProductId, // Use original backend ID
+                        productName: item.name,
+                        quantity: item.quantity,
+                        unitPrice: item.unitPrice,
+                        totalPrice: item.total - (item.discount * item.quantity),
+                        unit: item.unit,
+                        discount: item.discount,
+                        conversionFactor: item.conversionFactor,
+                    };
+                }),
+                subtotal: finalInvoice.subtotal,
+                totalItemDiscount: finalInvoice.totalItemDiscount,
+                invoiceDiscount: finalInvoice.invoiceDiscount,
+                tax: finalInvoice.tax,
+                total: finalInvoice.grandTotal,
+                paidAmount: paidAmount,
+                remainingAmount: remainingAmount,
+                paymentMethod: selectedPaymentMethod.toLowerCase(), // Convert to lowercase for backend
+                status: status === 'Paid' ? 'completed' : status === 'Partial' ? 'partial_payment' : 'pending',
+                seller: finalInvoice.cashier,
+            };
+
+            // Save sale to database
+            const saleResponse = await salesApi.createSale(saleData);
+            console.log('Sale saved to database:', saleResponse);
+            
+            // Update sale transaction with database ID if provided
+            if (saleResponse.data && (saleResponse.data as any).data?.sale) {
+                const savedSale = (saleResponse.data as any).data.sale;
+                saleTransaction.id = savedSale.id || savedSale._id || saleTransaction.id;
+            }
+        } catch (error: any) {
+            const apiError = error as ApiError;
+            
+            // Handle 404 specifically (endpoint doesn't exist)
+            if (apiError.status === 404) {
+                console.warn('Sales API endpoint not found. Sale will be saved to localStorage only.');
+                console.warn('To enable database saving, create a /api/sales POST endpoint in the backend.');
+                // Don't show alert for 404 - it's expected if backend route doesn't exist yet
+            } else {
+                console.error('Failed to save sale to database:', apiError);
+                // Only show alert for unexpected errors
+                alert(`تم إنشاء الفاتورة محلياً، لكن حدث خطأ في حفظها في قاعدة البيانات: ${apiError.message || 'خطأ غير معروف'}`);
+            }
+        }
+
+        // Save to localStorage as backup
+        saveSale(saleTransaction);
+        console.log('Sale transaction saved to localStorage:', saleTransaction);
     };
 
 
-    const handleConfirmReturn = (returnInvoice: SaleTransaction) => {
-        // Quantities in returnInvoice.items are negative, so this adds stock back.
-        setProducts(prevProducts => {
-            const newProducts = [...prevProducts];
-            returnInvoice.items.forEach(item => {
-                const productIndex = newProducts.findIndex(p => p.id === item.productId);
-                if (productIndex !== -1) {
-                    newProducts[productIndex].stock -= item.quantity; // e.g., 50 - (-2) = 52
-                }
-            });
-            return newProducts;
-        });
-
-        console.log("RETURN INVOICE CREATED:", returnInvoice);
-        setReturnModalOpen(false);
-        setReturnCompleted(returnInvoice);
-    };
 
     const renderReceipt = (invoice: SaleTransaction | POSInvoice, title: string) => {
-        const isReturn = 'originalInvoiceId' in invoice;
+        // Check if this is a return invoice
+        const isReturn = 'originalInvoiceId' in invoice && invoice.originalInvoiceId !== undefined
+            || ('status' in invoice && invoice.status === 'Returned')
+            || ('id' in invoice && invoice.id.startsWith('RET-'));
         return (
             <div id="printable-receipt" className="w-full max-w-md bg-white dark:bg-gray-800 p-4 sm:p-6 rounded-lg shadow-lg text-right">
                 <div className="text-center mb-3 sm:mb-4">
@@ -661,34 +1499,59 @@ const POSPage: React.FC = () => {
                             </tr>
                         </thead>
                         <tbody>
-                            {invoice.items.map(item => (
-                                <tr key={item.productId} className="border-b border-dashed border-gray-300 dark:border-gray-600">
+                            {invoice.items.map((item, idx) => {
+                                const itemUnitPrice = isReturn ? -Math.abs(item.unitPrice) : item.unitPrice;
+                                const itemTotal = isReturn ? -Math.abs(item.total - item.discount * item.quantity) : (item.total - item.discount * item.quantity);
+                                return (
+                                <tr key={item.cartItemId || `receipt-item-${idx}`} className="border-b border-dashed border-gray-300 dark:border-gray-600">
                                     <td className="py-1 px-1 sm:px-2">{item.name}</td>
                                     <td className="py-1 text-center px-1 sm:px-2">{Math.abs(item.quantity)}</td>
-                                    <td className="py-1 text-center px-1 sm:px-2">{formatCurrency(item.unitPrice)}</td>
-                                    <td className="py-1 text-left px-1 sm:px-2">{formatCurrency(Math.abs(item.total - item.discount * item.quantity))}</td>
+                                    <td className={`py-1 text-center px-1 sm:px-2 ${isReturn ? 'text-red-600' : ''}`}>{formatCurrency(itemUnitPrice)}</td>
+                                    <td className={`py-1 text-left px-1 sm:px-2 ${isReturn ? 'text-red-600' : ''}`}>{formatCurrency(itemTotal)}</td>
                                 </tr>
-                            ))}
+                                );
+                            })}
                         </tbody>
                     </table>
                 </div>
 
                 <div className="mt-3 sm:mt-4 text-xs space-y-1">
-                    <div className="flex justify-between"><span className="text-gray-600 dark:text-gray-400">{AR_LABELS.subtotal}:</span><span>{formatCurrency(Math.abs(invoice.subtotal))}</span></div>
-                    <div className="flex justify-between"><span className="text-gray-600 dark:text-gray-400">{AR_LABELS.totalDiscount}:</span><span>{formatCurrency(Math.abs(invoice.totalItemDiscount + invoice.invoiceDiscount))}</span></div>
-                    <div className="flex justify-between"><span className="text-gray-600 dark:text-gray-400">{AR_LABELS.tax}:</span><span>{formatCurrency(Math.abs(invoice.tax))}</span></div>
-                    <div className="flex justify-between font-bold text-sm sm:text-base border-t dark:border-gray-600 pt-1 mt-1"><span className="text-gray-800 dark:text-gray-100">{isReturn ? AR_LABELS.totalReturnValue : AR_LABELS.grandTotal}:</span><span className={isReturn ? 'text-red-600' : 'text-orange-600'}>{formatCurrency(Math.abs('grandTotal' in invoice ? invoice.grandTotal : invoice.totalAmount))}</span></div>
+                    <div className="flex justify-between">
+                        <span className="text-gray-600 dark:text-gray-400">{AR_LABELS.subtotal}:</span>
+                        <span className={isReturn ? 'text-red-600' : ''}>
+                            {formatCurrency(isReturn ? -Math.abs(invoice.subtotal) : invoice.subtotal)}
+                        </span>
+                    </div>
+                    <div className="flex justify-between">
+                        <span className="text-gray-600 dark:text-gray-400">{AR_LABELS.totalDiscount}:</span>
+                        <span className={isReturn ? 'text-red-600' : ''}>
+                            {formatCurrency(isReturn ? -Math.abs(invoice.totalItemDiscount + invoice.invoiceDiscount) : -(invoice.totalItemDiscount + invoice.invoiceDiscount))}
+                        </span>
+                    </div>
+                    <div className="flex justify-between">
+                        <span className="text-gray-600 dark:text-gray-400">{AR_LABELS.tax}:</span>
+                        <span className={isReturn ? 'text-red-600' : ''}>
+                            {formatCurrency(isReturn ? -Math.abs(invoice.tax) : invoice.tax)}
+                        </span>
+                    </div>
+                    <div className="flex justify-between font-bold text-sm sm:text-base border-t dark:border-gray-600 pt-1 mt-1">
+                        <span className="text-gray-800 dark:text-gray-100">{isReturn ? AR_LABELS.totalReturnValue : AR_LABELS.grandTotal}:</span>
+                        <span className={isReturn ? 'text-red-600' : 'text-orange-600'}>
+                            {formatCurrency(isReturn ? -Math.abs('grandTotal' in invoice ? invoice.grandTotal : invoice.totalAmount) : ('grandTotal' in invoice ? invoice.grandTotal : invoice.totalAmount))}
+                        </span>
+                    </div>
                 </div>
                 <p className="text-center text-xs mt-4 sm:mt-6 text-gray-500 dark:text-gray-400">شكراً لتعاملكم معنا!</p>
             </div>
         );
     }
     
-    if (saleCompleted || returnCompleted) {
+    if (saleCompleted) {
+        const isReturnInvoice = currentInvoice.id.startsWith('RET-') || currentInvoice.originalInvoiceId !== undefined;
+        const receiptTitle = isReturnInvoice ? 'Returns' : 'PoshPointHub';
         return (
             <div className="flex flex-col items-center justify-center min-h-screen bg-gray-100 dark:bg-gray-900 p-4 sm:p-6">
-                {saleCompleted && renderReceipt(currentInvoice, 'PoshPointHub')}
-                {returnCompleted && renderReceipt(returnCompleted, AR_LABELS.returnInvoice)}
+                {saleCompleted && renderReceipt(currentInvoice, receiptTitle)}
                 <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 sm:space-x-4 sm:space-x-reverse mt-4 sm:mt-6 print-hidden w-full max-w-md">
                     <button onClick={startNewSale} className="inline-flex items-center justify-center px-4 sm:px-6 py-2.5 sm:py-3 border border-transparent text-sm sm:text-base font-medium rounded-md shadow-sm text-white bg-orange-500 hover:bg-orange-600 transition-colors">
                         <PlusIcon className="h-4 w-4 sm:h-5 sm:w-5 ml-2" />
@@ -851,9 +1714,9 @@ const POSPage: React.FC = () => {
                                 </div>
                             ) : (
                                 <div className="grid grid-cols-2 gap-2 sm:gap-3">
-                                    {quickProducts.map(p => (
+                                    {quickProducts.map((p, index) => (
                                         <button 
-                                            key={p.id} 
+                                            key={`quick-product-${p.id}-${index}`} 
                                             onClick={() => handleAddProduct(p)} 
                                             disabled={p.stock <= 0}
                                             className="group p-3 sm:p-4 border border-gray-200 dark:border-gray-700 rounded-lg sm:rounded-xl text-center hover:bg-orange-50 dark:hover:bg-gray-700 hover:border-orange-300 dark:hover:border-orange-600 transition-all duration-200 hover:shadow-md active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
@@ -930,7 +1793,7 @@ const POSPage: React.FC = () => {
                                    {currentInvoice.items.length === 0 ? (
                                         <tr><td colSpan={7} className="text-center py-8 sm:py-10 text-xs sm:text-sm text-gray-500 dark:text-gray-400">{AR_LABELS.noItemsInCart}</td></tr>
                                    ) : currentInvoice.items.map((item, index) => (
-                                        <tr key={item.productId} className="hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors duration-150">
+                                        <tr key={item.cartItemId || `item-${index}`} className="hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors duration-150">
                                             <td className="px-2 sm:px-3 py-3 sm:py-4 text-xs sm:text-sm text-gray-500 dark:text-gray-400">{index + 1}</td>
                                             <td className="px-2 sm:px-3 py-3 sm:py-4 text-xs sm:text-sm font-medium text-gray-900 dark:text-gray-100 break-words">{item.name}</td>
                                             <td className="px-2 sm:px-3 py-3 sm:py-4">
@@ -939,7 +1802,9 @@ const POSPage: React.FC = () => {
                                                     value={item.quantity} 
                                                         onChange={e => {
                                                             const value = parseFloat(e.target.value);
-                                                            handleUpdateQuantity(item.productId, isNaN(value) ? item.quantity : value);
+                                                            if (item.cartItemId) {
+                                                                handleUpdateQuantity(item.cartItemId, isNaN(value) ? item.quantity : value);
+                                                            }
                                                         }} 
                                                     className="w-full max-w-[60px] text-xs sm:text-sm text-center border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent py-1 sm:py-1.5"
                                                 />
@@ -949,14 +1814,22 @@ const POSPage: React.FC = () => {
                                                 <input 
                                                     type="number" 
                                                     value={item.discount} 
-                                                    onChange={e => handleUpdateItemDiscount(item.productId, parseFloat(e.target.value) || 0)} 
+                                                    onChange={e => {
+                                                        if (item.cartItemId) {
+                                                            handleUpdateItemDiscount(item.cartItemId, parseFloat(e.target.value) || 0);
+                                                        }
+                                                    }} 
                                                     className="w-full max-w-[60px] text-xs sm:text-sm text-center border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent py-1 sm:py-1.5"
                                                 />
                                             </td>
                                             <td className="px-2 sm:px-3 py-3 sm:py-4 text-xs sm:text-sm font-semibold text-orange-600 whitespace-nowrap">{formatCurrency(item.total - (item.discount * item.quantity))}</td>
                                             <td className="px-2 sm:px-3 py-3 sm:py-4">
                                                 <button 
-                                                    onClick={() => handleRemoveItem(item.productId)} 
+                                                    onClick={() => {
+                                                        if (item.cartItemId) {
+                                                            handleRemoveItem(item.cartItemId);
+                                                        }
+                                                    }} 
                                                     className="text-red-600 hover:text-red-900 dark:text-red-400 dark:hover:text-red-300 p-1.5 sm:p-2 rounded-lg hover:bg-red-50 dark:hover:bg-gray-700 transition-colors mx-auto"
                                                 >
                                                     <span className="w-4 h-4 sm:w-5 sm:h-5 block"><DeleteIcon /></span>
@@ -977,15 +1850,6 @@ const POSPage: React.FC = () => {
                             <div className="mb-4">
                                 <h3 className="text-xs sm:text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3 text-right">الإجراءات</h3>
                                 <div className="flex flex-col gap-2 sm:gap-3">
-                                    <button 
-                                        onClick={() => setReturnModalOpen(true)} 
-                                        disabled={currentInvoice.items.length > 0}
-                                        className="inline-flex items-center justify-center px-4 py-2.5 rounded-xl border-2 border-blue-400 dark:border-blue-600 text-sm font-medium text-blue-700 dark:text-blue-300 bg-blue-50 dark:bg-blue-900/30 hover:bg-blue-100 dark:hover:bg-blue-900/50 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 shadow-sm hover:shadow-md"
-                                        title={currentInvoice.items.length > 0 ? "يجب إفراغ السلة لبدء عملية إرجاع" : AR_LABELS.returnProduct}
-                                    >
-                                        <span className="h-4 w-4 sm:h-5 sm:w-5 block"><ReturnIcon /></span>
-                                        <span className="mr-2">{AR_LABELS.returnProduct}</span>
-                                    </button>
                                     <button 
                                         onClick={handleHoldSale} 
                                         disabled={currentInvoice.items.length === 0} 
@@ -1096,26 +1960,28 @@ const POSPage: React.FC = () => {
                                             {AR_LABELS.autoPrintInvoice}
                                         </label>
                                     </div>
-                                    <button 
-                                        onClick={handleFinalizePayment} 
-                                        disabled={currentInvoice.items.length === 0} 
-                                        className="w-full px-4 py-3 text-sm sm:text-base font-bold text-white bg-gradient-to-r from-green-500 via-emerald-500 to-green-600 rounded-xl hover:from-green-600 hover:via-emerald-600 hover:to-green-700 disabled:from-gray-400 disabled:via-gray-400 disabled:to-gray-500 dark:disabled:from-gray-600 dark:disabled:via-gray-600 dark:disabled:to-gray-700 shadow-xl hover:shadow-2xl hover:scale-[1.02] transition-all duration-200 disabled:cursor-not-allowed disabled:scale-100"
-                                    >
-                                        {AR_LABELS.confirmPayment}
-                                    </button>
+                                    <div className="flex flex-col sm:flex-row gap-2 sm:gap-3">
+                                        <button 
+                                            onClick={handleFinalizePayment} 
+                                            disabled={currentInvoice.items.length === 0} 
+                                            className="flex-1 px-4 py-3 text-sm sm:text-base font-bold text-white bg-gradient-to-r from-green-500 via-emerald-500 to-green-600 rounded-xl hover:from-green-600 hover:via-emerald-600 hover:to-green-700 disabled:from-gray-400 disabled:via-gray-400 disabled:to-gray-500 dark:disabled:from-gray-600 dark:disabled:via-gray-600 dark:disabled:to-gray-700 shadow-xl hover:shadow-2xl hover:scale-[1.02] transition-all duration-200 disabled:cursor-not-allowed disabled:scale-100"
+                                        >
+                                            {AR_LABELS.confirmPayment}
+                                        </button>
+                                        <button 
+                                            onClick={handleReturn} 
+                                            disabled={currentInvoice.items.length === 0} 
+                                            className="flex-1 px-4 py-3 text-sm sm:text-base font-bold text-white bg-gradient-to-r from-red-500 via-rose-500 to-red-600 rounded-xl hover:from-red-600 hover:via-rose-600 hover:to-red-700 disabled:from-gray-400 disabled:via-gray-400 disabled:to-gray-500 dark:disabled:from-gray-600 dark:disabled:via-gray-600 dark:disabled:to-gray-700 shadow-xl hover:shadow-2xl hover:scale-[1.02] transition-all duration-200 disabled:cursor-not-allowed disabled:scale-100"
+                                        >
+                                            {AR_LABELS.returnProduct}
+                                        </button>
+                                    </div>
                                 </div>
                             </div>
                         </div>
                     </div>
                 </div>
             </div>
-            <ReturnModal 
-                isOpen={isReturnModalOpen} 
-                onClose={() => setReturnModalOpen(false)}
-                onConfirm={handleConfirmReturn}
-                products={products}
-                taxRate={taxRate}
-            />
             <AddCustomerModal 
                 isOpen={isAddCustomerModalOpen} 
                 onClose={() => setIsAddCustomerModalOpen(false)}
@@ -1280,183 +2146,6 @@ const AddCustomerModal: React.FC<{
                     >
                         {AR_LABELS.cancel}
                     </button>
-                </div>
-            </div>
-        </div>
-    );
-};
-
-const ReturnModal: React.FC<{
-    isOpen: boolean;
-    onClose: () => void;
-    onConfirm: (returnInvoice: SaleTransaction) => void;
-    products: POSProduct[];
-    taxRate: number;
-}> = ({ isOpen, onClose, onConfirm, products, taxRate }) => {
-    const [searchTerm, setSearchTerm] = useState('');
-    const [returnItems, setReturnItems] = useState<POSCartItem[]>([]);
-    const [reason, setReason] = useState('');
-    const [refundMethod, setRefundMethod] = useState<'Cash' | 'Card' | 'Credit'>('Cash');
-    const { formatCurrency } = useCurrency();
-
-    const handleSearch = (e: React.FormEvent) => {
-        e.preventDefault();
-        if (!searchTerm) return;
-        const trimmed = searchTerm.trim();
-        const lower = trimmed.toLowerCase();
-        
-        // Search in products by barcode or name (case-insensitive)
-        const foundProduct = products.find(p => {
-            // Exact barcode match
-            if (p.barcode && (p.barcode === trimmed || p.barcode.toLowerCase() === lower)) {
-                return true;
-            }
-            // Name contains search term
-            if (p.name && p.name.toLowerCase().includes(lower)) {
-                return true;
-            }
-            // Check units barcodes
-            if (p.units) {
-                return p.units.some(u => u.barcode && (u.barcode === trimmed || u.barcode.toLowerCase() === lower));
-            }
-            return false;
-        });
-        
-        if (foundProduct) {
-            setReturnItems(prevItems => {
-                const existingItem = prevItems.find(item => item.productId === foundProduct.id);
-                if (existingItem) {
-                    return prevItems.map(item => item.productId === foundProduct.id ? { ...item, quantity: item.quantity + 1, total: (item.quantity + 1) * item.unitPrice } : item);
-                } else {
-                    return [...prevItems, {
-                        productId: foundProduct.id,
-                        name: foundProduct.name,
-                        unit: 'قطعة',
-                        quantity: 1,
-                        unitPrice: foundProduct.price,
-                        total: foundProduct.price,
-                        discount: 0,
-                    }];
-                }
-            });
-            setSearchTerm('');
-        } else {
-            alert('المنتج غير موجود');
-        }
-    };
-
-    const handleQuantityChange = (productId: number, value: string) => {
-        const quantity = parseInt(value, 10);
-        if (!isNaN(quantity) && quantity >= 0) {
-            setReturnItems(prev => prev.map(item => 
-                item.productId === productId 
-                ? { ...item, quantity, total: quantity * item.unitPrice }
-                : item
-            ).filter(item => item.quantity > 0));
-        }
-    };
-    
-    const totalReturnValue = useMemo(() => {
-        return returnItems.reduce((total, item) => total + item.total, 0);
-    }, [returnItems]);
-
-    const handleConfirm = () => {
-        if (returnItems.length === 0) {
-            alert("الرجاء إضافة منتجات للإرجاع.");
-            return;
-        }
-        const returnTransactionItems: POSCartItem[] = returnItems.map(item => ({
-            ...item,
-            quantity: -item.quantity,
-            total: -item.total,
-        }));
-        
-        const subtotal = returnTransactionItems.reduce((acc, item) => acc + item.total, 0);
-        const tax = subtotal * taxRate;
-        const totalAmount = subtotal + tax;
-
-        const returnInvoice: SaleTransaction = {
-            id: `RET-${UUID()}`,
-            originalInvoiceId: 'N/A - No Receipt',
-            date: new Date().toISOString(),
-            customerName: 'عميل إرجاع',
-            customerId: 'N/A',
-            seller: AR_LABELS.ahmadSai,
-            items: returnTransactionItems,
-            status: 'Returned',
-            paymentMethod: refundMethod,
-            subtotal,
-            totalItemDiscount: 0,
-            invoiceDiscount: 0,
-            tax,
-            totalAmount,
-            paidAmount: totalAmount,
-            remainingAmount: 0,
-        };
-        
-        onConfirm(returnInvoice);
-        handleClose();
-    };
-
-    const handleClose = () => {
-        setSearchTerm('');
-        setReturnItems([]);
-        setReason('');
-        setRefundMethod('Cash');
-        onClose();
-    };
-
-    if (!isOpen) return null;
-
-    return (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-3 sm:p-4" onClick={handleClose}>
-            <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl p-4 sm:p-6 w-full max-w-2xl text-right max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
-                <h2 className="text-lg sm:text-xl font-bold text-gray-800 dark:text-gray-100 mb-3 sm:mb-4">{AR_LABELS.returnProduct}</h2>
-                
-                <form onSubmit={handleSearch} className="flex items-center gap-2 mb-3 sm:mb-4">
-                    <input type="text" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} placeholder={AR_LABELS.searchProductPlaceholder} className="w-full pl-3 pr-8 sm:pr-10 py-2 text-sm sm:text-base rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200 focus:ring-orange-500 text-right"/>
-                    <button type="submit" className="p-2 bg-blue-500 text-white rounded-md flex-shrink-0"><SearchIcon className="h-4 w-4 sm:h-5 sm:w-5"/></button>
-                </form>
-
-                <div className="space-y-3 sm:space-y-4">
-                    <div>
-                        <h3 className="font-semibold text-sm sm:text-base mb-2">{AR_LABELS.productsToReturn}</h3>
-                        <div className="space-y-2 max-h-40 sm:max-h-48 overflow-y-auto border rounded-md p-2 dark:border-gray-700">
-                            {returnItems.length > 0 ? returnItems.map(item => (
-                                <div key={item.productId} className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 p-2 rounded">
-                                    <span className="text-xs sm:text-sm">{item.name} <span className="text-xs text-gray-500">({formatCurrency(item.unitPrice)})</span></span>
-                                    <div className="flex items-center gap-2 w-full sm:w-auto">
-                                        <label className="text-xs sm:text-sm whitespace-nowrap">{AR_LABELS.returnQuantity}:</label>
-                                        <input type="number" value={item.quantity} onChange={e => handleQuantityChange(item.productId, e.target.value)} min="1" className="w-16 sm:w-20 text-xs sm:text-sm text-center border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 rounded-md py-1"/>
-                                    </div>
-                                </div>
-                            )) : <p className="text-center text-xs sm:text-sm text-gray-500 py-4">{AR_LABELS.noItemsInCart}</p>}
-                        </div>
-                    </div>
-                    <div>
-                        <label className="block text-xs sm:text-sm font-medium mb-1">{AR_LABELS.reasonForRefund}</label>
-                        <input type="text" value={reason} onChange={e => setReason(e.target.value)} className="w-full text-sm sm:text-base border-gray-300 dark:border-gray-600 rounded-md shadow-sm text-right bg-white dark:bg-gray-700 py-1.5 sm:py-2 px-2 sm:px-3"/>
-                    </div>
-                     <div>
-                        <label className="block text-xs sm:text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">{AR_LABELS.refundMethod}</label>
-                        <CustomDropdown
-                            id="refund-method-dropdown"
-                            value={refundMethod}
-                            onChange={(value) => setRefundMethod(value as any)}
-                            options={[
-                                { value: 'Cash', label: AR_LABELS.cash },
-                                { value: 'Card', label: AR_LABELS.card },
-                                { value: 'Customer Credit', label: AR_LABELS.customerCredit }
-                            ]}
-                            placeholder={AR_LABELS.refundMethod}
-                            className="w-full"
-                        />
-                    </div>
-                    <div className="text-left text-lg sm:text-xl font-bold"><span>{AR_LABELS.totalReturnValue}: </span><span className="text-red-600">{formatCurrency(totalReturnValue)}</span></div>
-                    <div className="flex flex-col sm:flex-row justify-start gap-2 sm:gap-4 sm:space-x-4 sm:space-x-reverse pt-3 sm:pt-4">
-                        <button onClick={handleConfirm} className="px-4 py-2 text-sm sm:text-base bg-green-500 text-white rounded-md hover:bg-green-600 transition-colors">{AR_LABELS.confirmReturn}</button>
-                        <button onClick={handleClose} className="px-4 py-2 text-sm sm:text-base bg-gray-200 dark:bg-gray-600 text-gray-800 dark:text-gray-200 rounded-md hover:bg-gray-300 dark:hover:bg-gray-500 transition-colors">{AR_LABELS.cancel}</button>
-                    </div>
                 </div>
             </div>
         </div>

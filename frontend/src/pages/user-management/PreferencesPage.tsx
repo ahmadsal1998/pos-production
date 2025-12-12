@@ -6,7 +6,7 @@ import { ToggleSwitch } from '@/shared/components/ui/ToggleSwitch';
 import { useCurrency } from '@/shared/contexts/CurrencyContext';
 import { CURRENCIES, CurrencyConfig } from '@/shared/utils/currency';
 import CustomDropdown from '@/shared/components/ui/CustomDropdown/CustomDropdown';
-import { storeSettingsApi } from '@/lib/api/client';
+import { loadSettings, saveSettings } from '@/shared/utils/settingsStorage';
 
 const initialPreferences: SystemPreferences = {
   // General
@@ -18,7 +18,7 @@ const initialPreferences: SystemPreferences = {
   defaultLanguage: 'ar',
   // Invoice & Sales
   vatPercentage: 15,
-  invoiceNumberFormat: 'INV-{YYYY}-{NNNN}',
+  invoiceNumberFormat: 'INV-{N}',
   invoiceFooterText: 'شكراً لتعاملكم معنا!',
   autoPrintInvoice: true,
   sellWithoutStock: false,
@@ -75,6 +75,10 @@ const PreferencesPage: React.FC = () => {
     if (type === 'checkbox' && e.target instanceof HTMLInputElement) {
         const { checked } = e.target;
         setPrefs(prev => ({ ...prev, [name]: checked }));
+    } else if (type === 'number') {
+        // Convert number inputs to actual numbers (handles 0 correctly)
+        const numValue = value === '' ? 0 : parseFloat(value);
+        setPrefs(prev => ({ ...prev, [name]: isNaN(numValue) ? 0 : numValue }));
     } else {
         setPrefs(prev => ({ ...prev, [name]: value }));
     }
@@ -96,63 +100,42 @@ const PreferencesPage: React.FC = () => {
       }
   };
 
-  // Load preferences from backend settings
+  // Load preferences from localStorage
   useEffect(() => {
-    const loadSettings = async () => {
+    const loadPreferences = () => {
       try {
         setLoading(true);
-        const response = await storeSettingsApi.getSettings();
-        const settings = (response.data as any)?.data?.settings || {};
-        const settingsMap: Record<string, any> = {};
-        Object.keys(settings || {}).forEach((k) => {
-          settingsMap[k.toLowerCase()] = settings[k];
-        });
-        const get = (key: string) => settings[key] ?? settingsMap[key.toLowerCase()];
+        const storedSettings = loadSettings();
+        
+        if (storedSettings) {
+          // Merge stored settings with initial preferences to ensure all fields are present
+          const updated: SystemPreferences = {
+            ...initialPreferences,
+            ...storedSettings,
+          };
+          setPrefs(updated);
 
-        const updated: SystemPreferences = {
-          ...initialPreferences,
-          businessName: get('businessName') || initialPreferences.businessName,
-          logoUrl: get('logoUrl') || initialPreferences.logoUrl,
-          defaultCurrency: get('defaultCurrency') || initialPreferences.defaultCurrency,
-          dateFormat: (get('dateFormat') as any) || initialPreferences.dateFormat,
-          timeFormat: (get('timeFormat') as any) || initialPreferences.timeFormat,
-          defaultLanguage: (get('defaultLanguage') as any) || initialPreferences.defaultLanguage,
-          vatPercentage: parseNumber(get('vatPercentage'), initialPreferences.vatPercentage),
-          invoiceNumberFormat: get('invoiceNumberFormat') || initialPreferences.invoiceNumberFormat,
-          invoiceFooterText: get('invoiceFooterText') || initialPreferences.invoiceFooterText,
-          autoPrintInvoice: parseBoolean(get('autoPrintInvoice'), initialPreferences.autoPrintInvoice),
-          sellWithoutStock: parseBoolean(get('sellWithoutStock'), initialPreferences.sellWithoutStock),
-          sessionDuration: parseNumber(get('sessionDuration'), initialPreferences.sessionDuration),
-          allowUserCreation: parseBoolean(get('allowUserCreation'), initialPreferences.allowUserCreation),
-          defaultUnits: get('defaultUnits') || initialPreferences.defaultUnits,
-          minStockLevel: parseNumber(get('minStockLevel'), initialPreferences.minStockLevel),
-          enableLowStockNotifications: parseBoolean(get('enableLowStockNotifications'), initialPreferences.enableLowStockNotifications),
-          allowCash: parseBoolean(get('allowCash'), initialPreferences.allowCash),
-          allowCard: parseBoolean(get('allowCard'), initialPreferences.allowCard),
-          allowCredit: parseBoolean(get('allowCredit'), initialPreferences.allowCredit),
-          enableOverdueNotifications: parseBoolean(get('enableOverdueNotifications'), initialPreferences.enableOverdueNotifications),
-          enableAutoNotifications: parseBoolean(get('enableAutoNotifications'), initialPreferences.enableAutoNotifications),
-          interfaceMode: (get('interfaceMode') as any) || initialPreferences.interfaceMode,
-        };
-
-        setPrefs(updated);
-
-        // If currency in settings differs, sync selector
-        if (updated.defaultCurrency) {
-          const match = Object.values(CURRENCIES).find(c => c.symbol === updated.defaultCurrency || c.code === updated.defaultCurrency);
-          if (match) {
-            setSelectedCurrencyCode(match.code);
+          // If currency in settings differs, sync selector
+          if (updated.defaultCurrency) {
+            const match = Object.values(CURRENCIES).find(c => c.symbol === updated.defaultCurrency || c.code === updated.defaultCurrency);
+            if (match) {
+              setSelectedCurrencyCode(match.code);
+            }
           }
+        } else {
+          // No stored settings, use defaults
+          setPrefs(initialPreferences);
         }
       } catch (err) {
-        console.error('Failed to load preferences settings:', err);
+        console.error('Failed to load preferences from localStorage:', err);
         // keep defaults on error
+        setPrefs(initialPreferences);
       } finally {
         setLoading(false);
       }
     };
 
-    loadSettings();
+    loadPreferences();
   }, []);
 
   const handleSaveChanges = async () => {
@@ -165,41 +148,8 @@ const PreferencesPage: React.FC = () => {
         await updateCurrency(selectedCurrency);
       }
 
-      // Save other preferences to store settings
-      const entries: Array<[string, any]> = [
-        ['businessName', prefs.businessName],
-        // Avoid sending empty logoUrl to bypass validation when no logo is set
-        ...(prefs.logoUrl ? [['logoUrl', prefs.logoUrl] as [string, any]] : []),
-        ['defaultCurrency', prefs.defaultCurrency],
-        ['dateFormat', prefs.dateFormat],
-        ['timeFormat', prefs.timeFormat],
-        ['defaultLanguage', prefs.defaultLanguage],
-        ['vatPercentage', prefs.vatPercentage],
-        ['invoiceNumberFormat', prefs.invoiceNumberFormat],
-        ['invoiceFooterText', prefs.invoiceFooterText],
-        ['autoPrintInvoice', prefs.autoPrintInvoice],
-        ['sellWithoutStock', prefs.sellWithoutStock],
-        ['sessionDuration', prefs.sessionDuration],
-        ['allowUserCreation', prefs.allowUserCreation],
-        ['defaultUnits', prefs.defaultUnits],
-        ['minStockLevel', prefs.minStockLevel],
-        ['enableLowStockNotifications', prefs.enableLowStockNotifications],
-        ['allowCash', prefs.allowCash],
-        ['allowCard', prefs.allowCard],
-        ['allowCredit', prefs.allowCredit],
-        ['enableOverdueNotifications', prefs.enableOverdueNotifications],
-        ['enableAutoNotifications', prefs.enableAutoNotifications],
-        ['interfaceMode', prefs.interfaceMode],
-      ];
-
-      await Promise.all(
-        entries.map(([key, value]) =>
-          storeSettingsApi.updateSetting(key, {
-            value: value,
-            description: undefined,
-          })
-        )
-      );
+      // Save preferences to localStorage
+      saveSettings(prefs);
       
       alert(AR_LABELS.changesSavedSuccessfully);
     } catch (error) {

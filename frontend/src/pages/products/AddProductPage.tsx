@@ -326,7 +326,7 @@ const AddProductPage: React.FC = () => {
                 console.log('Setting form data:', formDataUpdate);
                 console.log('Form data mainUnitId:', formDataUpdate.mainUnitId);
                 console.log('Form data categoryId:', formDataUpdate.categoryId);
-                console.log('Available units for matching:', units.map(u => ({ id: String(u.id), name: u.nameAr || u.name })));
+                console.log('Available units for matching:', units.map(u => ({ id: String(u.id), name: u.nameAr })));
                 console.log('Available categories for matching:', categories.map(c => ({ id: String(c.id), name: c.nameAr || c.name })));
                 setFormData(formDataUpdate);
                 setProductLoaded(true);
@@ -1231,7 +1231,7 @@ const AddProductPage: React.FC = () => {
                     className="px-4 py-2 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-md hover:bg-gray-200 dark:hover:bg-gray-600 flex items-center gap-2"
                     title={AR_LABELS.generateBarcode}
                   >
-                    <GenerateBarcodeIcon className="w-5 h-5" />
+                    <GenerateBarcodeIcon />
                   </button>
                 </div>
                 {errors.primaryBarcode && (
@@ -1370,7 +1370,7 @@ const AddProductPage: React.FC = () => {
                   <option value="">اختر الوحدة الرئيسية</option>
                   {units.map((unit) => (
                     <option key={unit.id} value={unit.id}>
-                      {unit.nameAr || unit.name}
+                      {unit.nameAr}
                     </option>
                   ))}
                   <option value="__add_unit__" className="text-orange-600 font-semibold">
@@ -1493,12 +1493,12 @@ const AddProductPage: React.FC = () => {
                           {formData.mainUnitId && (() => {
                             const mainUnit = units.find(u => u.id === formData.mainUnitId);
                             return mainUnit ? (
-                              <option value="main">{mainUnit.nameAr || mainUnit.name}</option>
+                              <option value="main">{mainUnit.nameAr}</option>
                             ) : null;
                           })()}
                           {units.filter(unit => unit.id !== formData.mainUnitId).map((unit) => (
                             <option key={unit.id} value={unit.id}>
-                              {unit.nameAr || unit.name}
+                              {unit.nameAr}
                             </option>
                           ))}
                           <option value="new">إضافة وحدة جديدة</option>
@@ -1523,7 +1523,7 @@ const AddProductPage: React.FC = () => {
                               setNewUnitForm(prev => ({
                                 ...prev,
                                 unitType: 'basic',
-                                unitName: mainUnit?.nameAr || mainUnit?.name || '',
+                                unitName: mainUnit?.nameAr || '',
                                 conversionFactor: 1,
                                 quantity: 0,
                                 barcode: '',
@@ -1547,7 +1547,7 @@ const AddProductPage: React.FC = () => {
                               // Selected an existing unit from the store by ID
                               const selectedUnit = units.find(u => u.id === selectedUnitForStock);
                               if (selectedUnit) {
-                                const unitName = selectedUnit.nameAr || selectedUnit.name;
+                                const unitName = selectedUnit.nameAr;
                                 // Check if this unit already exists in formData.units
                                 const existingUnit = formData.units.find(u => u.unitName === unitName);
                                 if (existingUnit) {
@@ -1642,7 +1642,7 @@ const AddProductPage: React.FC = () => {
                             {newUnitForm.unitType === 'basic' 
                               ? (() => {
                                   const mainUnit = units.find(u => u.id === formData.mainUnitId);
-                                  return mainUnit ? (mainUnit.nameAr || mainUnit.name) : 'الوحدة الرئيسية';
+                                  return mainUnit ? mainUnit.nameAr : 'الوحدة الرئيسية';
                                 })()
                               : newUnitForm.unitName || 'وحدة جديدة'
                             }
@@ -2017,7 +2017,7 @@ const AddProductPage: React.FC = () => {
                           onClick={() => handleRemoveWarehouseDistribution(index)}
                           className="text-red-600 hover:text-red-800"
                         >
-                          <MinusIcon className="w-4 h-4" />
+                          <MinusIcon />
                         </button>
                       </div>
                       <select

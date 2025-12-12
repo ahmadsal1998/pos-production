@@ -23,12 +23,6 @@ const calculateSupplierBalance = (
   return totalPurchases - totalPaid;
 };
 
-// Mock data
-const MOCK_SUPPLIERS: Supplier[] = [
-  { id: 'supp-1', name: 'شركة المواد الغذائية المتحدة', contactPerson: 'أحمد خالد', email: 'ahmad@supplier1.com', phone: '0112345678', address: 'الرياض, المنطقة الصناعية', notes: 'مورد رئيسي للمواد الجافة', previousBalance: 15000, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
-  { id: 'supp-2', name: 'موردو الإلكترونيات الحديثة', contactPerson: 'سارة عبدالله', email: 'sara@supplier2.com', phone: '0128765432', address: 'جدة, حي الشاطئ', notes: '', previousBalance: 0, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
-  { id: 'supp-3', name: 'شركة المشروبات العالمية', contactPerson: 'محمد علي', email: 'mohammed@supplier3.com', phone: '0134567890', address: 'الدمام, ميناء الملك عبدالعزيز', notes: 'الدفع عند الاستلام فقط', previousBalance: 5250.50, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
-];
 
 interface SuppliersPageProps {
   purchases?: PurchaseOrder[];

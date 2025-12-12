@@ -5,6 +5,7 @@ export type SaleStatus = 'Paid' | 'Partial' | 'Due' | 'Returned';
 
 export interface SaleTransaction {
   id: string;
+  invoiceNumber?: string; // The actual invoice number displayed to users
   date: string; // ISO format string
   customerName: string;
   customerId: string;

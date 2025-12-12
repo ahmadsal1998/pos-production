@@ -9,7 +9,9 @@ export interface Customer {
 }
 
 export interface POSCartItem {
-  productId: number;
+  cartItemId?: string; // Unique identifier for this cart item (to handle hash collisions)
+  productId: number; // Frontend product ID (normalized/hashed)
+  originalId?: string; // Backend product ID (MongoDB _id) - used for API calls
   name: string;
   unit: string; // e.g., "Piece", "Box"
   quantity: number;
@@ -31,6 +33,7 @@ export interface POSInvoice {
   tax: number; // Tax amount
   grandTotal: number;
   paymentMethod: string | null;
+  originalInvoiceId?: string; // For return invoices - links to original sale
 }
 
 export interface WholesalePOSCartItem {

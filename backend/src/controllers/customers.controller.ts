@@ -3,6 +3,7 @@ import { body, validationResult } from 'express-validator';
 import { asyncHandler } from '../middleware/error.middleware';
 import { AuthenticatedRequest } from '../middleware/auth.middleware';
 import { getCustomerModelForStore } from '../utils/customerModel';
+import { getCustomerPaymentModelForStore } from '../utils/customerPaymentModel';
 import { findUserByIdAcrossStores } from '../utils/userModel';
 
 export const validateCreateCustomer = [
@@ -215,6 +216,183 @@ export const getCustomerById = asyncHandler(async (req: AuthenticatedRequest, re
     return res.status(500).json({
       success: false,
       message: error.message || 'Failed to fetch customer. Please try again.',
+    });
+  }
+});
+
+export const validateCreateCustomerPayment = [
+  body('customerId')
+    .trim()
+    .notEmpty()
+    .withMessage('Customer ID is required'),
+  body('amount')
+    .isFloat({ min: 0.01 })
+    .withMessage('Payment amount must be greater than 0'),
+  body('method')
+    .isIn(['Cash', 'Bank Transfer', 'Cheque'])
+    .withMessage('Payment method must be Cash, Bank Transfer, or Cheque'),
+  body('date')
+    .optional()
+    .isISO8601()
+    .withMessage('Date must be a valid ISO 8601 date'),
+  body('invoiceId')
+    .optional()
+    .trim(),
+  body('notes')
+    .optional()
+    .trim()
+    .isLength({ max: 1000 })
+    .withMessage('Notes cannot exceed 1000 characters'),
+];
+
+export const createCustomerPayment = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({
+      success: false,
+      message: 'Validation failed',
+      errors: errors.array(),
+    });
+  }
+
+  const { customerId, amount, method, date, invoiceId, notes } = req.body;
+  let storeId = req.user?.storeId || null;
+
+  // If storeId is not in token, try to get it from the user record
+  if (!storeId && req.user?.userId && req.user.userId !== 'admin') {
+    try {
+      const user = await findUserByIdAcrossStores(req.user.userId, req.user.storeId || undefined);
+      if (user && user.storeId) {
+        storeId = user.storeId;
+      }
+    } catch (error: any) {
+      console.error('Error fetching user:', error.message);
+    }
+  }
+
+  // Store users must have a storeId
+  if (!storeId) {
+    return res.status(400).json({
+      success: false,
+      message: 'Store ID is required. Please ensure you are logged in as a store user.',
+    });
+  }
+
+  try {
+    // Verify customer exists
+    const Customer = await getCustomerModelForStore(storeId);
+    const customer = await Customer.findById(customerId);
+    
+    if (!customer) {
+      return res.status(404).json({
+        success: false,
+        message: 'Customer not found',
+      });
+    }
+
+    // Get store-specific Customer Payment model
+    const CustomerPayment = await getCustomerPaymentModelForStore(storeId);
+
+    // Create payment record
+    const payment = await CustomerPayment.create({
+      customerId: customerId.trim(),
+      storeId: storeId,
+      date: date ? new Date(date) : new Date(),
+      amount: parseFloat(amount),
+      method: method,
+      invoiceId: invoiceId?.trim() || null,
+      notes: notes?.trim() || null,
+    });
+
+    res.status(201).json({
+      success: true,
+      message: 'Customer payment created successfully',
+      data: {
+        payment: {
+          id: payment._id.toString(),
+          customerId: payment.customerId,
+          date: payment.date,
+          amount: payment.amount,
+          method: payment.method,
+          invoiceId: payment.invoiceId,
+          notes: payment.notes,
+          createdAt: payment.createdAt,
+          updatedAt: payment.updatedAt,
+        },
+      },
+    });
+  } catch (error: any) {
+    console.error('Error creating customer payment:', error);
+    
+    // Handle specific mongoose errors
+    if (error.name === 'ValidationError') {
+      const errorMessages = Object.values(error.errors || {}).map((e: any) => e.message);
+      return res.status(400).json({
+        success: false,
+        message: errorMessages.join(', ') || 'Validation error',
+      });
+    }
+    
+    return res.status(500).json({
+      success: false,
+      message: error.message || 'Failed to create customer payment. Please try again.',
+    });
+  }
+});
+
+export const getCustomerPayments = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+  const storeId = req.user?.storeId || null;
+  const { customerId } = req.query;
+
+  // Store users must have a storeId
+  if (!storeId) {
+    return res.status(400).json({
+      success: false,
+      message: 'Store ID is required. Please ensure you are logged in as a store user.',
+      data: {
+        payments: [],
+      },
+    });
+  }
+
+  try {
+    const CustomerPayment = await getCustomerPaymentModelForStore(storeId);
+    
+    // Build query
+    const query: any = {};
+    if (customerId && typeof customerId === 'string') {
+      query.customerId = customerId.trim();
+    }
+
+    const payments = await CustomerPayment.find(query)
+      .sort({ date: -1, createdAt: -1 })
+      .lean();
+
+    res.status(200).json({
+      success: true,
+      message: 'Customer payments fetched successfully',
+      data: {
+        payments: payments.map(payment => ({
+          id: payment._id.toString(),
+          customerId: payment.customerId,
+          date: payment.date,
+          amount: payment.amount,
+          method: payment.method,
+          invoiceId: payment.invoiceId,
+          notes: payment.notes,
+          createdAt: payment.createdAt,
+          updatedAt: payment.updatedAt,
+        })),
+      },
+    });
+  } catch (error: any) {
+    console.error('Error fetching customer payments:', error);
+    return res.status(500).json({
+      success: false,
+      message: error.message || 'Failed to fetch customer payments. Please try again.',
+      data: {
+        payments: [],
+      },
     });
   }
 });

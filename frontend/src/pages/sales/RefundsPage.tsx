@@ -2,6 +2,7 @@ import React, { useState, useMemo, useCallback } from 'react';
 import { RefundTransaction, RefundedItem, POSInvoice, POSCartItem } from '@/features/sales/types';
 import { AR_LABELS, UUID, SearchIcon, PlusIcon, ViewIcon, EditIcon, DeleteIcon } from '@/shared/constants';
 import { formatDate } from '@/shared/utils';
+import { useAuthStore } from '@/app/store';
 
 // --- MOCK DATA ---
 // We need mock original invoices to search against. Let's create some.
@@ -60,6 +61,8 @@ const RefundModal: React.FC<{
     onClose: () => void;
     onSave: (newRefund: RefundTransaction) => void;
 }> = ({ isOpen, onClose, onSave }) => {
+    const { user } = useAuthStore();
+    const currentUserName = user?.fullName || user?.username || 'Unknown';
     const [invoiceSearch, setInvoiceSearch] = useState('');
     const [foundInvoice, setFoundInvoice] = useState<POSInvoice | null>(null);
     const [refundQuantities, setRefundQuantities] = useState<Record<number, number>>({});
@@ -129,7 +132,7 @@ const RefundModal: React.FC<{
             refundMethod,
             reason,
             status: totalRefundedQuantity === totalOriginalQuantity ? 'Full' : 'Partial',
-            processedBy: AR_LABELS.ahmadSai
+            processedBy: currentUserName
         };
         
         onSave(newRefund);

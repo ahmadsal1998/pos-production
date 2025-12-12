@@ -136,7 +136,7 @@ export const AR_LABELS = {
   salesTodayDescription: 'عرض ملخص لمبيعاتك لليوم الحالي.',
   salesHistory: 'سجل المبيعات',
   salesHistoryDescription: 'تصفح وابحث في سجل المبيعات الخاص بك.',
-  totalSales: 'إجمالي المبيعات',
+  totalSales: 'إجمالي المشتريات',
   numberOfOrders: 'عدد الطلبات',
   avgOrderValue: 'متوسط قيمة الطلب',
   filterByDate: 'تصفية حسب التاريخ',

@@ -2,7 +2,6 @@ import { useState, useMemo, useCallback } from 'react';
 import { User } from '../../../../shared/types';
 import { AR_LABELS } from '../../../../shared/constants';
 import { UserFormModal, UserManagementToolbar, UserTable } from './components';
-import { createInitialUsers } from './data/mockUsers';
 import type { UserFilters } from './components/UserManagementToolbar/UserManagementToolbar';
 import { typography } from '../../../../shared/styles/design-tokens';
 

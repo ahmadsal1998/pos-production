@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { AR_LABELS, SunIcon, MoonIcon } from '@/shared/constants';
-import { useThemeStore, useAppStore } from '@/app/store';
+import { useThemeStore, useAppStore, useAuthStore } from '@/app/store';
 
 interface HeaderProps {
   activePath: string;
@@ -14,6 +14,7 @@ interface HeaderProps {
 const Header: React.FC<HeaderProps> = ({ onMenuToggle, isMobileMenuOpen }) => {
   const { theme, toggleTheme } = useThemeStore();
   const { isSidebarCollapsed } = useAppStore();
+  const { user } = useAuthStore();
   const [isFullscreen, setIsFullscreen] = useState(false);
 
   useEffect(() => {
@@ -155,7 +156,7 @@ const Header: React.FC<HeaderProps> = ({ onMenuToggle, isMobileMenuOpen }) => {
             {/* User profile */}
             <div className="flex items-center gap-2 sm:gap-2.5 px-2 sm:px-3 py-1.5 sm:py-2 rounded-xl hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors duration-200 cursor-pointer group">
               <span className="hidden sm:block text-sm sm:text-base font-medium text-gray-700 dark:text-gray-300 group-hover:text-gray-900 dark:group-hover:text-white transition-colors">
-                {AR_LABELS.ahmadSai}
+                {user?.fullName || user?.username || 'User'}
               </span>
               <div className="relative">
                 <img

@@ -232,8 +232,22 @@ export const getProducts = asyncHandler(async (req: AuthenticatedRequest, res: R
     // Search parameter
     const searchTerm = (req.query.search as string)?.trim() || '';
 
+    // Filter parameters
+    const showInQuickProducts = req.query.showInQuickProducts;
+    const status = req.query.status as string;
+
     // Build query filter
     const queryFilter: any = {};
+
+    // Filter by showInQuickProducts if provided
+    if (showInQuickProducts !== undefined) {
+      queryFilter.showInQuickProducts = showInQuickProducts === 'true' || showInQuickProducts === true;
+    }
+
+    // Filter by status if provided
+    if (status) {
+      queryFilter.status = status;
+    }
 
     // If search term is provided, search in name and barcode
     if (searchTerm) {
@@ -277,10 +291,23 @@ export const getProducts = asyncHandler(async (req: AuthenticatedRequest, res: R
 
     const totalPages = Math.max(1, Math.ceil(totalProducts / limit));
 
+    // Determine which fields to select (for optimization)
+    // If showInQuickProducts filter is used, only return essential fields
+    const fieldsToSelect = showInQuickProducts === 'true' || showInQuickProducts === true
+      ? 'name price stock barcode showInQuickProducts status units costPrice categoryId brandId description updatedAt'
+      : undefined; // Return all fields if not filtering for quick products
+
     // Fetch products with pagination and search filter
     let products = [];
     try {
-      products = await Product.find(queryFilter)
+      let query = Product.find(queryFilter);
+      
+      // Apply field selection if specified
+      if (fieldsToSelect) {
+        query = query.select(fieldsToSelect);
+      }
+      
+      products = await query
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit)

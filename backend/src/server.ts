@@ -17,6 +17,7 @@ import paymentsRoutes from './routes/payments.routes';
 import merchantsRoutes from './routes/merchants.routes';
 import settingsRoutes from './routes/settings.routes';
 import customersRoutes from './routes/customers.routes';
+import salesRoutes from './routes/sales.routes';
 
 // Load environment variables
 dotenv.config();
@@ -96,6 +97,7 @@ app.use('/api/payments', paymentsRoutes);
 app.use('/api/merchants', merchantsRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/customers', customersRoutes);
+app.use('/api/sales', salesRoutes);
 
 // 404 handler
 app.use((req, res) => {

@@ -61,3 +61,9 @@ export const formatDate = (date: Date | string | number): string => {
 
 // Export currency utilities
 export * from './currency';
+
+// Export sales storage utilities
+export * from './salesStorage';
+
+// Export settings storage utilities
+export * from './settingsStorage';
