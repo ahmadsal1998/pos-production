@@ -6,10 +6,11 @@ The error `#13 112.4 FATAL ERROR: Reached heap limit Allocation failed - JavaScr
 
 ## Solution Applied
 
-✅ **Memory limits reduced to 2GB (2048MB)** for free plan compatibility
+✅ **Memory limits reduced to 1.5GB (1536MB)** for free plan compatibility (reduced from 2GB due to persistent OOM)
 ✅ **TypeScript incremental builds enabled** to reduce memory usage
 ✅ **Docker build optimized** with `--no-optional` flag
 ✅ **All configuration files updated**
+✅ **Cache-busting added** to Dockerfile to force fresh builds
 
 ## Critical Steps
 
@@ -19,26 +20,34 @@ The error `#13 112.4 FATAL ERROR: Reached heap limit Allocation failed - JavaScr
 
 1. Go to Render Dashboard → Your Service → Environment tab
 2. Find or add: `NODE_OPTIONS`
-3. Set value to: `--max-old-space-size=2048`
+3. Set value to: `--max-old-space-size=1536`
 4. Save and redeploy
+
+### ⚠️ CRITICAL: Clear Build Cache
+
+**The error shows Docker is using a cached layer with old settings!**
+
+1. Go to **Settings** tab → **Build & Deploy** section
+2. Click **"Clear build cache"** button
+3. Confirm the action
+4. Then trigger a new deployment
+
+**Without clearing cache, Docker will keep using the old 6144MB cached layer!**
 
 ### 2. Verify Build Command
 
 In Render Dashboard → Settings → Build Command, it should be:
 ```bash
-NODE_OPTIONS="--max-old-space-size=2048" npm ci && NODE_OPTIONS="--max-old-space-size=2048" npm run build
+NODE_OPTIONS="--max-old-space-size=1536" npm ci && NODE_OPTIONS="--max-old-space-size=1536" npm run build
 ```
 
 ### 3. If Still Failing
 
 If the error persists after updating the environment variable:
 
-**Option A: Reduce to 1.5GB**
-- Change all `2048` to `1536` in:
-  - `backend/render.yaml`
-  - `backend/package.json`
-  - `backend/Dockerfile`
-  - Render Dashboard environment variable
+**Option A: Already reduced to 1.5GB (1536MB)**
+- All files already updated to 1536MB
+- Make sure to **clear build cache** in Render Dashboard
 
 **Option B: Upgrade Service Plan**
 - Free plan: ~512MB-1GB RAM (very limited)
