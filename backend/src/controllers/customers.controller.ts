@@ -145,7 +145,33 @@ export const getCustomers = asyncHandler(async (req: AuthenticatedRequest, res: 
 
   try {
     const Customer = await getCustomerModelForStore(storeId);
-    const customers = await Customer.find({}).sort({ createdAt: -1 });
+    
+    // Search parameter
+    const searchTerm = (req.query.search as string)?.trim() || '';
+    
+    // Build query filter
+    const queryFilter: any = {};
+    
+    // If search term is provided, search in name, phone, and address
+    if (searchTerm) {
+      // Normalize search term: remove extra spaces
+      const normalizedSearchTerm = searchTerm.replace(/\s+/g, ' ').trim();
+      
+      // Create regex pattern for case-insensitive search
+      // Escape special regex characters
+      const escapedSearchTerm = normalizedSearchTerm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      
+      // Search in name, phone, and address fields
+      // Using $or to search in multiple fields
+      // Using $regex with 'i' flag for case-insensitive search
+      queryFilter.$or = [
+        { name: { $regex: escapedSearchTerm, $options: 'i' } },
+        { phone: { $regex: escapedSearchTerm, $options: 'i' } },
+        { address: { $regex: escapedSearchTerm, $options: 'i' } },
+      ];
+    }
+    
+    const customers = await Customer.find(queryFilter).sort({ createdAt: -1 });
 
     res.status(200).json({
       success: true,

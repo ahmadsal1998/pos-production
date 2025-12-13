@@ -79,6 +79,8 @@ const POSPage: React.FC = () => {
     const [customerSearchTerm, setCustomerSearchTerm] = useState(''); // Search term for customers
     const [isCustomerDropdownOpen, setIsCustomerDropdownOpen] = useState(false);
     const [isLoadingCustomers, setIsLoadingCustomers] = useState(false);
+    const [customersLoaded, setCustomersLoaded] = useState(false); // Track if client-side customers loaded successfully
+    const [isSearchingCustomersServer, setIsSearchingCustomersServer] = useState(false); // Track server-side customer search state
     const [currentInvoice, setCurrentInvoice] = useState<POSInvoice>(() => generateNewInvoice(currentUserName, 'INV-1'));
     const [heldInvoices, setHeldInvoices] = useState<POSInvoice[]>([]);
     const [searchTerm, setSearchTerm] = useState('');
@@ -183,6 +185,7 @@ const POSPage: React.FC = () => {
     const fetchCustomers = useCallback(async () => {
         setIsLoadingCustomers(true);
         try {
+            console.log('[POS] Starting to fetch customers...');
             const response = await customersApi.getCustomers();
             const customersData = (response.data as any)?.data?.customers || [];
             
@@ -201,12 +204,62 @@ const POSPage: React.FC = () => {
             
             setAllCustomers(transformedCustomers);
             setCustomers(transformedCustomers);
+            setCustomersLoaded(true);
+            console.log(`[POS] Successfully loaded ${transformedCustomers.length} customers for client-side search`);
         } catch (err: any) {
             const apiError = err as ApiError;
-            console.error('Error fetching customers:', apiError);
-            // Don't show error to user, just log it - customers list will remain empty
+            console.error('[POS] Error fetching customers:', apiError);
+            console.error('[POS] Error details:', {
+                message: apiError.message,
+                status: apiError.status,
+                code: apiError.code
+            });
+            setCustomersLoaded(false);
+            // Don't show error to user, will use server-side search as fallback
         } finally {
             setIsLoadingCustomers(false);
+        }
+    }, []);
+
+    // Server-side customer search function (fallback when client-side customers aren't loaded)
+    const searchCustomersOnServer = useCallback(async (term: string): Promise<Customer[]> => {
+        const trimmed = term.trim();
+        if (!trimmed) return [];
+
+        try {
+            setIsSearchingCustomersServer(true);
+            console.log(`[POS] Performing server-side customer search for: "${trimmed}"`);
+            
+            // Use API search parameter to search on server
+            const response = await customersApi.getCustomers({ search: trimmed });
+
+            if (response.success) {
+                const customersData = (response.data as any)?.data?.customers || [];
+                
+                // Transform and filter out dummy customers
+                const transformedCustomers: Customer[] = Array.isArray(customersData)
+                    ? customersData
+                        .map((customer: any) => ({
+                            id: customer.id,
+                            name: customer.name || customer.phone,
+                            phone: customer.phone,
+                            address: customer.address,
+                            previousBalance: customer.previousBalance || 0,
+                        }))
+                        .filter((customer: Customer) => !isDummyCustomer(customer))
+                    : [];
+
+                console.log(`[POS] Server-side customer search found ${transformedCustomers.length} matches`);
+                return transformedCustomers;
+            } else {
+                console.warn('[POS] Server-side customer search response was not successful');
+                return [];
+            }
+        } catch (err: any) {
+            console.error('[POS] Error in server-side customer search:', err);
+            return [];
+        } finally {
+            setIsSearchingCustomersServer(false);
         }
     }, []);
 
@@ -462,21 +515,45 @@ const POSPage: React.FC = () => {
         };
     }, [fetchTaxRate]);
 
-    // Filter customers based on search term
+    // State for server-side customer search results
+    const [serverCustomerSearchResults, setServerCustomerSearchResults] = useState<Customer[]>([]);
+
+    // Filter customers based on search term (client-side or server-side)
     useEffect(() => {
         if (!customerSearchTerm.trim()) {
-            setCustomers(allCustomers);
+            // If no search term, use all customers (client-side) or empty (server-side)
+            if (customersLoaded && allCustomers.length > 0) {
+                setCustomers(allCustomers);
+            } else {
+                setCustomers([]);
+            }
+            setServerCustomerSearchResults([]);
             return;
         }
-        
-        const searchLower = customerSearchTerm.toLowerCase();
-        const filtered = allCustomers.filter(customer => 
-            customer.name?.toLowerCase().includes(searchLower) ||
-            customer.phone?.includes(searchLower) ||
-            customer.address?.toLowerCase().includes(searchLower)
-        );
-        setCustomers(filtered);
-    }, [customerSearchTerm, allCustomers]);
+
+        // If customers aren't loaded or array is empty, use server-side search
+        if (!customersLoaded || allCustomers.length === 0) {
+            console.log('[POS] Using server-side customer search (client-side customers not loaded)');
+            // Debounce server-side search
+            const timeoutId = setTimeout(async () => {
+                const results = await searchCustomersOnServer(customerSearchTerm);
+                setServerCustomerSearchResults(results);
+                setCustomers(results);
+            }, 300); // Debounce 300ms
+
+            return () => clearTimeout(timeoutId);
+        } else {
+            // Use client-side search if customers are loaded
+            const searchLower = customerSearchTerm.toLowerCase();
+            const filtered = allCustomers.filter(customer => 
+                customer.name?.toLowerCase().includes(searchLower) ||
+                customer.phone?.includes(searchLower) ||
+                customer.address?.toLowerCase().includes(searchLower)
+            );
+            setCustomers(filtered);
+            setServerCustomerSearchResults([]);
+        }
+    }, [customerSearchTerm, allCustomers, customersLoaded, searchCustomersOnServer]);
 
     useEffect(() => {
         if (saleCompleted && autoPrintEnabled) {

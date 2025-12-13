@@ -343,8 +343,8 @@ export const usersApi = {
 
 // Customers API endpoints
 export const customersApi = {
-  getCustomers: () =>
-    apiClient.get<{ success: boolean; message: string; data: { customers: any[] } }>('/customers'),
+  getCustomers: (params?: { search?: string }) =>
+    apiClient.get<{ success: boolean; message: string; data: { customers: any[] } }>('/customers', params),
   
   getCustomer: (id: string) =>
     apiClient.get<{ success: boolean; message: string; data: { customer: any } }>(`/customers/${id}`),
