@@ -108,7 +108,9 @@ const connectDB = async (retryCount: number = 0): Promise<void> => {
 
     console.error('❌ MongoDB connection error:', errorMessage);
     console.error('Full error:', error);
-    process.exit(1);
+    // Don't exit the process - let the caller handle the error
+    // This allows the server to start even if MongoDB isn't available
+    throw error;
   }
 };
 

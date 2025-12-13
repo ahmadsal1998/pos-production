@@ -26,8 +26,12 @@ dotenv.config();
 const app: Application = express();
 const PORT = process.env.PORT || 5000;
 
-// Connect to MongoDB
-connectDB();
+// Connect to MongoDB (non-blocking - server will start even if connection fails initially)
+connectDB().catch((error) => {
+  console.error('❌ Failed to connect to MongoDB:', error);
+  console.warn('⚠️ Server will continue to run, but database operations may fail');
+  // Don't exit - let the server start and handle errors gracefully
+});
 
 // Middleware
 // CORS configuration - Allow configured origins and Vercel preview deployments
@@ -158,12 +162,19 @@ app.listen(PORT, () => {
 // Handle unhandled promise rejections
 process.on('unhandledRejection', (err: Error) => {
   console.error('❌ Unhandled Rejection:', err.message);
-  process.exit(1);
+  console.error('Stack:', err.stack);
+  // In production, log but don't exit immediately - let the server keep running
+  // This prevents Render from killing the service during startup
+  if (process.env.NODE_ENV === 'development') {
+    process.exit(1);
+  }
 });
 
 // Handle uncaught exceptions
 process.on('uncaughtException', (err: Error) => {
   console.error('❌ Uncaught Exception:', err.message);
+  console.error('Stack:', err.stack);
+  // Always exit on uncaught exceptions as they indicate a serious error
   process.exit(1);
 });
 
