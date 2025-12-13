@@ -961,3 +961,86 @@ export const getProductMetrics = asyncHandler(async (req: AuthenticatedRequest, 
   }
 });
 
+/**
+ * Get product by barcode (exact match)
+ * Searches both product barcode and unit barcodes
+ * Returns the first matching product with the matched unit info
+ */
+export const getProductByBarcode = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+  const { barcode } = req.params;
+  const storeId = req.user?.storeId || null;
+
+  if (!storeId) {
+    return res.status(400).json({
+      success: false,
+      message: 'Store ID is required. Please ensure you are logged in as a store user.',
+    });
+  }
+
+  if (!barcode || !barcode.trim()) {
+    return res.status(400).json({
+      success: false,
+      message: 'Barcode is required',
+    });
+  }
+
+  try {
+    const Product = await getProductModelForStore(storeId);
+    const trimmedBarcode = barcode.trim();
+
+    // First, try exact match on product barcode (only active products)
+    let product = await Product.findOne({ 
+      barcode: trimmedBarcode,
+      status: 'active',
+    }).lean();
+
+    // If not found, search in unit barcodes (only active products)
+    if (!product) {
+      product = await Product.findOne({
+        'units.barcode': trimmedBarcode,
+        status: 'active',
+      }).lean();
+    }
+
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        message: 'Product not found',
+      });
+    }
+
+    // Convert product to plain object and ensure categoryId and mainUnitId are strings
+    const productObj = product.toObject ? product.toObject() : product;
+    
+    // Ensure categoryId and mainUnitId are strings (handle ObjectId conversion if needed)
+    if (productObj.categoryId) {
+      productObj.categoryId = String(productObj.categoryId);
+    }
+    if (productObj.mainUnitId) {
+      productObj.mainUnitId = String(productObj.mainUnitId);
+    }
+
+    // Determine which unit matched (if any)
+    let matchedUnit = null;
+    if (productObj.units && Array.isArray(productObj.units)) {
+      matchedUnit = productObj.units.find((u: any) => u.barcode === trimmedBarcode);
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'Product retrieved successfully',
+      data: {
+        product: productObj,
+        matchedUnit: matchedUnit || null, // Include matched unit info if found
+        matchedBarcode: trimmedBarcode,
+      },
+    });
+  } catch (error: any) {
+    console.error('Error fetching product by barcode:', error);
+    return res.status(500).json({
+      success: false,
+      message: error.message || 'Failed to fetch product by barcode',
+    });
+  }
+});
+

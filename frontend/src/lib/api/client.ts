@@ -240,6 +240,9 @@ export const productsApi = {
   getProduct: (id: string) =>
     apiClient.get(`/products/${id}`),
   
+  getProductByBarcode: (barcode: string) =>
+    apiClient.get<{ success: boolean; message: string; data: { product: any; matchedUnit: any; matchedBarcode: string } }>(`/products/barcode/${encodeURIComponent(barcode)}`),
+  
   getProductMetrics: () =>
     apiClient.get<{ success: boolean; message: string; data: ProductMetrics }>('/products/metrics'),
   

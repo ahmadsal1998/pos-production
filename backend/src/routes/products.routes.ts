@@ -9,6 +9,7 @@ import {
   importProducts,
   upload,
   getProductMetrics,
+  getProductByBarcode,
 } from '../controllers/products.controller';
 import { authenticate } from '../middleware/auth.middleware';
 import { requireStoreAccess } from '../middleware/storeIsolation.middleware';
@@ -21,6 +22,7 @@ router.use(requireStoreAccess);
 
 router.get('/', getProducts);
 router.get('/metrics', getProductMetrics);
+router.get('/barcode/:barcode', getProductByBarcode);
 router.post('/', validateCreateProduct, createProduct);
 router.post('/import', upload.single('file'), importProducts);
 router.get('/:id', getProduct);

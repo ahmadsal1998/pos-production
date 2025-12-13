@@ -15,6 +15,7 @@ export const API_ENDPOINTS = {
     UPDATE: '/products/:id',
     DELETE: '/products/:id',
     METRICS: '/products/metrics',
+    BARCODE: '/products/barcode/:barcode',
     CATEGORIES: '/products/categories',
     BRANDS: '/products/brands',
     WAREHOUSES: '/warehouses',

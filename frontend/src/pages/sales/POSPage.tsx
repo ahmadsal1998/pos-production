@@ -840,13 +840,125 @@ const POSPage: React.FC = () => {
         });
     }, [products]);
 
+    // Helper function to check if input is a barcode (numeric only)
+    const isBarcodeInput = useCallback((input: string): boolean => {
+        const trimmed = input.trim();
+        if (!trimmed) return false;
+        // Check if input is numeric only (1 digit or more)
+        return /^[0-9]+$/.test(trimmed);
+    }, []);
+
+    // Barcode search function - searches by exact barcode match
+    const searchProductByBarcode = useCallback(async (barcode: string): Promise<{ success: boolean; product?: POSProduct; unitName?: string; unitPrice?: number; conversionFactor?: number; piecesPerUnit?: number }> => {
+        const trimmed = barcode.trim();
+        if (!trimmed) {
+            return { success: false };
+        }
+
+        try {
+            setIsSearchingServer(true);
+            console.log(`[POS] Searching product by barcode: "${trimmed}"`);
+            
+            const response = await productsApi.getProductByBarcode(trimmed);
+
+            if (response.success && response.data?.product) {
+                const productData = response.data.product;
+                const matchedUnit = response.data.matchedUnit;
+                
+                // Normalize the product
+                const normalizedProduct = normalizeProduct(productData);
+                
+                // Determine unit information
+                let unitName = 'قطعة';
+                let unitPrice = normalizedProduct.price;
+                let conversionFactor = 1;
+                let piecesPerUnit = 1;
+                
+                const piecesPerMainUnit = getPiecesPerMainUnit(normalizedProduct);
+                
+                // If a unit was matched, use its information
+                if (matchedUnit) {
+                    unitName = matchedUnit.unitName || 'قطعة';
+                    unitPrice = matchedUnit.sellingPrice || normalizedProduct.price;
+                    conversionFactor = matchedUnit.conversionFactor || piecesPerMainUnit;
+                    piecesPerUnit = 1; // Secondary units are counted as 1 piece per scan
+                } else {
+                    // Product barcode matched - use default unit
+                    unitName = 'قطعة';
+                    unitPrice = piecesPerMainUnit > 0 ? normalizedProduct.price / piecesPerMainUnit : normalizedProduct.price;
+                    conversionFactor = piecesPerMainUnit;
+                    piecesPerUnit = piecesPerMainUnit;
+                }
+
+                console.log(`[POS] Product found by barcode: ${normalizedProduct.name}`);
+                return {
+                    success: true,
+                    product: normalizedProduct,
+                    unitName,
+                    unitPrice,
+                    conversionFactor,
+                    piecesPerUnit,
+                };
+            } else {
+                console.log(`[POS] Product not found for barcode: "${trimmed}"`);
+                return { success: false };
+            }
+        } catch (err: any) {
+            console.error('[POS] Error searching product by barcode:', err);
+            return { success: false };
+        } finally {
+            setIsSearchingServer(false);
+        }
+    }, [normalizeProduct, getPiecesPerMainUnit]);
+
     const handleSearch = async (e: React.FormEvent) => {
         e.preventDefault();
         
+        const trimmedSearchTerm = searchTerm.trim();
+        if (!trimmedSearchTerm) return;
+
+        // Check if input is a barcode (numeric only)
+        if (isBarcodeInput(trimmedSearchTerm)) {
+            // Handle barcode search
+            const barcodeResult = await searchProductByBarcode(trimmedSearchTerm);
+            
+            if (barcodeResult.success && barcodeResult.product) {
+                // Product found - add to cart automatically
+                handleAddProduct(
+                    barcodeResult.product,
+                    barcodeResult.unitName || 'قطعة',
+                    barcodeResult.unitPrice,
+                    barcodeResult.conversionFactor,
+                    barcodeResult.piecesPerUnit
+                );
+                setSearchTerm('');
+                setProductSuggestionsOpen(false);
+                
+                // Optional: Play success sound (uncomment if you want audio feedback)
+                // try {
+                //     const audio = new Audio('/sounds/success.mp3');
+                //     audio.play().catch(() => {}); // Ignore errors
+                // } catch {}
+            } else {
+                // Product not found
+                alert('المنتج غير موجود');
+                setSearchTerm('');
+                setProductSuggestionsOpen(false);
+                
+                // Optional: Play error sound (uncomment if you want audio feedback)
+                // try {
+                //     const audio = new Audio('/sounds/error.mp3');
+                //     audio.play().catch(() => {}); // Ignore errors
+                // } catch {}
+            }
+            return;
+        }
+
+        // Not a barcode - use regular name search
         // If products aren't loaded or array is empty, use server-side search
         if (!productsLoaded || products.length === 0) {
             console.log('[POS] Using server-side search (client-side products not loaded)');
-            const matches = await searchProductsOnServer(searchTerm);
+            const matches = await searchProductsOnServer(trimmedSearchTerm);
             if (matches.length === 0) {
                 alert('المنتج غير موجود');
                 return;
@@ -866,7 +978,7 @@ const POSPage: React.FC = () => {
         }
 
         // Use client-side search if products are loaded
-        const matches = resolveSearchMatches(searchTerm);
+        const matches = resolveSearchMatches(trimmedSearchTerm);
         if (matches.length === 0) {
             alert('المنتج غير موجود');
             return;
@@ -2007,10 +2119,55 @@ const POSPage: React.FC = () => {
                                     type="text" 
                                     value={searchTerm} 
                                     onChange={e => {
-                                        setSearchTerm(e.target.value);
-                                        setProductSuggestionsOpen(true);
+                                        const value = e.target.value;
+                                        setSearchTerm(value);
+                                        // Only show suggestions for non-barcode input (name search)
+                                        if (!isBarcodeInput(value)) {
+                                            setProductSuggestionsOpen(true);
+                                        } else {
+                                            // For barcode input, don't show suggestions while typing
+                                            setProductSuggestionsOpen(false);
+                                        }
                                     }} 
-                                    onFocus={() => setProductSuggestionsOpen(true)}
+                                    onKeyDown={async (e) => {
+                                        // Handle Enter key for barcode search
+                                        if (e.key === 'Enter') {
+                                            e.preventDefault();
+                                            const trimmed = searchTerm.trim();
+                                            
+                                            // If it's a barcode (numeric only), search immediately
+                                            if (trimmed && isBarcodeInput(trimmed)) {
+                                                const barcodeResult = await searchProductByBarcode(trimmed);
+                                                
+                                                if (barcodeResult.success && barcodeResult.product) {
+                                                    // Product found - add to cart automatically
+                                                    handleAddProduct(
+                                                        barcodeResult.product,
+                                                        barcodeResult.unitName || 'قطعة',
+                                                        barcodeResult.unitPrice,
+                                                        barcodeResult.conversionFactor,
+                                                        barcodeResult.piecesPerUnit
+                                                    );
+                                                    setSearchTerm('');
+                                                    setProductSuggestionsOpen(false);
+                                                } else {
+                                                    // Product not found
+                                                    alert('المنتج غير موجود');
+                                                    setSearchTerm('');
+                                                    setProductSuggestionsOpen(false);
+                                                }
+                                            } else {
+                                                // Not a barcode - use regular form submit (name search)
+                                                handleSearch(e as any);
+                                            }
+                                        }
+                                    }}
+                                    onFocus={() => {
+                                        // Only show suggestions if not a barcode input
+                                        if (!isBarcodeInput(searchTerm)) {
+                                            setProductSuggestionsOpen(true);
+                                        }
+                                    }}
                                     placeholder={AR_LABELS.searchProductPlaceholder} 
                                     className="w-full pl-8 sm:pl-10 pr-3 sm:pr-4 py-2 sm:py-2.5 text-sm sm:text-base rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-orange-500 focus:border-transparent text-right"
                                 />
