@@ -482,14 +482,20 @@ const POSPage: React.FC = () => {
         fetchTaxRate();
         fetchQuickProducts(); // Fast - uses backend filtering and cache
         
-        // Load all products for search in background (non-blocking)
-        // Use setTimeout to defer this so quick products load first
-        const timer = setTimeout(() => {
-            fetchAllProducts();
-        }, 100);
+        // DISABLED: Automatic fetching of all products causes too many API requests (57+ requests)
+        // Instead, we rely on server-side search which is more efficient and scalable
+        // Server-side search is already implemented and works for both name and barcode searches
+        // If you need client-side search for better performance, consider:
+        // 1. Limiting to first page only (e.g., first 1000 products)
+        // 2. Using a lazy loading strategy (fetch on demand)
+        // 3. Implementing proper caching with TTL
         
-        return () => clearTimeout(timer);
-    }, [fetchCustomers, fetchQuickProducts, fetchTaxRate, fetchAllProducts]);
+        // Uncomment below to enable client-side product loading (with limitations):
+        // const timer = setTimeout(() => {
+        //     fetchAllProducts();
+        // }, 100);
+        // return () => clearTimeout(timer);
+    }, [fetchCustomers, fetchQuickProducts, fetchTaxRate]);
 
     // Reload tax rate when page becomes visible (in case settings were changed in another tab)
     useEffect(() => {
