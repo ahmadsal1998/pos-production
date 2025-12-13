@@ -49,7 +49,10 @@ export function ensureAdminDatabase(uri: string): string {
  * This is separate from the distributed databases used for store-specific data
  * Note: Distributed databases are connected lazily when needed
  */
-const connectDB = async (): Promise<void> => {
+const connectDB = async (retryCount: number = 0): Promise<void> => {
+  const MAX_RETRIES = 3;
+  const INITIAL_RETRY_DELAY = 1000; // 1 second
+
   try {
     const mongoUri = process.env.MONGODB_URI as string;
     if (!mongoUri) {
@@ -59,19 +62,52 @@ const connectDB = async (): Promise<void> => {
     // Ensure the connection string uses admin_db as the database name
     const uriWithAdminDb = ensureAdminDatabase(mongoUri);
     
+    if (retryCount === 0) {
+      console.log('🔗 Connecting to main MongoDB database...');
+    } else {
+      console.log(`🔄 Retrying main MongoDB connection (attempt ${retryCount + 1}/${MAX_RETRIES})...`);
+    }
+    
     // Connect with options to prevent automatic collection creation
     // Individual models can override this with autoCreate: false in their schema options
     const conn = await mongoose.connect(uriWithAdminDb, {
       autoCreate: true, // Allow auto-creation (models can override with autoCreate: false)
       autoIndex: true, // Create indexes automatically for better query performance
+      serverSelectionTimeoutMS: 30000, // Increased to 30 seconds
+      socketTimeoutMS: 60000, // Increased to 60 seconds
+      connectTimeoutMS: 30000, // Increased to 30 seconds
+      retryWrites: true,
+      w: 'majority',
+      family: 4, // Force IPv4 to avoid IPv6 issues
     });
+    
     console.log(`✅ Main MongoDB Connected: ${conn.connection.host}`);
     console.log(`📊 Database: ${conn.connection.name}`);
     
     // Note: Distributed databases are connected lazily when first accessed
     // This prevents memory issues and unnecessary connections at startup
-  } catch (error) {
-    console.error('❌ MongoDB connection error:', error);
+  } catch (error: any) {
+    const errorMessage = error?.message || 'Unknown error';
+    const isNetworkError = 
+      errorMessage.includes('ETIMEOUT') ||
+      errorMessage.includes('ENOTFOUND') ||
+      errorMessage.includes('ECONNREFUSED') ||
+      errorMessage.includes('ERR_INTERNET_DISCONNECTED') ||
+      errorMessage.includes('timeout') ||
+      errorMessage.includes('network') ||
+      errorMessage.includes('querySrv');
+
+    // Retry on network errors
+    if (isNetworkError && retryCount < MAX_RETRIES) {
+      const delay = INITIAL_RETRY_DELAY * Math.pow(2, retryCount); // Exponential backoff
+      console.warn(`⚠️ Network error connecting to main database: ${errorMessage}. Retrying in ${delay}ms...`);
+      
+      await new Promise(resolve => setTimeout(resolve, delay));
+      return connectDB(retryCount + 1);
+    }
+
+    console.error('❌ MongoDB connection error:', errorMessage);
+    console.error('Full error:', error);
     process.exit(1);
   }
 };

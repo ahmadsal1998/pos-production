@@ -51,23 +51,49 @@ function ensureAdminDatabase(uri) {
   const cleanProtocolAndHost = protocolAndHost.replace(/\/+$/, "");
   return `${cleanProtocolAndHost}/${ADMIN_DB_NAME}${queryString}`;
 }
-const connectDB = async () => {
+const connectDB = async (retryCount = 0) => {
+  const MAX_RETRIES = 3;
+  const INITIAL_RETRY_DELAY = 1e3;
   try {
     const mongoUri = process.env.MONGODB_URI;
     if (!mongoUri) {
       throw new Error("MONGODB_URI environment variable is not set");
     }
     const uriWithAdminDb = ensureAdminDatabase(mongoUri);
+    if (retryCount === 0) {
+      console.log("\u{1F517} Connecting to main MongoDB database...");
+    } else {
+      console.log(`\u{1F504} Retrying main MongoDB connection (attempt ${retryCount + 1}/${MAX_RETRIES})...`);
+    }
     const conn = await import_mongoose.default.connect(uriWithAdminDb, {
       autoCreate: true,
       // Allow auto-creation (models can override with autoCreate: false)
-      autoIndex: true
+      autoIndex: true,
       // Create indexes automatically for better query performance
+      serverSelectionTimeoutMS: 3e4,
+      // Increased to 30 seconds
+      socketTimeoutMS: 6e4,
+      // Increased to 60 seconds
+      connectTimeoutMS: 3e4,
+      // Increased to 30 seconds
+      retryWrites: true,
+      w: "majority",
+      family: 4
+      // Force IPv4 to avoid IPv6 issues
     });
     console.log(`\u2705 Main MongoDB Connected: ${conn.connection.host}`);
     console.log(`\u{1F4CA} Database: ${conn.connection.name}`);
   } catch (error) {
-    console.error("\u274C MongoDB connection error:", error);
+    const errorMessage = error?.message || "Unknown error";
+    const isNetworkError = errorMessage.includes("ETIMEOUT") || errorMessage.includes("ENOTFOUND") || errorMessage.includes("ECONNREFUSED") || errorMessage.includes("ERR_INTERNET_DISCONNECTED") || errorMessage.includes("timeout") || errorMessage.includes("network") || errorMessage.includes("querySrv");
+    if (isNetworkError && retryCount < MAX_RETRIES) {
+      const delay = INITIAL_RETRY_DELAY * Math.pow(2, retryCount);
+      console.warn(`\u26A0\uFE0F Network error connecting to main database: ${errorMessage}. Retrying in ${delay}ms...`);
+      await new Promise((resolve) => setTimeout(resolve, delay));
+      return connectDB(retryCount + 1);
+    }
+    console.error("\u274C MongoDB connection error:", errorMessage);
+    console.error("Full error:", error);
     process.exit(1);
   }
 };

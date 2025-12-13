@@ -56,27 +56,50 @@ const PORT = process.env.PORT || 5e3;
 const isDevelopment = process.env.NODE_ENV !== "production";
 const corsOptions = {
   origin: (origin, callback) => {
-    if (!origin) {
-      return callback(null, true);
+    try {
+      if (!origin) {
+        return callback(null, true);
+      }
+      if (isDevelopment) {
+        return callback(null, true);
+      }
+      const normalizedOrigin = origin.trim().toLowerCase().replace(/\/$/, "");
+      const allowedOrigins = [];
+      if (process.env.CLIENT_URL) {
+        const clientUrl = process.env.CLIENT_URL.trim();
+        allowedOrigins.push(clientUrl);
+        if (clientUrl.endsWith("/")) {
+          allowedOrigins.push(clientUrl.slice(0, -1));
+        } else {
+          allowedOrigins.push(clientUrl + "/");
+        }
+      }
+      if (origin.toLowerCase().includes(".vercel.app")) {
+        console.log(`CORS: Allowing Vercel origin: ${origin}`);
+        return callback(null, true);
+      }
+      if (normalizedOrigin === "https://pos-production.vercel.app") {
+        console.log(`CORS: Allowing production origin: ${origin}`);
+        return callback(null, true);
+      }
+      const normalizedAllowed = allowedOrigins.map((o) => o.trim().toLowerCase().replace(/\/$/, ""));
+      if (normalizedAllowed.includes(normalizedOrigin) || allowedOrigins.some((o) => o.toLowerCase() === origin.toLowerCase())) {
+        console.log(`CORS: Allowing configured origin: ${origin}`);
+        return callback(null, true);
+      }
+      console.warn(`CORS: Origin not allowed: ${origin}`);
+      callback(new Error(`Not allowed by CORS: ${origin}`));
+    } catch (error) {
+      console.error("CORS validation error:", error);
+      callback(new Error("CORS validation failed"));
     }
-    if (isDevelopment) {
-      return callback(null, true);
-    }
-    const allowedOrigins = [];
-    if (process.env.CLIENT_URL) {
-      allowedOrigins.push(process.env.CLIENT_URL);
-    }
-    if (origin.includes(".vercel.app")) {
-      return callback(null, true);
-    }
-    if (allowedOrigins.includes(origin)) {
-      return callback(null, true);
-    }
-    callback(new Error("Not allowed by CORS"));
   },
   credentials: true,
   methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization"]
+  allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
+  exposedHeaders: ["Authorization"],
+  optionsSuccessStatus: 204,
+  preflightContinue: false
 };
 app.use((0, import_cors.default)(corsOptions));
 app.use(import_express.default.json());

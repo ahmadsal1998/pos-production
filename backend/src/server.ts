@@ -35,40 +35,70 @@ const isDevelopment = process.env.NODE_ENV !== 'production';
 
 const corsOptions = {
   origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
-    // Allow requests with no origin (like mobile apps or curl requests)
-    if (!origin) {
-      return callback(null, true);
-    }
+    try {
+      // Allow requests with no origin (like mobile apps or curl requests)
+      if (!origin) {
+        return callback(null, true);
+      }
 
-    // In development, allow all origins
-    if (isDevelopment) {
-      return callback(null, true);
-    }
+      // In development, allow all origins
+      if (isDevelopment) {
+        return callback(null, true);
+      }
 
-    // In production, check allowed origins
-    const allowedOrigins: string[] = [];
-    
-    // Add CLIENT_URL if set
-    if (process.env.CLIENT_URL) {
-      allowedOrigins.push(process.env.CLIENT_URL);
-    }
+      // Normalize origin (remove trailing slash, trim whitespace)
+      const normalizedOrigin = origin.trim().toLowerCase().replace(/\/$/, '');
 
-    // Allow any Vercel preview/production deployment
-    if (origin.includes('.vercel.app')) {
-      return callback(null, true);
-    }
+      // Build allowed origins list
+      const allowedOrigins: string[] = [];
+      
+      // Add CLIENT_URL if set
+      if (process.env.CLIENT_URL) {
+        const clientUrl = process.env.CLIENT_URL.trim();
+        allowedOrigins.push(clientUrl);
+        // Also add without trailing slash if it has one
+        if (clientUrl.endsWith('/')) {
+          allowedOrigins.push(clientUrl.slice(0, -1));
+        } else {
+          allowedOrigins.push(clientUrl + '/');
+        }
+      }
 
-    // Check if origin is in allowed list
-    if (allowedOrigins.includes(origin)) {
-      return callback(null, true);
-    }
+      // Allow any Vercel preview/production deployment (case-insensitive check)
+      if (origin.toLowerCase().includes('.vercel.app')) {
+        console.log(`CORS: Allowing Vercel origin: ${origin}`);
+        return callback(null, true);
+      }
 
-    // Origin not allowed
-    callback(new Error('Not allowed by CORS'));
+      // Explicitly allow the production Vercel URL (case-insensitive)
+      if (normalizedOrigin === 'https://pos-production.vercel.app') {
+        console.log(`CORS: Allowing production origin: ${origin}`);
+        return callback(null, true);
+      }
+
+      // Check if origin is in allowed list (exact match or with/without trailing slash)
+      const normalizedAllowed = allowedOrigins.map(o => o.trim().toLowerCase().replace(/\/$/, ''));
+      
+      if (normalizedAllowed.includes(normalizedOrigin) || allowedOrigins.some(o => o.toLowerCase() === origin.toLowerCase())) {
+        console.log(`CORS: Allowing configured origin: ${origin}`);
+        return callback(null, true);
+      }
+
+      // Origin not allowed - log for debugging
+      console.warn(`CORS: Origin not allowed: ${origin}`);
+      callback(new Error(`Not allowed by CORS: ${origin}`));
+    } catch (error) {
+      // If there's an error in the validation logic, deny by default but log the error
+      console.error('CORS validation error:', error);
+      callback(new Error('CORS validation failed'));
+    }
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  exposedHeaders: ['Authorization'],
+  optionsSuccessStatus: 204,
+  preflightContinue: false,
 };
 
 app.use(cors(corsOptions));

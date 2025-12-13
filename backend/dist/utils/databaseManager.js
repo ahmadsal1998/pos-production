@@ -80,7 +80,9 @@ function getDatabaseUri(databaseId) {
   const cleanProtocolAndHost = protocolAndHost.replace(/\/+$/, "");
   return `${cleanProtocolAndHost}/${dbName}${queryString}`;
 }
-async function connectToDatabase(databaseId) {
+async function connectToDatabase(databaseId, retryCount = 0) {
+  const MAX_RETRIES = 3;
+  const INITIAL_RETRY_DELAY = 1e3;
   if (databaseConnections.has(databaseId)) {
     const connection = databaseConnections.get(databaseId);
     if (connection.readyState === 1) {
@@ -102,26 +104,43 @@ async function connectToDatabase(databaseId) {
   }
   try {
     const uriForLogging = uri.replace(/\/\/([^:]+):([^@]+)@/, "//***:***@");
-    console.log(`\u{1F517} Connecting to database ${dbName} with URI: ${uriForLogging}`);
+    if (retryCount === 0) {
+      console.log(`\u{1F517} Connecting to database ${dbName} with URI: ${uriForLogging}`);
+    } else {
+      console.log(`\u{1F504} Retrying connection to database ${dbName} (attempt ${retryCount + 1}/${MAX_RETRIES})...`);
+    }
     const connection = import_mongoose.default.createConnection(uri, {
       maxPoolSize: 2,
       // Reduced to save memory
       minPoolSize: 0,
       // Don't maintain minimum connections
-      serverSelectionTimeoutMS: 1e4,
-      // Increased for Atlas
-      socketTimeoutMS: 45e3,
-      connectTimeoutMS: 1e4,
+      serverSelectionTimeoutMS: 3e4,
+      // Increased to 30 seconds for better reliability
+      socketTimeoutMS: 6e4,
+      // Increased to 60 seconds
+      connectTimeoutMS: 3e4,
+      // Increased to 30 seconds
       retryWrites: true,
-      w: "majority"
+      w: "majority",
+      // Add DNS caching and connection options
+      family: 4
+      // Force IPv4 to avoid IPv6 issues
     });
     await connection.asPromise();
     console.log(`\u2705 Connected to database: ${dbName}`);
     databaseConnections.set(databaseId, connection);
     return connection;
   } catch (error) {
-    console.error(`\u274C Error connecting to database ${dbName}:`, error.message);
-    throw new Error(`Failed to connect to database ${dbName}: ${error.message}`);
+    const errorMessage = error.message || "Unknown error";
+    const isNetworkError = errorMessage.includes("ETIMEOUT") || errorMessage.includes("ENOTFOUND") || errorMessage.includes("ECONNREFUSED") || errorMessage.includes("ERR_INTERNET_DISCONNECTED") || errorMessage.includes("timeout") || errorMessage.includes("network");
+    if (isNetworkError && retryCount < MAX_RETRIES) {
+      const delay = INITIAL_RETRY_DELAY * Math.pow(2, retryCount);
+      console.warn(`\u26A0\uFE0F Network error connecting to ${dbName}: ${errorMessage}. Retrying in ${delay}ms...`);
+      await new Promise((resolve) => setTimeout(resolve, delay));
+      return connectToDatabase(databaseId, retryCount + 1);
+    }
+    console.error(`\u274C Error connecting to database ${dbName}:`, errorMessage);
+    throw new Error(`Failed to connect to database ${dbName}: ${errorMessage}`);
   }
 }
 async function getDatabaseConnection(databaseId) {

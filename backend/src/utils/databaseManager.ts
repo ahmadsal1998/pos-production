@@ -86,11 +86,15 @@ function getDatabaseUri(databaseId: number): string {
 }
 
 /**
- * Connect to a specific database
+ * Connect to a specific database with retry logic
  * @param databaseId - Database ID (1-5)
+ * @param retryCount - Current retry attempt (internal use)
  * @returns Mongoose connection
  */
-export async function connectToDatabase(databaseId: number): Promise<Connection> {
+export async function connectToDatabase(databaseId: number, retryCount: number = 0): Promise<Connection> {
+  const MAX_RETRIES = 3;
+  const INITIAL_RETRY_DELAY = 1000; // 1 second
+
   // Check if connection already exists and is ready
   if (databaseConnections.has(databaseId)) {
     const connection = databaseConnections.get(databaseId)!;
@@ -122,20 +126,26 @@ export async function connectToDatabase(databaseId: number): Promise<Connection>
   try {
     // Log the URI (without credentials) for debugging
     const uriForLogging = uri.replace(/\/\/([^:]+):([^@]+)@/, '//***:***@');
-    console.log(`🔗 Connecting to database ${dbName} with URI: ${uriForLogging}`);
+    if (retryCount === 0) {
+      console.log(`🔗 Connecting to database ${dbName} with URI: ${uriForLogging}`);
+    } else {
+      console.log(`🔄 Retrying connection to database ${dbName} (attempt ${retryCount + 1}/${MAX_RETRIES})...`);
+    }
     
     // Create a new connection for this database with optimized settings for Atlas
     const connection = mongoose.createConnection(uri, {
       maxPoolSize: 2, // Reduced to save memory
       minPoolSize: 0, // Don't maintain minimum connections
-      serverSelectionTimeoutMS: 10000, // Increased for Atlas
-      socketTimeoutMS: 45000,
-      connectTimeoutMS: 10000,
+      serverSelectionTimeoutMS: 30000, // Increased to 30 seconds for better reliability
+      socketTimeoutMS: 60000, // Increased to 60 seconds
+      connectTimeoutMS: 30000, // Increased to 30 seconds
       retryWrites: true,
       w: 'majority',
+      // Add DNS caching and connection options
+      family: 4, // Force IPv4 to avoid IPv6 issues
     });
 
-    // Wait for connection (Atlas connections can take a moment)
+    // Wait for connection (timeout is handled by serverSelectionTimeoutMS)
     await connection.asPromise();
     
     console.log(`✅ Connected to database: ${dbName}`);
@@ -145,9 +155,27 @@ export async function connectToDatabase(databaseId: number): Promise<Connection>
     
     return connection;
   } catch (error: any) {
-    console.error(`❌ Error connecting to database ${dbName}:`, error.message);
-    // Don't throw immediately - allow retry on next access
-    throw new Error(`Failed to connect to database ${dbName}: ${error.message}`);
+    const errorMessage = error.message || 'Unknown error';
+    const isNetworkError = 
+      errorMessage.includes('ETIMEOUT') ||
+      errorMessage.includes('ENOTFOUND') ||
+      errorMessage.includes('ECONNREFUSED') ||
+      errorMessage.includes('ERR_INTERNET_DISCONNECTED') ||
+      errorMessage.includes('timeout') ||
+      errorMessage.includes('network');
+
+    // Retry on network errors
+    if (isNetworkError && retryCount < MAX_RETRIES) {
+      const delay = INITIAL_RETRY_DELAY * Math.pow(2, retryCount); // Exponential backoff
+      console.warn(`⚠️ Network error connecting to ${dbName}: ${errorMessage}. Retrying in ${delay}ms...`);
+      
+      await new Promise(resolve => setTimeout(resolve, delay));
+      return connectToDatabase(databaseId, retryCount + 1);
+    }
+
+    // Log error and throw
+    console.error(`❌ Error connecting to database ${dbName}:`, errorMessage);
+    throw new Error(`Failed to connect to database ${dbName}: ${errorMessage}`);
   }
 }
 
