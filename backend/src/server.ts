@@ -38,54 +38,62 @@ const corsOptions = {
     try {
       // Allow requests with no origin (like mobile apps or curl requests)
       if (!origin) {
+        console.log('CORS: Allowing request with no origin');
         return callback(null, true);
       }
 
       // In development, allow all origins
       if (isDevelopment) {
+        console.log(`CORS: Development mode - allowing origin: ${origin}`);
         return callback(null, true);
       }
 
       // Normalize origin (remove trailing slash, trim whitespace)
       const normalizedOrigin = origin.trim().toLowerCase().replace(/\/$/, '');
+      console.log(`CORS: Checking origin: ${origin} (normalized: ${normalizedOrigin})`);
 
-      // Build allowed origins list
-      const allowedOrigins: string[] = [];
-      
-      // Add CLIENT_URL if set
+      // FIRST: Check for Vercel deployments (most common in production)
+      if (origin.toLowerCase().includes('.vercel.app')) {
+        console.log(`CORS: ✓ Allowing Vercel origin: ${origin}`);
+        return callback(null, true);
+      }
+
+      // SECOND: Explicitly allow the production Vercel URL (case-insensitive)
+      if (normalizedOrigin === 'https://pos-production.vercel.app') {
+        console.log(`CORS: ✓ Allowing production origin: ${origin}`);
+        return callback(null, true);
+      }
+
+      // THIRD: Check CLIENT_URL if set
       if (process.env.CLIENT_URL) {
         const clientUrl = process.env.CLIENT_URL.trim();
-        allowedOrigins.push(clientUrl);
-        // Also add without trailing slash if it has one
+        const normalizedClientUrl = clientUrl.toLowerCase().replace(/\/$/, '');
+        
+        // Check exact match
+        if (normalizedOrigin === normalizedClientUrl) {
+          console.log(`CORS: ✓ Allowing CLIENT_URL origin: ${origin}`);
+          return callback(null, true);
+        }
+        
+        // Check with/without trailing slash variations
         if (clientUrl.endsWith('/')) {
-          allowedOrigins.push(clientUrl.slice(0, -1));
+          const clientUrlNoSlash = clientUrl.slice(0, -1).toLowerCase();
+          if (normalizedOrigin === clientUrlNoSlash) {
+            console.log(`CORS: ✓ Allowing CLIENT_URL origin (no slash variant): ${origin}`);
+            return callback(null, true);
+          }
         } else {
-          allowedOrigins.push(clientUrl + '/');
+          const clientUrlWithSlash = (clientUrl + '/').toLowerCase();
+          if (normalizedOrigin === clientUrlWithSlash) {
+            console.log(`CORS: ✓ Allowing CLIENT_URL origin (with slash variant): ${origin}`);
+            return callback(null, true);
+          }
         }
       }
 
-      // Allow any Vercel preview/production deployment (case-insensitive check)
-      if (origin.toLowerCase().includes('.vercel.app')) {
-        console.log(`CORS: Allowing Vercel origin: ${origin}`);
-        return callback(null, true);
-      }
-
-      // Explicitly allow the production Vercel URL (case-insensitive)
-      if (normalizedOrigin === 'https://pos-production.vercel.app') {
-        console.log(`CORS: Allowing production origin: ${origin}`);
-        return callback(null, true);
-      }
-
-      // Check if origin is in allowed list (exact match or with/without trailing slash)
-      const normalizedAllowed = allowedOrigins.map(o => o.trim().toLowerCase().replace(/\/$/, ''));
-      
-      if (normalizedAllowed.includes(normalizedOrigin) || allowedOrigins.some(o => o.toLowerCase() === origin.toLowerCase())) {
-        console.log(`CORS: Allowing configured origin: ${origin}`);
-        return callback(null, true);
-      }
-
       // Origin not allowed - log for debugging
-      console.warn(`CORS: Origin not allowed: ${origin}`);
+      console.warn(`CORS: ✗ Origin not allowed: ${origin}`);
+      console.warn(`CORS: CLIENT_URL env var: ${process.env.CLIENT_URL || 'not set'}`);
       callback(new Error(`Not allowed by CORS: ${origin}`));
     } catch (error) {
       // If there's an error in the validation logic, deny by default but log the error

@@ -38,14 +38,30 @@ MongoDB connection error: MongoNetworkError
 
 **Symptoms**:
 ```
-Access to XMLHttpRequest blocked by CORS policy
+Access to XMLHttpRequest blocked by CORS policy: Response to preflight request doesn't pass access control check: No 'Access-Control-Allow-Origin' header is present
 ```
 
 **Solutions**:
-1. Set `CLIENT_URL` environment variable to exact frontend URL
-2. Remove trailing slashes from URLs
-3. Ensure frontend uses HTTPS if backend uses HTTPS
-4. Check `server.ts` CORS configuration
+1. **Set `CLIENT_URL` environment variable** (optional, but recommended):
+   - Set `CLIENT_URL=https://pos-production.vercel.app` (WITHOUT trailing slash)
+   - The CORS configuration automatically allows any `.vercel.app` domain, so this is optional
+
+2. **Verify the fix is deployed**:
+   - The CORS configuration has been improved to check Vercel origins first
+   - Rebuild and redeploy the backend if you see this error
+   - Check Render logs to see CORS debugging messages
+
+3. **Check Render environment variables**:
+   - Ensure `NODE_ENV=production` is set (CORS is more permissive in development)
+   - Verify `CLIENT_URL` matches your frontend URL exactly (no trailing slash)
+
+4. **Verify frontend API URL**:
+   - Ensure `VITE_API_URL` in Vercel is set to your backend URL (e.g., `https://pos-production-rwbd.onrender.com/api`)
+   - The base URL should include `/api` if your routes are mounted at `/api`
+
+5. **Check browser console and Render logs**:
+   - Look for CORS debug messages in Render logs (lines starting with `CORS:`)
+   - These will show which origin is being checked and whether it's allowed
 
 #### Error: Build succeeds but service won't start
 
