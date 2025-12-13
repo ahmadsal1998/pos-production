@@ -967,17 +967,34 @@ export const getProductMetrics = asyncHandler(async (req: AuthenticatedRequest, 
  * Returns the first matching product with the matched unit info
  */
 export const getProductByBarcode = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+  // Log route access for debugging
+  console.log('[Barcode Route] Request received:', {
+    method: req.method,
+    path: req.path,
+    originalUrl: req.originalUrl,
+    params: req.params,
+    query: req.query,
+  });
+
   const { barcode } = req.params;
   const storeId = req.user?.storeId || null;
 
+  // Decode the barcode in case it was URL encoded
+  const decodedBarcode = decodeURIComponent(barcode || '');
+  console.log('[Barcode Route] Parsed barcode (raw):', barcode);
+  console.log('[Barcode Route] Parsed barcode (decoded):', decodedBarcode);
+  console.log('[Barcode Route] StoreId:', storeId);
+
   if (!storeId) {
+    console.error('[Barcode Route] Missing storeId');
     return res.status(400).json({
       success: false,
       message: 'Store ID is required. Please ensure you are logged in as a store user.',
     });
   }
 
-  if (!barcode || !barcode.trim()) {
+  if (!decodedBarcode || !decodedBarcode.trim()) {
+    console.error('[Barcode Route] Missing or empty barcode');
     return res.status(400).json({
       success: false,
       message: 'Barcode is required',
@@ -986,7 +1003,7 @@ export const getProductByBarcode = asyncHandler(async (req: AuthenticatedRequest
 
   try {
     const Product = await getProductModelForStore(storeId);
-    const trimmedBarcode = barcode.trim();
+    const trimmedBarcode = decodedBarcode.trim();
 
     // First, try exact match on product barcode (only active products)
     let product = await Product.findOne({ 
