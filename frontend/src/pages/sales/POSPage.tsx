@@ -72,6 +72,8 @@ const POSPage: React.FC = () => {
     const [quickProducts, setQuickProducts] = useState<POSProduct[]>([]);
     const [isLoadingQuickProducts, setIsLoadingQuickProducts] = useState(false);
     const [productSuggestionsOpen, setProductSuggestionsOpen] = useState(false);
+    const [productsLoaded, setProductsLoaded] = useState(false); // Track if client-side products loaded successfully
+    const [isSearchingServer, setIsSearchingServer] = useState(false); // Track server-side search state
     const [customers, setCustomers] = useState<Customer[]>([]); // Customer list - starts empty, no dummy customers
     const [allCustomers, setAllCustomers] = useState<Customer[]>([]); // All customers from API
     const [customerSearchTerm, setCustomerSearchTerm] = useState(''); // Search term for customers
@@ -353,6 +355,7 @@ const POSPage: React.FC = () => {
     // Fetch all products for search functionality (lazy load in background)
     const fetchAllProducts = useCallback(async () => {
         try {
+            console.log('[POS] Starting to fetch all products for search...');
             // Fetch all products - fetch multiple pages if needed to get all products
             let allProductsData: any[] = [];
             let currentPage = 1;
@@ -361,22 +364,38 @@ const POSPage: React.FC = () => {
             
             // Fetch all pages of products
             while (hasMorePages) {
-                const response = await productsApi.getProducts({ page: currentPage, limit: pageSize });
-                if (response.success) {
-                    const productsData = (response.data as any)?.products || (response.data as any)?.data?.products || [];
-                    allProductsData = [...allProductsData, ...productsData];
-                    
-                    // Check if there are more pages
-                    const pagination = (response.data as any)?.pagination;
-                    if (pagination) {
-                        hasMorePages = pagination.hasNextPage === true;
-                        currentPage++;
+                try {
+                    const response = await productsApi.getProducts({ page: currentPage, limit: pageSize });
+                    if (response.success) {
+                        const productsData = (response.data as any)?.products || (response.data as any)?.data?.products || [];
+                        allProductsData = [...allProductsData, ...productsData];
+                        
+                        // Check if there are more pages
+                        const pagination = (response.data as any)?.pagination;
+                        if (pagination) {
+                            hasMorePages = pagination.hasNextPage === true;
+                            currentPage++;
+                        } else {
+                            // If no pagination info, stop after first page
+                            hasMorePages = false;
+                        }
                     } else {
-                        // If no pagination info, stop after first page
+                        console.warn('[POS] API response was not successful:', response);
                         hasMorePages = false;
                     }
-                } else {
-                    hasMorePages = false;
+                } catch (pageError: any) {
+                    console.error(`[POS] Error fetching page ${currentPage}:`, pageError);
+                    // Continue to next page or stop if it's a critical error
+                    if (pageError.status === 401 || pageError.status === 403) {
+                        // Auth error - stop trying
+                        hasMorePages = false;
+                    } else if (currentPage === 1) {
+                        // If first page fails, stop completely
+                        hasMorePages = false;
+                    } else {
+                        // If later page fails, stop but keep what we have
+                        hasMorePages = false;
+                    }
                 }
             }
             
@@ -385,12 +404,22 @@ const POSPage: React.FC = () => {
                 // This ensures all products in the database are searchable in POS
                 const allProductsList = allProductsData.map((p: any) => normalizeProduct(p));
                 setProducts(allProductsList);
+                setProductsLoaded(true);
                 
-                console.log(`Loaded ${allProductsList.length} products for POS search`);
+                console.log(`[POS] Successfully loaded ${allProductsList.length} products for client-side search`);
+            } else {
+                console.warn('[POS] No products loaded - will use server-side search as fallback');
+                setProductsLoaded(false);
             }
         } catch (err: any) {
-            console.error('Error fetching all products for search:', err);
-            // Don't show error to user, search will just be limited
+            console.error('[POS] Error fetching all products for search:', err);
+            console.error('[POS] Error details:', {
+                message: err.message,
+                status: err.status,
+                code: err.code
+            });
+            setProductsLoaded(false);
+            // Don't show error to user, will use server-side search as fallback
         }
     }, [normalizeProduct]);
 
@@ -594,6 +623,105 @@ const POSPage: React.FC = () => {
     
     type SearchMatch = { product: POSProduct; unitName: string; unitPrice: number; barcode?: string; conversionFactor?: number; piecesPerUnit?: number };
 
+    // Server-side search function (fallback when client-side products aren't loaded)
+    const searchProductsOnServer = useCallback(async (term: string): Promise<SearchMatch[]> => {
+        const trimmed = term.trim();
+        if (!trimmed) return [];
+
+        try {
+            setIsSearchingServer(true);
+            console.log(`[POS] Performing server-side search for: "${trimmed}"`);
+            
+            // Use API search parameter to search on server
+            const response = await productsApi.getProducts({ 
+                page: 1, 
+                limit: 100, // Get up to 100 results
+                search: trimmed 
+            });
+
+            if (response.success) {
+                const productsData = (response.data as any)?.products || (response.data as any)?.data?.products || [];
+                const results: SearchMatch[] = [];
+
+                productsData.forEach((p: any) => {
+                    const normalizedProduct = normalizeProduct(p);
+                    const piecesPerMainUnit = getPiecesPerMainUnit(normalizedProduct);
+
+                    // Check barcode match on product
+                    if (normalizedProduct.barcode && (
+                        normalizedProduct.barcode === trimmed || 
+                        normalizedProduct.barcode.toLowerCase() === trimmed.toLowerCase()
+                    )) {
+                        const perPiecePrice = piecesPerMainUnit > 0 ? normalizedProduct.price / piecesPerMainUnit : normalizedProduct.price;
+                        results.push({ 
+                            product: normalizedProduct, 
+                            unitName: 'كرتون', 
+                            unitPrice: perPiecePrice, 
+                            barcode: normalizedProduct.barcode, 
+                            conversionFactor: piecesPerMainUnit, 
+                            piecesPerUnit: piecesPerMainUnit 
+                        });
+                    }
+
+                    // Check barcode match on units
+                    if (normalizedProduct.units) {
+                        for (const u of normalizedProduct.units) {
+                            if (u.barcode && (
+                                u.barcode === trimmed || 
+                                u.barcode.toLowerCase() === trimmed.toLowerCase()
+                            )) {
+                                const perPiecePrice = u.sellingPrice || (piecesPerMainUnit > 0 ? normalizedProduct.price / piecesPerMainUnit : normalizedProduct.price);
+                                results.push({ 
+                                    product: normalizedProduct, 
+                                    unitName: u.unitName || 'قطعة', 
+                                    unitPrice: perPiecePrice, 
+                                    barcode: u.barcode, 
+                                    conversionFactor: u.conversionFactor || piecesPerMainUnit, 
+                                    piecesPerUnit: 1 
+                                });
+                            }
+                        }
+                    }
+
+                    // Name match (API already filters by name, but we include it for completeness)
+                    const lower = trimmed.toLowerCase();
+                    if (normalizedProduct.name && normalizedProduct.name.toLowerCase().includes(lower)) {
+                        const perPiecePrice = piecesPerMainUnit > 0 ? normalizedProduct.price / piecesPerMainUnit : normalizedProduct.price;
+                        results.push({ 
+                            product: normalizedProduct, 
+                            unitName: 'كرتون', 
+                            unitPrice: perPiecePrice, 
+                            barcode: normalizedProduct.barcode, 
+                            conversionFactor: piecesPerMainUnit, 
+                            piecesPerUnit: piecesPerMainUnit 
+                        });
+                    }
+                });
+
+                // Deduplicate
+                const seen = new Set<string>();
+                const uniqueResults = results.filter((r) => {
+                    const key = `${r.product.id}-${r.unitName}-${r.barcode || ''}`;
+                    if (seen.has(key)) return false;
+                    seen.add(key);
+                    return true;
+                });
+
+                console.log(`[POS] Server-side search found ${uniqueResults.length} matches`);
+                return uniqueResults;
+            } else {
+                console.warn('[POS] Server-side search response was not successful');
+                return [];
+            }
+        } catch (err: any) {
+            console.error('[POS] Error in server-side search:', err);
+            return [];
+        } finally {
+            setIsSearchingServer(false);
+        }
+    }, [normalizeProduct]);
+
+    // Client-side search function (uses loaded products array)
     const resolveSearchMatches = useCallback((term: string): SearchMatch[] => {
         const trimmed = term.trim();
         if (!trimmed) return [];
@@ -635,8 +763,32 @@ const POSPage: React.FC = () => {
         });
     }, [products]);
 
-    const handleSearch = (e: React.FormEvent) => {
+    const handleSearch = async (e: React.FormEvent) => {
         e.preventDefault();
+        
+        // If products aren't loaded or array is empty, use server-side search
+        if (!productsLoaded || products.length === 0) {
+            console.log('[POS] Using server-side search (client-side products not loaded)');
+            const matches = await searchProductsOnServer(searchTerm);
+            if (matches.length === 0) {
+                alert('المنتج غير موجود');
+                return;
+            }
+            // Store the matches for the suggestions dropdown
+            setServerSearchResults(matches);
+            if (matches.length === 1) {
+                const match = matches[0];
+                handleAddProduct(match.product, match.unitName, match.unitPrice, match.conversionFactor, match.piecesPerUnit);
+                setSearchTerm('');
+                setProductSuggestionsOpen(false);
+            } else {
+                // Show all matches for the cashier to pick
+                setProductSuggestionsOpen(true);
+            }
+            return;
+        }
+
+        // Use client-side search if products are loaded
         const matches = resolveSearchMatches(searchTerm);
         if (matches.length === 0) {
             alert('المنتج غير موجود');
@@ -645,16 +797,46 @@ const POSPage: React.FC = () => {
         if (matches.length === 1) {
             const match = matches[0];
             handleAddProduct(match.product, match.unitName, match.unitPrice, match.conversionFactor, match.piecesPerUnit);
+            setSearchTerm('');
+            setProductSuggestionsOpen(false);
         } else {
             // Show all matches for the cashier to pick
             setProductSuggestionsOpen(true);
         }
     };
 
+    // State for server-side search results (for suggestions dropdown)
+    const [serverSearchResults, setServerSearchResults] = useState<SearchMatch[]>([]);
+
+    // Update server search results when search term changes (debounced)
+    useEffect(() => {
+        if (!searchTerm.trim()) {
+            setServerSearchResults([]);
+            return;
+        }
+
+        // Only use server-side search if client-side products aren't loaded
+        if (!productsLoaded || products.length === 0) {
+            const timeoutId = setTimeout(async () => {
+                const results = await searchProductsOnServer(searchTerm);
+                setServerSearchResults(results);
+            }, 300); // Debounce 300ms
+
+            return () => clearTimeout(timeoutId);
+        } else {
+            setServerSearchResults([]);
+        }
+    }, [searchTerm, productsLoaded, products.length, searchProductsOnServer]);
+
     const productSuggestions = useMemo(() => {
+        // If using server-side search, return server results
+        if (!productsLoaded || products.length === 0) {
+            return serverSearchResults.slice(0, 12);
+        }
+        // Otherwise use client-side search
         const matches = resolveSearchMatches(searchTerm);
         return matches.slice(0, 12);
-    }, [searchTerm, resolveSearchMatches]);
+    }, [searchTerm, resolveSearchMatches, productsLoaded, products.length, serverSearchResults]);
 
     const handleUpdateQuantity = (cartItemId: string, quantity: number) => {
         const normalizedQuantity = Number.isFinite(quantity) ? quantity : 0;
