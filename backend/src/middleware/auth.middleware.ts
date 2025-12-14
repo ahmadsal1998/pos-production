@@ -14,9 +14,24 @@ export const authenticate = async (
   next: NextFunction
 ): Promise<void> => {
   try {
+    // Enhanced logging for barcode routes
+    const isBarcodeRoute = req.path.includes('/barcode') || req.originalUrl.includes('/barcode');
+    if (isBarcodeRoute) {
+      console.log('[Auth Middleware] 🔍 BARCODE ROUTE - Authentication check:', {
+        path: req.path,
+        originalUrl: req.originalUrl,
+        method: req.method,
+        hasAuthHeader: !!req.headers.authorization,
+        authHeaderPrefix: req.headers.authorization?.substring(0, 20) || 'none',
+      });
+    }
+    
     const authHeader = req.headers.authorization;
 
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      if (isBarcodeRoute) {
+        console.error('[Auth Middleware] ❌ BARCODE ROUTE - Missing or invalid auth header');
+      }
       res.status(401).json({
         success: false,
         message: 'Authentication required. Please provide a valid token.',
@@ -30,12 +45,23 @@ export const authenticate = async (
       const decoded = verifyToken(token);
       req.user = decoded;
 
+      if (isBarcodeRoute) {
+        console.log('[Auth Middleware] ✅ BARCODE ROUTE - Token verified:', {
+          userId: decoded.userId,
+          storeId: decoded.storeId,
+          role: decoded.role,
+        });
+      }
+
       // Check subscription status for store users (not admins)
       if (decoded.storeId && decoded.role !== 'Admin') {
         try {
           const subscriptionStatus = await checkAndUpdateStoreSubscription(decoded.storeId);
           
           if (!subscriptionStatus.isActive || subscriptionStatus.subscriptionExpired) {
+            if (isBarcodeRoute) {
+              console.error('[Auth Middleware] ❌ BARCODE ROUTE - Subscription expired');
+            }
             res.status(403).json({
               success: false,
               message: 'Your store subscription has expired. Please renew your subscription to regain access.',
@@ -50,9 +76,13 @@ export const authenticate = async (
         }
       }
 
+      if (isBarcodeRoute) {
+        console.log('[Auth Middleware] ✅ BARCODE ROUTE - Authentication passed, calling next()');
+      }
       next();
     } catch (error: any) {
       // Enhanced error logging for debugging
+      const isBarcodeRoute = req.path.includes('/barcode') || req.originalUrl.includes('/barcode');
       console.error('[Auth Middleware] Token verification failed:', {
         error: error.message,
         tokenLength: token.length,
@@ -60,7 +90,13 @@ export const authenticate = async (
         jwtSecretSet: !!process.env.JWT_SECRET,
         jwtSecretLength: process.env.JWT_SECRET?.length || 0,
         nodeEnv: process.env.NODE_ENV,
+        isBarcodeRoute,
+        path: req.path,
       });
+      
+      if (isBarcodeRoute) {
+        console.error('[Auth Middleware] ❌ BARCODE ROUTE - Authentication failed');
+      }
       
       res.status(401).json({
         success: false,

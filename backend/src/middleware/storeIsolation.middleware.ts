@@ -16,16 +16,32 @@ export const requireStoreAccess = (
   res: Response,
   next: NextFunction
 ): void => {
+  const isBarcodeRoute = req.path.includes('/barcode') || req.originalUrl.includes('/barcode');
+  
+  if (isBarcodeRoute) {
+    console.log('[Store Isolation] 🔍 BARCODE ROUTE - Store access check:', {
+      path: req.path,
+      role: req.user?.role,
+      storeId: req.user?.storeId,
+    });
+  }
+  
   const requesterRole = req.user?.role;
   const requesterStoreId = req.user?.storeId;
 
   // Admin users bypass store restrictions
   if (requesterRole === 'Admin') {
+    if (isBarcodeRoute) {
+      console.log('[Store Isolation] ✅ BARCODE ROUTE - Admin user, bypassing store restrictions');
+    }
     return next();
   }
 
   // Non-admin users must have a storeId
   if (!requesterStoreId) {
+    if (isBarcodeRoute) {
+      console.error('[Store Isolation] ❌ BARCODE ROUTE - Missing storeId');
+    }
     res.status(403).json({
       success: false,
       message: 'Access denied. Store ID is required. Please ensure your account is associated with a store.',
@@ -39,6 +55,9 @@ export const requireStoreAccess = (
     storeId: requesterStoreId.toLowerCase(),
   };
 
+  if (isBarcodeRoute) {
+    console.log('[Store Isolation] ✅ BARCODE ROUTE - Store access granted, calling next()');
+  }
   next();
 };
 
