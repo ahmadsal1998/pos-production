@@ -156,9 +156,20 @@ app.use((req, res, next) => {
 
 // Log all incoming requests for debugging
 app.use((req, res, next) => {
-  // Enhanced logging for API routes
+  // Enhanced logging for API routes, especially barcode routes
   if (req.path.startsWith('/api/')) {
-    console.log(`[Request] ${req.method} ${req.path}${req.url !== req.path ? ' (url: ' + req.url + ')' : ''} - Origin: ${req.headers.origin || 'none'}`);
+    const isBarcodeRoute = req.path.includes('/barcode') || req.originalUrl.includes('/barcode');
+    if (isBarcodeRoute) {
+      console.log(`[Request] 🔍 BARCODE REQUEST: ${req.method} ${req.path}${req.url !== req.path ? ' (url: ' + req.url + ')' : ''}`);
+      console.log(`[Request] Full URL: ${req.originalUrl}`);
+      console.log(`[Request] Base URL: ${req.baseUrl}`);
+      console.log(`[Request] Headers:`, {
+        authorization: req.headers.authorization ? 'Present' : 'Missing',
+        origin: req.headers.origin || 'none',
+      });
+    } else {
+      console.log(`[Request] ${req.method} ${req.path}${req.url !== req.path ? ' (url: ' + req.url + ')' : ''} - Origin: ${req.headers.origin || 'none'}`);
+    }
   }
   next();
 });
