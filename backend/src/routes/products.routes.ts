@@ -16,6 +16,20 @@ import { requireStoreAccess } from '../middleware/storeIsolation.middleware';
 
 const router = Router();
 
+// Debug middleware to log all requests to products router
+router.use((req, res, next) => {
+  if (req.path.includes('barcode') || req.originalUrl.includes('barcode')) {
+    console.log('[Products Router] Incoming request:', {
+      method: req.method,
+      path: req.path,
+      originalUrl: req.originalUrl,
+      baseUrl: req.baseUrl,
+      url: req.url,
+    });
+  }
+  next();
+});
+
 // All product routes require authentication and store access
 router.use(authenticate);
 router.use(requireStoreAccess);
@@ -26,8 +40,8 @@ router.get('/metrics', getProductMetrics);
 
 // Barcode route must come before /:id route to avoid conflicts
 // Using explicit route pattern to ensure it matches correctly
-// Adding logging middleware to debug route matching issues
-router.get('/barcode/:barcode', (req, res, next) => {
+// CRITICAL: This route must be registered before /:id to prevent route conflicts
+router.get('/barcode/:barcode', async (req, res, next) => {
   console.log('[Products Router] ✓✓✓ Barcode route MATCHED ✓✓✓');
   console.log('[Products Router] Method:', req.method);
   console.log('[Products Router] Path:', req.path);

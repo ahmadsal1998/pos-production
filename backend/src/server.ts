@@ -222,7 +222,7 @@ app.use('/api/settings', settingsRoutes);
 app.use('/api/customers', customersRoutes);
 app.use('/api/sales', salesRoutes);
 
-// 404 handler
+// 404 handler - log all unmatched routes for debugging
 app.use((req, res) => {
   console.error('[404 Handler] Route not found:', {
     method: req.method,
@@ -230,10 +230,24 @@ app.use((req, res) => {
     originalUrl: req.originalUrl,
     baseUrl: req.baseUrl,
     url: req.url,
+    headers: {
+      authorization: req.headers.authorization ? 'Present' : 'Missing',
+      'content-type': req.headers['content-type'],
+    },
   });
+  
+  // Special handling for barcode routes to help debug
+  if (req.path.includes('/barcode') || req.originalUrl.includes('/barcode')) {
+    console.error('[404 Handler] ⚠️ Barcode route not matched! This should not happen.');
+    console.error('[404 Handler] Expected route: /api/products/barcode/:barcode');
+    console.error('[404 Handler] Actual request:', req.originalUrl);
+  }
+  
   res.status(404).json({
     success: false,
     message: 'Route not found',
+    path: req.path,
+    originalUrl: req.originalUrl,
   });
 });
 
