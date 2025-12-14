@@ -156,30 +156,28 @@ app.use((req, res, next) => {
 
 // Log ALL incoming requests immediately after CORS (before any other middleware)
 app.use((req, res, next) => {
-  // Log ALL requests to catch barcode routes
-  const isBarcodeRoute = req.path.includes('/barcode') || req.originalUrl.includes('/barcode') || req.url.includes('/barcode');
-  
-  if (isBarcodeRoute) {
-    console.log('═══════════════════════════════════════════════════════════');
-    console.log(`[Request] 🔍🔍🔍 BARCODE REQUEST DETECTED 🔍🔍🔍`);
-    console.log(`[Request] Method: ${req.method}`);
-    console.log(`[Request] Path: ${req.path}`);
-    console.log(`[Request] URL: ${req.url}`);
-    console.log(`[Request] Original URL: ${req.originalUrl}`);
-    console.log(`[Request] Base URL: ${req.baseUrl}`);
-    console.log(`[Request] Query:`, req.query);
-    console.log(`[Request] Params:`, req.params);
-    console.log(`[Request] Headers:`, {
-      authorization: req.headers.authorization ? `Present (${req.headers.authorization.substring(0, 30)}...)` : 'Missing',
-      origin: req.headers.origin || 'none',
-      'content-type': req.headers['content-type'] || 'none',
-    });
-    console.log('═══════════════════════════════════════════════════════════');
-  }
-  
-  // Also log all API routes for general debugging
+  // Log ALL API requests for debugging
   if (req.path.startsWith('/api/')) {
-    if (!isBarcodeRoute) {
+    const isBarcodeRoute = req.path.includes('/barcode') || req.originalUrl.includes('/barcode') || req.url.includes('/barcode');
+    
+    if (isBarcodeRoute) {
+      console.log('═══════════════════════════════════════════════════════════');
+      console.log(`[Request] 🔍🔍🔍 BARCODE REQUEST DETECTED 🔍🔍🔍`);
+      console.log(`[Request] Method: ${req.method}`);
+      console.log(`[Request] Path: ${req.path}`);
+      console.log(`[Request] URL: ${req.url}`);
+      console.log(`[Request] Original URL: ${req.originalUrl}`);
+      console.log(`[Request] Base URL: ${req.baseUrl}`);
+      console.log(`[Request] Query:`, req.query);
+      console.log(`[Request] Params:`, req.params);
+      console.log(`[Request] Headers:`, {
+        authorization: req.headers.authorization ? `Present (${req.headers.authorization.substring(0, 30)}...)` : 'Missing',
+        origin: req.headers.origin || 'none',
+        'content-type': req.headers['content-type'] || 'none',
+      });
+      console.log('═══════════════════════════════════════════════════════════');
+    } else {
+      // Log all other API requests too
       console.log(`[Request] ${req.method} ${req.path}${req.url !== req.path ? ' (url: ' + req.url + ')' : ''} - Origin: ${req.headers.origin || 'none'}`);
     }
   }
