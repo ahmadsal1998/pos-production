@@ -43,6 +43,7 @@ class ProductSyncManager {
   private syncInProgress: Set<string> = new Set();
   private lastSyncTime: number = 0;
   private readonly SYNC_COOLDOWN = 1000; // 1 second cooldown between syncs
+  private readonly DATA_FRESHNESS_THRESHOLD = 5 * 60 * 1000; // 5 minutes - consider data fresh if updated within this time
 
   /**
    * Sync products from server and update local cache
@@ -90,12 +91,18 @@ class ProductSyncManager {
       try {
         const dbProducts = await productsDB.getAllProducts();
         if (dbProducts && dbProducts.length > 0) {
-          // IndexedDB has products, return them
-          return {
-            success: true,
-            syncedCount: dbProducts.length,
-            products: dbProducts,
-          };
+          // Check if data is fresh (updated recently)
+          const isFresh = await productsDB.isDataFresh(this.DATA_FRESHNESS_THRESHOLD);
+          if (isFresh) {
+            console.log(`[ProductSync] IndexedDB has ${dbProducts.length} fresh products (updated within ${this.DATA_FRESHNESS_THRESHOLD / 1000 / 60} minutes), skipping server sync`);
+            return {
+              success: true,
+              syncedCount: dbProducts.length,
+              products: dbProducts,
+            };
+          } else {
+            console.log(`[ProductSync] IndexedDB has ${dbProducts.length} products but data is stale, syncing from server...`);
+          }
         }
       } catch (error) {
         console.warn('[ProductSync] Error reading from IndexedDB, will fetch from server:', error);

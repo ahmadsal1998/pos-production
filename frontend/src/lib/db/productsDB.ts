@@ -193,6 +193,59 @@ class ProductsDB {
   }
 
   /**
+   * Get the last update timestamp for products in IndexedDB
+   * Returns the most recent lastUpdated timestamp, or 0 if no products exist
+   */
+  async getLastUpdateTime(): Promise<number> {
+    await this.init();
+    if (!this.db) {
+      return 0;
+    }
+
+    const storeId = this.getStoreId();
+    if (!storeId) {
+      return 0;
+    }
+
+    return new Promise((resolve, reject) => {
+      const transaction = this.db!.transaction([this.storeName], 'readonly');
+      const objectStore = transaction.objectStore(this.storeName);
+      const index = objectStore.index(this.indexName);
+      const request = index.getAll(storeId);
+
+      request.onsuccess = () => {
+        const records = request.result as ProductRecord[];
+        if (records.length === 0) {
+          resolve(0);
+          return;
+        }
+        
+        // Find the most recent lastUpdated timestamp
+        const maxTimestamp = Math.max(...records.map(r => r.lastUpdated || 0));
+        resolve(maxTimestamp);
+      };
+
+      request.onerror = () => {
+        reject(request.error);
+      };
+    });
+  }
+
+  /**
+   * Check if IndexedDB data is fresh (updated within the specified time)
+   * @param maxAge Maximum age in milliseconds (default: 5 minutes)
+   */
+  async isDataFresh(maxAge: number = 5 * 60 * 1000): Promise<boolean> {
+    const lastUpdate = await this.getLastUpdateTime();
+    if (lastUpdate === 0) {
+      return false; // No data in IndexedDB
+    }
+    
+    const age = Date.now() - lastUpdate;
+    return age < maxAge;
+  }
+
+  /**
    * Get a single product by ID
    */
   async getProduct(productId: string | number): Promise<any | null> {

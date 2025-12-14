@@ -580,7 +580,15 @@ const POSPage: React.FC = () => {
                 setProductsLoaded(true);
                 console.log(`[POS] Using ${allProductsList.length} products from IndexedDB`);
                 
-                // Sync from server in background to ensure we have latest data
+                // Check if data is fresh before syncing from server
+                const isFresh = await productsDB.isDataFresh(5 * 60 * 1000); // 5 minutes
+                if (isFresh) {
+                    console.log('[POS] IndexedDB data is fresh, skipping background sync');
+                    return;
+                }
+                
+                // Data is stale, sync from server in background
+                console.log('[POS] IndexedDB data is stale, syncing from server in background...');
                 productSync.syncProducts({ forceRefresh: false }).then((result) => {
                     if (result.success && result.products) {
                         const normalizedProducts = result.products.map((p: any) => normalizeProduct(p));
