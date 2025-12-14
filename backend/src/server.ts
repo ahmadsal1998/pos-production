@@ -224,8 +224,16 @@ app.use('/api/brands', brandsRoutes);
 app.use('/api/units', unitsRoutes);
 app.use('/api/warehouses', warehousesRoutes);
 app.use('/api/products', productsRoutes);
-console.log('[Server] Products routes registered at /api/products');
-console.log('[Server] Available routes: GET /, GET /metrics, GET /barcode/:barcode, GET /:id, POST /, POST /import, PUT /:id, DELETE /:id');
+console.log('[Server] ✅ Products routes registered at /api/products');
+console.log('[Server] 📋 Available product routes:');
+console.log('  - GET  /api/products/');
+console.log('  - GET  /api/products/metrics');
+console.log('  - GET  /api/products/barcode/:barcode ⭐ BARCODE ROUTE');
+console.log('  - GET  /api/products/:id');
+console.log('  - POST /api/products/');
+console.log('  - POST /api/products/import');
+console.log('  - PUT  /api/products/:id');
+console.log('  - DELETE /api/products/:id');
 app.use('/api/admin', adminRoutes);
 app.use('/api/payments', paymentsRoutes);
 app.use('/api/merchants', merchantsRoutes);
@@ -235,7 +243,9 @@ app.use('/api/sales', salesRoutes);
 
 // 404 handler - log all unmatched routes for debugging
 app.use((req, res) => {
-  console.error('[404 Handler] Route not found:', {
+  const isBarcodeRoute = req.path.includes('/barcode') || req.originalUrl.includes('/barcode');
+  
+  console.error('[404 Handler] ❌ Route not found:', {
     method: req.method,
     path: req.path,
     originalUrl: req.originalUrl,
@@ -248,10 +258,17 @@ app.use((req, res) => {
   });
   
   // Special handling for barcode routes to help debug
-  if (req.path.includes('/barcode') || req.originalUrl.includes('/barcode')) {
-    console.error('[404 Handler] ⚠️ Barcode route not matched! This should not happen.');
-    console.error('[404 Handler] Expected route: /api/products/barcode/:barcode');
-    console.error('[404 Handler] Actual request:', req.originalUrl);
+  if (isBarcodeRoute) {
+    console.error('[404 Handler] ⚠️⚠️⚠️ BARCODE ROUTE 404 - This should not happen! ⚠️⚠️⚠️');
+    console.error('[404 Handler] Expected route: GET /api/products/barcode/:barcode');
+    console.error('[404 Handler] Actual request path:', req.path);
+    console.error('[404 Handler] Actual request originalUrl:', req.originalUrl);
+    console.error('[404 Handler] Request reached 404 handler - route was NOT matched');
+    console.error('[404 Handler] Possible causes:');
+    console.error('  1. Route not registered (check server startup logs)');
+    console.error('  2. Authentication failed before reaching route (check auth logs)');
+    console.error('  3. Store isolation middleware blocked request (check store isolation logs)');
+    console.error('  4. Path mismatch (expected /api/products/barcode/:barcode)');
   }
   
   res.status(404).json({
