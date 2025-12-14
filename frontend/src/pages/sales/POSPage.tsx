@@ -702,37 +702,50 @@ const POSPage: React.FC = () => {
 
     // Reload tax rate and sync products when page becomes visible (in case stock changed in another tab)
     useEffect(() => {
-        const handleVisibilityChange = () => {
+        const handleVisibilityChange = async () => {
             if (!document.hidden) {
                 fetchTaxRate();
-                // Sync products in background when page becomes visible (to catch stock changes from other tabs)
-                productSync.syncProducts({ forceRefresh: false }).then((result) => {
-                    if (result.success && result.products) {
-                        // Update local product state with synced products
-                        const normalizedProducts = result.products.map((p: any) => normalizeProduct(p));
-                        setProducts(prevProducts => {
-                            // Merge synced products with existing products
-                            const productMap = new Map(
-                                prevProducts.map(p => [String(p.id), p])
-                            );
-                            normalizedProducts.forEach((p: POSProduct) => {
-                                const key = String(p.id);
-                                const existing = productMap.get(key);
-                                if (existing) {
-                                    // Update existing product with fresh stock
-                                    productMap.set(key, { ...existing, stock: p.stock });
-                                } else {
-                                    // Add new product
-                                    productMap.set(key, p);
-                                }
-                            });
-                            return Array.from(productMap.values());
+                
+                // Check if data is fresh before syncing products
+                try {
+                    await productsDB.init();
+                    const isFresh = await productsDB.isDataFresh(5 * 60 * 1000); // 5 minutes
+                    if (isFresh) {
+                        console.log('[POS] Page visible but product data is fresh, skipping sync');
+                    } else {
+                        // Data is stale, sync products in background when page becomes visible (to catch stock changes from other tabs)
+                        console.log('[POS] Page visible and product data is stale, syncing...');
+                        productSync.syncProducts({ forceRefresh: false }).then((result) => {
+                            if (result.success && result.products) {
+                                // Update local product state with synced products
+                                const normalizedProducts = result.products.map((p: any) => normalizeProduct(p));
+                                setProducts(prevProducts => {
+                                    // Merge synced products with existing products
+                                    const productMap = new Map(
+                                        prevProducts.map(p => [String(p.id), p])
+                                    );
+                                    normalizedProducts.forEach((p: POSProduct) => {
+                                        const key = String(p.id);
+                                        const existing = productMap.get(key);
+                                        if (existing) {
+                                            // Update existing product with fresh stock
+                                            productMap.set(key, { ...existing, stock: p.stock });
+                                        } else {
+                                            // Add new product
+                                            productMap.set(key, p);
+                                        }
+                                    });
+                                    return Array.from(productMap.values());
+                                });
+                                console.log('[POS] Products synced after visibility change');
+                            }
+                        }).catch(error => {
+                            console.error('[POS] Error syncing products on visibility change:', error);
                         });
-                        console.log('[POS] Products synced after visibility change');
                     }
-                }).catch(error => {
-                    console.error('[POS] Error syncing products on visibility change:', error);
-                });
+                } catch (error) {
+                    console.error('[POS] Error checking data freshness on visibility change:', error);
+                }
                 // Sync customers in background when page becomes visible (to catch changes from other tabs)
                 customerSync.syncCustomers({ forceRefresh: false }).then((result) => {
                     if (isMountedRef.current && result.success && result.customers) {
