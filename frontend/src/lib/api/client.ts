@@ -81,13 +81,36 @@ export class ApiClient {
   }
 
   async get<T>(endpoint: string, params?: any): Promise<ApiResponse<T>> {
-    const response = await this.client.get(endpoint, { params });
-    return {
-      data: response.data as T,
-      message: (response.data as any)?.message ?? 'Success',
-      success: true,
-      status: response.status,
-    };
+    try {
+      const response = await this.client.get(endpoint, { params });
+      return {
+        data: response.data as T,
+        message: (response.data as any)?.message ?? 'Success',
+        success: true,
+        status: response.status,
+      };
+    } catch (error: any) {
+      // Enhanced error logging for 404s to help diagnose API URL issues
+      if (error.response?.status === 404) {
+        const fullUrl = error.config?.url || endpoint;
+        const baseURL = this.client.defaults.baseURL;
+        console.error('[API Client] 404 Error:', {
+          endpoint,
+          fullUrl,
+          baseURL,
+          resolvedURL: baseURL ? `${baseURL}${endpoint}` : endpoint,
+          message: 'Route not found - check if VITE_API_URL is set correctly',
+        });
+        
+        // If baseURL is '/api' in production, warn about missing VITE_API_URL
+        if (baseURL === '/api' && !import.meta.env.DEV) {
+          console.error('[API Client] ⚠️ CRITICAL: VITE_API_URL is not set!');
+          console.error('[API Client] Requests are going to frontend domain instead of backend');
+          console.error('[API Client] Set VITE_API_URL environment variable to your backend URL (e.g., https://your-backend.onrender.com/api)');
+        }
+      }
+      throw error;
+    }
   }
 
   async post<T>(endpoint: string, data?: any): Promise<ApiResponse<T>> {
@@ -173,7 +196,28 @@ export class ApiClient {
 }
 
 // Create default instance
-export const apiClient = new ApiClient((import.meta as any).env?.VITE_API_URL || '/api');
+// In production, VITE_API_URL must be set to the backend URL (e.g., https://your-backend.onrender.com/api)
+// In development, it defaults to '/api' which is proxied by Vite
+const getApiBaseUrl = (): string => {
+  const envUrl = (import.meta as any).env?.VITE_API_URL;
+  if (envUrl) {
+    console.log('[API Client] Using VITE_API_URL:', envUrl);
+    return envUrl;
+  }
+  
+  // Development fallback
+  if (import.meta.env.DEV) {
+    console.log('[API Client] Development mode - using /api proxy');
+    return '/api';
+  }
+  
+  // Production fallback - warn if not set
+  console.warn('[API Client] ⚠️ VITE_API_URL not set in production! Using /api (this will likely fail)');
+  console.warn('[API Client] Please set VITE_API_URL environment variable to your backend URL');
+  return '/api';
+};
+
+export const apiClient = new ApiClient(getApiBaseUrl());
 
 // Auth API endpoints
 export const authApi = {
