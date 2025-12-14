@@ -77,7 +77,17 @@ router.post('/', validateCreateProduct, createProduct);
 router.post('/import', upload.single('file'), importProducts);
 
 // Parameterized routes must come last
-router.get('/:id', getProduct);
+router.get('/:id', (req, res, next) => {
+  // Log if /:id route is matching a barcode request (this should NOT happen)
+  if (req.params.id && req.params.id.includes('barcode') || req.path.includes('barcode')) {
+    console.error('[Products Router] ⚠️⚠️⚠️ WARNING: /:id route matched a barcode request! ⚠️⚠️⚠️');
+    console.error('[Products Router] This means /barcode/:barcode route was NOT matched first');
+    console.error('[Products Router] ID param:', req.params.id);
+    console.error('[Products Router] Path:', req.path);
+    console.error('[Products Router] OriginalUrl:', req.originalUrl);
+  }
+  next();
+}, getProduct);
 router.put('/:id', updateProduct);
 router.delete('/:id', deleteProduct);
 
