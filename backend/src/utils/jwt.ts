@@ -20,9 +20,37 @@ export const generateRefreshToken = (payload: AuthTokenPayload): string => {
 
 export const verifyToken = (token: string): AuthTokenPayload => {
   try {
-    return jwt.verify(token, JWT_SECRET) as AuthTokenPayload;
-  } catch (error) {
-    throw new Error('Invalid or expired token');
+    // Verify token with detailed error handling
+    const decoded = jwt.verify(token, JWT_SECRET) as AuthTokenPayload;
+    return decoded;
+  } catch (error: any) {
+    // Provide more detailed error information for debugging
+    if (error.name === 'TokenExpiredError') {
+      console.error('[JWT] Token expired:', {
+        expiredAt: error.expiredAt,
+        currentTime: new Date(),
+      });
+      throw new Error('Token expired');
+    } else if (error.name === 'JsonWebTokenError') {
+      console.error('[JWT] Invalid token:', {
+        message: error.message,
+        secretSet: !!JWT_SECRET,
+        secretLength: JWT_SECRET?.length || 0,
+      });
+      throw new Error('Invalid token');
+    } else if (error.name === 'NotBeforeError') {
+      console.error('[JWT] Token not active yet:', {
+        notBefore: error.date,
+        currentTime: new Date(),
+      });
+      throw new Error('Token not active');
+    } else {
+      console.error('[JWT] Token verification error:', {
+        name: error.name,
+        message: error.message,
+      });
+      throw new Error('Invalid or expired token');
+    }
   }
 };
 

@@ -51,10 +51,20 @@ export const authenticate = async (
       }
 
       next();
-    } catch (error) {
+    } catch (error: any) {
+      // Enhanced error logging for debugging
+      console.error('[Auth Middleware] Token verification failed:', {
+        error: error.message,
+        tokenLength: token.length,
+        tokenPrefix: token.substring(0, 20) + '...',
+        jwtSecretSet: !!process.env.JWT_SECRET,
+        jwtSecretLength: process.env.JWT_SECRET?.length || 0,
+        nodeEnv: process.env.NODE_ENV,
+      });
+      
       res.status(401).json({
         success: false,
-        message: 'Invalid or expired token.',
+        message: error.message || 'Invalid or expired token.',
       });
       return;
     }
