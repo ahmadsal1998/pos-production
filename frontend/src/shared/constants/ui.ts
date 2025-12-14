@@ -364,6 +364,7 @@ export const AR_LABELS = {
   invoiceFooterText: 'النص التذييلي الافتراضي للفاتورة',
   // autoPrintInvoice: 'طباعة الفواتير تلقائياً بعد كل عملية بيع', // This is duplicated, using the one from POS
   sellWithoutStock: 'السماح ببيع المنتجات التي لا يوجد لها مخزون',
+  allowSellingZeroStock: 'السماح ببيع المنتجات ذات المخزون الصفر',
   userRolesAndPermissions: 'أدوار المستخدمين والصلاحيات',
   sessionDuration: 'مدة جلسة تسجيل الدخول (بالدقائق)',
   allowUserCreation: 'السماح للمسؤول بإنشاء مستخدمين جدد',

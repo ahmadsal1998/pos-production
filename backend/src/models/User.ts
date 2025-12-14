@@ -19,14 +19,12 @@ const userSchema = new Schema(
     username: {
       type: String,
       required: [true, 'Username is required'],
-      unique: true,
       trim: true,
       lowercase: true,
     },
     email: {
       type: String,
       required: [true, 'Email is required'],
-      unique: true,
       trim: true,
       lowercase: true,
       match: [/^\S+@\S+\.\S+$/, 'Please provide a valid email'],
@@ -76,6 +74,7 @@ const userSchema = new Schema(
       trim: true,
       lowercase: true,
       default: null,
+      index: true,
       // null means system/admin user, string means store-specific user
     },
   },
@@ -118,11 +117,13 @@ userSchema.methods.comparePassword = async function (
   return bcrypt.compare(candidatePassword, user.password as string);
 };
 
-// Indexes (email and username already indexed by unique: true)
+// CRITICAL INDEXES for performance
 userSchema.index({ role: 1 });
 userSchema.index({ storeId: 1 });
-// Compound index for store-specific username uniqueness
+// Unique username per store (for store users) - same username can exist in different stores
 userSchema.index({ storeId: 1, username: 1 }, { unique: true, partialFilterExpression: { storeId: { $ne: null } } });
+// GLOBAL unique email across ALL stores - prevents same email in multiple stores
+userSchema.index({ email: 1 }, { unique: true });
 
 // Create model
 const User: Model<UserDocument> = mongoose.model<UserDocument>('User', userSchema);

@@ -9,6 +9,9 @@ import { formatDate } from '@/shared/utils';
 import { customersApi, salesApi, ApiError } from '@/lib/api/client';
 import { useCurrency } from '@/shared/contexts/CurrencyContext';
 import { useAuthStore } from '@/app/store';
+import { printReceipt } from '@/shared/utils/printUtils';
+import { customerSync } from '@/lib/sync/customerSync';
+import { customersDB } from '@/lib/db/customersDB';
 
 // Filter icon component
 const FilterIcon = () => (
@@ -30,95 +33,99 @@ const SaleDetailsModal: React.FC<{ sale: SaleTransaction | null, onClose: () => 
     if (!sale) return null;
 
     const handlePrint = () => {
-        window.print();
+        printReceipt('printable-receipt');
     };
+
+    const isReturn = sale.status === 'Returned' || sale.id.startsWith('RET-');
+    const title = isReturn ? 'Returns' : 'PoshPointHub';
 
     return (
         <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4" onClick={onClose}>
             <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-2xl text-right" onClick={e => e.stopPropagation()}>
-                <div id="printable-receipt" className="p-6">
-                    <div className="flex justify-between items-start pb-4 border-b dark:border-gray-700">
-                        <div>
-                            <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100">{AR_LABELS.invoiceDetails}</h2>
-                            <p className="text-sm text-gray-500 dark:text-gray-400 font-mono">{sale.invoiceNumber || sale.id}</p>
-                        </div>
-                        <div className="text-left">
-                             <h3 className="font-bold text-lg">PoshPointHub</h3>
-                             <p className="text-xs text-gray-600 dark:text-gray-400">123 الشارع التجاري, الرياض, السعودية</p>
-                        </div>
-                    </div>
-                    
-                    <div className="grid grid-cols-2 gap-4 my-4 text-sm">
-                        <div>
-                            <p className="font-semibold text-gray-700 dark:text-gray-300">{AR_LABELS.customerName}:</p>
-                            <p className="text-gray-900 dark:text-gray-100">{sale.customerName}</p>
-                        </div>
-                        <div className="text-left">
-                             <p className="font-semibold text-gray-700 dark:text-gray-300">{AR_LABELS.date}:</p>
-                             <p className="text-gray-900 dark:text-gray-100">{new Date(sale.date).toLocaleString('ar-SA')}</p>
-                        </div>
-                         <div>
-                            <p className="font-semibold text-gray-700 dark:text-gray-300">{AR_LABELS.seller}:</p>
-                            <p className="text-gray-900 dark:text-gray-100">{sale.seller}</p>
-                        </div>
+                <div id="printable-receipt" className="w-full max-w-md bg-white dark:bg-gray-800 p-4 sm:p-6 rounded-lg shadow-lg text-right mx-auto">
+                    <div className="text-center mb-4 sm:mb-5 print-hidden">
+                        <h2 className="text-xl sm:text-2xl font-bold text-gray-800 dark:text-gray-100 mt-2">{isReturn ? AR_LABELS.returnCompleted || 'إرجاع مكتمل' : AR_LABELS.saleCompleted || 'بيع مكتمل'}</h2>
+                        <h3 className="text-lg sm:text-xl font-bold text-center text-gray-900 dark:text-gray-100 mt-3 sm:mt-4 mb-2">{title}</h3>
+                        <p className="text-center text-xs text-gray-500 dark:text-gray-400">123 الشارع التجاري, الرياض, السعودية</p>
                     </div>
 
-                    <div className="overflow-x-auto border-t border-b dark:border-gray-700">
-                        <table className="min-w-full text-right">
-                            <thead className="bg-gray-50 dark:bg-gray-700/50">
-                                <tr>
-                                    <th className="p-2 text-xs font-medium uppercase">#</th>
-                                    <th className="p-2 text-xs font-medium uppercase">{AR_LABELS.productName}</th>
-                                    <th className="p-2 text-xs font-medium uppercase">{AR_LABELS.quantity}</th>
-                                    <th className="p-2 text-xs font-medium uppercase">{AR_LABELS.price}</th>
-                                    <th className="p-2 text-xs font-medium uppercase text-left">{AR_LABELS.totalAmount}</th>
+                    <div className="invoice-info text-xs my-4 space-y-1.5">
+                        <p><strong>{AR_LABELS.invoiceNumber}:</strong> {sale.invoiceNumber || sale.id}</p>
+                        <p><strong>{AR_LABELS.date}:</strong> {new Date(sale.date).toLocaleString('ar-SA')}</p>
+                        <p><strong>{AR_LABELS.seller}:</strong> {sale.seller}</p>
+                        <p><strong>{AR_LABELS.customerName}:</strong> {sale.customerName || 'N/A'}</p>
+                    </div>
+                    
+                    <div className="overflow-x-auto -mx-2 sm:mx-0">
+                        <table className="w-full text-xs min-w-full border-collapse" style={{ borderSpacing: 0 }}>
+                            <thead>
+                                <tr className="bg-gray-100 dark:bg-gray-700">
+                                    <th className="py-2.5 px-3 text-right font-bold border border-gray-300 dark:border-gray-600" style={{ borderRight: '1px solid #dee2e6', borderLeft: '1px solid #dee2e6', borderTop: '1px solid #dee2e6', borderBottom: '2px solid #495057' }}>اسم المنتج</th>
+                                    <th className="py-2.5 px-3 text-center font-bold border border-gray-300 dark:border-gray-600" style={{ borderRight: '1px solid #dee2e6', borderLeft: '1px solid #dee2e6', borderTop: '1px solid #dee2e6', borderBottom: '2px solid #495057' }}>الكمية</th>
+                                    <th className="py-2.5 px-3 text-center font-bold border border-gray-300 dark:border-gray-600" style={{ borderRight: '1px solid #dee2e6', borderLeft: '1px solid #dee2e6', borderTop: '1px solid #dee2e6', borderBottom: '2px solid #495057' }}>سعر الوحدة</th>
+                                    <th className="py-2.5 px-3 text-left font-bold border border-gray-300 dark:border-gray-600" style={{ borderRight: '1px solid #dee2e6', borderLeft: '1px solid #dee2e6', borderTop: '1px solid #dee2e6', borderBottom: '2px solid #495057' }}>الإجمالي</th>
                                 </tr>
                             </thead>
                             <tbody>
-                                {sale.items.map((item, index) => {
-                                    const isReturn = sale.status === 'Returned' || sale.id.startsWith('RET-');
-                                    const displayUnitPrice = isReturn ? Math.abs(item.unitPrice) : item.unitPrice;
-                                    const displayTotal = isReturn ? Math.abs(item.total) : item.total;
+                                {sale.items.map((item, idx) => {
+                                    const itemUnitPrice = isReturn ? -Math.abs(item.unitPrice) : item.unitPrice;
+                                    const itemTotal = isReturn ? -Math.abs(item.total) : item.total;
                                     return (
-                                        <tr key={item.productId} className="border-b dark:border-gray-700">
-                                            <td className="p-2 text-sm">{index + 1}</td>
-                                            <td className="p-2 text-sm font-medium">{item.name}</td>
-                                            <td className="p-2 text-sm">{item.quantity}</td>
-                                            <td className={`p-2 text-sm ${isReturn ? 'text-red-600' : ''}`}>{isReturn ? '-' : ''}{formatCurrency(displayUnitPrice)}</td>
-                                            <td className={`p-2 text-sm font-semibold text-left ${isReturn ? 'text-red-600' : ''}`}>{isReturn ? '-' : ''}{formatCurrency(displayTotal)}</td>
-                                        </tr>
+                                    <tr key={item.productId || `receipt-item-${idx}`} className="border-b border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700/50">
+                                        <td className="py-2.5 px-3 text-right border border-gray-300 dark:border-gray-600 font-medium">{item.name}</td>
+                                        <td className="py-2.5 px-3 text-center border border-gray-300 dark:border-gray-600">{Math.abs(item.quantity)}</td>
+                                        <td className={`py-2.5 px-3 text-center border border-gray-300 dark:border-gray-600 ${isReturn ? 'text-red-600 dark:text-red-400' : 'text-gray-700 dark:text-gray-300'}`}>{formatCurrency(itemUnitPrice)}</td>
+                                        <td className={`py-2.5 px-3 text-left border border-gray-300 dark:border-gray-600 font-semibold ${isReturn ? 'text-red-600 dark:text-red-400' : 'text-gray-900 dark:text-gray-100'}`}>{formatCurrency(itemTotal)}</td>
+                                    </tr>
                                     );
                                 })}
                             </tbody>
                         </table>
                     </div>
-                    
-                    <div className="flex justify-end mt-4">
-                        <div className="w-1/2 text-sm space-y-1">
-                            {(() => {
-                                const isReturn = sale.status === 'Returned' || sale.id.startsWith('RET-');
-                                const displaySubtotal = isReturn ? Math.abs(sale.subtotal) : sale.subtotal;
-                                const displayDiscount = isReturn ? Math.abs(sale.totalItemDiscount + sale.invoiceDiscount) : (sale.totalItemDiscount + sale.invoiceDiscount);
-                                const displayTax = isReturn ? Math.abs(sale.tax) : sale.tax;
-                                const displayTotal = isReturn ? Math.abs(sale.totalAmount) : sale.totalAmount;
-                                const displayPaid = isReturn ? Math.abs(sale.paidAmount) : sale.paidAmount;
-                                const displayRemaining = isReturn ? Math.abs(sale.remainingAmount) : sale.remainingAmount;
-                                return (
-                                    <>
-                                        <div className="flex justify-between"><span className="text-gray-600 dark:text-gray-400">{AR_LABELS.subtotal}:</span><span className={isReturn ? 'text-red-600' : ''}>{isReturn ? '-' : ''}{formatCurrency(displaySubtotal)}</span></div>
-                                        <div className="flex justify-between"><span className="text-gray-600 dark:text-gray-400">{AR_LABELS.discount}:</span><span className={isReturn ? 'text-red-600' : ''}>{isReturn ? '-' : '-'}{formatCurrency(displayDiscount)}</span></div>
-                                        <div className="flex justify-between"><span className="text-gray-600 dark:text-gray-400">{AR_LABELS.tax}:</span><span className={isReturn ? 'text-red-600' : ''}>{isReturn ? '-' : '+'}{formatCurrency(displayTax)}</span></div>
-                                        <div className="flex justify-between font-bold text-lg border-t dark:border-gray-600 pt-1 mt-1"><span className="text-gray-800 dark:text-gray-100">{isReturn ? AR_LABELS.totalReturnValue || 'إجمالي الإرجاع' : AR_LABELS.grandTotal}:</span><span className={isReturn ? 'text-red-600' : 'text-orange-600'}>{isReturn ? '-' : ''}{formatCurrency(displayTotal)}</span></div>
-                                        <div className="flex justify-between"><span className="text-gray-600 dark:text-gray-400">{AR_LABELS.amountPaid}:</span><span className={isReturn ? 'text-red-600' : 'text-green-600'}>{isReturn ? '-' : ''}{formatCurrency(displayPaid)}</span></div>
-                                        <div className="flex justify-between"><span className="text-gray-600 dark:text-gray-400">{AR_LABELS.remaining}:</span><span className="text-red-600">{isReturn ? '-' : ''}{formatCurrency(displayRemaining)}</span></div>
-                                    </>
-                                );
-                            })()}
+
+                    <div className="receipt-summary mt-5 text-xs">
+                        <div className="flex justify-between py-1.5">
+                            <span className="text-gray-600 dark:text-gray-400 font-medium">{AR_LABELS.subtotal}:</span>
+                            <span className={`font-semibold ${isReturn ? 'text-red-600 dark:text-red-400' : 'text-gray-900 dark:text-gray-100'}`}>
+                                {formatCurrency(isReturn ? -Math.abs(sale.subtotal) : sale.subtotal)}
+                            </span>
                         </div>
+                        <div className="flex justify-between py-1.5">
+                            <span className="text-gray-600 dark:text-gray-400 font-medium">{AR_LABELS.totalDiscount}:</span>
+                            <span className={`font-semibold ${isReturn ? 'text-red-600 dark:text-red-400' : 'text-gray-900 dark:text-gray-100'}`}>
+                                {formatCurrency(isReturn ? -Math.abs(sale.totalItemDiscount + sale.invoiceDiscount) : -(sale.totalItemDiscount + sale.invoiceDiscount))}
+                            </span>
+                        </div>
+                        <div className="flex justify-between py-1.5">
+                            <span className="text-gray-600 dark:text-gray-400 font-medium">{AR_LABELS.tax}:</span>
+                            <span className={`font-semibold ${isReturn ? 'text-red-600 dark:text-red-400' : 'text-gray-900 dark:text-gray-100'}`}>
+                                {formatCurrency(isReturn ? -Math.abs(sale.tax) : sale.tax)}
+                            </span>
+                        </div>
+                        <div className="grand-total flex justify-between">
+                            <span className="text-gray-900 dark:text-gray-100 font-bold">{isReturn ? AR_LABELS.totalReturnValue || 'إجمالي الإرجاع' : AR_LABELS.grandTotal}:</span>
+                            <span className={`font-bold text-lg ${isReturn ? 'text-red-600 dark:text-red-400' : 'text-orange-600 dark:text-orange-400'}`}>
+                                {formatCurrency(isReturn ? -Math.abs(sale.totalAmount) : sale.totalAmount)}
+                            </span>
+                        </div>
+                        {sale.paidAmount > 0 && (
+                            <div className="flex justify-between py-1.5 mt-2">
+                                <span className="text-gray-600 dark:text-gray-400 font-medium">{AR_LABELS.amountPaid}:</span>
+                                <span className={`font-semibold ${isReturn ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400'}`}>
+                                    {formatCurrency(isReturn ? -Math.abs(sale.paidAmount) : sale.paidAmount)}
+                                </span>
+                            </div>
+                        )}
+                        {sale.remainingAmount !== 0 && (
+                            <div className="flex justify-between py-1.5">
+                                <span className="text-gray-600 dark:text-gray-400 font-medium">{AR_LABELS.remaining}:</span>
+                                <span className="font-semibold text-red-600 dark:text-red-400">
+                                    {formatCurrency(isReturn ? -Math.abs(sale.remainingAmount) : sale.remainingAmount)}
+                                </span>
+                            </div>
+                        )}
                     </div>
-
-                    <p className="text-center text-xs text-gray-500 dark:text-gray-400 mt-6 print-only-text">شكراً لتسوقكم!</p>
-
+                    <p className="receipt-footer text-center text-xs mt-6 text-gray-500 dark:text-gray-400">شكراً لتعاملكم معنا!</p>
                 </div>
                 <div className="flex justify-start space-x-4 space-x-reverse p-4 bg-gray-50 dark:bg-gray-800/50 border-t dark:border-gray-700 rounded-b-lg print-hidden">
                     <button onClick={handlePrint} className="inline-flex items-center px-4 py-2 bg-blue-500 text-white rounded-md"><PrintIcon/><span className="mr-2">{AR_LABELS.printReceipt}</span></button>
@@ -287,7 +294,7 @@ const CustomerDetailsModal: React.FC<{
                     </div>
                 </div>
                  <div className="flex justify-start space-x-4 space-x-reverse p-4 bg-gray-50 dark:bg-gray-800/50 border-t dark:border-gray-700 rounded-b-lg print-hidden">
-                    <button onClick={() => window.print()} className="inline-flex items-center px-4 py-2 bg-blue-500 text-white rounded-md"><PrintIcon/><span className="mr-2">{AR_LABELS.printReceipt}</span></button>
+                    <button onClick={() => printReceipt('printable-receipt')} className="inline-flex items-center px-4 py-2 bg-blue-500 text-white rounded-md"><PrintIcon/><span className="mr-2">{AR_LABELS.printReceipt}</span></button>
                     <button onClick={onClose} className="px-4 py-2 bg-gray-200 dark:bg-gray-600 text-gray-800 dark:text-gray-200 rounded-md">{AR_LABELS.cancel}</button>
                 </div>
             </div>
@@ -667,49 +674,73 @@ const SalesPage: React.FC<SalesPageProps> = ({ setActivePath }) => {
         setCurrentPage(1);
     }, [filters, pageSize]);
 
-    // Fetch customers from API
+    // Load customers from IndexedDB on mount
+    const loadCustomersFromDB = useCallback(async () => {
+        setIsLoadingCustomers(true);
+        setCustomersError(null);
+        try {
+            console.log('[Sales] Loading customers from IndexedDB...');
+            // Initialize IndexedDB
+            await customersDB.init();
+            
+            // Get all customers from IndexedDB
+            const dbCustomers = await customersDB.getAllCustomers();
+            
+            if (dbCustomers && dbCustomers.length > 0) {
+                // Transform API response to match Customer type
+                const transformedCustomers: Customer[] = dbCustomers.map((c: any) => ({
+                    id: c.id,
+                    name: c.name,
+                    phone: c.phone,
+                    previousBalance: c.previousBalance || 0,
+                    ...(c.address && { address: c.address }),
+                }));
+                console.log(`[Sales] Loaded ${transformedCustomers.length} customers from IndexedDB`);
+                setCustomers(transformedCustomers);
+                setIsLoadingCustomers(false);
+            } else {
+                // No customers in IndexedDB, sync from server
+                console.log('[Sales] No customers in IndexedDB, syncing from server...');
+                await fetchCustomers();
+            }
+        } catch (error) {
+            console.error('[Sales] Error loading customers from IndexedDB:', error);
+            // Fallback to server fetch
+            await fetchCustomers();
+        }
+    }, []);
+
+    // Fetch customers from API and sync to IndexedDB
     const fetchCustomers = useCallback(async () => {
         setIsLoadingCustomers(true);
         setCustomersError(null);
         try {
-            const response = await customersApi.getCustomers();
-            console.log('Customers API Response:', response); // Debug log
+            console.log('[Sales] Starting to fetch customers...');
             
-            // The API client wraps the response, so response.data contains the backend response
-            // Backend response structure: { success: boolean, message: string, data: { customers: [] } }
-            const backendResponse = response.data;
+            // Sync customers from server (this handles IndexedDB storage)
+            const syncResult = await customerSync.syncCustomers({ forceRefresh: true });
             
-            // Check backend's success field
-            if (backendResponse?.success) {
-                // Check if customers are in backendResponse.data.customers
-                const customersArray = backendResponse.data?.customers || [];
-                
-                if (Array.isArray(customersArray)) {
-                    // Transform API response to match Customer type
-                    const transformedCustomers: Customer[] = customersArray.map((c: any) => ({
-                        id: c.id,
-                        name: c.name,
-                        phone: c.phone,
-                        previousBalance: c.previousBalance || 0,
-                        ...(c.address && { address: c.address }),
-                    }));
-                    console.log(`Loaded ${transformedCustomers.length} customers from database`); // Debug log
-                    setCustomers(transformedCustomers);
-                } else {
-                    // Invalid response structure
-                    console.error('Invalid customers array format:', customersArray);
-                    setCustomers([]);
-                }
+            if (syncResult.success && syncResult.customers) {
+                // Transform API response to match Customer type
+                const transformedCustomers: Customer[] = syncResult.customers.map((c: any) => ({
+                    id: c.id,
+                    name: c.name,
+                    phone: c.phone,
+                    previousBalance: c.previousBalance || 0,
+                    ...(c.address && { address: c.address }),
+                }));
+                console.log(`[Sales] Successfully loaded ${transformedCustomers.length} customers and stored in IndexedDB`);
+                setCustomers(transformedCustomers);
             } else {
-                // Backend returned success: false
-                const errorMsg = backendResponse?.message || response.message || 'فشل تحميل قائمة العملاء';
+                // Error syncing
+                const errorMsg = syncResult.error || 'فشل تحميل قائمة العملاء';
                 setCustomersError(errorMsg);
-                console.error('Backend returned success: false', backendResponse);
-                setCustomers([]); // Clear customers on error
+                console.error('[Sales] Failed to sync customers:', syncResult.error);
+                setCustomers([]);
             }
         } catch (err: any) {
             const apiError = err as ApiError;
-            console.error('Error fetching customers:', {
+            console.error('[Sales] Error fetching customers:', {
                 error: err,
                 message: apiError.message,
                 status: apiError.status,
@@ -720,7 +751,7 @@ const SalesPage: React.FC<SalesPageProps> = ({ setActivePath }) => {
                 return;
             }
             setCustomersError(apiError.message || 'فشل تحميل قائمة العملاء');
-            setCustomers([]); // Clear customers on error
+            setCustomers([]);
         } finally {
             setIsLoadingCustomers(false);
         }
@@ -761,11 +792,83 @@ const SalesPage: React.FC<SalesPageProps> = ({ setActivePath }) => {
         }
     }, []);
 
-    // Fetch customers on component mount
+    // Load customers from IndexedDB on mount
     useEffect(() => {
-        fetchCustomers();
+        // Load customers from IndexedDB (fast, handles large datasets)
+        loadCustomersFromDB();
         fetchPayments();
-    }, [fetchCustomers, fetchPayments]);
+        
+        // Also sync customers in background
+        const timer = setTimeout(() => {
+            customerSync.syncCustomers({ forceRefresh: false }).then((result) => {
+                if (result.success && result.customers) {
+                    const transformedCustomers: Customer[] = result.customers.map((c: any) => ({
+                        id: c.id,
+                        name: c.name,
+                        phone: c.phone,
+                        previousBalance: c.previousBalance || 0,
+                        ...(c.address && { address: c.address }),
+                    }));
+                    setCustomers(transformedCustomers);
+                }
+            });
+        }, 500);
+        
+        return () => clearTimeout(timer);
+    }, [loadCustomersFromDB, fetchPayments]);
+
+    // Listen for customer changes from other tabs
+    useEffect(() => {
+        const handleStorageChange = (e: StorageEvent) => {
+            // If customers cache was invalidated, sync customers
+            if (e.key?.startsWith('customers_db_changed_')) {
+                customerSync.syncCustomers({ forceRefresh: true }).then(async (result) => {
+                    if (result.success && result.customers) {
+                        try {
+                            await customersDB.storeCustomers(result.customers);
+                            const dbCustomers = await customersDB.getAllCustomers();
+                            const transformedCustomers: Customer[] = dbCustomers.map((c: any) => ({
+                                id: c.id,
+                                name: c.name,
+                                phone: c.phone,
+                                previousBalance: c.previousBalance || 0,
+                                ...(c.address && { address: c.address }),
+                            }));
+                            setCustomers(transformedCustomers);
+                            console.log('[Sales] Customers synced and updated in IndexedDB after cache invalidation');
+                        } catch (error) {
+                            console.error('[Sales] Error updating customers in IndexedDB after cache invalidation:', error);
+                        }
+                    }
+                }).catch(error => {
+                    console.error('[Sales] Error syncing customers after cache invalidation:', error);
+                });
+            }
+        };
+
+        // Listen for customer changes via BroadcastChannel
+        let customerChannel: BroadcastChannel | null = null;
+        try {
+            customerChannel = new BroadcastChannel('customers_db_channel');
+            customerChannel.onmessage = (event) => {
+                if (event.data.type === 'customers_changed') {
+                    // Reload customers from IndexedDB
+                    loadCustomersFromDB();
+                }
+            };
+        } catch (error) {
+            console.warn('[Sales] BroadcastChannel not supported for customers');
+        }
+
+        window.addEventListener('storage', handleStorageChange);
+
+        return () => {
+            window.removeEventListener('storage', handleStorageChange);
+            if (customerChannel) {
+                customerChannel.close();
+            }
+        };
+    }, [loadCustomersFromDB]);
 
     // Get unique sellers from all sales (for filter dropdown)
     const sellers = useMemo(() => {
@@ -974,17 +1077,29 @@ const SalesPage: React.FC<SalesPageProps> = ({ setActivePath }) => {
 
                                     const backendResponse = response.data as any;
                                     if (response.success && backendResponse?.data?.customer) {
-                                        // Transform API response to match Customer type
-                                        const newCustomer: Customer = {
-                                            id: backendResponse.data.customer.id,
-                                            name: backendResponse.data.customer.name,
-                                            phone: backendResponse.data.customer.phone,
-                                            previousBalance: backendResponse.data.customer.previousBalance || 0,
-                                            ...(backendResponse.data.customer.address && { address: backendResponse.data.customer.address }),
-                                        };
+                                        const newCustomerData = backendResponse.data.customer;
                                         
-                                        // Refresh customers from API to ensure consistency
-                                        await fetchCustomers();
+                                        // Store the new customer directly in IndexedDB immediately (we already have it from the response)
+                                        // Use syncAfterCreateOrUpdate for proper sync handling and cross-tab notification
+                                        try {
+                                            await customerSync.syncAfterCreateOrUpdate(newCustomerData);
+                                            console.log('[SalesPage] Successfully synced customer to IndexedDB');
+                                        } catch (syncError) {
+                                            console.error('[SalesPage] Error syncing customer to IndexedDB:', syncError);
+                                            // Continue anyway - the customer was created successfully
+                                        }
+                                        
+                                        // Reload customers from IndexedDB to get updated list
+                                        const dbCustomers = await customersDB.getAllCustomers();
+                                        const transformedCustomers: Customer[] = dbCustomers.map((c: any) => ({
+                                            id: c.id,
+                                            name: c.name,
+                                            phone: c.phone,
+                                            previousBalance: c.previousBalance || 0,
+                                            ...(c.address && { address: c.address }),
+                                        }));
+                                        
+                                        setCustomers(transformedCustomers);
                                     }
                                 } catch (err: any) {
                                     const apiError = err as ApiError;
@@ -1658,12 +1773,136 @@ const AddCustomerModal: React.FC<{
     );
 };
 
+const EditCustomerModal: React.FC<{
+    customer: Customer | null;
+    onClose: () => void;
+    onSave: (customer: Customer) => Promise<void>;
+}> = ({ customer, onClose, onSave }) => {
+    const [name, setName] = useState(customer?.name || '');
+    const [phone, setPhone] = useState(customer?.phone || '');
+    const [address, setAddress] = useState(customer?.address || '');
+    const [errors, setErrors] = useState<{ phone?: string }>({});
+    const [isSubmitting, setIsSubmitting] = useState(false);
+
+    // Update form when customer changes
+    useEffect(() => {
+        if (customer) {
+            setName(customer.name || '');
+            setPhone(customer.phone || '');
+            setAddress(customer.address || '');
+        }
+    }, [customer]);
+
+    const handleSave = async () => {
+        if (!customer) return;
+
+        // Validate phone number (required)
+        if (!phone.trim()) {
+            setErrors({ phone: 'رقم الهاتف مطلوب' });
+            return;
+        }
+
+        // Clear errors
+        setErrors({});
+        setIsSubmitting(true);
+
+        try {
+            // Update customer data
+            const updatedCustomer: Customer = {
+                ...customer,
+                name: name.trim() || phone, // Use phone as name if name not provided
+                phone: phone.trim(),
+                ...(address.trim() && { address: address.trim() }),
+            };
+
+            await onSave(updatedCustomer);
+            
+            // Close modal on success
+            onClose();
+        } catch (error) {
+            // Error is handled by parent component
+            console.error('Error updating customer:', error);
+        } finally {
+            setIsSubmitting(false);
+        }
+    };
+
+    if (!customer) return null;
+
+    return (
+        <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4" onClick={onClose}>
+            <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-md text-right" onClick={e => e.stopPropagation()}>
+                <div className="p-6 space-y-4">
+                    <h2 className="text-xl font-bold text-gray-900 dark:text-gray-100">{AR_LABELS.edit} {AR_LABELS.customer}</h2>
+                    
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{AR_LABELS.customerName}</label>
+                        <input 
+                            type="text" 
+                            value={name} 
+                            onChange={e => setName(e.target.value)} 
+                            placeholder="اختياري"
+                            className="w-full p-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200 rounded-md text-right"
+                        />
+                    </div>
+
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                            {AR_LABELS.phone} <span className="text-red-500">*</span>
+                        </label>
+                        <input 
+                            type="tel" 
+                            value={phone} 
+                            onChange={e => {
+                                setPhone(e.target.value);
+                                if (errors.phone) setErrors({});
+                            }}
+                            className={`w-full p-2 border ${errors.phone ? 'border-red-500' : 'border-gray-300 dark:border-gray-600'} bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200 rounded-md text-right`}
+                            required
+                        />
+                        {errors.phone && <p className="text-red-500 text-xs mt-1">{errors.phone}</p>}
+                    </div>
+
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{AR_LABELS.address}</label>
+                        <textarea 
+                            value={address} 
+                            onChange={e => setAddress(e.target.value)} 
+                            placeholder="اختياري"
+                            rows={3}
+                            className="w-full p-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200 rounded-md text-right resize-none"
+                        />
+                    </div>
+                </div>
+                <div className="flex justify-start space-x-4 space-x-reverse p-4 bg-gray-50 dark:bg-gray-800/50 border-t dark:border-gray-700 rounded-b-lg">
+                    <button 
+                        onClick={handleSave} 
+                        disabled={isSubmitting}
+                        className="px-4 py-2 bg-orange-500 text-white rounded-md disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                        {isSubmitting ? 'جاري الحفظ...' : AR_LABELS.save}
+                    </button>
+                    <button 
+                        onClick={onClose} 
+                        disabled={isSubmitting}
+                        className="px-4 py-2 bg-gray-200 dark:bg-gray-600 text-gray-800 dark:text-gray-200 rounded-md disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                        {AR_LABELS.cancel}
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+};
+
 const CustomerGridCard: React.FC<{
     customer: Customer;
     summary: CustomerAccountSummary | undefined;
     onAddPayment: () => void;
     onViewStatement: () => void;
-}> = ({ customer, summary, onAddPayment, onViewStatement }) => {
+    onEdit: () => void;
+    onDelete: () => void;
+}> = ({ customer, summary, onAddPayment, onViewStatement, onEdit, onDelete }) => {
     const { formatCurrency } = useCurrency();
     
     return (
@@ -1710,21 +1949,39 @@ const CustomerGridCard: React.FC<{
             </div>
             
             {summary && (
-                <div className="flex gap-2">
-                    <button 
-                        onClick={onAddPayment}
-                        className="flex-1 px-3 py-2 bg-green-500 hover:bg-green-600 text-white rounded-md text-sm font-medium transition-colors flex items-center justify-center gap-2"
-                    >
-                        <AddPaymentIcon />
-                        {AR_LABELS.addPayment}
-                    </button>
-                    <button 
-                        onClick={onViewStatement}
-                        className="flex-1 px-3 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-md text-sm font-medium transition-colors flex items-center justify-center gap-2"
-                    >
-                        <ViewIcon />
-                        {AR_LABELS.customerStatement}
-                    </button>
+                <div className="space-y-2">
+                    <div className="flex gap-2">
+                        <button 
+                            onClick={onAddPayment}
+                            className="flex-1 px-3 py-2 bg-green-500 hover:bg-green-600 text-white rounded-md text-sm font-medium transition-colors flex items-center justify-center gap-2"
+                        >
+                            <AddPaymentIcon />
+                            {AR_LABELS.addPayment}
+                        </button>
+                        <button 
+                            onClick={onViewStatement}
+                            className="flex-1 px-3 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-md text-sm font-medium transition-colors flex items-center justify-center gap-2"
+                        >
+                            <ViewIcon />
+                            {AR_LABELS.customerStatement}
+                        </button>
+                    </div>
+                    <div className="flex gap-2">
+                        <button 
+                            onClick={onEdit}
+                            className="flex-1 px-3 py-2 bg-indigo-500 hover:bg-indigo-600 text-white rounded-md text-sm font-medium transition-colors flex items-center justify-center gap-2"
+                        >
+                            <EditIcon />
+                            {AR_LABELS.edit}
+                        </button>
+                        <button 
+                            onClick={onDelete}
+                            className="flex-1 px-3 py-2 bg-red-500 hover:bg-red-600 text-white rounded-md text-sm font-medium transition-colors flex items-center justify-center gap-2"
+                        >
+                            <DeleteIcon />
+                            {AR_LABELS.delete}
+                        </button>
+                    </div>
                 </div>
             )}
         </div>
@@ -1749,6 +2006,7 @@ const CustomerAccountsView: React.FC<{
     const [paymentModalTarget, setPaymentModalTarget] = useState<CustomerAccountSummary | null>(null);
     const [statementModalTarget, setStatementModalTarget] = useState<CustomerAccountSummary | null>(null);
     const [showAddCustomerModal, setShowAddCustomerModal] = useState(false);
+    const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
     const [sortField, setSortField] = useState<'name' | 'phone' | 'balance' | 'totalSales'>('name');
     const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
     const [viewMode, setViewMode] = useState<'table' | 'grid'>('table');
@@ -1948,6 +2206,104 @@ const CustomerAccountsView: React.FC<{
         return sortDirection === 'asc' ? '↑' : '↓';
     };
     
+    const handleUpdateCustomer = async (customer: Customer) => {
+        try {
+            const response = await customersApi.updateCustomer(customer.id, {
+                name: customer.name,
+                phone: customer.phone,
+                address: customer.address,
+                previousBalance: customer.previousBalance || 0,
+            });
+
+            const backendResponse = response.data as any;
+            if (response.success && backendResponse?.data?.customer) {
+                const updatedCustomerData = backendResponse.data.customer;
+                
+                // Sync to IndexedDB immediately
+                try {
+                    await customerSync.syncAfterCreateOrUpdate(updatedCustomerData);
+                    console.log('[CustomerAccountsView] Successfully synced updated customer to IndexedDB');
+                } catch (syncError) {
+                    console.error('[CustomerAccountsView] Error syncing customer to IndexedDB:', syncError);
+                }
+                
+                // Reload customers from IndexedDB to get updated list
+                const dbCustomers = await customersDB.getAllCustomers();
+                const transformedCustomers: Customer[] = dbCustomers.map((c: any) => ({
+                    id: c.id,
+                    name: c.name,
+                    phone: c.phone,
+                    previousBalance: c.previousBalance || 0,
+                    ...(c.address && { address: c.address }),
+                }));
+                
+                setCustomers(transformedCustomers);
+                setEditingCustomer(null);
+            }
+        } catch (err: any) {
+            const apiError = err as ApiError;
+            if (apiError.status === 401 || apiError.status === 403) {
+                // Handle auth errors if needed
+                console.error('Authentication error:', apiError);
+            }
+            const errorMessage = apiError.message || 'فشل تحديث العميل. يرجى المحاولة مرة أخرى.';
+            alert(errorMessage);
+            throw err;
+        }
+    };
+
+    const handleDeleteCustomer = async (customerId: string) => {
+        if (!window.confirm('هل أنت متأكد من حذف هذا العميل؟')) {
+            return;
+        }
+
+        try {
+            const response = await customersApi.deleteCustomer(customerId);
+
+            if (response.success) {
+                // Delete customer from IndexedDB immediately
+                try {
+                    await customerSync.syncAfterDelete(customerId);
+                    console.log('[CustomerAccountsView] Successfully removed customer from IndexedDB');
+                } catch (syncError) {
+                    console.error('[CustomerAccountsView] Error removing customer from IndexedDB:', syncError);
+                    // Even if IndexedDB deletion fails, we should still update local state
+                    // since the server confirmed the deletion
+                }
+                
+                // Remove customer from local state
+                setCustomers((prev) => prev.filter((c) => c.id !== customerId));
+            } else {
+                alert('فشل حذف العميل. يرجى المحاولة مرة أخرى.');
+            }
+        } catch (err: any) {
+            const apiError = err as ApiError;
+            
+            // Handle 404 as "already deleted" - sync IndexedDB to match server state
+            // This ensures consistency when customer was deleted on another device/session
+            if (apiError.status === 404) {
+                console.log('[CustomerAccountsView] Customer not found on server (404), syncing IndexedDB...');
+                try {
+                    await customerSync.syncAfterDelete(customerId);
+                    // Remove from local state since it doesn't exist on server
+                    setCustomers((prev) => prev.filter((c) => c.id !== customerId));
+                    console.log('[CustomerAccountsView] Successfully synced IndexedDB after 404');
+                } catch (syncError) {
+                    console.error('[CustomerAccountsView] Error syncing IndexedDB after 404:', syncError);
+                }
+                // Don't show error alert for 404 - customer is already deleted
+                return;
+            }
+            
+            if (apiError.status === 401 || apiError.status === 403) {
+                // Handle auth errors if needed
+                console.error('Authentication error:', apiError);
+            }
+            const errorMessage = apiError.message || 'فشل حذف العميل. يرجى المحاولة مرة أخرى.';
+            alert(errorMessage);
+        }
+    };
+
     const handleSavePayment = async (payment: CustomerPayment) => {
         try {
             // Save payment to database
@@ -2337,24 +2693,40 @@ const CustomerAccountsView: React.FC<{
                                             {summary?.lastPaymentDate || 'N/A'}
                                         </td>
                                 <td className="px-6 py-4 whitespace-nowrap text-center text-sm">
-                                            {summary && (
                                     <div className="flex items-center justify-center gap-2">
+                                        {summary && (
+                                            <>
+                                                <button 
+                                                    onClick={() => setPaymentModalTarget(summary)} 
+                                                    className="p-2 text-green-600 hover:text-green-900 dark:text-green-400 dark:hover:text-green-300 rounded-lg hover:bg-green-50 dark:hover:bg-gray-700 transition-colors"
+                                                    title={AR_LABELS.addPayment}
+                                                >
+                                                    <AddPaymentIcon/>
+                                                </button>
+                                                <button 
+                                                    onClick={() => setStatementModalTarget(summary)} 
+                                                    className="p-2 text-blue-600 hover:text-blue-900 dark:text-blue-400 dark:hover:text-blue-300 rounded-lg hover:bg-blue-50 dark:hover:bg-gray-700 transition-colors"
+                                                    title={AR_LABELS.customerStatement}
+                                                >
+                                                    <ViewIcon/>
+                                                </button>
+                                            </>
+                                        )}
                                         <button 
-                                                        onClick={() => setPaymentModalTarget(summary)} 
-                                            className="p-2 text-green-600 hover:text-green-900 dark:text-green-400 dark:hover:text-green-300 rounded-lg hover:bg-green-50 dark:hover:bg-gray-700 transition-colors"
-                                            title={AR_LABELS.addPayment}
+                                            onClick={() => setEditingCustomer(customer)} 
+                                            className="p-2 text-indigo-600 hover:text-indigo-900 dark:text-indigo-400 dark:hover:text-indigo-300 rounded-lg hover:bg-indigo-50 dark:hover:bg-gray-700 transition-colors"
+                                            title={AR_LABELS.edit}
                                         >
-                                            <AddPaymentIcon/>
+                                            <EditIcon/>
                                         </button>
                                         <button 
-                                                        onClick={() => setStatementModalTarget(summary)} 
-                                            className="p-2 text-blue-600 hover:text-blue-900 dark:text-blue-400 dark:hover:text-blue-300 rounded-lg hover:bg-blue-50 dark:hover:bg-gray-700 transition-colors"
-                                            title={AR_LABELS.customerStatement}
+                                            onClick={() => handleDeleteCustomer(customer.id)} 
+                                            className="p-2 text-red-600 hover:text-red-900 dark:text-red-400 dark:hover:text-red-300 rounded-lg hover:bg-red-50 dark:hover:bg-gray-700 transition-colors"
+                                            title={AR_LABELS.delete}
                                         >
-                                            <ViewIcon/>
+                                            <DeleteIcon/>
                                         </button>
                                     </div>
-                                            )}
                                 </td>
                             </tr>
                                 );
@@ -2373,6 +2745,8 @@ const CustomerAccountsView: React.FC<{
                                 summary={summary}
                                 onAddPayment={() => summary && setPaymentModalTarget(summary)}
                                 onViewStatement={() => summary && setStatementModalTarget(summary)}
+                                onEdit={() => setEditingCustomer(customer)}
+                                onDelete={() => handleDeleteCustomer(customer.id)}
                             />
                         );
                     })}
@@ -2421,6 +2795,13 @@ const CustomerAccountsView: React.FC<{
                 <AddCustomerModal 
                     onClose={() => setShowAddCustomerModal(false)} 
                     onSave={onSaveCustomer} 
+                />
+            )}
+            {editingCustomer && (
+                <EditCustomerModal 
+                    customer={editingCustomer}
+                    onClose={() => setEditingCustomer(null)} 
+                    onSave={handleUpdateCustomer} 
                 />
             )}
         </div>

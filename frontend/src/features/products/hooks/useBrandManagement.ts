@@ -55,9 +55,29 @@ const useBrandManagement = () => {
 
   const fetchBrands = useCallback(async () => {
     try {
+      // Try to get from IndexedDB first
+      try {
+        const { brandSync } = await import('@/lib/sync/brandsSync');
+        const cached = await brandSync.getCachedBrands();
+        if (cached && cached.length > 0) {
+          setBrands(cached.map(mapBackendBrand));
+        }
+      } catch (dbError) {
+        console.warn('Failed to load brands from IndexedDB:', dbError);
+      }
+      
+      // Always fetch from server to ensure we have the latest
       const response = await brandsApi.getBrands();
       const payload = response.data.brands ?? [];
       setBrands(payload.map(mapBackendBrand));
+      
+      // Sync to IndexedDB
+      try {
+        const { brandSync } = await import('@/lib/sync/brandsSync');
+        await brandSync.syncBrands(false);
+      } catch (syncError) {
+        console.warn('Failed to sync brands to IndexedDB:', syncError);
+      }
     } catch (error) {
       const apiError = error as ApiError;
       console.error('Failed to load brands', apiError);
@@ -130,6 +150,15 @@ const useBrandManagement = () => {
               productCount: 0
             };
             setBrands((previous) => [normalized, ...previous]);
+            
+            // Sync to IndexedDB
+            try {
+              await import('@/lib/sync/brandsSync').then(({ brandSync }) => 
+                brandSync.syncAfterCreateOrUpdate(createdBrand)
+              );
+            } catch (syncError) {
+              console.warn('Failed to sync brand to IndexedDB:', syncError);
+            }
           } else {
             await fetchBrands();
           }

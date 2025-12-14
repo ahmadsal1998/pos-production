@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useCallback } from 'react';
+import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { Product, Customer, POSInvoice, POSCartItem, SaleTransaction, SaleStatus, SalePaymentMethod } from '@/shared/types';
 
 import { AR_LABELS, UUID, SearchIcon, DeleteIcon, PlusIcon, HandIcon, CancelIcon, PrintIcon, CheckCircleIcon } from '@/shared/constants';
@@ -9,6 +9,12 @@ import { useCurrency } from '@/shared/contexts/CurrencyContext';
 import { saveSale } from '@/shared/utils/salesStorage';
 import { loadSettings } from '@/shared/utils/settingsStorage';
 import { useAuthStore } from '@/app/store';
+import { printReceipt } from '@/shared/utils/printUtils';
+import { productSync } from '@/lib/sync/productSync';
+import { productsDB } from '@/lib/db/productsDB';
+import { customerSync } from '@/lib/sync/customerSync';
+import { customersDB } from '@/lib/db/customersDB';
+import { salesSync } from '@/lib/sync/salesSync';
 // PaymentProcessingModal removed - using simple payment flow
 
 // Local POS product type with optional units
@@ -68,12 +74,13 @@ const POSPage: React.FC = () => {
     const { formatCurrency } = useCurrency();
     const { user } = useAuthStore();
     const currentUserName = user?.fullName || user?.username || 'Unknown';
-    const [products, setProducts] = useState<POSProduct[]>([]);
+    const [products, setProducts] = useState<POSProduct[]>([]); // Keep for backward compatibility, but IndexedDB is primary
     const [quickProducts, setQuickProducts] = useState<POSProduct[]>([]);
     const [isLoadingQuickProducts, setIsLoadingQuickProducts] = useState(false);
     const [productSuggestionsOpen, setProductSuggestionsOpen] = useState(false);
-    const [productsLoaded, setProductsLoaded] = useState(false); // Track if client-side products loaded successfully
+    const [productsLoaded, setProductsLoaded] = useState(false); // Track if products loaded from IndexedDB
     const [isSearchingServer, setIsSearchingServer] = useState(false); // Track server-side search state
+    const [isLoadingFromDB, setIsLoadingFromDB] = useState(false); // Track IndexedDB loading state
     const [customers, setCustomers] = useState<Customer[]>([]); // Customer list - starts empty, no dummy customers
     const [allCustomers, setAllCustomers] = useState<Customer[]>([]); // All customers from API
     const [customerSearchTerm, setCustomerSearchTerm] = useState(''); // Search term for customers
@@ -81,13 +88,40 @@ const POSPage: React.FC = () => {
     const [isLoadingCustomers, setIsLoadingCustomers] = useState(false);
     const [customersLoaded, setCustomersLoaded] = useState(false); // Track if client-side customers loaded successfully
     const [isSearchingCustomersServer, setIsSearchingCustomersServer] = useState(false); // Track server-side customer search state
+    const isLoadingCustomersRef = useRef(false); // Prevent multiple simultaneous customer loads
+    const isMountedRef = useRef(true); // Track if component is mounted
     const [currentInvoice, setCurrentInvoice] = useState<POSInvoice>(() => generateNewInvoice(currentUserName, 'INV-1'));
     const [heldInvoices, setHeldInvoices] = useState<POSInvoice[]>([]);
     const [searchTerm, setSearchTerm] = useState('');
     const [saleCompleted, setSaleCompleted] = useState(false);
     const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<string>('Cash');
     const [creditPaidAmount, setCreditPaidAmount] = useState(0);
-    const [autoPrintEnabled, setAutoPrintEnabled] = useState(true);
+    // Load autoPrintInvoice setting from preferences, default to true
+    const getAutoPrintSetting = (): boolean => {
+        try {
+            const settings = loadSettings(null);
+            if (settings && settings.autoPrintInvoice !== undefined) {
+                return settings.autoPrintInvoice;
+            }
+        } catch (err) {
+            console.error('Failed to load autoPrintInvoice setting:', err);
+        }
+        return true; // Default to true if not found
+    };
+    
+    // Helper function to get allowSellingZeroStock setting, default to true
+    const getAllowSellingZeroStockSetting = (): boolean => {
+        try {
+            const settings = loadSettings(null);
+            if (settings && settings.allowSellingZeroStock !== undefined) {
+                return settings.allowSellingZeroStock;
+            }
+        } catch (err) {
+            console.error('Failed to load allowSellingZeroStock setting:', err);
+        }
+        return true; // Default to true if not found
+    };
+    const [autoPrintEnabled, setAutoPrintEnabled] = useState(() => getAutoPrintSetting());
     const [isAddCustomerModalOpen, setIsAddCustomerModalOpen] = useState(false);
     
     // Helper function to get tax rate from settings (synchronous for initial state)
@@ -181,17 +215,39 @@ const POSPage: React.FC = () => {
         initializeInvoiceNumber();
     }, [fetchNextInvoiceNumber]);
 
-    // Fetch customers from API - made as useCallback so it can be called after customer creation
+    // Initialize sales sync service on mount
+    useEffect(() => {
+        const initializeSalesSync = async () => {
+            try {
+                await salesSync.init();
+                console.log('✅ Sales sync service initialized');
+            } catch (error) {
+                console.error('❌ Failed to initialize sales sync service:', error);
+            }
+        };
+        initializeSalesSync();
+    }, []);
+
+    // Set mounted ref to false on unmount
+    useEffect(() => {
+        isMountedRef.current = true;
+        return () => {
+            isMountedRef.current = false;
+        };
+    }, []);
+
+    // Fetch customers from API and sync to IndexedDB
     const fetchCustomers = useCallback(async () => {
         setIsLoadingCustomers(true);
         try {
             console.log('[POS] Starting to fetch customers...');
-            const response = await customersApi.getCustomers();
-            const customersData = (response.data as any)?.data?.customers || [];
             
-            // Transform backend data to frontend Customer format and filter out dummy customers
-            const transformedCustomers: Customer[] = Array.isArray(customersData)
-                ? customersData
+            // Sync customers from server (this handles IndexedDB storage)
+            const syncResult = await customerSync.syncCustomers({ forceRefresh: true });
+            
+            if (syncResult.success && syncResult.customers) {
+                // Transform backend data to frontend Customer format and filter out dummy customers
+                const transformedCustomers: Customer[] = syncResult.customers
                     .map((customer: any) => ({
                         id: customer.id,
                         name: customer.name || customer.phone,
@@ -199,13 +255,16 @@ const POSPage: React.FC = () => {
                         address: customer.address,
                         previousBalance: customer.previousBalance || 0,
                     }))
-                    .filter((customer: Customer) => !isDummyCustomer(customer))
-                : [];
-            
-            setAllCustomers(transformedCustomers);
-            setCustomers(transformedCustomers);
-            setCustomersLoaded(true);
-            console.log(`[POS] Successfully loaded ${transformedCustomers.length} customers for client-side search`);
+                    .filter((customer: Customer) => !isDummyCustomer(customer));
+                
+                setAllCustomers(transformedCustomers);
+                setCustomers(transformedCustomers);
+                setCustomersLoaded(true);
+                console.log(`[POS] Successfully loaded ${transformedCustomers.length} customers and stored in IndexedDB`);
+            } else {
+                console.warn('[POS] Failed to sync customers:', syncResult.error);
+                setCustomersLoaded(false);
+            }
         } catch (err: any) {
             const apiError = err as ApiError;
             console.error('[POS] Error fetching customers:', apiError);
@@ -221,6 +280,47 @@ const POSPage: React.FC = () => {
         }
     }, []);
 
+    // Load customers from IndexedDB on mount
+    const loadCustomersFromDB = useCallback(async () => {
+        setIsLoadingCustomers(true);
+        try {
+            console.log('[POS] Loading customers from IndexedDB...');
+            // Initialize IndexedDB
+            await customersDB.init();
+            
+            // Get all customers from IndexedDB
+            const dbCustomers = await customersDB.getAllCustomers();
+            
+            if (dbCustomers && dbCustomers.length > 0) {
+                // Transform backend data to frontend Customer format and filter out dummy customers
+                const transformedCustomers: Customer[] = dbCustomers
+                    .map((customer: any) => ({
+                        id: customer.id,
+                        name: customer.name || customer.phone,
+                        phone: customer.phone,
+                        address: customer.address,
+                        previousBalance: customer.previousBalance || 0,
+                    }))
+                    .filter((customer: Customer) => !isDummyCustomer(customer));
+                
+                setAllCustomers(transformedCustomers);
+                setCustomers(transformedCustomers);
+                setCustomersLoaded(true);
+                console.log(`[POS] Loaded ${transformedCustomers.length} customers from IndexedDB`);
+            } else {
+                // No customers in IndexedDB, sync from server
+                console.log('[POS] No customers in IndexedDB, syncing from server...');
+                await fetchCustomers();
+            }
+        } catch (error) {
+            console.error('[POS] Error loading customers from IndexedDB:', error);
+            // Fallback to server fetch
+            await fetchCustomers();
+        } finally {
+            setIsLoadingCustomers(false);
+        }
+    }, [fetchCustomers]);
+
     // Server-side customer search function (fallback when client-side customers aren't loaded)
     const searchCustomersOnServer = useCallback(async (term: string): Promise<Customer[]> => {
         const trimmed = term.trim();
@@ -235,6 +335,24 @@ const POSPage: React.FC = () => {
 
             if (response.success) {
                 const customersData = (response.data as any)?.data?.customers || [];
+                
+                // Sync found customers to IndexedDB to keep cache updated (server is source of truth)
+                if (customersData.length > 0) {
+                    try {
+                        // Sync each found customer to IndexedDB to ensure cache is up-to-date
+                        await Promise.all(
+                            customersData.map((customer: any) => 
+                                customerSync.syncAfterCreateOrUpdate(customer).catch(err => 
+                                    console.warn('[POS] Error syncing customer from search:', err)
+                                )
+                            )
+                        );
+                        console.log(`[POS] Synced ${customersData.length} customers from search to IndexedDB`);
+                    } catch (syncError) {
+                        console.warn('[POS] Error syncing customers from search to IndexedDB:', syncError);
+                        // Continue anyway - we still have the search results
+                    }
+                }
                 
                 // Transform and filter out dummy customers
                 const transformedCustomers: Customer[] = Array.isArray(customersData)
@@ -405,11 +523,78 @@ const POSPage: React.FC = () => {
         }
     }, [normalizeProduct]);
 
+    // Load products from IndexedDB on mount
+    const loadProductsFromDB = useCallback(async () => {
+        try {
+            setIsLoadingFromDB(true);
+            console.log('[POS] Loading products from IndexedDB...');
+            
+            // Initialize IndexedDB
+            await productsDB.init();
+            
+            // Get all products from IndexedDB
+            const dbProducts = await productsDB.getAllProducts();
+            
+            if (dbProducts && dbProducts.length > 0) {
+                // Normalize and set products
+                const normalizedProducts = dbProducts.map((p: any) => normalizeProduct(p));
+                setProducts(normalizedProducts);
+                setProductsLoaded(true);
+                console.log(`[POS] Loaded ${normalizedProducts.length} products from IndexedDB`);
+            } else {
+                // No products in IndexedDB, sync from server
+                console.log('[POS] No products in IndexedDB, syncing from server...');
+                const syncResult = await productSync.syncProducts({ forceRefresh: false });
+                if (syncResult.success && syncResult.products) {
+                    const normalizedProducts = syncResult.products.map((p: any) => normalizeProduct(p));
+                    setProducts(normalizedProducts);
+                    setProductsLoaded(true);
+                    console.log(`[POS] Synced and loaded ${normalizedProducts.length} products`);
+                } else {
+                    setProductsLoaded(false);
+                    console.warn('[POS] Failed to sync products from server');
+                }
+            }
+        } catch (error: any) {
+            console.error('[POS] Error loading products from IndexedDB:', error);
+            setProductsLoaded(false);
+        } finally {
+            setIsLoadingFromDB(false);
+        }
+    }, [normalizeProduct]);
+
     // Fetch all products for search functionality (lazy load in background)
+    // Now uses IndexedDB as primary storage
     const fetchAllProducts = useCallback(async () => {
         try {
             console.log('[POS] Starting to fetch all products for search...');
-            // Fetch all products - fetch multiple pages if needed to get all products
+            
+            // First check IndexedDB
+            await productsDB.init();
+            const dbProducts = await productsDB.getAllProducts();
+            
+            if (dbProducts && dbProducts.length > 0) {
+                // Use products from IndexedDB
+                const allProductsList = dbProducts.map((p: any) => normalizeProduct(p));
+                setProducts(allProductsList);
+                setProductsLoaded(true);
+                console.log(`[POS] Using ${allProductsList.length} products from IndexedDB`);
+                
+                // Sync from server in background to ensure we have latest data
+                productSync.syncProducts({ forceRefresh: false }).then((result) => {
+                    if (result.success && result.products) {
+                        const normalizedProducts = result.products.map((p: any) => normalizeProduct(p));
+                        setProducts(normalizedProducts);
+                        console.log(`[POS] Updated with ${normalizedProducts.length} products from server`);
+                    }
+                }).catch(error => {
+                    console.error('[POS] Error syncing products in background:', error);
+                });
+                
+                return;
+            }
+            
+            // No products in IndexedDB, fetch from server
             let allProductsData: any[] = [];
             let currentPage = 1;
             let hasMorePages = true;
@@ -429,7 +614,6 @@ const POSPage: React.FC = () => {
                             hasMorePages = pagination.hasNextPage === true;
                             currentPage++;
                         } else {
-                            // If no pagination info, stop after first page
                             hasMorePages = false;
                         }
                     } else {
@@ -438,70 +622,135 @@ const POSPage: React.FC = () => {
                     }
                 } catch (pageError: any) {
                     console.error(`[POS] Error fetching page ${currentPage}:`, pageError);
-                    // Continue to next page or stop if it's a critical error
-                    if (pageError.status === 401 || pageError.status === 403) {
-                        // Auth error - stop trying
-                        hasMorePages = false;
-                    } else if (currentPage === 1) {
-                        // If first page fails, stop completely
+                    if (pageError.status === 401 || pageError.status === 403 || currentPage === 1) {
                         hasMorePages = false;
                     } else {
-                        // If later page fails, stop but keep what we have
                         hasMorePages = false;
                     }
                 }
             }
             
             if (allProductsData.length > 0) {
-                // Update the main products list with ALL products (regardless of status) for search functionality
-                // This ensures all products in the database are searchable in POS
+                // Store in IndexedDB
+                await productsDB.storeProducts(allProductsData);
+                
+                // Update the main products list
                 const allProductsList = allProductsData.map((p: any) => normalizeProduct(p));
                 setProducts(allProductsList);
                 setProductsLoaded(true);
                 
-                console.log(`[POS] Successfully loaded ${allProductsList.length} products for client-side search`);
+                console.log(`[POS] Successfully loaded ${allProductsList.length} products and stored in IndexedDB`);
             } else {
                 console.warn('[POS] No products loaded - will use server-side search as fallback');
                 setProductsLoaded(false);
             }
         } catch (err: any) {
             console.error('[POS] Error fetching all products for search:', err);
-            console.error('[POS] Error details:', {
-                message: err.message,
-                status: err.status,
-                code: err.code
-            });
             setProductsLoaded(false);
-            // Don't show error to user, will use server-side search as fallback
         }
     }, [normalizeProduct]);
 
-    // Fetch customers and quick products on mount
+    // Fetch customers and quick products on mount, and load products from IndexedDB
     useEffect(() => {
-        fetchCustomers();
+        // Load customers from IndexedDB (fast, handles large datasets)
+        loadCustomersFromDB();
         fetchTaxRate();
         fetchQuickProducts(); // Fast - uses backend filtering and cache
         
-        // DISABLED: Automatic fetching of all products causes too many API requests (57+ requests)
-        // Instead, we rely on server-side search which is more efficient and scalable
-        // Server-side search is already implemented and works for both name and barcode searches
-        // If you need client-side search for better performance, consider:
-        // 1. Limiting to first page only (e.g., first 1000 products)
-        // 2. Using a lazy loading strategy (fetch on demand)
-        // 3. Implementing proper caching with TTL
+        // Load products from IndexedDB (fast, handles large datasets)
+        loadProductsFromDB();
         
-        // Uncomment below to enable client-side product loading (with limitations):
-        // const timer = setTimeout(() => {
-        //     fetchAllProducts();
-        // }, 100);
-        // return () => clearTimeout(timer);
-    }, [fetchCustomers, fetchQuickProducts, fetchTaxRate]);
+        // Also fetch all products in background for search (uses IndexedDB)
+        const timer = setTimeout(() => {
+            fetchAllProducts();
+            // Also sync customers in background
+            customerSync.syncCustomers({ forceRefresh: false }).then((result) => {
+                if (isMountedRef.current && result.success && result.customers) {
+                    const transformedCustomers: Customer[] = result.customers
+                        .map((customer: any) => ({
+                            id: customer.id,
+                            name: customer.name || customer.phone,
+                            phone: customer.phone,
+                            address: customer.address,
+                            previousBalance: customer.previousBalance || 0,
+                        }))
+                        .filter((customer: Customer) => !isDummyCustomer(customer));
+                    try {
+                        setAllCustomers(transformedCustomers);
+                        setCustomers(transformedCustomers);
+                        setCustomersLoaded(true);
+                    } catch (error) {
+                        // Silently handle if component unmounted
+                        console.debug('[POS] State update skipped (component unmounted)');
+                    }
+                }
+            });
+        }, 500); // Small delay to let IndexedDB load first
+        
+        return () => {
+            clearTimeout(timer);
+        };
+    }, [loadCustomersFromDB, fetchQuickProducts, fetchTaxRate, loadProductsFromDB, fetchAllProducts]);
 
-    // Reload tax rate when page becomes visible (in case settings were changed in another tab)
+    // Reload tax rate and sync products when page becomes visible (in case stock changed in another tab)
     useEffect(() => {
         const handleVisibilityChange = () => {
             if (!document.hidden) {
                 fetchTaxRate();
+                // Sync products in background when page becomes visible (to catch stock changes from other tabs)
+                productSync.syncProducts({ forceRefresh: false }).then((result) => {
+                    if (result.success && result.products) {
+                        // Update local product state with synced products
+                        const normalizedProducts = result.products.map((p: any) => normalizeProduct(p));
+                        setProducts(prevProducts => {
+                            // Merge synced products with existing products
+                            const productMap = new Map(
+                                prevProducts.map(p => [String(p.id), p])
+                            );
+                            normalizedProducts.forEach((p: POSProduct) => {
+                                const key = String(p.id);
+                                const existing = productMap.get(key);
+                                if (existing) {
+                                    // Update existing product with fresh stock
+                                    productMap.set(key, { ...existing, stock: p.stock });
+                                } else {
+                                    // Add new product
+                                    productMap.set(key, p);
+                                }
+                            });
+                            return Array.from(productMap.values());
+                        });
+                        console.log('[POS] Products synced after visibility change');
+                    }
+                }).catch(error => {
+                    console.error('[POS] Error syncing products on visibility change:', error);
+                });
+                // Sync customers in background when page becomes visible (to catch changes from other tabs)
+                customerSync.syncCustomers({ forceRefresh: false }).then((result) => {
+                    if (isMountedRef.current && result.success && result.customers) {
+                        const transformedCustomers: Customer[] = result.customers
+                            .map((customer: any) => ({
+                                id: customer.id,
+                                name: customer.name || customer.phone,
+                                phone: customer.phone,
+                                address: customer.address,
+                                previousBalance: customer.previousBalance || 0,
+                            }))
+                            .filter((customer: Customer) => !isDummyCustomer(customer));
+                        try {
+                            setAllCustomers(transformedCustomers);
+                            setCustomers(transformedCustomers);
+                            setCustomersLoaded(true);
+                            console.log('[POS] Customers synced after visibility change');
+                        } catch (error) {
+                            console.debug('[POS] State update skipped (component unmounted)');
+                        }
+                    }
+                }).catch(error => {
+                    if (isMountedRef.current) {
+                        console.error('[POS] Error syncing customers on visibility change:', error);
+                    }
+                });
             }
         };
         
@@ -510,7 +759,48 @@ const POSPage: React.FC = () => {
             if (e.key && e.key.startsWith('pos_settings_')) {
                 fetchTaxRate();
             }
+            // If products cache was invalidated, sync products
+            if (e.key && e.key.startsWith('pos_products_cache_') || e.key?.startsWith('products_db_changed_')) {
+                productSync.syncProducts({ forceRefresh: true }).then(async (result) => {
+                    if (result.success && result.products) {
+                        // Update IndexedDB
+                        try {
+                            await productsDB.storeProducts(result.products);
+                            // Reload from IndexedDB
+                            const dbProducts = await productsDB.getAllProducts();
+                            const normalizedProducts = dbProducts.map((p: any) => normalizeProduct(p));
+                            setProducts(normalizedProducts);
+                            console.log('[POS] Products synced and updated in IndexedDB after cache invalidation');
+                        } catch (error) {
+                            console.error('[POS] Error updating IndexedDB after cache invalidation:', error);
+                        }
+                    }
+                }).catch(error => {
+                    console.error('[POS] Error syncing products after cache invalidation:', error);
+                });
+            }
+            // If customers cache was invalidated, sync customerssss
+            if (e.key?.startsWith('customers_db_changed_')) {
+                // Use loadCustomersFromDB to ensure proper closure and avoid "setCustomers is not defined" errors
+                loadCustomersFromDB().catch(error => {
+                    console.error('[POS] Error reloading customers after cache invalidation:', error);
+                });
+            }
         };
+
+        // Listen for customer changes via BroadcastChannel
+        let customerChannel: BroadcastChannel | null = null;
+        try {
+            customerChannel = new BroadcastChannel('customers_db_channel');
+            customerChannel.onmessage = (event) => {
+                if (event.data.type === 'customers_changed') {
+                    // Reload customers from IndexedDB
+                    loadCustomersFromDB();
+                }
+            };
+        } catch (error) {
+            console.warn('[POS] BroadcastChannel not supported for customers');
+        }
 
         document.addEventListener('visibilitychange', handleVisibilityChange);
         window.addEventListener('storage', handleStorageChange);
@@ -518,52 +808,174 @@ const POSPage: React.FC = () => {
         return () => {
             document.removeEventListener('visibilitychange', handleVisibilityChange);
             window.removeEventListener('storage', handleStorageChange);
+            if (customerChannel) {
+                customerChannel.close();
+            }
         };
-    }, [fetchTaxRate]);
+    }, [fetchTaxRate, normalizeProduct, loadCustomersFromDB]);
 
     // State for server-side customer search results
     const [serverCustomerSearchResults, setServerCustomerSearchResults] = useState<Customer[]>([]);
 
-    // Filter customers based on search term (client-side or server-side)
+    // Filter customers based on search term (uses IndexedDB for fast local search)
     useEffect(() => {
         if (!customerSearchTerm.trim()) {
-            // If no search term, use all customers (client-side) or empty (server-side)
+            // If no search term, use allCustomers if already loaded
             if (customersLoaded && allCustomers.length > 0) {
-                setCustomers(allCustomers);
-            } else {
-                setCustomers([]);
+                // Only update customers if they're different to prevent unnecessary re-renders
+                setCustomers(prevCustomers => {
+                    if (prevCustomers.length !== allCustomers.length ||
+                        !prevCustomers.every((c, i) => allCustomers[i]?.id === c.id)) {
+                        return allCustomers;
+                    }
+                    return prevCustomers;
+                });
+                setServerCustomerSearchResults([]);
+                return;
             }
+
+            // If customers are not loaded and we're not already loading, try to load from IndexedDB
+            if (isLoadingCustomersRef.current) {
+                return;
+            }
+
+            isLoadingCustomersRef.current = true;
+            const loadAllCustomers = async () => {
+                try {
+                    await customersDB.init();
+                    const dbCustomers = await customersDB.getAllCustomers();
+                    
+                    if (isMountedRef.current && dbCustomers && dbCustomers.length > 0) {
+                        const transformedCustomers: Customer[] = dbCustomers
+                            .map((customer: any) => ({
+                                id: customer.id,
+                                name: customer.name || customer.phone,
+                                phone: customer.phone,
+                                address: customer.address,
+                                previousBalance: customer.previousBalance || 0,
+                            }))
+                            .filter((customer: Customer) => !isDummyCustomer(customer));
+                        try {
+                            setAllCustomers(transformedCustomers);
+                            setCustomers(transformedCustomers);
+                            setCustomersLoaded(true);
+                            console.log(`[POS] Loaded ${transformedCustomers.length} customers from IndexedDB for dropdown`);
+                        } catch (error) {
+                            // Silently handle if component unmounted
+                            console.debug('[POS] State update skipped (component unmounted)');
+                        }
+                    }
+                    // If no customers in IndexedDB, don't set empty - let initial load handle it
+                } catch (error) {
+                    console.error('[POS] Error loading customers from IndexedDB:', error);
+                } finally {
+                    isLoadingCustomersRef.current = false;
+                }
+            };
+            loadAllCustomers();
             setServerCustomerSearchResults([]);
             return;
         }
 
-        // If customers aren't loaded or array is empty, use server-side search
-        if (!customersLoaded || allCustomers.length === 0) {
-            console.log('[POS] Using server-side customer search (client-side customers not loaded)');
-            // Debounce server-side search
-            const timeoutId = setTimeout(async () => {
-                const results = await searchCustomersOnServer(customerSearchTerm);
-                setServerCustomerSearchResults(results);
-                setCustomers(results);
-            }, 300); // Debounce 300ms
+        // Use IndexedDB search for fast local search
+        const searchCustomersLocal = async () => {
+            if (!isMountedRef.current) return;
+            try {
+                // Search in IndexedDB (fast, handles large datasets)
+                const searchResults = await customersDB.searchCustomers(customerSearchTerm);
 
-            return () => clearTimeout(timeoutId);
-        } else {
-            // Use client-side search if customers are loaded
-            const searchLower = customerSearchTerm.toLowerCase();
-            const filtered = allCustomers.filter(customer => 
-                customer.name?.toLowerCase().includes(searchLower) ||
-                customer.phone?.includes(searchLower) ||
-                customer.address?.toLowerCase().includes(searchLower)
-            );
-            setCustomers(filtered);
-            setServerCustomerSearchResults([]);
+                if (!isMountedRef.current) return;
+
+                // Transform and filter out dummy customers
+                const transformedCustomers: Customer[] = searchResults
+                    .map((customer: any) => ({
+                        id: customer.id,
+                        name: customer.name || customer.phone,
+                        phone: customer.phone,
+                        address: customer.address,
+                        previousBalance: customer.previousBalance || 0,
+                    }))
+                    .filter((customer: Customer) => !isDummyCustomer(customer));
+
+                try {
+                    setCustomers(transformedCustomers);
+                    setServerCustomerSearchResults([]);
+                } catch (error) {
+                    // Silently handle if component unmounted
+                    console.debug('[POS] State update skipped (component unmounted)');
+                }
+            } catch (error) {
+                if (!isMountedRef.current) return;
+                console.error('[POS] Error searching customers in IndexedDB:', error);
+                // Fallback to server-side search
+                if (!customersLoaded || allCustomers.length === 0) {
+                    const results = await searchCustomersOnServer(customerSearchTerm);
+                    if (isMountedRef.current) {
+                        try {
+                            setServerCustomerSearchResults(results);
+                            setCustomers(results);
+                        } catch (error) {
+                            console.debug('[POS] State update skipped (component unmounted)');
+                        }
+                    }
+                } else {
+                    // Fallback to client-side filter from state
+                    const searchLower = customerSearchTerm.toLowerCase();
+                    const filtered = allCustomers.filter(customer => 
+                        customer.name?.toLowerCase().includes(searchLower) ||
+                        customer.phone?.includes(searchLower) ||
+                        customer.address?.toLowerCase().includes(searchLower)
+                    );
+                    if (isMountedRef.current) {
+                        try {
+                            setCustomers(filtered);
+                        } catch (error) {
+                            console.debug('[POS] State update skipped (component unmounted)');
+                        }
+                    }
+                }
+            }
+        };
+
+        // Debounce search
+        const timeoutId = setTimeout(() => {
+            searchCustomersLocal();
+        }, 300);
+
+        return () => {
+            clearTimeout(timeoutId);
+        };
+    }, [customerSearchTerm, customersLoaded, allCustomers, searchCustomersOnServer]);
+
+    // Load autoPrintInvoice setting when component mounts or settings change
+    useEffect(() => {
+        const settings = loadSettings(null);
+        if (settings && settings.autoPrintInvoice !== undefined) {
+            setAutoPrintEnabled(settings.autoPrintInvoice);
         }
-    }, [customerSearchTerm, allCustomers, customersLoaded, searchCustomersOnServer]);
+    }, []);
 
+    // Auto-print when sale is completed and autoPrintInvoice is enabled
     useEffect(() => {
         if (saleCompleted && autoPrintEnabled) {
-            const timer = setTimeout(() => window.print(), 300); // Small delay to ensure render
+            // Small delay to ensure the receipt screen is rendered before printing
+            const timer = setTimeout(() => {
+                // Check if the receipt element exists and is visible
+                const receiptElement = document.getElementById('printable-receipt');
+                if (receiptElement) {
+                    // Use silent print utility - prints without opening new window/tab
+                    printReceipt('printable-receipt').catch((error) => {
+                        console.error('Auto-print failed:', error);
+                    });
+                } else {
+                    // If receipt not found, try again after a short delay
+                    setTimeout(() => {
+                        printReceipt('printable-receipt').catch((error) => {
+                            console.error('Auto-print failed:', error);
+                        });
+                    }, 200);
+                }
+            }, 100); // Minimal delay to ensure receipt element is rendered
             return () => clearTimeout(timer);
         }
     }, [saleCompleted, autoPrintEnabled]);
@@ -588,11 +1000,29 @@ const POSPage: React.FC = () => {
         return factor && factor > 0 ? factor : 1;
     }, []);
 
-    const handleAddProduct = (product: POSProduct, unit = 'قطعة', unitPriceOverride?: number, conversionFactorOverride?: number, piecesPerUnitOverride?: number) => {
+    // Check stock from server for critical operations (bypasses cache)
+    const checkStockFromServer = useCallback(async (productId: string, originalId?: string): Promise<number | null> => {
+        const idToQuery = originalId || productId;
+        if (!idToQuery) return null;
+
+        try {
+            const serverProduct = await productSync.queryProductFromServer(idToQuery);
+            if (serverProduct) {
+                return serverProduct.stock || 0;
+            }
+        } catch (error) {
+            console.error('[POS] Error checking stock from server:', error);
+        }
+        return null;
+    }, []);
+
+    const handleAddProduct = async (product: POSProduct, unit = 'قطعة', unitPriceOverride?: number, conversionFactorOverride?: number, piecesPerUnitOverride?: number, useServerStockCheck = false) => {
         // Use the passed product directly to ensure we use the correct price (avoids hash collision issues)
         // Only use productFromState for additional properties like units if needed
         const productFromState = products.find(prod => prod.id === product.id);
         
+        // CRITICAL: Always use the passed product data as the source of truth
+        // The passed product comes from fresh API data (e.g., barcode search), not stale IndexedDB/state
         // Prefer the passed product's data, but merge with state product for units if available
         const finalProduct: POSProduct = {
             ...product,
@@ -631,6 +1061,46 @@ const POSPage: React.FC = () => {
             incomingUnitPrice = product.price || 0;
         }
 
+        // CRITICAL: Always use the passed product's stock as the source of truth
+        // The passed product comes from fresh API data (e.g., barcode search), which has the latest quantity
+        // Only fall back to state product if the passed product doesn't have stock data
+        let availableStock = product.stock !== undefined && product.stock !== null 
+            ? product.stock 
+            : (productFromState?.stock ?? 0);
+            
+        console.log('[POS] Stock check:', {
+            productId: product.id,
+            productName: product.name,
+            passedProductStock: product.stock,
+            stateProductStock: productFromState?.stock,
+            finalAvailableStock: availableStock,
+            source: product.stock !== undefined && product.stock !== null ? 'passed_product' : 'state_fallback'
+        });
+        if (useServerStockCheck && product.originalId) {
+            const serverStock = await checkStockFromServer(String(product.id), product.originalId);
+            if (serverStock !== null) {
+                availableStock = serverStock;
+                // Update IndexedDB and local state with fresh stock
+                try {
+                    await productsDB.updateProductStock(product.originalId, serverStock);
+                } catch (error) {
+                    console.error('[POS] Error updating stock in IndexedDB:', error);
+                }
+                setProducts(prevProducts => {
+                    const updated = prevProducts.map(p => 
+                        String(p.id) === String(product.id) 
+                            ? { ...p, stock: serverStock }
+                            : p
+                    );
+                    // If product not in state, add it
+                    if (!updated.some(p => String(p.id) === String(product.id))) {
+                        updated.push({ ...product, stock: serverStock });
+                    }
+                    return updated;
+                });
+            }
+        }
+
         setCurrentInvoice(inv => {
             // Check for existing item using productId AND name AND unit to avoid hash collision issues
             // Only update quantity if it's truly the same product (same ID, name, and unit)
@@ -643,8 +1113,19 @@ const POSPage: React.FC = () => {
             const newQuantity = currentQuantity + piecesPerUnit;
 
             // Stock check using piece-based quantities
-            const availablePieces = productFromState ? productFromState.stock * piecesPerMainUnit : Infinity;
-            if (newQuantity > availablePieces) {
+            const availablePieces = availableStock * piecesPerMainUnit;
+            
+            // Check allowSellingZeroStock setting
+            const allowSellingZeroStock = getAllowSellingZeroStockSetting();
+            
+            // If setting is disabled and stock is zero, block the sale
+            if (!allowSellingZeroStock && availablePieces === 0) {
+                alert(`لا يمكن بيع المنتج "${product.name}" لأنه لا يوجد مخزون متوفر.`);
+                return inv;
+            }
+            
+            // If quantity exceeds available stock (and stock > 0), block the sale
+            if (newQuantity > availablePieces && availablePieces > 0) {
                 alert(`الكمية المطلوبة (${newQuantity}) تتجاوز المخزون المتوفر (${availablePieces}).`);
                 return inv;
             }
@@ -804,47 +1285,97 @@ const POSPage: React.FC = () => {
         }
     }, [normalizeProduct]);
 
-    // Client-side search function (uses loaded products array)
-    const resolveSearchMatches = useCallback((term: string): SearchMatch[] => {
+    // Client-side search function (uses IndexedDB for fast search)
+    const resolveSearchMatches = useCallback(async (term: string): Promise<SearchMatch[]> => {
         const trimmed = term.trim();
         if (!trimmed) return [];
         const lower = trimmed.toLowerCase();
         const results: SearchMatch[] = [];
 
-        products.forEach((p) => {
-            const piecesPerMainUnit = getPiecesPerMainUnit(p);
+        try {
+            // Search in IndexedDB first (fast, handles large datasets)
+            const dbProducts = await productsDB.searchProducts({
+                searchTerm: trimmed,
+                limit: 1000, // Get up to 1000 results for search
+            });
 
-            // Barcode exact match on product
-            if (p.barcode && (p.barcode === trimmed || p.barcode.toLowerCase() === lower)) {
-                const perPiecePrice = piecesPerMainUnit > 0 ? p.price / piecesPerMainUnit : p.price;
-                results.push({ product: p, unitName: 'كرتون', unitPrice: perPiecePrice, barcode: p.barcode, conversionFactor: piecesPerMainUnit, piecesPerUnit: piecesPerMainUnit });
-            }
-            // Barcode match on units
-            if (p.units) {
-                for (const u of p.units) {
-                    if (u.barcode && (u.barcode === trimmed || u.barcode.toLowerCase() === lower)) {
-                        const perPiecePrice = u.sellingPrice || (piecesPerMainUnit > 0 ? p.price / piecesPerMainUnit : p.price);
-                        // Secondary units are counted as 1 piece per scan
-                        results.push({ product: p, unitName: u.unitName || 'قطعة', unitPrice: perPiecePrice, barcode: u.barcode, conversionFactor: u.conversionFactor || piecesPerMainUnit, piecesPerUnit: 1 });
+            // Process results
+            dbProducts.forEach((p: any) => {
+                const normalizedProduct = normalizeProduct(p);
+                const piecesPerMainUnit = getPiecesPerMainUnit(normalizedProduct);
+
+                // Barcode exact match on product
+                const productBarcode = normalizedProduct.barcode || (p as any).primaryBarcode || '';
+                if (productBarcode && (productBarcode === trimmed || productBarcode.toLowerCase() === lower)) {
+                    const perPiecePrice = piecesPerMainUnit > 0 ? normalizedProduct.price / piecesPerMainUnit : normalizedProduct.price;
+                    results.push({ 
+                        product: normalizedProduct, 
+                        unitName: 'كرتون', 
+                        unitPrice: perPiecePrice, 
+                        barcode: productBarcode, 
+                        conversionFactor: piecesPerMainUnit, 
+                        piecesPerUnit: piecesPerMainUnit 
+                    });
+                }
+                
+                // Barcode match on units
+                if (normalizedProduct.units) {
+                    for (const u of normalizedProduct.units) {
+                        if (u.barcode && (u.barcode === trimmed || u.barcode.toLowerCase() === lower)) {
+                            const perPiecePrice = u.sellingPrice || (piecesPerMainUnit > 0 ? normalizedProduct.price / piecesPerMainUnit : normalizedProduct.price);
+                            // Secondary units are counted as 1 piece per scan
+                            results.push({ 
+                                product: normalizedProduct, 
+                                unitName: u.unitName || 'قطعة', 
+                                unitPrice: perPiecePrice, 
+                                barcode: u.barcode, 
+                                conversionFactor: u.conversionFactor || piecesPerMainUnit, 
+                                piecesPerUnit: 1 
+                            });
+                        }
                     }
                 }
-            }
-            // Name contains
-            if (p.name && p.name.toLowerCase().includes(lower)) {
-                const perPiecePrice = piecesPerMainUnit > 0 ? p.price / piecesPerMainUnit : p.price;
-                results.push({ product: p, unitName: 'كرتون', unitPrice: perPiecePrice, barcode: p.barcode, conversionFactor: piecesPerMainUnit, piecesPerUnit: piecesPerMainUnit });
-            }
-        });
+                
+                // Name contains (already filtered by IndexedDB search, but add to results)
+                if (normalizedProduct.name && normalizedProduct.name.toLowerCase().includes(lower)) {
+                    const perPiecePrice = piecesPerMainUnit > 0 ? normalizedProduct.price / piecesPerMainUnit : normalizedProduct.price;
+                    results.push({ 
+                        product: normalizedProduct, 
+                        unitName: 'كرتون', 
+                        unitPrice: perPiecePrice, 
+                        barcode: productBarcode, 
+                        conversionFactor: piecesPerMainUnit, 
+                        piecesPerUnit: piecesPerMainUnit 
+                    });
+                }
+            });
 
-        // Deduplicate exact same product+unit combination
-        const seen = new Set<string>();
-        return results.filter((r) => {
-            const key = `${r.product.id}-${r.unitName}-${r.barcode || ''}`;
-            if (seen.has(key)) return false;
-            seen.add(key);
-            return true;
-        });
-    }, [products]);
+            // Deduplicate exact same product+unit combination
+            const seen = new Set<string>();
+            return results.filter((r) => {
+                const key = `${r.product.id}-${r.unitName}-${r.barcode || ''}`;
+                if (seen.has(key)) return false;
+                seen.add(key);
+                return true;
+            });
+        } catch (error) {
+            console.error('[POS] Error searching IndexedDB:', error);
+            // Fallback to local state search
+            const results: SearchMatch[] = [];
+            products.forEach((p) => {
+                const piecesPerMainUnit = getPiecesPerMainUnit(p);
+                if (p.barcode && (p.barcode === trimmed || p.barcode.toLowerCase() === lower)) {
+                    const perPiecePrice = piecesPerMainUnit > 0 ? p.price / piecesPerMainUnit : p.price;
+                    results.push({ product: p, unitName: 'كرتون', unitPrice: perPiecePrice, barcode: p.barcode, conversionFactor: piecesPerMainUnit, piecesPerUnit: piecesPerMainUnit });
+                }
+                if (p.name && p.name.toLowerCase().includes(lower)) {
+                    const perPiecePrice = piecesPerMainUnit > 0 ? p.price / piecesPerMainUnit : p.price;
+                    results.push({ product: p, unitName: 'كرتون', unitPrice: perPiecePrice, barcode: p.barcode, conversionFactor: piecesPerMainUnit, piecesPerUnit: piecesPerMainUnit });
+                }
+            });
+            return results;
+        }
+    }, [products, normalizeProduct, getPiecesPerMainUnit]);
 
     // Helper function to check if input is a barcode (numeric only)
     const isBarcodeInput = useCallback((input: string): boolean => {
@@ -867,9 +1398,12 @@ const POSPage: React.FC = () => {
             
             const response = await productsApi.getProductByBarcode(trimmed);
 
-            if (response.success && response.data?.product) {
-                const productData = response.data.product;
-                const matchedUnit = response.data.matchedUnit;
+            // API client wraps the response, so we need to access response.data.data
+            console.log('[POS] Barcode search response:', response);
+            
+            if (response.data?.success && response.data?.data?.product) {
+                const productData = response.data.data.product;
+                const matchedUnit = response.data.data.matchedUnit;
                 
                 // Normalize the product
                 const normalizedProduct = normalizeProduct(productData);
@@ -897,6 +1431,34 @@ const POSPage: React.FC = () => {
                 }
 
                 console.log(`[POS] Product found by barcode: ${normalizedProduct.name}`);
+                
+                // CRITICAL: Update IndexedDB and state with fresh product data immediately
+                // This ensures stock checks use the latest quantity, not stale cached data
+                // Server is the single source of truth - always sync from server response
+                try {
+                    // Use productSync to properly sync the product to IndexedDB and notify other tabs
+                    await productSync.syncAfterCreateOrUpdate(productData);
+                    console.log(`[POS] Updated IndexedDB with fresh product data from server for: ${normalizedProduct.name}`);
+                    
+                    // Update products state to replace stale data
+                    // Match by both id and originalId to ensure we replace the correct product
+                    setProducts(prevProducts => {
+                        const updated = prevProducts.filter(p => {
+                            const matchesById = String(p.id) === String(normalizedProduct.id);
+                            const matchesByOriginalId = normalizedProduct.originalId && 
+                                String(p.originalId) === String(normalizedProduct.originalId);
+                            return !matchesById && !matchesByOriginalId;
+                        });
+                        // Add the fresh product data (this replaces any stale version)
+                        updated.push(normalizedProduct);
+                        return updated;
+                    });
+                    console.log(`[POS] Updated products state with fresh data for: ${normalizedProduct.name}`);
+                } catch (error) {
+                    console.error('[POS] Error updating IndexedDB/state with fresh product data:', error);
+                    // Continue anyway - we still have the fresh product from API
+                }
+                
                 return {
                     success: true,
                     product: normalizedProduct,
@@ -907,10 +1469,28 @@ const POSPage: React.FC = () => {
                 };
             } else {
                 console.log(`[POS] Product not found for barcode: "${trimmed}"`);
+                console.log('[POS] Response structure:', {
+                    hasResponse: !!response,
+                    hasData: !!response?.data,
+                    hasSuccess: !!response?.data?.success,
+                    hasDataData: !!response?.data?.data,
+                    hasProduct: !!response?.data?.data?.product,
+                    fullResponse: response
+                });
                 return { success: false };
             }
         } catch (err: any) {
             console.error('[POS] Error searching product by barcode:', err);
+            // If it's a 404, the product simply doesn't exist
+            if (err?.status === 404) {
+                console.log(`[POS] Product not found (404) for barcode: "${trimmed}"`);
+            } else {
+                console.error('[POS] Unexpected error during barcode search:', {
+                    status: err?.status,
+                    message: err?.message,
+                    details: err?.details
+                });
+            }
             return { success: false };
         } finally {
             setIsSearchingServer(false);
@@ -983,30 +1563,35 @@ const POSPage: React.FC = () => {
             return;
         }
 
-        // Use client-side search if products are loaded
-        const matches = resolveSearchMatches(trimmedSearchTerm);
-        if (matches.length === 0) {
-            alert('المنتج غير موجود');
-            return;
-        }
-        if (matches.length === 1) {
-            const match = matches[0];
-            handleAddProduct(match.product, match.unitName, match.unitPrice, match.conversionFactor, match.piecesPerUnit);
-            setSearchTerm('');
-            setProductSuggestionsOpen(false);
-        } else {
-            // Show all matches for the cashier to pick
-            setProductSuggestionsOpen(true);
+        // Use IndexedDB search if products are loaded (async)
+        if (productsLoaded && products.length > 0) {
+            const matches = await resolveSearchMatches(trimmedSearchTerm);
+            if (matches.length === 0) {
+                alert('المنتج غير موجود');
+                return;
+            }
+            if (matches.length === 1) {
+                const match = matches[0];
+                handleAddProduct(match.product, match.unitName, match.unitPrice, match.conversionFactor, match.piecesPerUnit);
+                setSearchTerm('');
+                setProductSuggestionsOpen(false);
+            } else {
+                // Show all matches for the cashier to pick
+                setProductSuggestionsOpen(true);
+            }
         }
     };
 
     // State for server-side search results (for suggestions dropdown)
     const [serverSearchResults, setServerSearchResults] = useState<SearchMatch[]>([]);
+    // State for client-side search results (for suggestions dropdown)
+    const [clientSearchResults, setClientSearchResults] = useState<SearchMatch[]>([]);
 
     // Update server search results when search term changes (debounced)
     useEffect(() => {
         if (!searchTerm.trim()) {
             setServerSearchResults([]);
+            setClientSearchResults([]);
             return;
         }
 
@@ -1023,15 +1608,35 @@ const POSPage: React.FC = () => {
         }
     }, [searchTerm, productsLoaded, products.length, searchProductsOnServer]);
 
+    // Update client-side search results when search term changes (debounced)
+    useEffect(() => {
+        if (!searchTerm.trim()) {
+            setClientSearchResults([]);
+            return;
+        }
+
+        // Only use client-side search if products are loaded
+        if (productsLoaded && products.length > 0) {
+            const timeoutId = setTimeout(async () => {
+                const matches = await resolveSearchMatches(searchTerm);
+                setClientSearchResults(matches);
+            }, 300); // Debounce 300ms
+
+            return () => clearTimeout(timeoutId);
+        } else {
+            setClientSearchResults([]);
+        }
+    }, [searchTerm, resolveSearchMatches, productsLoaded, products.length]);
+
+    // Compute product suggestions from either server or client results
     const productSuggestions = useMemo(() => {
         // If using server-side search, return server results
         if (!productsLoaded || products.length === 0) {
             return serverSearchResults.slice(0, 12);
         }
-        // Otherwise use client-side search
-        const matches = resolveSearchMatches(searchTerm);
-        return matches.slice(0, 12);
-    }, [searchTerm, resolveSearchMatches, productsLoaded, products.length, serverSearchResults]);
+        // Otherwise use client-side search results
+        return clientSearchResults.slice(0, 12);
+    }, [productsLoaded, products.length, serverSearchResults, clientSearchResults]);
 
     const handleUpdateQuantity = (cartItemId: string, quantity: number) => {
         const normalizedQuantity = Number.isFinite(quantity) ? quantity : 0;
@@ -1044,7 +1649,18 @@ const POSPage: React.FC = () => {
         const p = products.find(prod => prod.id === item.productId);
         const piecesPerMainUnit = getPiecesPerMainUnit(p);
         const availablePieces = p ? p.stock * piecesPerMainUnit : Infinity;
-        if (p && roundedQuantity > availablePieces) {
+        
+        // Check allowSellingZeroStock setting
+        const allowSellingZeroStock = getAllowSellingZeroStockSetting();
+        
+        // If setting is disabled and stock is zero, block the update
+        if (p && !allowSellingZeroStock && availablePieces === 0 && roundedQuantity > 0) {
+            alert(`لا يمكن بيع المنتج "${p.name}" لأنه لا يوجد مخزون متوفر.`);
+            return;
+        }
+        
+        // If quantity exceeds available stock (and stock > 0), block the update
+        if (p && roundedQuantity > availablePieces && availablePieces > 0) {
             alert(`الكمية المطلوبة (${roundedQuantity}) تتجاوز المخزون المتوفر (${availablePieces}). لا يمكنك إضافة المزيد.`);
             return;
         }
@@ -1228,6 +1844,31 @@ const POSPage: React.FC = () => {
             }
         } catch (error) {
             console.error('Error updating stock for return:', error);
+        }
+
+        // Sync products after quantity changes (non-blocking)
+        const productIdsToSync = returnInvoice.items
+            .map(item => item.originalId)
+            .filter((id): id is string => !!id);
+        
+        if (productIdsToSync.length > 0) {
+            productSync.syncAfterQuantityChange(productIdsToSync).then(async (result) => {
+                if (result.success && result.products) {
+                    // Update IndexedDB with synced products
+                    try {
+                        await productsDB.storeProducts(result.products);
+                        // Reload from IndexedDB
+                        const dbProducts = await productsDB.getAllProducts();
+                        const normalizedProducts = dbProducts.map((p: any) => normalizeProduct(p));
+                        setProducts(normalizedProducts);
+                        console.log(`[POS] Updated IndexedDB with ${normalizedProducts.length} synced products after return`);
+                    } catch (error) {
+                        console.error('[POS] Error updating IndexedDB after return sync:', error);
+                    }
+                }
+            }).catch(error => {
+                console.error('[POS] Error syncing products after return:', error);
+            });
         }
 
         // Update local product state
@@ -1638,15 +2279,69 @@ const POSPage: React.FC = () => {
 
         // Update local state (optimistic update)
         // CRITICAL: Only update products that are in the invoice items
+        // First, check which products are missing and fetch them
+        const invoiceItemsForStateUpdate = currentInvoice.items || [];
+        
+        // Identify missing products that need to be fetched
+        const missingProductsToFetch: Array<{ item: POSCartItem; originalId: string }> = [];
+        
+        // Check which invoice items have products missing from local state
+        invoiceItemsForStateUpdate.forEach(item => {
+            if (!item || !item.productId || item.quantity <= 0) {
+                return;
+            }
+            
+            const existsInState = products.some(p => String(p.id) === String(item.productId));
+            if (!existsInState && item.originalId) {
+                missingProductsToFetch.push({ item, originalId: item.originalId });
+            }
+        });
+        
+        // Fetch missing products if any
+        let fetchedProducts: POSProduct[] = [];
+        if (missingProductsToFetch.length > 0) {
+            try {
+                const fetchPromises = missingProductsToFetch.map(async ({ originalId }) => {
+                    try {
+                        const response = await productsApi.getProduct(originalId);
+                        const productData = (response.data as any)?.data?.product || (response.data as any)?.product;
+                        if (productData) {
+                            return normalizeProduct(productData);
+                        }
+                    } catch (error) {
+                        // Silently fail - product will be skipped in local state update
+                        if (process.env.NODE_ENV === 'development') {
+                            console.debug(`Could not fetch product ${originalId} for local state update:`, error);
+                        }
+                    }
+                    return null;
+                });
+                
+                fetchedProducts = (await Promise.all(fetchPromises)).filter((p): p is POSProduct => p !== null);
+            } catch (error) {
+                // Silently continue - backend update already succeeded
+                if (process.env.NODE_ENV === 'development') {
+                    console.debug('Error fetching missing products for local state update:', error);
+                }
+            }
+        }
+        
+        // Update local state: add fetched products and update stock
         setProducts(prevProducts => {
             const newProducts = [...prevProducts];
-            const invoiceItemsForStateUpdate = currentInvoice.items || [];
+            
+            // Add fetched products that don't already exist
+            fetchedProducts.forEach(fetchedProduct => {
+                const exists = newProducts.some(p => String(p.id) === String(fetchedProduct.id));
+                if (!exists) {
+                    newProducts.push(fetchedProduct);
+                }
+            });
             
             // CRITICAL FIX: Only iterate over invoice items, not all products
             invoiceItemsForStateUpdate.forEach(item => {
                 // Validate item has required fields
                 if (!item || !item.productId || item.quantity <= 0) {
-                    console.warn('Skipping invalid invoice item in local state update:', item);
                     return;
                 }
 
@@ -1654,24 +2349,15 @@ const POSPage: React.FC = () => {
                 const invoiceItemProductId = item.productId;
                 const invoiceItemName = item.name;
 
-                // Find the product by matching productId - use filter to find all matches first
-                const matchingProducts = newProducts.filter(p => String(p.id) === String(invoiceItemProductId));
-                
-                if (matchingProducts.length === 0) {
-                    console.warn(`Product not found in local state for productId: ${invoiceItemProductId}, name: ${invoiceItemName}`);
-                    return;
-                }
-
-                // If multiple products match (shouldn't happen, but handle it), use the first one
-                if (matchingProducts.length > 1) {
-                    console.warn(`Multiple products found with same ID in local state: ${invoiceItemProductId}. Using first match.`);
-                }
-
-                // Find the index of the matching product
+                // Find the product by matching productId
                 const productIndex = newProducts.findIndex(p => String(p.id) === String(invoiceItemProductId));
                 
+                // Skip if product not found (may happen if fetch failed, but backend update already succeeded)
                 if (productIndex === -1) {
-                    console.error(`Product index not found despite filter match for productId: ${invoiceItemProductId}`);
+                    // Only log in development mode - this is expected for products not in local state
+                    if (process.env.NODE_ENV === 'development') {
+                        console.debug(`Product not found in local state for productId: ${invoiceItemProductId}, name: ${invoiceItemName}. Skipping local state update (backend update already succeeded).`);
+                    }
                     return;
                 }
 
@@ -1679,13 +2365,10 @@ const POSPage: React.FC = () => {
                 
                 // CRITICAL VALIDATION: Ensure we found the correct product
                 if (String(product.id) !== String(invoiceItemProductId)) {
-                    console.error(`Product ID mismatch in local state update: product.id (${product.id}) !== item.productId (${invoiceItemProductId})`);
+                    if (process.env.NODE_ENV === 'development') {
+                        console.debug(`Product ID mismatch in local state update: product.id (${product.id}) !== item.productId (${invoiceItemProductId})`);
+                    }
                     return;
-                }
-
-                // Additional validation: verify product name matches
-                if (product.name !== invoiceItemName) {
-                    console.warn(`Product name mismatch in local state update: product.name (${product.name}) !== item.name (${invoiceItemName}). Continuing anyway.`);
                 }
 
                 // Calculate stock reduction
@@ -1699,11 +2382,45 @@ const POSPage: React.FC = () => {
                 const newStock = Math.max(0, product.stock - stockReduction);
                 newProducts[productIndex].stock = newStock;
 
-                console.log(`Local state: Updated stock for product "${product.name}" (ID: ${invoiceItemProductId}): ${oldStock} -> ${newStock} (reduced by ${stockReduction})`);
+                // Also update IndexedDB
+                if (product.originalId) {
+                    productsDB.updateProductStock(product.originalId, newStock).catch(error => {
+                        console.error(`[POS] Error updating stock in IndexedDB for product ${product.originalId}:`, error);
+                    });
+                }
+
+                if (process.env.NODE_ENV === 'development') {
+                    console.log(`Local state: Updated stock for product "${product.name}" (ID: ${invoiceItemProductId}): ${oldStock} -> ${newStock} (reduced by ${stockReduction})`);
+                }
             });
             
             return newProducts;
         });
+        
+        // Sync products after quantity changes (non-blocking)
+        const productIdsToSync = invoiceItems
+            .map(item => item.originalId)
+            .filter((id): id is string => !!id);
+        
+        if (productIdsToSync.length > 0) {
+            productSync.syncAfterQuantityChange(productIdsToSync).then(async (result) => {
+                if (result.success && result.products) {
+                    // Update IndexedDB with synced products
+                    try {
+                        await productsDB.storeProducts(result.products);
+                        // Reload from IndexedDB
+                        const dbProducts = await productsDB.getAllProducts();
+                        const normalizedProducts = dbProducts.map((p: any) => normalizeProduct(p));
+                        setProducts(normalizedProducts);
+                        console.log(`[POS] Updated IndexedDB with ${normalizedProducts.length} synced products after sale`);
+                    } catch (error) {
+                        console.error('[POS] Error updating IndexedDB after sale sync:', error);
+                    }
+                }
+            }).catch(error => {
+                console.error('[POS] Error syncing products after sale:', error);
+            });
+        }
         
         console.log('Sale Finalized:', finalInvoice);
         setCurrentInvoice(finalInvoice);
@@ -1768,11 +2485,18 @@ const POSPage: React.FC = () => {
             tax: finalInvoice.tax,
         };
 
-        // Save to database via API (if endpoint exists)
+        // Save to IndexedDB and sync with backend
         try {
-            // Regular sale - Prepare sale data for backend API
+            // Get storeId from user
+            const storeId = user?.storeId;
+            if (!storeId) {
+                throw new Error('Store ID is required to save sale');
+            }
+
+            // Prepare sale data for IndexedDB and backend
             const saleData = {
                 invoiceNumber: finalInvoice.id,
+                storeId: storeId,
                 date: finalInvoice.date instanceof Date 
                     ? finalInvoice.date.toISOString() 
                     : new Date().toISOString(),
@@ -1811,33 +2535,32 @@ const POSPage: React.FC = () => {
                 seller: finalInvoice.cashier,
             };
 
-            // Save sale to database
-            const saleResponse = await salesApi.createSale(saleData);
-            console.log('Sale saved to database:', saleResponse);
+            // Use IndexedDB sync service (saves locally and syncs with backend)
+            const syncResult = await salesSync.createAndSyncSale(saleData, storeId);
             
-            // Update sale transaction with database ID if provided
-            if (saleResponse.data && (saleResponse.data as any).data?.sale) {
-                const savedSale = (saleResponse.data as any).data.sale;
-                saleTransaction.id = savedSale.id || savedSale._id || saleTransaction.id;
+            if (syncResult.success) {
+                // Update sale transaction with database ID if provided
+                if (syncResult.saleId) {
+                    saleTransaction.id = syncResult.saleId;
+                }
+                console.log('✅ Sale saved to IndexedDB and synced:', finalInvoice.id);
+                
+                // Show warning if sync had errors but sale was saved locally
+                if (syncResult.error) {
+                    console.warn('⚠️ Sale saved locally, will sync later:', syncResult.error);
+                }
+            } else {
+                throw new Error(syncResult.error || 'Failed to save sale');
             }
         } catch (error: any) {
-            const apiError = error as ApiError;
-            
-            // Handle 404 specifically (endpoint doesn't exist)
-            if (apiError.status === 404) {
-                console.warn('Sales API endpoint not found. Sale will be saved to localStorage only.');
-                console.warn('To enable database saving, create a /api/sales POST endpoint in the backend.');
-                // Don't show alert for 404 - it's expected if backend route doesn't exist yet
-            } else {
-                console.error('Failed to save sale to database:', apiError);
-                // Only show alert for unexpected errors
-                alert(`تم إنشاء الفاتورة محلياً، لكن حدث خطأ في حفظها في قاعدة البيانات: ${apiError.message || 'خطأ غير معروف'}`);
-            }
+            console.error('❌ Failed to save sale:', error);
+            // Show alert for errors
+            alert(`تم إنشاء الفاتورة محلياً، لكن حدث خطأ في حفظها: ${error?.message || 'خطأ غير معروف'}`);
         }
 
-        // Save to localStorage as backup
+        // Save to localStorage as backup (legacy support)
         saveSale(saleTransaction);
-        console.log('Sale transaction saved to localStorage:', saleTransaction);
+        console.log('Sale transaction saved to localStorage (backup):', saleTransaction);
     };
 
 
@@ -1849,14 +2572,14 @@ const POSPage: React.FC = () => {
             || ('id' in invoice && invoice.id.startsWith('RET-'));
         return (
             <div id="printable-receipt" className="w-full max-w-md bg-white dark:bg-gray-800 p-4 sm:p-6 rounded-lg shadow-lg text-right">
-                <div className="text-center mb-3 sm:mb-4">
+                <div className="text-center mb-4 sm:mb-5">
                     <CheckCircleIcon className={`w-12 h-12 sm:w-16 sm:h-16 ${isReturn ? 'text-blue-500' : 'text-green-500'} mx-auto print-hidden`} />
                     <h2 className="text-xl sm:text-2xl font-bold text-gray-800 dark:text-gray-100 mt-2 print-hidden">{isReturn ? AR_LABELS.returnCompleted : AR_LABELS.saleCompleted}</h2>
-                    <h3 className="text-lg sm:text-xl font-bold text-center text-gray-900 dark:text-gray-100 mt-3 sm:mt-4">{title}</h3>
+                    <h3 className="text-lg sm:text-xl font-bold text-center text-gray-900 dark:text-gray-100 mt-3 sm:mt-4 mb-2">{title}</h3>
                     <p className="text-center text-xs text-gray-500 dark:text-gray-400">123 الشارع التجاري, الرياض, السعودية</p>
                 </div>
 
-                <div className="text-xs my-3 sm:my-4 space-y-1 border-b border-dashed pb-2">
+                <div className="invoice-info text-xs my-4 space-y-1.5">
                     <p><strong>{AR_LABELS.invoiceNumber}:</strong> {invoice.id}</p>
                     {isReturn && 'originalInvoiceId' in invoice && <p><strong>{AR_LABELS.originalInvoiceNumber}:</strong> {invoice.originalInvoiceId}</p>}
                     <p><strong>{AR_LABELS.date}:</strong> {new Date(invoice.date).toLocaleString('ar-SA')}</p>
@@ -1865,14 +2588,14 @@ const POSPage: React.FC = () => {
                     <p><strong>{AR_LABELS.customerName}:</strong> {'customer' in invoice ? invoice.customer?.name : invoice.customerName || 'N/A'}</p>
                 </div>
                 
-                <div className="overflow-x-auto">
-                    <table className="w-full text-xs min-w-full">
+                <div className="overflow-x-auto -mx-2 sm:mx-0">
+                    <table className="w-full text-xs min-w-full border-collapse" style={{ borderSpacing: 0 }}>
                         <thead>
-                            <tr className="border-b-2 border-dashed border-gray-400 dark:border-gray-500">
-                                <th className="py-1 text-right font-semibold px-1 sm:px-2">الصنف</th>
-                                <th className="py-1 text-center font-semibold px-1 sm:px-2">الكمية</th>
-                                <th className="py-1 text-center font-semibold px-1 sm:px-2">السعر</th>
-                                <th className="py-1 text-left font-semibold px-1 sm:px-2">الإجمالي</th>
+                            <tr className="bg-gray-100 dark:bg-gray-700">
+                                <th className="py-2.5 px-3 text-right font-bold border border-gray-300 dark:border-gray-600" style={{ borderRight: '1px solid #dee2e6', borderLeft: '1px solid #dee2e6', borderTop: '1px solid #dee2e6', borderBottom: '2px solid #495057' }}>اسم المنتج</th>
+                                <th className="py-2.5 px-3 text-center font-bold border border-gray-300 dark:border-gray-600" style={{ borderRight: '1px solid #dee2e6', borderLeft: '1px solid #dee2e6', borderTop: '1px solid #dee2e6', borderBottom: '2px solid #495057' }}>الكمية</th>
+                                <th className="py-2.5 px-3 text-center font-bold border border-gray-300 dark:border-gray-600" style={{ borderRight: '1px solid #dee2e6', borderLeft: '1px solid #dee2e6', borderTop: '1px solid #dee2e6', borderBottom: '2px solid #495057' }}>سعر الوحدة</th>
+                                <th className="py-2.5 px-3 text-left font-bold border border-gray-300 dark:border-gray-600" style={{ borderRight: '1px solid #dee2e6', borderLeft: '1px solid #dee2e6', borderTop: '1px solid #dee2e6', borderBottom: '2px solid #495057' }}>الإجمالي</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -1880,11 +2603,11 @@ const POSPage: React.FC = () => {
                                 const itemUnitPrice = isReturn ? -Math.abs(item.unitPrice) : item.unitPrice;
                                 const itemTotal = isReturn ? -Math.abs(item.total - item.discount * item.quantity) : (item.total - item.discount * item.quantity);
                                 return (
-                                <tr key={item.cartItemId || `receipt-item-${idx}`} className="border-b border-dashed border-gray-300 dark:border-gray-600">
-                                    <td className="py-1 px-1 sm:px-2">{item.name}</td>
-                                    <td className="py-1 text-center px-1 sm:px-2">{Math.abs(item.quantity)}</td>
-                                    <td className={`py-1 text-center px-1 sm:px-2 ${isReturn ? 'text-red-600' : ''}`}>{formatCurrency(itemUnitPrice)}</td>
-                                    <td className={`py-1 text-left px-1 sm:px-2 ${isReturn ? 'text-red-600' : ''}`}>{formatCurrency(itemTotal)}</td>
+                                <tr key={item.cartItemId || `receipt-item-${idx}`} className="border-b border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700/50">
+                                    <td className="py-2.5 px-3 text-right border border-gray-300 dark:border-gray-600 font-medium">{item.name}</td>
+                                    <td className="py-2.5 px-3 text-center border border-gray-300 dark:border-gray-600">{Math.abs(item.quantity)}</td>
+                                    <td className={`py-2.5 px-3 text-center border border-gray-300 dark:border-gray-600 ${isReturn ? 'text-red-600 dark:text-red-400' : 'text-gray-700 dark:text-gray-300'}`}>{formatCurrency(itemUnitPrice)}</td>
+                                    <td className={`py-2.5 px-3 text-left border border-gray-300 dark:border-gray-600 font-semibold ${isReturn ? 'text-red-600 dark:text-red-400' : 'text-gray-900 dark:text-gray-100'}`}>{formatCurrency(itemTotal)}</td>
                                 </tr>
                                 );
                             })}
@@ -1892,33 +2615,33 @@ const POSPage: React.FC = () => {
                     </table>
                 </div>
 
-                <div className="mt-3 sm:mt-4 text-xs space-y-1">
-                    <div className="flex justify-between">
-                        <span className="text-gray-600 dark:text-gray-400">{AR_LABELS.subtotal}:</span>
-                        <span className={isReturn ? 'text-red-600' : ''}>
+                <div className="receipt-summary mt-5 text-xs">
+                    <div className="flex justify-between py-1.5">
+                        <span className="text-gray-600 dark:text-gray-400 font-medium">{AR_LABELS.subtotal}:</span>
+                        <span className={`font-semibold ${isReturn ? 'text-red-600 dark:text-red-400' : 'text-gray-900 dark:text-gray-100'}`}>
                             {formatCurrency(isReturn ? -Math.abs(invoice.subtotal) : invoice.subtotal)}
                         </span>
                     </div>
-                    <div className="flex justify-between">
-                        <span className="text-gray-600 dark:text-gray-400">{AR_LABELS.totalDiscount}:</span>
-                        <span className={isReturn ? 'text-red-600' : ''}>
+                    <div className="flex justify-between py-1.5">
+                        <span className="text-gray-600 dark:text-gray-400 font-medium">{AR_LABELS.totalDiscount}:</span>
+                        <span className={`font-semibold ${isReturn ? 'text-red-600 dark:text-red-400' : 'text-gray-900 dark:text-gray-100'}`}>
                             {formatCurrency(isReturn ? -Math.abs(invoice.totalItemDiscount + invoice.invoiceDiscount) : -(invoice.totalItemDiscount + invoice.invoiceDiscount))}
                         </span>
                     </div>
-                    <div className="flex justify-between">
-                        <span className="text-gray-600 dark:text-gray-400">{AR_LABELS.tax}:</span>
-                        <span className={isReturn ? 'text-red-600' : ''}>
+                    <div className="flex justify-between py-1.5">
+                        <span className="text-gray-600 dark:text-gray-400 font-medium">{AR_LABELS.tax}:</span>
+                        <span className={`font-semibold ${isReturn ? 'text-red-600 dark:text-red-400' : 'text-gray-900 dark:text-gray-100'}`}>
                             {formatCurrency(isReturn ? -Math.abs(invoice.tax) : invoice.tax)}
                         </span>
                     </div>
-                    <div className="flex justify-between font-bold text-sm sm:text-base border-t dark:border-gray-600 pt-1 mt-1">
-                        <span className="text-gray-800 dark:text-gray-100">{isReturn ? AR_LABELS.totalReturnValue : AR_LABELS.grandTotal}:</span>
-                        <span className={isReturn ? 'text-red-600' : 'text-orange-600'}>
+                    <div className="grand-total flex justify-between">
+                        <span className="text-gray-900 dark:text-gray-100 font-bold">{isReturn ? AR_LABELS.totalReturnValue : AR_LABELS.grandTotal}:</span>
+                        <span className={`font-bold text-lg ${isReturn ? 'text-red-600 dark:text-red-400' : 'text-orange-600 dark:text-orange-400'}`}>
                             {formatCurrency(isReturn ? -Math.abs('grandTotal' in invoice ? invoice.grandTotal : invoice.totalAmount) : ('grandTotal' in invoice ? invoice.grandTotal : invoice.totalAmount))}
                         </span>
                     </div>
                 </div>
-                <p className="text-center text-xs mt-4 sm:mt-6 text-gray-500 dark:text-gray-400">شكراً لتعاملكم معنا!</p>
+                <p className="receipt-footer text-center text-xs mt-6 text-gray-500 dark:text-gray-400">شكراً لتعاملكم معنا!</p>
             </div>
         );
     }
@@ -1934,7 +2657,7 @@ const POSPage: React.FC = () => {
                         <PlusIcon className="h-4 w-4 sm:h-5 sm:w-5 ml-2" />
                         <span>{AR_LABELS.startNewSale}</span>
                     </button>
-                    <button onClick={() => window.print()} className="inline-flex items-center justify-center px-4 sm:px-6 py-2.5 sm:py-3 border border-gray-300 dark:border-gray-600 text-sm sm:text-base font-medium rounded-md text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 transition-colors">
+                    <button onClick={() => printReceipt('printable-receipt')} className="inline-flex items-center justify-center px-4 sm:px-6 py-2.5 sm:py-3 border border-gray-300 dark:border-gray-600 text-sm sm:text-base font-medium rounded-md text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 transition-colors">
                         <span className="h-4 w-4 sm:h-5 sm:w-5"><PrintIcon /></span>
                         <span className="mr-2">{AR_LABELS.printReceipt}</span>
                     </button>
@@ -1967,13 +2690,13 @@ const POSPage: React.FC = () => {
                    {/* Column 1: Customer & Quick Products (25%) */}
                     <div className="flex flex-col gap-3 sm:gap-4 min-h-0 min-w-0">
                         {/* Customer & Held Invoices */}
-                        <div className="bg-white/95 dark:bg-gray-800/95 rounded-xl sm:rounded-2xl shadow-sm p-4 sm:p-6 backdrop-blur-xl border border-slate-200/50 dark:border-slate-700/50 space-y-3 sm:space-y-4 flex flex-col min-h-0">
+                        <div className="bg-white/95 dark:bg-gray-800/95 rounded-xl sm:rounded-2xl shadow-sm p-4 sm:p-6 backdrop-blur-xl border border-slate-200/50 dark:border-slate-700/50 space-y-3 sm:space-y-4 flex flex-col min-h-0 relative z-10">
                             <div className="flex-shrink-0">
                                 <h3 className="font-bold text-sm sm:text-base text-gray-700 dark:text-gray-200 text-right mb-2">{AR_LABELS.customerName}</h3>
                                 
-                                {/* Customer Search Input */}
-                                <div className="relative mb-2">
-                                    <SearchIcon className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 dark:text-gray-500" />
+                                {/* Customer Search Input with Dropdown */}
+                                <div className="relative mb-2 z-[100]">
+                                    <SearchIcon className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 dark:text-gray-500 z-10" />
                                     <input
                                         type="text"
                                         value={customerSearchTerm}
@@ -1981,52 +2704,94 @@ const POSPage: React.FC = () => {
                                             setCustomerSearchTerm(e.target.value);
                                             setIsCustomerDropdownOpen(true);
                                         }}
-                                        onFocus={() => setIsCustomerDropdownOpen(true)}
+                                        onFocus={async () => {
+                                            if (!isMountedRef.current) return;
+                                            setIsCustomerDropdownOpen(true);
+                                            // Ensure customers are loaded when dropdown opens
+                                            if (!customersLoaded || allCustomers.length === 0 || customers.length === 0) {
+                                                try {
+                                                    // First try IndexedDB
+                                                    await customersDB.init();
+                                                    if (!isMountedRef.current) return;
+                                                    const dbCustomers = await customersDB.getAllCustomers();
+                                                    if (isMountedRef.current && dbCustomers && dbCustomers.length > 0) {
+                                                        const transformedCustomers: Customer[] = dbCustomers
+                                                            .map((customer: any) => ({
+                                                                id: customer.id,
+                                                                name: customer.name || customer.phone,
+                                                                phone: customer.phone,
+                                                                address: customer.address,
+                                                                previousBalance: customer.previousBalance || 0,
+                                                            }))
+                                                            .filter((customer: Customer) => !isDummyCustomer(customer));
+                                                        try {
+                                                            setAllCustomers(transformedCustomers);
+                                                            setCustomers(transformedCustomers);
+                                                            setCustomersLoaded(true);
+                                                            console.log(`[POS] Loaded ${transformedCustomers.length} customers on focus`);
+                                                        } catch (error) {
+                                                            console.debug('[POS] State update skipped (component unmounted)');
+                                                        }
+                                                    } else if (isMountedRef.current) {
+                                                        // No customers in IndexedDB, trigger sync
+                                                        console.log('[POS] No customers in IndexedDB on focus, syncing from server...');
+                                                        const syncResult = await customerSync.syncCustomers({ forceRefresh: true });
+                                                        if (isMountedRef.current && syncResult.success && syncResult.customers) {
+                                                            const transformedCustomers: Customer[] = syncResult.customers
+                                                                .map((customer: any) => ({
+                                                                    id: customer.id,
+                                                                    name: customer.name || customer.phone,
+                                                                    phone: customer.phone,
+                                                                    address: customer.address,
+                                                                    previousBalance: customer.previousBalance || 0,
+                                                                }))
+                                                                .filter((customer: Customer) => !isDummyCustomer(customer));
+                                                            try {
+                                                                setAllCustomers(transformedCustomers);
+                                                                setCustomers(transformedCustomers);
+                                                                setCustomersLoaded(true);
+                                                                console.log(`[POS] Synced ${transformedCustomers.length} customers on focus`);
+                                                            } catch (error) {
+                                                                console.debug('[POS] State update skipped (component unmounted)');
+                                                            }
+                                                        }
+                                                    }
+                                                } catch (error) {
+                                                    if (isMountedRef.current) {
+                                                        console.error('[POS] Error loading customers on focus:', error);
+                                                    }
+                                                }
+                                            } else if (isMountedRef.current && customers.length === 0 && allCustomers.length > 0) {
+                                                // If customers state is empty but allCustomers has data, update customers
+                                                try {
+                                                    setCustomers(allCustomers);
+                                                } catch (error) {
+                                                    console.debug('[POS] State update skipped (component unmounted)');
+                                                }
+                                            }
+                                        }}
                                         placeholder="ابحث عن عميل..."
                                         className="w-full pl-8 pr-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-orange-500 focus:border-transparent text-right"
                                     />
-                                </div>
-
-                                {/* Selected Customer Display */}
-                                {currentInvoice.customer && (
-                                    <div className="mb-2 p-2 bg-orange-50 dark:bg-orange-900/20 rounded-lg border border-orange-200 dark:border-orange-800">
-                                        <div className="flex justify-between items-start">
-                                            <button
-                                                onClick={() => setCurrentInvoice(inv => ({...inv, customer: null}))}
-                                                className="text-red-500 hover:text-red-700 text-xs"
-                                            >
-                                                ✕
-                                            </button>
-                                            <div className="flex-1 text-right">
-                                                <p className="font-semibold text-sm text-gray-900 dark:text-gray-100">{currentInvoice.customer.name}</p>
-                                                <p className="text-xs text-gray-600 dark:text-gray-400">{currentInvoice.customer.phone}</p>
-                                                {currentInvoice.customer.address && (
-                                                    <p className="text-xs text-gray-500 dark:text-gray-500 mt-1">{currentInvoice.customer.address}</p>
-                                                )}
-                                            </div>
-                                        </div>
-                                    </div>
-                                )}
-
-                                {/* Customer List Dropdown */}
-                                {isCustomerDropdownOpen && (
-                                    <>
-                                        {/* Click outside to close dropdown */}
-                                        <div
-                                            className="fixed inset-0 z-[5]"
-                                            onClick={() => setIsCustomerDropdownOpen(false)}
-                                        />
-                                        <div className="relative z-[10]">
-                                            <div className="absolute w-full mt-1 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg shadow-xl max-h-60 overflow-y-auto">
-                                                {isLoadingCustomers ? (
-                                                    <div className="p-4 text-center text-sm text-gray-500 dark:text-gray-400">جاري التحميل...</div>
-                                                ) : customers.length === 0 ? (
-                                                    <div className="p-4 text-center text-sm text-gray-500 dark:text-gray-400">
-                                                        {customerSearchTerm ? 'لا توجد نتائج' : 'لا يوجد عملاء'}
-                                                    </div>
-                                                ) : (
-                                                    <div className="max-h-60 overflow-y-auto">
-                                                        {customers.map((customer) => (
+                                    
+                                    {/* Customer List Dropdown - positioned relative to input container */}
+                                    {isCustomerDropdownOpen && (
+                                        <>
+                                            {/* Click outside to close dropdown */}
+                                            <div
+                                                className="fixed inset-0 z-[9998]"
+                                                onClick={() => setIsCustomerDropdownOpen(false)}
+                                            />
+                                            <div className="absolute top-full left-0 right-0 z-[9999] mt-1">
+                                                <div className="bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg shadow-2xl max-h-60 overflow-y-auto">
+                                                    {isLoadingCustomers ? (
+                                                        <div className="p-4 text-center text-sm text-gray-500 dark:text-gray-400">جاري التحميل...</div>
+                                                    ) : customers.length === 0 ? (
+                                                        <div className="p-4 text-center text-sm text-gray-500 dark:text-gray-400">
+                                                            {customerSearchTerm ? 'لا توجد نتائج' : 'لا يوجد عملاء'}
+                                                        </div>
+                                                    ) : (
+                                                        customers.map((customer) => (
                                                             <button
                                                                 key={customer.id}
                                                                 type="button"
@@ -2048,12 +2813,33 @@ const POSPage: React.FC = () => {
                                                                     )}
                                                                 </div>
                                                             </button>
-                                                        ))}
-                                                    </div>
+                                                        ))
+                                                    )}
+                                                </div>
+                                            </div>
+                                        </>
+                                    )}
+                                </div>
+
+                                {/* Selected Customer Display */}
+                                {currentInvoice.customer && (
+                                    <div className="mb-2 p-2 bg-orange-50 dark:bg-orange-900/20 rounded-lg border border-orange-200 dark:border-orange-800">
+                                        <div className="flex justify-between items-start">
+                                            <button
+                                                onClick={() => setCurrentInvoice(inv => ({...inv, customer: null}))}
+                                                className="text-red-500 hover:text-red-700 text-xs"
+                                            >
+                                                ✕
+                                            </button>
+                                            <div className="flex-1 text-right">
+                                                <p className="font-semibold text-sm text-gray-900 dark:text-gray-100">{currentInvoice.customer.name}</p>
+                                                <p className="text-xs text-gray-600 dark:text-gray-400">{currentInvoice.customer.phone}</p>
+                                                {currentInvoice.customer.address && (
+                                                    <p className="text-xs text-gray-500 dark:text-gray-500 mt-1">{currentInvoice.customer.address}</p>
                                                 )}
                                             </div>
                                         </div>
-                                    </>
+                                    </div>
                                 )}
 
                                 <button 
@@ -2079,7 +2865,7 @@ const POSPage: React.FC = () => {
                             )}
                         </div>
                         {/* Quick Products */}
-                        <div className="bg-white/95 dark:bg-gray-800/95 rounded-xl sm:rounded-2xl shadow-sm p-4 sm:p-6 backdrop-blur-xl border border-slate-200/50 dark:border-slate-700/50 flex-grow overflow-y-auto">
+                        <div className="bg-white/95 dark:bg-gray-800/95 rounded-xl sm:rounded-2xl shadow-sm p-4 sm:p-6 backdrop-blur-xl border border-slate-200/50 dark:border-slate-700/50 flex-grow overflow-y-auto relative z-0">
                             <h3 className="font-bold text-sm sm:text-base text-gray-900 dark:text-gray-100 text-right mb-3 sm:mb-4">{AR_LABELS.quickProducts}</h3>
                             {isLoadingQuickProducts ? (
                                 <div className="text-center py-4 text-sm text-gray-500 dark:text-gray-400">
@@ -2417,12 +3203,42 @@ const POSPage: React.FC = () => {
                             previousBalance: customer.previousBalance || 0,
                         });
 
-                        if (response.data && (response.data as any).data?.customer) {
-                            // Refresh customers list to include the new customer
-                            await fetchCustomers();
+                        if (response.success && response.data && (response.data as any).data?.customer) {
+                            const newCustomerData = (response.data as any).data.customer;
+                            
+                            // Store the new customer directly in IndexedDB immediately (we already have it from the response)
+                            // Use syncAfterCreateOrUpdate for proper sync handling and cross-tab notification
+                            try {
+                                await customerSync.syncAfterCreateOrUpdate(newCustomerData);
+                                console.log('[POSPage] Successfully synced customer to IndexedDB');
+                            } catch (syncError) {
+                                console.error('[POSPage] Error syncing customer to IndexedDB:', syncError);
+                                // Continue anyway - the customer was created successfully
+                            }
+                            
+                            // Reload customers from IndexedDB to get updated list
+                            if (isMountedRef.current) {
+                                const dbCustomers = await customersDB.getAllCustomers();
+                                const transformedCustomers: Customer[] = dbCustomers
+                                    .map((customer: any) => ({
+                                        id: customer.id,
+                                        name: customer.name || customer.phone,
+                                        phone: customer.phone,
+                                        address: customer.address,
+                                        previousBalance: customer.previousBalance || 0,
+                                    }))
+                                    .filter((customer: Customer) => !isDummyCustomer(customer));
+                                
+                                try {
+                                    setAllCustomers(transformedCustomers);
+                                    setCustomers(transformedCustomers);
+                                    setCustomersLoaded(true);
+                                } catch (error) {
+                                    console.debug('[POS] State update skipped (component unmounted)');
+                                }
+                            }
                             
                             // Optionally select the newly created customer
-                            const newCustomerData = (response.data as any).data.customer;
                             const newCustomer: Customer = {
                                 id: newCustomerData.id,
                                 name: newCustomerData.name || newCustomerData.phone,

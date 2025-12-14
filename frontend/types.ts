@@ -277,6 +277,7 @@ export interface SystemPreferences {
   invoiceFooterText: string;
   autoPrintInvoice: boolean;
   sellWithoutStock: boolean;
+  allowSellingZeroStock: boolean;
   // User Roles
   sessionDuration: number;
   allowUserCreation: boolean;
@@ -293,6 +294,18 @@ export interface SystemPreferences {
   enableAutoNotifications: boolean;
   // Other
   interfaceMode: 'light' | 'dark';
+  // Print Settings
+  printPaperSize: 'A4' | 'A5' | '80mm' | '58mm' | 'custom';
+  printPaperWidth?: number; // in mm, for custom size
+  printPaperHeight?: number; // in mm, for custom size
+  printMarginTop: number; // in cm
+  printMarginBottom: number; // in cm
+  printMarginLeft: number; // in cm
+  printMarginRight: number; // in cm
+  printFontSize: number; // in px
+  printTableFontSize: number; // in px
+  printShowBorders: boolean;
+  printCompactMode: boolean;
 }
 
 // --- SUPPLIER MANAGEMENT INTERFACES ---

@@ -3,8 +3,8 @@ import { body, validationResult } from 'express-validator';
 import { parse } from 'csv-parse/sync';
 import { asyncHandler } from '../middleware/error.middleware';
 import { AuthenticatedRequest } from '../middleware/auth.middleware';
-import { getUnitModelForStore } from '../utils/unitModel';
-import { findUserByIdAcrossStores } from '../utils/userModel';
+import Unit from '../models/Unit';
+import User from '../models/User';
 
 export const validateCreateUnit = [
   body('name')
@@ -60,7 +60,7 @@ export const createUnit = asyncHandler(async (req: AuthenticatedRequest, res: Re
   // If storeId is not in token, try to get it from the user record
   if (!storeId && req.user?.userId && req.user.userId !== 'admin') {
     try {
-      const user = await findUserByIdAcrossStores(req.user.userId, req.user.storeId || undefined);
+      const user = await User.findById(req.user.userId);
       if (user && user.storeId) {
         storeId = user.storeId;
         console.log('✅ Create Unit - Found storeId from user record:', storeId);
@@ -80,28 +80,14 @@ export const createUnit = asyncHandler(async (req: AuthenticatedRequest, res: Re
   }
 
   try {
-    console.log('🔍 Create Unit - Getting Unit model for storeId:', storeId);
-    // Get store-specific Unit model
-    let Unit;
-    try {
-      Unit = await getUnitModelForStore(storeId);
-      console.log('✅ Create Unit - Unit model obtained');
-    } catch (modelError: any) {
-      console.error('❌ Create Unit - Error getting Unit model:', {
-        message: modelError.message,
-        stack: modelError.stack,
-        storeId: storeId,
-      });
-      return res.status(400).json({
-        success: false,
-        message: modelError.message || 'Failed to access store units. Please ensure your account is associated with a valid store.',
-      });
-    }
+    // Normalize storeId to lowercase for consistency
+    const normalizedStoreId = storeId.toLowerCase().trim();
 
     const trimmedName = name.trim();
 
     // Check if unit with same name exists for this store
     const existingUnit = await Unit.findOne({ 
+      storeId: normalizedStoreId,
       name: trimmedName,
     });
     
@@ -113,6 +99,7 @@ export const createUnit = asyncHandler(async (req: AuthenticatedRequest, res: Re
     }
 
     const unit = await Unit.create({
+      storeId: normalizedStoreId,
       name: trimmedName,
       description: description?.trim() || undefined,
     });
@@ -168,11 +155,11 @@ export const getUnits = asyncHandler(async (req: AuthenticatedRequest, res: Resp
   }
 
   try {
-    // Get store-specific Unit model
-    const Unit = await getUnitModelForStore(storeId);
+    // Normalize storeId to lowercase for consistency
+    const normalizedStoreId = storeId.toLowerCase().trim();
     
-    // Get all units from the store-specific collection
-    const units = await Unit.find().sort({ createdAt: -1 });
+    // Get all units for this store from unified collection
+    const units = await Unit.find({ storeId: normalizedStoreId }).sort({ createdAt: -1 });
 
     res.status(200).json({
       success: true,
@@ -201,8 +188,14 @@ export const getUnitById = asyncHandler(async (req: AuthenticatedRequest, res: R
   }
 
   try {
-    const Unit = await getUnitModelForStore(storeId);
-    const unit = await Unit.findById(id);
+    // Normalize storeId to lowercase for consistency
+    const normalizedStoreId = storeId.toLowerCase().trim();
+    
+    // Find unit by ID and storeId to ensure store isolation
+    const unit = await Unit.findOne({
+      _id: id,
+      storeId: normalizedStoreId,
+    });
 
     if (!unit) {
       return res.status(404).json({
@@ -247,8 +240,14 @@ export const updateUnit = asyncHandler(async (req: AuthenticatedRequest, res: Re
   }
 
   try {
-    const Unit = await getUnitModelForStore(storeId);
-    const unit = await Unit.findById(id);
+    // Normalize storeId to lowercase for consistency
+    const normalizedStoreId = storeId.toLowerCase().trim();
+    
+    // Find unit by ID and storeId to ensure store isolation
+    const unit = await Unit.findOne({
+      _id: id,
+      storeId: normalizedStoreId,
+    });
 
     if (!unit) {
       return res.status(404).json({
@@ -260,6 +259,7 @@ export const updateUnit = asyncHandler(async (req: AuthenticatedRequest, res: Re
     // Check if name is being changed and if new name already exists
     if (name && name.trim() !== unit.name) {
       const existingUnit = await Unit.findOne({ 
+        storeId: normalizedStoreId,
         name: name.trim(),
         _id: { $ne: id }
       });
@@ -319,8 +319,14 @@ export const deleteUnit = asyncHandler(async (req: AuthenticatedRequest, res: Re
   }
 
   try {
-    const Unit = await getUnitModelForStore(storeId);
-    const unit = await Unit.findById(id);
+    // Normalize storeId to lowercase for consistency
+    const normalizedStoreId = storeId.toLowerCase().trim();
+    
+    // Find unit by ID and storeId to ensure store isolation
+    const unit = await Unit.findOne({
+      _id: id,
+      storeId: normalizedStoreId,
+    });
 
     if (!unit) {
       return res.status(404).json({
@@ -329,7 +335,7 @@ export const deleteUnit = asyncHandler(async (req: AuthenticatedRequest, res: Re
       });
     }
 
-    await Unit.findByIdAndDelete(id);
+    await Unit.deleteOne({ _id: id, storeId: normalizedStoreId });
 
     res.status(200).json({
       success: true,
@@ -367,11 +373,11 @@ export const exportUnits = asyncHandler(async (req: AuthenticatedRequest, res: R
   }
 
   try {
-    // Get store-specific Unit model
-    const Unit = await getUnitModelForStore(storeId);
+    // Normalize storeId to lowercase for consistency
+    const normalizedStoreId = storeId.toLowerCase().trim();
     
-    // Get all units from the store-specific collection
-    const units = await Unit.find().sort({ createdAt: -1 });
+    // Get all units for this store from unified collection
+    const units = await Unit.find({ storeId: normalizedStoreId }).sort({ createdAt: -1 });
 
     const headers = ['name', 'description', 'createdAt'];
     const rows = units.map((unit) => [
@@ -452,23 +458,8 @@ export const importUnits = asyncHandler(async (req: AuthenticatedRequest, res: R
     return normalized;
   });
 
-  // Get store-specific Unit model once
-  let UnitModel;
-  try {
-    UnitModel = await getUnitModelForStore(storeId);
-  } catch (error: any) {
-    return res.status(400).json({
-      success: false,
-      message: error.message || 'Failed to access store units. Please ensure you are logged in as a store user.',
-      summary: {
-        created: 0,
-        updated: 0,
-        failed: normalizedRecords.length,
-      },
-      errors: normalizedRecords.map((_, index) => ({ row: index + 1, message: 'Store access error' })),
-      units: [],
-    });
-  }
+  // Normalize storeId to lowercase for consistency
+  const normalizedStoreId = storeId.toLowerCase().trim();
 
   const getValue = (row: Record<string, string>, ...keys: string[]): string => {
     for (const key of keys) {
@@ -494,9 +485,13 @@ export const importUnits = asyncHandler(async (req: AuthenticatedRequest, res: R
       const description = getValue(row, 'description', 'details', 'desc', 'وصف').trim();
 
       // Find existing unit for this store
-      let existing = await UnitModel.findOne({ name });
+      let existing = await Unit.findOne({ 
+        storeId: normalizedStoreId,
+        name 
+      });
       if (!existing) {
-        existing = await UnitModel.findOne({
+        existing = await Unit.findOne({
+          storeId: normalizedStoreId,
           name: {
             $regex: new RegExp(`^${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i'),
           },
@@ -508,7 +503,8 @@ export const importUnits = asyncHandler(async (req: AuthenticatedRequest, res: R
         await existing.save();
         updated += 1;
       } else {
-        await UnitModel.create({
+        await Unit.create({
+          storeId: normalizedStoreId,
           name,
           description: description || undefined,
         });
@@ -516,8 +512,8 @@ export const importUnits = asyncHandler(async (req: AuthenticatedRequest, res: R
       }
     }
 
-    // Get all units from the store-specific collection
-    const units = await UnitModel.find().sort({ createdAt: -1 });
+    // Get all units for this store from unified collection
+    const units = await Unit.find({ storeId: normalizedStoreId }).sort({ createdAt: -1 });
 
     res.status(200).json({
       success: true,

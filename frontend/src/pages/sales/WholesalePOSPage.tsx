@@ -4,6 +4,9 @@ import { WholesaleProduct, WholesaleProductUnit } from '@/features/products/type
 import { AR_LABELS, UUID, SearchIcon, DeleteIcon, PlusIcon, CancelIcon, PrintIcon, CheckCircleIcon } from '@/shared/constants';
 import CustomDropdown from '@/shared/components/ui/CustomDropdown/CustomDropdown';
 import { useAuthStore } from '@/app/store';
+import { loadSettings } from '@/shared/utils/settingsStorage';
+import { printReceipt } from '@/shared/utils/printUtils';
+import { useCurrency } from '@/shared/contexts/CurrencyContext';
 
 // --- MOCK DATA ---
 const MOCK_WHOLESALE_PRODUCTS: WholesaleProduct[] = [
@@ -107,6 +110,7 @@ const generateNewInvoice = (cashierName: string): WholesaleInvoice => ({
 
 const WholesalePOSPage: React.FC = () => {
     const { user } = useAuthStore();
+    const { formatCurrency } = useCurrency();
     const currentUserName = user?.fullName || user?.username || 'Unknown';
     const [invoice, setInvoice] = useState<WholesaleInvoice>(generateNewInvoice(currentUserName));
     const [customers, setCustomers] = useState<Customer[]>([]); // Customer list - starts empty, no dummy customers
@@ -119,6 +123,20 @@ const WholesalePOSPage: React.FC = () => {
     const [saleCompleted, setSaleCompleted] = useState(false);
     const [selectedProduct, setSelectedProduct] = useState<WholesaleProduct | null>(null);
     const [modalQuantities, setModalQuantities] = useState<Record<string, string>>({});
+    
+    // Load autoPrintInvoice setting from preferences, default to true
+    const getAutoPrintSetting = (): boolean => {
+        try {
+            const settings = loadSettings(null);
+            if (settings && settings.autoPrintInvoice !== undefined) {
+                return settings.autoPrintInvoice;
+            }
+        } catch (err) {
+            console.error('Failed to load autoPrintInvoice setting:', err);
+        }
+        return true; // Default to true if not found
+    };
+    const [autoPrintEnabled, setAutoPrintEnabled] = useState(() => getAutoPrintSetting());
     
     // Infinite scroll state
     const [displayedCount, setDisplayedCount] = useState(20); // Initial number of products to display
@@ -364,6 +382,39 @@ const WholesalePOSPage: React.FC = () => {
         setSelectedPaymentMethod(null);
     };
     
+    // Load autoPrintInvoice setting when component mounts or settings change
+    useEffect(() => {
+        const settings = loadSettings(null);
+        if (settings && settings.autoPrintInvoice !== undefined) {
+            setAutoPrintEnabled(settings.autoPrintInvoice);
+        }
+    }, []);
+
+    // Auto-print when sale is completed and autoPrintInvoice is enabled
+    useEffect(() => {
+        if (saleCompleted && autoPrintEnabled) {
+            // Small delay to ensure the receipt screen is rendered before printing
+            const timer = setTimeout(() => {
+                // Check if the receipt element exists and is visible
+                const receiptElement = document.getElementById('printable-receipt');
+                if (receiptElement) {
+                    // Use silent print utility - prints without opening new window/tab
+                    printReceipt('printable-receipt').catch((error) => {
+                        console.error('Auto-print failed:', error);
+                    });
+                } else {
+                    // If receipt not found, try again after a short delay
+                    setTimeout(() => {
+                        printReceipt('printable-receipt').catch((error) => {
+                            console.error('Auto-print failed:', error);
+                        });
+                    }, 200);
+                }
+            }, 100); // Minimal delay to ensure receipt element is rendered
+            return () => clearTimeout(timer);
+        }
+    }, [saleCompleted, autoPrintEnabled]);
+    
     const filteredProducts = useMemo(() => {
         return MOCK_WHOLESALE_PRODUCTS.filter(p => {
             const matchesSearch = searchTerm ? (p.name.toLowerCase().includes(searchTerm.toLowerCase()) || p.units.some(u => u.barcode?.toLowerCase().includes(searchTerm.toLowerCase()))) : true;
@@ -425,14 +476,14 @@ const WholesalePOSPage: React.FC = () => {
     const renderReceipt = (invoice: WholesaleInvoice) => {
         return (
             <div id="printable-receipt" className="w-full max-w-md bg-white dark:bg-gray-800 p-4 sm:p-6 rounded-lg shadow-lg text-right">
-                <div className="text-center mb-3 sm:mb-4">
+                <div className="text-center mb-4 sm:mb-5">
                     <CheckCircleIcon className="w-12 h-12 sm:w-16 sm:h-16 text-green-500 mx-auto print-hidden" />
                     <h2 className="text-xl sm:text-2xl font-bold text-gray-800 dark:text-gray-100 mt-2 print-hidden">{AR_LABELS.saleCompleted}</h2>
-                    <h3 className="text-lg sm:text-xl font-bold text-center text-gray-900 dark:text-gray-100 mt-3 sm:mt-4">فاتورة جملة</h3>
+                    <h3 className="text-lg sm:text-xl font-bold text-center text-gray-900 dark:text-gray-100 mt-3 sm:mt-4 mb-2">فاتورة جملة</h3>
                     <p className="text-center text-xs text-gray-500 dark:text-gray-400">123 الشارع التجاري, الرياض, السعودية</p>
                 </div>
 
-                <div className="text-xs my-3 sm:my-4 space-y-1 border-b border-dashed pb-2">
+                <div className="invoice-info text-xs my-4 space-y-1.5">
                     <p><strong>{AR_LABELS.invoiceNumber}:</strong> {invoice.id}</p>
                     <p><strong>{AR_LABELS.date}:</strong> {new Date(invoice.date).toLocaleString('ar-SA')}</p>
                     <p><strong>{AR_LABELS.posCashier}:</strong> {invoice.cashier}</p>
@@ -440,37 +491,46 @@ const WholesalePOSPage: React.FC = () => {
                     {invoice.customer?.companyName && <p><strong>اسم الشركة:</strong> {invoice.customer.companyName}</p>}
                 </div>
                 
-                <div className="overflow-x-auto">
-                    <table className="w-full text-xs min-w-full">
+                <div className="overflow-x-auto -mx-2 sm:mx-0">
+                    <table className="w-full text-xs min-w-full border-collapse" style={{ borderSpacing: 0 }}>
                         <thead>
-                            <tr className="border-b-2 border-dashed border-gray-400 dark:border-gray-500">
-                                <th className="py-1 text-right font-semibold px-1 sm:px-2">الصنف</th>
-                                <th className="py-1 text-center font-semibold px-1 sm:px-2">الوحدة</th>
-                                <th className="py-1 text-center font-semibold px-1 sm:px-2">الكمية</th>
-                                <th className="py-1 text-center font-semibold px-1 sm:px-2">السعر</th>
-                                <th className="py-1 text-left font-semibold px-1 sm:px-2">الإجمالي</th>
+                            <tr className="bg-gray-100 dark:bg-gray-700">
+                                <th className="py-2.5 px-3 text-right font-bold border border-gray-300 dark:border-gray-600" style={{ borderRight: '1px solid #dee2e6', borderLeft: '1px solid #dee2e6', borderTop: '1px solid #dee2e6', borderBottom: '2px solid #495057' }}>اسم المنتج</th>
+                                <th className="py-2.5 px-3 text-center font-bold border border-gray-300 dark:border-gray-600" style={{ borderRight: '1px solid #dee2e6', borderLeft: '1px solid #dee2e6', borderTop: '1px solid #dee2e6', borderBottom: '2px solid #495057' }}>الوحدة</th>
+                                <th className="py-2.5 px-3 text-center font-bold border border-gray-300 dark:border-gray-600" style={{ borderRight: '1px solid #dee2e6', borderLeft: '1px solid #dee2e6', borderTop: '1px solid #dee2e6', borderBottom: '2px solid #495057' }}>الكمية</th>
+                                <th className="py-2.5 px-3 text-center font-bold border border-gray-300 dark:border-gray-600" style={{ borderRight: '1px solid #dee2e6', borderLeft: '1px solid #dee2e6', borderTop: '1px solid #dee2e6', borderBottom: '2px solid #495057' }}>سعر الوحدة</th>
+                                <th className="py-2.5 px-3 text-left font-bold border border-gray-300 dark:border-gray-600" style={{ borderRight: '1px solid #dee2e6', borderLeft: '1px solid #dee2e6', borderTop: '1px solid #dee2e6', borderBottom: '2px solid #495057' }}>الإجمالي</th>
                             </tr>
                         </thead>
                         <tbody>
                             {invoice.items.map(item => (
-                                <tr key={`${item.productId}-${item.unitName}`} className="border-b border-dashed border-gray-300 dark:border-gray-600">
-                                    <td className="py-1 px-1 sm:px-2">{item.name}</td>
-                                    <td className="py-1 text-center px-1 sm:px-2">{item.unitName}</td>
-                                    <td className="py-1 text-center px-1 sm:px-2">{item.quantity}</td>
-                                    <td className="py-1 text-center px-1 sm:px-2">{item.unitPrice.toFixed(2)}</td>
-                                    <td className="py-1 text-left px-1 sm:px-2">{item.total.toFixed(2)}</td>
+                                <tr key={`${item.productId}-${item.unitName}`} className="border-b border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700/50">
+                                    <td className="py-2.5 px-3 text-right border border-gray-300 dark:border-gray-600 font-medium">{item.name}</td>
+                                    <td className="py-2.5 px-3 text-center border border-gray-300 dark:border-gray-600">{item.unitName}</td>
+                                    <td className="py-2.5 px-3 text-center border border-gray-300 dark:border-gray-600">{item.quantity}</td>
+                                    <td className="py-2.5 px-3 text-center border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300">{formatCurrency(item.unitPrice)}</td>
+                                    <td className="py-2.5 px-3 text-left border border-gray-300 dark:border-gray-600 font-semibold text-gray-900 dark:text-gray-100">{formatCurrency(item.total)}</td>
                                 </tr>
                             ))}
                         </tbody>
                     </table>
                 </div>
 
-                <div className="mt-3 sm:mt-4 text-xs space-y-1">
-                    <div className="flex justify-between"><span className="text-gray-600 dark:text-gray-400">{AR_LABELS.subtotal}:</span><span>{invoice.subtotal.toFixed(2)} ر.س</span></div>
-                    <div className="flex justify-between"><span className="text-gray-600 dark:text-gray-400">{AR_LABELS.totalDiscount}:</span><span>{invoice.totalDiscount.toFixed(2)} ر.س</span></div>
-                    <div className="flex justify-between font-bold text-sm sm:text-base border-t dark:border-gray-600 pt-1 mt-1"><span className="text-gray-800 dark:text-gray-100">{AR_LABELS.grandTotal}:</span><span className="text-orange-600">{invoice.grandTotal.toFixed(2)} ر.س</span></div>
+                <div className="receipt-summary mt-5 text-xs">
+                    <div className="flex justify-between py-1.5">
+                        <span className="text-gray-600 dark:text-gray-400 font-medium">{AR_LABELS.subtotal}:</span>
+                        <span className="font-semibold text-gray-900 dark:text-gray-100">{formatCurrency(invoice.subtotal)}</span>
+                    </div>
+                    <div className="flex justify-between py-1.5">
+                        <span className="text-gray-600 dark:text-gray-400 font-medium">{AR_LABELS.totalDiscount}:</span>
+                        <span className="font-semibold text-gray-900 dark:text-gray-100">{formatCurrency(invoice.totalDiscount)}</span>
+                    </div>
+                    <div className="grand-total flex justify-between">
+                        <span className="text-gray-900 dark:text-gray-100 font-bold">{AR_LABELS.grandTotal}:</span>
+                        <span className="font-bold text-lg text-orange-600 dark:text-orange-400">{formatCurrency(invoice.grandTotal)}</span>
+                    </div>
                 </div>
-                <p className="text-center text-xs mt-4 sm:mt-6 text-gray-500 dark:text-gray-400">شكراً لتعاملكم معنا!</p>
+                <p className="receipt-footer text-center text-xs mt-6 text-gray-500 dark:text-gray-400">شكراً لتعاملكم معنا!</p>
             </div>
         );
     };
@@ -484,7 +544,7 @@ const WholesalePOSPage: React.FC = () => {
                         <PlusIcon className="h-4 w-4 sm:h-5 sm:w-5 ml-2" />
                         <span>{AR_LABELS.startNewSale}</span>
                     </button>
-                    <button onClick={() => window.print()} className="inline-flex items-center justify-center px-4 sm:px-6 py-2.5 sm:py-3 border border-gray-300 dark:border-gray-600 text-sm sm:text-base font-medium rounded-md text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 transition-colors">
+                    <button onClick={() => printReceipt('printable-receipt')} className="inline-flex items-center justify-center px-4 sm:px-6 py-2.5 sm:py-3 border border-gray-300 dark:border-gray-600 text-sm sm:text-base font-medium rounded-md text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 transition-colors">
                         <span className="h-4 w-4 sm:h-5 sm:w-5 block"><PrintIcon /></span>
                         <span className="mr-2">{AR_LABELS.printReceipt}</span>
                     </button>

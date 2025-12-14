@@ -3,8 +3,8 @@ import { body, validationResult } from 'express-validator';
 import { parse } from 'csv-parse/sync';
 import { asyncHandler } from '../middleware/error.middleware';
 import { AuthenticatedRequest } from '../middleware/auth.middleware';
-import { getCategoryModelForStore } from '../utils/categoryModel';
-import { findUserByIdAcrossStores } from '../utils/userModel';
+import Category from '../models/Category';
+import User from '../models/User';
 
 export const validateCreateCategory = [
   body('name')
@@ -44,7 +44,7 @@ export const createCategory = asyncHandler(async (req: AuthenticatedRequest, res
   // If storeId is not in token, try to get it from the user record
   if (!storeId && req.user?.userId && req.user.userId !== 'admin') {
     try {
-      const user = await findUserByIdAcrossStores(req.user.userId, req.user.storeId || undefined);
+      const user = await User.findById(req.user.userId);
       if (user && user.storeId) {
         storeId = user.storeId;
         console.log('✅ Create Category - Found storeId from user record:', storeId);
@@ -64,26 +64,12 @@ export const createCategory = asyncHandler(async (req: AuthenticatedRequest, res
   }
 
   try {
-    console.log('🔍 Create Category - Getting Category model for storeId:', storeId);
-    // Get store-specific Category model
-    let Category;
-    try {
-      Category = await getCategoryModelForStore(storeId);
-      console.log('✅ Create Category - Category model obtained');
-    } catch (modelError: any) {
-      console.error('❌ Create Category - Error getting Category model:', {
-        message: modelError.message,
-        stack: modelError.stack,
-        storeId: storeId,
-      });
-      return res.status(400).json({
-        success: false,
-        message: modelError.message || 'Failed to access store categories. Please ensure your account is associated with a valid store.',
-      });
-    }
+    // Normalize storeId to lowercase for consistency
+    const normalizedStoreId = storeId.toLowerCase().trim();
 
     // Check if category with same name exists for this store
     const existingCategory = await Category.findOne({ 
+      storeId: normalizedStoreId,
       name: name.trim(),
     });
     
@@ -95,6 +81,7 @@ export const createCategory = asyncHandler(async (req: AuthenticatedRequest, res
     }
 
     const category = await Category.create({
+      storeId: normalizedStoreId,
       name: name.trim(),
       description: description?.trim() || undefined,
     });
@@ -150,11 +137,11 @@ export const getCategories = asyncHandler(async (req: AuthenticatedRequest, res:
   }
 
   try {
-    // Get store-specific Category model
-    const Category = await getCategoryModelForStore(storeId);
+    // Normalize storeId to lowercase for consistency
+    const normalizedStoreId = storeId.toLowerCase().trim();
     
-    // Get all categories from the store-specific collection
-    const categories = await Category.find().sort({ createdAt: -1 });
+    // Get all categories for this store from unified collection
+    const categories = await Category.find({ storeId: normalizedStoreId }).sort({ createdAt: -1 });
 
     res.status(200).json({
       success: true,
@@ -197,11 +184,11 @@ export const exportCategories = asyncHandler(async (req: AuthenticatedRequest, r
   }
 
   try {
-    // Get store-specific Category model
-    const Category = await getCategoryModelForStore(storeId);
+    // Normalize storeId to lowercase for consistency
+    const normalizedStoreId = storeId.toLowerCase().trim();
     
-    // Get all categories from the store-specific collection
-    const categories = await Category.find().sort({ createdAt: -1 });
+    // Get all categories for this store from unified collection
+    const categories = await Category.find({ storeId: normalizedStoreId }).sort({ createdAt: -1 });
 
   const headers = ['name', 'description', 'imageUrl', 'createdAt'];
   const rows = categories.map((category) => [
@@ -283,23 +270,8 @@ export const importCategories = asyncHandler(async (req: AuthenticatedRequest, r
     return normalized;
   });
 
-  // Get store-specific Category model once
-  let CategoryModel;
-  try {
-    CategoryModel = await getCategoryModelForStore(storeId);
-  } catch (error: any) {
-    return res.status(400).json({
-      success: false,
-      message: error.message || 'Failed to access store categories. Please ensure you are logged in as a store user.',
-      summary: {
-        created: 0,
-        updated: 0,
-        failed: normalizedRecords.length,
-      },
-      errors: normalizedRecords.map((_, index) => ({ row: index + 1, message: 'Store access error' })),
-      categories: [],
-    });
-  }
+  // Normalize storeId to lowercase for consistency
+  const normalizedStoreId = storeId.toLowerCase().trim();
 
   const getValue = (row: Record<string, string>, ...keys: string[]): string => {
     for (const key of keys) {
@@ -325,9 +297,13 @@ export const importCategories = asyncHandler(async (req: AuthenticatedRequest, r
       const imageUrl = getValue(row, 'imageurl', 'image url', 'image', 'صورة').trim();
 
       // Find existing category for this store
-      let existing = await CategoryModel.findOne({ name });
+      let existing = await Category.findOne({ 
+        storeId: normalizedStoreId,
+        name 
+      });
       if (!existing) {
-        existing = await CategoryModel.findOne({
+        existing = await Category.findOne({
+          storeId: normalizedStoreId,
           name: {
             $regex: new RegExp(`^${escapeRegex(name)}$`, 'i'),
           },
@@ -345,7 +321,8 @@ export const importCategories = asyncHandler(async (req: AuthenticatedRequest, r
         await existing.save();
         updated += 1;
       } else {
-        await CategoryModel.create({
+        await Category.create({
+          storeId: normalizedStoreId,
           name,
           description: description || undefined,
           imageUrl: imageUrl || undefined,
@@ -354,8 +331,8 @@ export const importCategories = asyncHandler(async (req: AuthenticatedRequest, r
       }
     }
 
-    // Get all categories from the store-specific collection
-    const categories = await CategoryModel.find().sort({ createdAt: -1 });
+    // Get all categories for this store from unified collection
+    const categories = await Category.find({ storeId: normalizedStoreId }).sort({ createdAt: -1 });
 
     res.status(200).json({
       success: true,

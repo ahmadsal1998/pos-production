@@ -2,9 +2,9 @@ import { Response } from 'express';
 import { body, validationResult } from 'express-validator';
 import { asyncHandler } from '../middleware/error.middleware';
 import { AuthenticatedRequest } from '../middleware/auth.middleware';
-import { getCustomerModelForStore } from '../utils/customerModel';
+import Customer from '../models/Customer';
 import { getCustomerPaymentModelForStore } from '../utils/customerPaymentModel';
-import { findUserByIdAcrossStores } from '../utils/userModel';
+import User from '../models/User';
 
 export const validateCreateCustomer = [
   body('name')
@@ -45,7 +45,7 @@ export const createCustomer = asyncHandler(async (req: AuthenticatedRequest, res
   // If storeId is not in token, try to get it from the user record
   if (!storeId && req.user?.userId && req.user.userId !== 'admin') {
     try {
-      const user = await findUserByIdAcrossStores(req.user.userId, req.user.storeId || undefined);
+      const user = await User.findById(req.user.userId);
       if (user && user.storeId) {
         storeId = user.storeId;
       }
@@ -63,11 +63,12 @@ export const createCustomer = asyncHandler(async (req: AuthenticatedRequest, res
   }
 
   try {
-    // Get store-specific Customer model
-    const Customer = await getCustomerModelForStore(storeId);
+    // Normalize storeId to lowercase for consistency
+    const normalizedStoreId = storeId.toLowerCase().trim();
 
     // Check if customer with same phone exists for this store
     const existingCustomer = await Customer.findOne({ 
+      storeId: normalizedStoreId,
       phone: phone.trim(),
     });
     
@@ -82,6 +83,7 @@ export const createCustomer = asyncHandler(async (req: AuthenticatedRequest, res
     const customerName = name?.trim() || phone.trim();
 
     const customer = await Customer.create({
+      storeId: normalizedStoreId,
       name: customerName,
       phone: phone.trim(),
       address: address?.trim() || undefined,
@@ -144,13 +146,16 @@ export const getCustomers = asyncHandler(async (req: AuthenticatedRequest, res: 
   }
 
   try {
-    const Customer = await getCustomerModelForStore(storeId);
+    // Normalize storeId to lowercase for consistency
+    const normalizedStoreId = storeId.toLowerCase().trim();
     
     // Search parameter
     const searchTerm = (req.query.search as string)?.trim() || '';
     
-    // Build query filter
-    const queryFilter: any = {};
+    // Build query filter - always filter by storeId for store isolation
+    const queryFilter: any = {
+      storeId: normalizedStoreId,
+    };
     
     // If search term is provided, search in name, phone, and address
     if (searchTerm) {
@@ -212,8 +217,14 @@ export const getCustomerById = asyncHandler(async (req: AuthenticatedRequest, re
   }
 
   try {
-    const Customer = await getCustomerModelForStore(storeId);
-    const customer = await Customer.findById(id);
+    // Normalize storeId to lowercase for consistency
+    const normalizedStoreId = storeId.toLowerCase().trim();
+    
+    // Find customer by ID and storeId to ensure store isolation
+    const customer = await Customer.findOne({
+      _id: id,
+      storeId: normalizedStoreId,
+    });
 
     if (!customer) {
       return res.status(404).json({
@@ -242,6 +253,203 @@ export const getCustomerById = asyncHandler(async (req: AuthenticatedRequest, re
     return res.status(500).json({
       success: false,
       message: error.message || 'Failed to fetch customer. Please try again.',
+    });
+  }
+});
+
+export const validateUpdateCustomer = [
+  body('name')
+    .optional({ nullable: true })
+    .trim()
+    .isLength({ max: 200 })
+    .withMessage('Customer name cannot exceed 200 characters'),
+  body('phone')
+    .optional({ nullable: true })
+    .trim()
+    .isLength({ max: 20 })
+    .withMessage('Phone number cannot exceed 20 characters'),
+  body('address')
+    .optional({ nullable: true })
+    .trim()
+    .isLength({ max: 500 })
+    .withMessage('Address cannot exceed 500 characters'),
+  body('previousBalance')
+    .optional({ nullable: true })
+    .isFloat({ min: 0 })
+    .withMessage('Previous balance must be a non-negative number'),
+];
+
+export const updateCustomer = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({
+      success: false,
+      message: 'Validation failed',
+      errors: errors.array(),
+    });
+  }
+
+  const { id } = req.params;
+  const { name, phone, address, previousBalance } = req.body;
+  const storeId = req.user?.storeId || null;
+
+  if (!storeId) {
+    return res.status(400).json({
+      success: false,
+      message: 'Store ID is required. Please ensure you are logged in as a store user.',
+    });
+  }
+
+  try {
+    // Normalize storeId to lowercase for consistency
+    const normalizedStoreId = storeId.toLowerCase().trim();
+
+    // Find customer by ID and storeId to ensure store isolation
+    const customer = await Customer.findOne({
+      _id: id,
+      storeId: normalizedStoreId,
+    });
+
+    if (!customer) {
+      return res.status(404).json({
+        success: false,
+        message: 'Customer not found',
+      });
+    }
+
+    // Check if phone is being updated and if it conflicts with another customer
+    if (phone && phone.trim() !== customer.phone) {
+      const existingCustomer = await Customer.findOne({
+        storeId: normalizedStoreId,
+        phone: phone.trim(),
+        _id: { $ne: id },
+      });
+
+      if (existingCustomer) {
+        return res.status(400).json({
+          success: false,
+          message: 'Customer with this phone number already exists',
+        });
+      }
+    }
+
+    // Prepare update data
+    const updateData: any = {};
+    if (name !== undefined) {
+      updateData.name = name?.trim() || phone?.trim() || customer.phone;
+    }
+    if (phone !== undefined) {
+      updateData.phone = phone.trim();
+      // If name is not provided but phone is updated, use phone as name
+      if (!name && !customer.name) {
+        updateData.name = phone.trim();
+      }
+    }
+    if (address !== undefined) {
+      updateData.address = address?.trim() || undefined;
+    }
+    if (previousBalance !== undefined) {
+      updateData.previousBalance = previousBalance || 0;
+    }
+
+    // Update customer
+    const updatedCustomer = await Customer.findOneAndUpdate(
+      { _id: id, storeId: normalizedStoreId },
+      updateData,
+      { new: true, runValidators: true }
+    );
+
+    if (!updatedCustomer) {
+      return res.status(404).json({
+        success: false,
+        message: 'Customer not found',
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'Customer updated successfully',
+      data: {
+        customer: {
+          id: updatedCustomer._id.toString(),
+          name: updatedCustomer.name,
+          phone: updatedCustomer.phone,
+          address: updatedCustomer.address,
+          previousBalance: updatedCustomer.previousBalance,
+          createdAt: updatedCustomer.createdAt,
+          updatedAt: updatedCustomer.updatedAt,
+        },
+      },
+    });
+  } catch (error: any) {
+    console.error('Error updating customer:', error);
+
+    // Handle specific mongoose errors
+    if (error.name === 'ValidationError') {
+      const errorMessages = Object.values(error.errors || {}).map((e: any) => e.message);
+      return res.status(400).json({
+        success: false,
+        message: errorMessages.join(', ') || 'Validation error',
+      });
+    }
+
+    if (error.code === 11000) {
+      return res.status(400).json({
+        success: false,
+        message: 'Customer with this phone number already exists',
+      });
+    }
+
+    return res.status(500).json({
+      success: false,
+      message: error.message || 'Failed to update customer. Please try again.',
+    });
+  }
+});
+
+export const deleteCustomer = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+  const { id } = req.params;
+  const storeId = req.user?.storeId || null;
+
+  if (!storeId) {
+    return res.status(400).json({
+      success: false,
+      message: 'Store ID is required. Please ensure you are logged in as a store user.',
+    });
+  }
+
+  try {
+    // Normalize storeId to lowercase for consistency
+    const normalizedStoreId = storeId.toLowerCase().trim();
+
+    // Find customer by ID and storeId to ensure store isolation
+    const customer = await Customer.findOne({
+      _id: id,
+      storeId: normalizedStoreId,
+    });
+
+    // If customer doesn't exist, treat as already deleted (idempotent delete)
+    // This ensures consistency: if the customer is already gone from server,
+    // we return success so the client can sync its local state
+    if (!customer) {
+      return res.status(200).json({
+        success: true,
+        message: 'Customer already deleted or not found',
+      });
+    }
+
+    // Delete customer
+    await Customer.deleteOne({ _id: id, storeId: normalizedStoreId });
+
+    res.status(200).json({
+      success: true,
+      message: 'Customer deleted successfully',
+    });
+  } catch (error: any) {
+    console.error('Error deleting customer:', error);
+    return res.status(500).json({
+      success: false,
+      message: error.message || 'Failed to delete customer. Please try again.',
     });
   }
 });
@@ -287,7 +495,7 @@ export const createCustomerPayment = asyncHandler(async (req: AuthenticatedReque
   // If storeId is not in token, try to get it from the user record
   if (!storeId && req.user?.userId && req.user.userId !== 'admin') {
     try {
-      const user = await findUserByIdAcrossStores(req.user.userId, req.user.storeId || undefined);
+      const user = await User.findById(req.user.userId);
       if (user && user.storeId) {
         storeId = user.storeId;
       }
@@ -305,9 +513,14 @@ export const createCustomerPayment = asyncHandler(async (req: AuthenticatedReque
   }
 
   try {
-    // Verify customer exists
-    const Customer = await getCustomerModelForStore(storeId);
-    const customer = await Customer.findById(customerId);
+    // Normalize storeId to lowercase for consistency
+    const normalizedStoreId = storeId.toLowerCase().trim();
+    
+    // Verify customer exists and belongs to this store
+    const customer = await Customer.findOne({
+      _id: customerId,
+      storeId: normalizedStoreId,
+    });
     
     if (!customer) {
       return res.status(404).json({

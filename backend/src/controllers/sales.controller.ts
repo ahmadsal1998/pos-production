@@ -4,6 +4,7 @@ import { AuthenticatedRequest } from '../middleware/auth.middleware';
 import { asyncHandler } from '../middleware/error.middleware';
 import { getSaleModelForStore } from '../utils/saleModel';
 import { getProductModelForStore } from '../utils/productModel';
+import { invalidateAllProductBarcodeCaches } from '../utils/productCache';
 
 /**
  * Get the next sequential invoice number
@@ -19,11 +20,11 @@ export const getNextInvoiceNumber = asyncHandler(async (req: AuthenticatedReques
     });
   }
 
-  // Get store-specific Sale model
+  // Get unified Sale model (all stores use same collection)
   const Sale = await getSaleModelForStore(storeId);
 
-  // Get all sales to find the highest invoice number
-  const allSales = await Sale.find({}).select('invoiceNumber').lean();
+  // Get all sales for this store to find the highest invoice number
+  const allSales = await Sale.find({ storeId: storeId.toLowerCase() }).select('invoiceNumber').lean();
   
   let maxNumber = 0;
   
@@ -136,12 +137,14 @@ export const createSale = asyncHandler(async (req: AuthenticatedRequest, res: Re
     }
   }
 
-  // Get store-specific Sale model
+  // Get unified Sale model (all stores use same collection)
   const Sale = await getSaleModelForStore(storeId);
 
   // Check if invoice number already exists for this store
+  // Invoice numbers must be unique per store
   const existingSale = await Sale.findOne({
     invoiceNumber,
+    storeId: storeId.toLowerCase().trim(),
   });
 
   if (existingSale) {
@@ -213,23 +216,55 @@ export const createSale = asyncHandler(async (req: AuthenticatedRequest, res: Re
  * Get all sales with optional filters
  */
 export const getSales = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
-  const storeId = req.user?.storeId || null;
+  const userStoreId = req.user?.storeId || null;
+  const userRole = req.user?.role || null;
+  const { startDate, endDate, customerId, status, paymentMethod, storeId: queryStoreId, page = 1, limit = 100 } = req.query;
+
+  // Determine which storeId to use
+  let targetStoreId: string | null = null;
   
-  // Store users must have a storeId
-  if (!storeId) {
-    return res.status(400).json({
-      success: false,
-      message: 'Store ID is required to access sales',
-    });
+  // Admin users can query any store via storeId query parameter, or all stores if not specified
+  if (userRole === 'Admin') {
+    if (queryStoreId) {
+      targetStoreId = (queryStoreId as string).toLowerCase().trim();
+    }
+    // If no storeId in query, admin can see all stores (no storeId filter)
+  } else {
+    // Non-admin users must have a storeId and can only query their own store
+    if (!userStoreId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Store ID is required to access sales',
+      });
+    }
+    targetStoreId = userStoreId.toLowerCase().trim();
+  }
+
+  // Get unified Sale model (all stores use same collection)
+  // Use user's storeId or targetStoreId for model access (model is unified, but we validate store exists)
+  let modelStoreId = userStoreId || targetStoreId;
+  if (!modelStoreId) {
+    // For admin querying all stores, we still need a storeId to get the model
+    // Use the first available store or a default
+    const Store = (await import('../models/Store')).default;
+    const firstStore = await Store.findOne().lean();
+    if (!firstStore) {
+      return res.status(400).json({
+        success: false,
+        message: 'No stores available',
+      });
+    }
+    modelStoreId = firstStore.storeId || firstStore.prefix;
   }
   
-  const { startDate, endDate, customerId, status, paymentMethod, page = 1, limit = 100 } = req.query;
+  // Get the unified Sale model (all stores use the same collection)
+  const Sale = await getSaleModelForStore(modelStoreId);
 
-  // Get store-specific Sale model
-  const Sale = await getSaleModelForStore(storeId);
-
-  // Build query (no need to filter by storeId since each store has its own collection)
+  // Build query - filter by storeId if specified (for non-admin or admin with storeId filter)
   const query: any = {};
+  if (targetStoreId) {
+    query.storeId = targetStoreId;
+  }
 
   if (customerId) {
     query.customerId = customerId;
@@ -302,10 +337,14 @@ export const getSale = asyncHandler(async (req: AuthenticatedRequest, res: Respo
     });
   }
 
-  // Get store-specific Sale model
+  // Get unified Sale model (all stores use same collection)
   const Sale = await getSaleModelForStore(storeId);
 
-  const sale = await Sale.findById(id);
+  // Find sale by ID and ensure it belongs to the user's store
+  const sale = await Sale.findOne({
+    _id: id,
+    storeId: storeId.toLowerCase().trim(),
+  });
 
   if (!sale) {
     return res.status(404).json({
@@ -335,10 +374,14 @@ export const updateSale = asyncHandler(async (req: AuthenticatedRequest, res: Re
     });
   }
 
-  // Get store-specific Sale model
+  // Get unified Sale model (all stores use same collection)
   const Sale = await getSaleModelForStore(storeId);
 
-  const sale = await Sale.findById(id);
+  // Find sale by ID and ensure it belongs to the user's store
+  const sale = await Sale.findOne({
+    _id: id,
+    storeId: storeId.toLowerCase().trim(),
+  });
 
   if (!sale) {
     return res.status(404).json({
@@ -385,10 +428,14 @@ export const deleteSale = asyncHandler(async (req: AuthenticatedRequest, res: Re
     });
   }
 
-  // Get store-specific Sale model
+  // Get unified Sale model (all stores use same collection)
   const Sale = await getSaleModelForStore(storeId);
 
-  const sale = await Sale.findByIdAndDelete(id);
+  // Find and delete sale by ID, ensuring it belongs to the user's store
+  const sale = await Sale.findOneAndDelete({
+    _id: id,
+    storeId: storeId.toLowerCase().trim(),
+  });
 
   if (!sale) {
     return res.status(404).json({
@@ -445,7 +492,10 @@ export const processReturn = asyncHandler(async (req: AuthenticatedRequest, res:
   // Find the original invoice if provided (for validation and linking)
   let originalInvoice = null;
   if (originalInvoiceId) {
-    originalInvoice = await Sale.findById(originalInvoiceId);
+    originalInvoice = await Sale.findOne({
+      _id: originalInvoiceId,
+      storeId: storeId.toLowerCase().trim(),
+    });
     if (!originalInvoice) {
       return res.status(404).json({
         success: false,
@@ -544,7 +594,12 @@ export const processReturn = asyncHandler(async (req: AuthenticatedRequest, res:
       const currentStock = product.stock || 0;
       const newStock = currentStock + stockIncrease;
 
-      await Product.findByIdAndUpdate(productId, { stock: newStock }, { new: true });
+      const updatedProduct = await Product.findByIdAndUpdate(productId, { stock: newStock }, { new: true });
+      
+      // Invalidate product cache to ensure POS shows updated quantity
+      if (updatedProduct && storeId) {
+        await invalidateAllProductBarcodeCaches(storeId, updatedProduct);
+      }
       
       stockUpdates.push({
         productId,
@@ -632,7 +687,7 @@ export const processReturn = asyncHandler(async (req: AuthenticatedRequest, res:
   const finalCustomerId = customerId || originalInvoice?.customerId || null;
 
   // Get next sequential invoice number for return (using same format as regular invoices)
-  const allSales = await Sale.find({}).select('invoiceNumber').lean();
+  const allSales = await Sale.find({ storeId: storeId.toLowerCase() }).select('invoiceNumber').lean();
   let maxNumber = 0;
   
   // Extract numeric part from invoice numbers (format: INV-1, INV-2, etc.)

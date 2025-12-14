@@ -7,6 +7,8 @@ import UnitFormModal from '@/features/products/components/unit-management/UnitFo
 import CategoryFormModal from '@/features/products/components/category-management/CategoryFormModal';
 import { Brand, Unit, Category } from '@/shared/types';
 import { ApiError } from '@/lib/api/client';
+import { invalidateProductsCache, getStoreIdFromToken } from '@/lib/cache/productsCache';
+import { productSync } from '@/lib/sync/productSync';
 
 interface ProductFormData {
   // Basic Information
@@ -1092,6 +1094,27 @@ const AddProductPage: React.FC = () => {
       }
 
       if (response.success) {
+        // Get the product data from response
+        const productData = (response.data as any)?.data?.product || 
+                          (response.data as any)?.product;
+        
+        // Sync the product to IndexedDB immediately
+        if (productData) {
+          try {
+            await productSync.syncAfterCreateOrUpdate(productData);
+            console.log('[AddProductPage] Successfully synced product to IndexedDB');
+          } catch (syncError) {
+            console.error('[AddProductPage] Error syncing product to IndexedDB:', syncError);
+            // Continue anyway - the product was created/updated successfully
+          }
+        }
+        
+        // Invalidate products cache to ensure fresh data on next load (backup)
+        const storeId = getStoreIdFromToken();
+        if (storeId) {
+          invalidateProductsCache(storeId);
+        }
+        
         // Handle image uploads if any
         if (formData.images.length > 0) {
           // TODO: Implement image upload endpoint

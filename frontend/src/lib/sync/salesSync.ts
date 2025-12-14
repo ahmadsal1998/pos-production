@@ -1,0 +1,289 @@
+/**
+ * Sales synchronization service
+ * Handles syncing between IndexedDB and backend API
+ */
+
+import { salesDB, SaleRecord } from '../db/salesDB';
+import { salesApi } from '../api/client';
+
+interface SyncResult {
+  success: boolean;
+  synced: number;
+  failed: number;
+  errors: Array<{ saleId: string; error: string }>;
+}
+
+class SalesSyncService {
+  private isSyncing = false;
+  private syncInterval: number | null = null;
+
+  /**
+   * Initialize sync service
+   */
+  async init(): Promise<void> {
+    // Initialize IndexedDB
+    await salesDB.init();
+
+    // Start periodic sync (every 30 seconds)
+    this.startPeriodicSync(30000);
+
+    // Sync on page visibility change (when user comes back to tab)
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) {
+        this.syncUnsyncedSales().catch((error) => {
+          console.error('Error syncing on visibility change:', error);
+        });
+      }
+    });
+
+    // Sync on online event
+    window.addEventListener('online', () => {
+      this.syncUnsyncedSales().catch((error) => {
+        console.error('Error syncing on online event:', error);
+      });
+    });
+  }
+
+  /**
+   * Start periodic sync
+   */
+  startPeriodicSync(intervalMs: number): void {
+    if (this.syncInterval) {
+      clearInterval(this.syncInterval);
+    }
+
+    this.syncInterval = window.setInterval(() => {
+      this.syncUnsyncedSales().catch((error) => {
+        console.error('Error in periodic sync:', error);
+      });
+    }, intervalMs);
+  }
+
+  /**
+   * Stop periodic sync
+   */
+  stopPeriodicSync(): void {
+    if (this.syncInterval) {
+      clearInterval(this.syncInterval);
+      this.syncInterval = null;
+    }
+  }
+
+  /**
+   * Sync a single sale to backend
+   */
+  async syncSale(sale: SaleRecord, storeId: string): Promise<{ success: boolean; backendId?: string; error?: string }> {
+    try {
+      // Prepare sale data for backend (remove local-only fields)
+      const saleData = {
+        invoiceNumber: sale.invoiceNumber,
+        date: sale.date,
+        customerId: sale.customerId,
+        customerName: sale.customerName,
+        items: sale.items,
+        subtotal: sale.subtotal,
+        totalItemDiscount: sale.totalItemDiscount,
+        invoiceDiscount: sale.invoiceDiscount,
+        tax: sale.tax,
+        total: sale.total,
+        paidAmount: sale.paidAmount,
+        remainingAmount: sale.remainingAmount,
+        paymentMethod: sale.paymentMethod,
+        status: sale.status,
+        seller: sale.seller,
+        isReturn: sale.isReturn || false,
+        originalInvoiceId: sale.originalInvoiceId,
+      };
+
+      // Call backend API
+      const response = await salesApi.createSale(saleData);
+
+      if (response.data && (response.data as any).success) {
+        const savedSale = (response.data as any).data?.sale;
+        const backendId = savedSale?.id || savedSale?._id;
+
+        // Mark as synced in IndexedDB
+        // Pass storeId and invoiceNumber to help find the sale if ID doesn't match
+        if (sale.id) {
+          await salesDB.markAsSynced(sale.id, backendId, sale.storeId, sale.invoiceNumber);
+        }
+
+        console.log('✅ Sale synced successfully:', sale.invoiceNumber);
+        return { success: true, backendId };
+      } else {
+        throw new Error('Backend returned unsuccessful response');
+      }
+    } catch (error: any) {
+      const errorMessage = error?.message || 'Unknown sync error';
+      console.error('❌ Failed to sync sale:', sale.invoiceNumber, errorMessage);
+
+      // Mark sync error in IndexedDB
+      // Pass storeId and invoiceNumber to help find the sale if ID doesn't match
+      if (sale.id) {
+        await salesDB.markSyncError(sale.id, errorMessage, sale.storeId, sale.invoiceNumber);
+      }
+
+      return { success: false, error: errorMessage };
+    }
+  }
+
+  /**
+   * Sync all unsynced sales
+   */
+  async syncUnsyncedSales(storeId?: string): Promise<SyncResult> {
+    if (this.isSyncing) {
+      console.log('⏳ Sync already in progress, skipping...');
+      return { success: false, synced: 0, failed: 0, errors: [] };
+    }
+
+    // Check if online
+    if (!navigator.onLine) {
+      console.log('📴 Offline, skipping sync');
+      return { success: false, synced: 0, failed: 0, errors: [] };
+    }
+
+    this.isSyncing = true;
+
+    try {
+      const unsyncedSales = await salesDB.getUnsyncedSales(storeId);
+      console.log(`🔄 Syncing ${unsyncedSales.length} unsynced sales...`);
+
+      if (unsyncedSales.length === 0) {
+        this.isSyncing = false;
+        return { success: true, synced: 0, failed: 0, errors: [] };
+      }
+
+      const results: SyncResult = {
+        success: true,
+        synced: 0,
+        failed: 0,
+        errors: [],
+      };
+
+      // Sync sales sequentially to avoid overwhelming the backend
+      for (const sale of unsyncedSales) {
+        const saleStoreId = sale.storeId || storeId;
+        if (!saleStoreId) {
+          console.warn('⚠️ Sale missing storeId, skipping:', sale.invoiceNumber);
+          results.failed++;
+          results.errors.push({
+            saleId: sale.id || 'unknown',
+            error: 'Missing storeId',
+          });
+          continue;
+        }
+
+        const syncResult = await this.syncSale(sale, saleStoreId);
+
+        if (syncResult.success) {
+          results.synced++;
+        } else {
+          results.failed++;
+          results.errors.push({
+            saleId: sale.id || 'unknown',
+            error: syncResult.error || 'Unknown error',
+          });
+        }
+
+        // Small delay between syncs to avoid rate limiting
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+
+      console.log(`✅ Sync completed: ${results.synced} synced, ${results.failed} failed`);
+      this.isSyncing = false;
+      return results;
+    } catch (error: any) {
+      console.error('❌ Error during sync:', error);
+      this.isSyncing = false;
+      return {
+        success: false,
+        synced: 0,
+        failed: 0,
+        errors: [{ saleId: 'unknown', error: error?.message || 'Unknown error' }],
+      };
+    }
+  }
+
+  /**
+   * Create a sale and sync immediately
+   * This is the main method to use when creating a new sale
+   */
+  async createAndSyncSale(sale: SaleRecord, storeId: string): Promise<{ success: boolean; saleId?: string; error?: string }> {
+    try {
+      // Ensure IndexedDB is initialized
+      await salesDB.init();
+
+      // Ensure storeId is set and normalized
+      sale.storeId = storeId.toLowerCase().trim();
+
+      // Generate temporary ID if not provided
+      // Use a combination of storeId, invoiceNumber, and timestamp to ensure uniqueness
+      if (!sale.id && !sale._id) {
+        const timestamp = Date.now();
+        const random = Math.random().toString(36).substr(2, 9);
+        sale.id = `temp_${sale.storeId}_${sale.invoiceNumber}_${timestamp}_${random}`;
+      }
+
+      // Mark as unsynced initially
+      sale.synced = false;
+
+      // Save to IndexedDB first (for offline support)
+      await salesDB.saveSale(sale);
+
+      console.log('💾 Sale saved to IndexedDB:', sale.invoiceNumber);
+
+      // Try to sync immediately if online
+      if (navigator.onLine) {
+        const syncResult = await this.syncSale(sale, storeId);
+        if (syncResult.success) {
+          return { success: true, saleId: syncResult.backendId || sale.id };
+        } else {
+          // Sale is saved locally, will sync later
+          console.warn('⚠️ Sale saved locally, will sync later:', syncResult.error);
+          return { success: true, saleId: sale.id, error: syncResult.error };
+        }
+      } else {
+        // Offline - sale is saved locally, will sync when online
+        console.log('📴 Offline - sale saved locally, will sync when online');
+        return { success: true, saleId: sale.id };
+      }
+    } catch (error: any) {
+      console.error('❌ Failed to create sale:', error);
+      return { success: false, error: error?.message || 'Unknown error' };
+    }
+  }
+
+  /**
+   * Get sales from IndexedDB (fast local access)
+   */
+  async getSales(
+    storeId: string,
+    filters?: {
+      startDate?: Date;
+      endDate?: Date;
+      customerId?: string;
+      status?: string;
+      paymentMethod?: string;
+      limit?: number;
+      offset?: number;
+    }
+  ): Promise<SaleRecord[]> {
+    await salesDB.init();
+    return salesDB.getSalesByStore(storeId, filters);
+  }
+
+  /**
+   * Get a single sale by ID
+   */
+  async getSale(saleId: string): Promise<SaleRecord | null> {
+    await salesDB.init();
+    return salesDB.getSale(saleId);
+  }
+}
+
+// Export singleton instance
+export const salesSync = new SalesSyncService();
+
+// Export types
+export type { SyncResult };
+

@@ -9,6 +9,7 @@ import PurchaseQuickActions from '@/features/financial/components/PurchaseQuickA
 import SuppliersAnalytics from '@/features/financial/components/SuppliersAnalytics';
 import SuppliersQuickActions from '@/features/financial/components/SuppliersQuickActions';
 import { formatDate } from '@/shared/utils';
+import { printReceipt } from '@/shared/utils/printUtils';
 import PaymentsAnalytics from '@/features/financial/components/PaymentsAnalytics';
 import PaymentsQuickActions from '@/features/financial/components/PaymentsQuickActions';
 import QuickReports from '@/features/financial/components/QuickReports';
@@ -206,7 +207,7 @@ const SupplierStatementModal: React.FC<{ summary: SupplierAccountSummary | null;
                 </tbody>
             </table>
         </div>
-    </div><div className="flex justify-start space-x-4 space-x-reverse p-4 bg-gray-50 dark:bg-gray-800/50 border-t dark:border-gray-700 rounded-b-lg print-hidden"><button onClick={() => window.print()} className="inline-flex items-center px-4 py-2 bg-blue-500 text-white rounded-md"><PrintIcon/><span className="mr-2">{AR_LABELS.printReceipt}</span></button><button onClick={onClose} className="px-4 py-2 bg-gray-200 dark:bg-gray-600 text-gray-800 dark:text-gray-200 rounded-md">{AR_LABELS.cancel}</button></div></div></div>);
+    </div><div className="flex justify-start space-x-4 space-x-reverse p-4 bg-gray-50 dark:bg-gray-800/50 border-t dark:border-gray-700 rounded-b-lg print-hidden"><button onClick={() => printReceipt('printable-receipt')} className="inline-flex items-center px-4 py-2 bg-blue-500 text-white rounded-md"><PrintIcon/><span className="mr-2">{AR_LABELS.printReceipt}</span></button><button onClick={onClose} className="px-4 py-2 bg-gray-200 dark:bg-gray-600 text-gray-800 dark:text-gray-200 rounded-md">{AR_LABELS.cancel}</button></div></div></div>);
 };
 
 // FIX: Added the main component and default export to fix the error.

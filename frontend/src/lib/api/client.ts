@@ -234,7 +234,7 @@ export interface ProductsPaginationResponse {
 }
 
 export const productsApi = {
-  getProducts: (params?: { page?: number; limit?: number; search?: string; showInQuickProducts?: boolean; status?: string }) =>
+  getProducts: (params?: { page?: number; limit?: number; search?: string; showInQuickProducts?: boolean; status?: string; all?: boolean; includeCategories?: boolean }) =>
     apiClient.get<ProductsPaginationResponse>('/products', params),
   
   getProduct: (id: string) =>
@@ -354,6 +354,12 @@ export const customersApi = {
   
   createCustomer: (customer: { name?: string; phone: string; address?: string; previousBalance?: number }) =>
     apiClient.post<{ success: boolean; message: string; data: { customer: any } }>('/customers', customer),
+  
+  updateCustomer: (id: string, customer: { name?: string; phone?: string; address?: string; previousBalance?: number }) =>
+    apiClient.put<{ success: boolean; message: string; data: { customer: any } }>(`/customers/${id}`, customer),
+  
+  deleteCustomer: (id: string) =>
+    apiClient.delete<{ success: boolean; message: string }>(`/customers/${id}`),
   
   // Customer payment endpoints
   getCustomerPayments: (params?: { customerId?: string }) =>

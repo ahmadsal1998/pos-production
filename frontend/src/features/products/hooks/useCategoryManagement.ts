@@ -67,10 +67,31 @@ const useCategoryManagement = () => {
 
   const fetchCategories = useCallback(async () => {
     try {
+      // Try to get from IndexedDB first
+      try {
+        const { categorySync } = await import('@/lib/sync/categoriesSync');
+        const cached = await categorySync.getCachedCategories();
+        if (cached && cached.length > 0) {
+          const normalized = cached.map(mapBackendCategory);
+          setCategories(normalized);
+        }
+      } catch (dbError) {
+        console.warn('Failed to load categories from IndexedDB:', dbError);
+      }
+      
+      // Always fetch from server to ensure we have the latest
       const response = await categoriesApi.getCategories();
       const payload = response.data.categories ?? [];
       const normalized = payload.map(mapBackendCategory);
       setCategories(normalized);
+      
+      // Sync to IndexedDB
+      try {
+        const { categorySync } = await import('@/lib/sync/categoriesSync');
+        await categorySync.syncCategories(false);
+      } catch (syncError) {
+        console.warn('Failed to sync categories to IndexedDB:', syncError);
+      }
     } catch (error) {
       console.error('Failed to load categories', error);
     }
@@ -109,6 +130,15 @@ const useCategoryManagement = () => {
               const withoutDuplicate = previous.filter((category) => category.id !== normalized.id);
               return [normalized, ...withoutDuplicate];
             });
+            
+            // Sync to IndexedDB
+            try {
+              await import('@/lib/sync/categoriesSync').then(({ categorySync }) => 
+                categorySync.syncAfterCreateOrUpdate(createdCategory)
+              );
+            } catch (syncError) {
+              console.warn('Failed to sync category to IndexedDB:', syncError);
+            }
           }
 
           closeModal();
@@ -161,6 +191,15 @@ const useCategoryManagement = () => {
 
       if (!window.confirm(requiresConfirmation)) {
         return;
+      }
+
+      // Delete from IndexedDB
+      try {
+        import('@/lib/sync/categoriesSync').then(({ categorySync }) => 
+          categorySync.syncAfterDelete(categoryId)
+        );
+      } catch (syncError) {
+        console.warn('Failed to delete category from IndexedDB:', syncError);
       }
 
       setCategories((previous) =>

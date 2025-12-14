@@ -27,8 +27,10 @@ const paymentSchema = new Schema<IPayment>(
     },
     storeId: {
       type: String,
+      required: [true, 'Store ID is required'],
+      trim: true,
+      lowercase: true,
       index: true,
-      default: null,
     },
     merchantId: {
       type: Schema.Types.ObjectId,
@@ -94,14 +96,12 @@ const paymentSchema = new Schema<IPayment>(
   }
 );
 
-// Indexes for better query performance
-paymentSchema.index({ invoiceId: 1, storeId: 1 });
-paymentSchema.index({ status: 1, createdAt: -1 });
-paymentSchema.index({ transactionId: 1 });
-// Compound indexes for merchantId queries
-// MongoDB can use these for queries on merchantId alone (prefix matching)
-paymentSchema.index({ merchantId: 1, terminalId: 1 });
-paymentSchema.index({ merchantId: 1, status: 1 });
+// CRITICAL INDEXES for performance
+paymentSchema.index({ storeId: 1, invoiceId: 1 });
+paymentSchema.index({ storeId: 1, status: 1, createdAt: -1 });
+paymentSchema.index({ storeId: 1, transactionId: 1 });
+paymentSchema.index({ storeId: 1, merchantId: 1, terminalId: 1 });
+paymentSchema.index({ storeId: 1, merchantId: 1, status: 1 });
 
 export const Payment: Model<IPayment> = mongoose.model<IPayment>('Payment', paymentSchema);
 

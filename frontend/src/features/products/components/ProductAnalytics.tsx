@@ -69,7 +69,7 @@ const ProductAnalytics: React.FC<ProductAnalyticsProps> = ({ onViewDetails }) =>
   }, [timeFilter]);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 min-h-[150px]">
       {/* Time Filter */}
 
 

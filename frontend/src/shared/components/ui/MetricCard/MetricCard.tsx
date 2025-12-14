@@ -6,7 +6,7 @@ const MetricCard = ({ title, value, icon, bgColor, valueColor }: MetricCardProps
   const darkBgColor = bgColor.replace('-100', '-900/50').replace('-50', '-950/50');
 
   return (
-    <div className={`${components.card} group relative overflow-hidden transition-all duration-300 hover:shadow-xl hover:scale-105`}>
+    <div className={`${components.card} group relative overflow-hidden transition-all duration-300 hover:shadow-xl hover:scale-105 min-h-[100px]`}>
       {/* Background gradient overlay */}
       <div className="absolute inset-0 bg-gradient-to-br from-transparent via-white/5 to-transparent opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
       

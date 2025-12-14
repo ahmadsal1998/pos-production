@@ -4,6 +4,9 @@ import {
   getCustomers,
   getCustomerById,
   validateCreateCustomer,
+  updateCustomer,
+  validateUpdateCustomer,
+  deleteCustomer,
   createCustomerPayment,
   getCustomerPayments,
   validateCreateCustomerPayment,
@@ -20,6 +23,8 @@ router.use(requireStoreAccess);
 router.get('/', getCustomers);
 router.get('/:id', getCustomerById);
 router.post('/', validateCreateCustomer, createCustomer);
+router.put('/:id', validateUpdateCustomer, updateCustomer);
+router.delete('/:id', deleteCustomer);
 
 // Customer payment routes
 router.get('/payments/list', getCustomerPayments);

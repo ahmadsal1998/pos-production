@@ -6,7 +6,7 @@ import { AuthenticatedRequest } from '../middleware/auth.middleware';
 import { asyncHandler } from '../middleware/error.middleware';
 import { determineDatabaseForStore } from '../utils/databaseManager';
 import { createStoreCollections } from '../utils/storeCollections';
-import { getUserModel, findUserAcrossStores } from '../utils/userModel';
+import User from '../models/User';
 import { reactivateStore } from '../utils/subscriptionManager';
 
 // Get all stores
@@ -89,6 +89,21 @@ export const createStore = asyncHandler(
       });
     }
 
+    // CRITICAL: Check if email already exists BEFORE creating the store
+    // This prevents creating a store when the email is already in use
+    if (createDefaultAdmin && defaultAdminEmail) {
+      const existingEmail = await User.findOne({ 
+        email: defaultAdminEmail.toLowerCase() 
+      });
+      
+      if (existingEmail) {
+        return res.status(400).json({
+          success: false,
+          message: 'Email already in use',
+        });
+      }
+    }
+
     // Calculate subscription end date
     let endDate: Date;
     const startDate = new Date();
@@ -155,36 +170,56 @@ export const createStore = asyncHandler(
       isActive: true, // Store starts as active
     });
 
-    // Create collections for the new store in the assigned database
-    try {
-      await createStoreCollections(prefix.toLowerCase(), databaseId, store.storeId.toLowerCase());
-      console.log(`✅ Successfully created all collections for store ${prefix} in database ${databaseId}`);
-    } catch (error: any) {
-      console.error(`❌ Error creating collections for store ${prefix}:`, error.message);
-      // Continue even if collection creation fails - store is already created
-      // Collections will be created automatically when first document is inserted
-    }
+    // Collections are now unified with storeId and created automatically by Mongoose
+    // when the first document is inserted. No need to create them manually.
+    console.log(`✅ Store created. Collections will be created automatically when first documents are inserted.`);
 
     // Optionally create a default store admin user
+    // Note: Email uniqueness was already checked above before store creation
     let defaultAdmin = null;
     if (createDefaultAdmin && defaultAdminEmail && defaultAdminPassword) {
       try {
         // Generate a default username if not provided
         const defaultUsername = defaultAdminEmail.split('@')[0] + '_' + prefix;
         
-        // Check if username or email already exists across all stores
-        const existingUser = await findUserAcrossStores({
-          $or: [
-            { username: defaultUsername.toLowerCase() },
-            { email: defaultAdminEmail.toLowerCase() }
-          ]
+        // Check if username already exists in this store (email already validated above)
+        const existingUsername = await User.findOne({
+          username: defaultUsername.toLowerCase(),
+          storeId: store.storeId.toLowerCase()
         });
 
-        if (!existingUser) {
-          // Get the user model for this store's collection
-          const userModel = await getUserModel(store.storeId.toLowerCase());
-          
-          defaultAdmin = await userModel.create({
+        if (existingUsername) {
+          // Username conflict - this shouldn't happen often, but handle it
+          console.warn(`⚠️ Username ${defaultUsername} already exists for store ${store.storeId}`);
+          // Still create the user with a modified username
+          const modifiedUsername = defaultUsername + '_' + Date.now();
+          defaultAdmin = await User.create({
+            fullName: defaultAdminName || `Store Admin - ${name}`,
+            username: modifiedUsername.toLowerCase(),
+            email: defaultAdminEmail.toLowerCase(),
+            password: defaultAdminPassword,
+            role: 'Manager',
+            permissions: [
+              'dashboard',
+              'products',
+              'categories',
+              'brands',
+              'purchases',
+              'expenses',
+              'salesToday',
+              'salesHistory',
+              'posRetail',
+              'posWholesale',
+              'refunds',
+              'preferences',
+              'users',
+            ],
+            status: 'Active',
+            storeId: store.storeId.toLowerCase(),
+          });
+        } else {
+          // Create user in unified collection
+          defaultAdmin = await User.create({
             fullName: defaultAdminName || `Store Admin - ${name}`,
             username: defaultUsername.toLowerCase(),
             email: defaultAdminEmail.toLowerCase(),
@@ -211,7 +246,17 @@ export const createStore = asyncHandler(
         }
       } catch (error: any) {
         console.error('Error creating default admin user:', error);
-        // Continue even if user creation fails - store is already created
+        // If user creation fails after store is created, we should rollback the store
+        // But for now, log the error - the email check above should prevent this
+        if (error.code === 11000 && error.keyPattern?.email) {
+          // Duplicate email error (shouldn't happen due to pre-check, but handle it)
+          await Store.findByIdAndDelete(store._id);
+          return res.status(400).json({
+            success: false,
+            message: 'Email already in use',
+          });
+        }
+        throw error; // Re-throw other errors
       }
     }
 

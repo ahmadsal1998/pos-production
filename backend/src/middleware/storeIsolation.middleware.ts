@@ -43,14 +43,15 @@ export const requireStoreAccess = (
 };
 
 /**
- * Middleware to validate that a storeId in request body/params matches the requester's storeId
+ * Middleware to STRICTLY enforce JWT-only storeId extraction
  * 
- * This prevents non-admin users from accessing or modifying data from other stores
+ * CRITICAL SECURITY: This middleware REMOVES any storeId from request body/params/query
+ * and ensures storeId ONLY comes from JWT token. This prevents storeId manipulation attacks.
  * 
- * @param field - The field name to check (default: 'storeId')
- * @param location - Where to check ('body', 'params', or 'query')
+ * @param field - The field name to sanitize (default: 'storeId')
+ * @param location - Where to sanitize ('body', 'params', or 'query')
  */
-export const validateStoreAccess = (
+export const sanitizeStoreId = (
   field: string = 'storeId',
   location: 'body' | 'params' | 'query' = 'body'
 ) => {
@@ -58,12 +59,12 @@ export const validateStoreAccess = (
     const requesterRole = req.user?.role;
     const requesterStoreId = req.user?.storeId;
 
-    // Admin users bypass validation
+    // Admin users bypass sanitization (they can access all stores)
     if (requesterRole === 'Admin') {
       return next();
     }
 
-    // Non-admin users must have a storeId
+    // Non-admin users must have a storeId from JWT
     if (!requesterStoreId) {
       res.status(403).json({
         success: false,
@@ -72,25 +73,21 @@ export const validateStoreAccess = (
       return;
     }
 
-    // Get the storeId from the specified location
+    // CRITICAL: Remove storeId from request to prevent manipulation
     const source = location === 'body' ? req.body : location === 'params' ? req.params : req.query;
-    const providedStoreId = source?.[field];
-
-    // If storeId is provided, it must match the requester's storeId
-    if (providedStoreId && providedStoreId.toLowerCase() !== requesterStoreId.toLowerCase()) {
-      res.status(403).json({
-        success: false,
-        message: 'Access denied. You can only access data from your own store.',
-      });
-      return;
-    }
-
-    // If storeId is not provided but should be, set it to requester's storeId
-    if (!providedStoreId && location === 'body') {
-      req.body[field] = requesterStoreId.toLowerCase();
+    if (source && source[field]) {
+      // Log security warning if storeId was provided in request
+      console.warn(`[SECURITY] storeId provided in ${location}.${field} - removing for user ${req.user?.userId}`);
+      delete source[field];
     }
 
     next();
   };
 };
+
+/**
+ * Legacy middleware - kept for backward compatibility
+ * @deprecated Use sanitizeStoreId instead
+ */
+export const validateStoreAccess = sanitizeStoreId;
 

@@ -3,8 +3,8 @@ import { body, validationResult } from 'express-validator';
 import { parse } from 'csv-parse/sync';
 import { asyncHandler } from '../middleware/error.middleware';
 import { AuthenticatedRequest } from '../middleware/auth.middleware';
-import { getBrandModelForStore } from '../utils/brandModel';
-import { findUserByIdAcrossStores } from '../utils/userModel';
+import Brand from '../models/Brand';
+import User from '../models/User';
 
 export const validateCreateBrand = [
   body('name')
@@ -44,7 +44,7 @@ export const createBrand = asyncHandler(async (req: AuthenticatedRequest, res: R
   // If storeId is not in token, try to get it from the user record
   if (!storeId && req.user?.userId && req.user.userId !== 'admin') {
     try {
-      const user = await findUserByIdAcrossStores(req.user.userId, req.user.storeId || undefined);
+      const user = await User.findById(req.user.userId);
       if (user && user.storeId) {
         storeId = user.storeId;
         console.log('✅ Create Brand - Found storeId from user record:', storeId);
@@ -64,28 +64,14 @@ export const createBrand = asyncHandler(async (req: AuthenticatedRequest, res: R
   }
 
   try {
-    console.log('🔍 Create Brand - Getting Brand model for storeId:', storeId);
-    // Get store-specific Brand model
-    let Brand;
-    try {
-      Brand = await getBrandModelForStore(storeId);
-      console.log('✅ Create Brand - Brand model obtained');
-    } catch (modelError: any) {
-      console.error('❌ Create Brand - Error getting Brand model:', {
-        message: modelError.message,
-        stack: modelError.stack,
-        storeId: storeId,
-      });
-      return res.status(400).json({
-        success: false,
-        message: modelError.message || 'Failed to access store brands. Please ensure your account is associated with a valid store.',
-      });
-    }
+    // Normalize storeId to lowercase for consistency
+    const normalizedStoreId = storeId.toLowerCase().trim();
 
     const trimmedName = name.trim();
 
     // Check if brand with same name exists for this store
     const existingBrand = await Brand.findOne({ 
+      storeId: normalizedStoreId,
       name: trimmedName,
     });
     
@@ -97,6 +83,7 @@ export const createBrand = asyncHandler(async (req: AuthenticatedRequest, res: R
     }
 
     const brand = await Brand.create({
+      storeId: normalizedStoreId,
       name: trimmedName,
       description: description?.trim() || undefined,
     });
@@ -152,11 +139,11 @@ export const getBrands = asyncHandler(async (req: AuthenticatedRequest, res: Res
   }
 
   try {
-    // Get store-specific Brand model
-    const Brand = await getBrandModelForStore(storeId);
+    // Normalize storeId to lowercase for consistency
+    const normalizedStoreId = storeId.toLowerCase().trim();
     
-    // Get all brands from the store-specific collection
-    const brands = await Brand.find().sort({ createdAt: -1 });
+    // Get all brands for this store from unified collection
+    const brands = await Brand.find({ storeId: normalizedStoreId }).sort({ createdAt: -1 });
 
     res.status(200).json({
       success: true,
@@ -196,11 +183,11 @@ export const exportBrands = asyncHandler(async (req: AuthenticatedRequest, res: 
   }
 
   try {
-    // Get store-specific Brand model
-    const Brand = await getBrandModelForStore(storeId);
+    // Normalize storeId to lowercase for consistency
+    const normalizedStoreId = storeId.toLowerCase().trim();
     
-    // Get all brands from the store-specific collection
-    const brands = await Brand.find().sort({ createdAt: -1 });
+    // Get all brands for this store from unified collection
+    const brands = await Brand.find({ storeId: normalizedStoreId }).sort({ createdAt: -1 });
 
     const headers = ['name', 'description', 'createdAt'];
     const rows = brands.map((brand) => [
@@ -281,23 +268,8 @@ export const importBrands = asyncHandler(async (req: AuthenticatedRequest, res: 
     return normalized;
   });
 
-  // Get store-specific Brand model once
-  let BrandModel;
-  try {
-    BrandModel = await getBrandModelForStore(storeId);
-  } catch (error: any) {
-    return res.status(400).json({
-      success: false,
-      message: error.message || 'Failed to access store brands. Please ensure you are logged in as a store user.',
-      summary: {
-        created: 0,
-        updated: 0,
-        failed: normalizedRecords.length,
-      },
-      errors: normalizedRecords.map((_, index) => ({ row: index + 1, message: 'Store access error' })),
-      brands: [],
-    });
-  }
+  // Normalize storeId to lowercase for consistency
+  const normalizedStoreId = storeId.toLowerCase().trim();
 
   const getValue = (row: Record<string, string>, ...keys: string[]): string => {
     for (const key of keys) {
@@ -323,9 +295,13 @@ export const importBrands = asyncHandler(async (req: AuthenticatedRequest, res: 
       const description = getValue(row, 'description', 'details', 'desc', 'وصف').trim();
 
       // Find existing brand for this store
-      let existing = await BrandModel.findOne({ name });
+      let existing = await Brand.findOne({ 
+        storeId: normalizedStoreId,
+        name 
+      });
       if (!existing) {
-        existing = await BrandModel.findOne({
+        existing = await Brand.findOne({
+          storeId: normalizedStoreId,
           name: {
             $regex: new RegExp(`^${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i'),
           },
@@ -337,7 +313,8 @@ export const importBrands = asyncHandler(async (req: AuthenticatedRequest, res: 
         await existing.save();
         updated += 1;
       } else {
-        await BrandModel.create({
+        await Brand.create({
+          storeId: normalizedStoreId,
           name,
           description: description || undefined,
         });
@@ -345,8 +322,8 @@ export const importBrands = asyncHandler(async (req: AuthenticatedRequest, res: 
       }
     }
 
-    // Get all brands from the store-specific collection
-    const brands = await BrandModel.find().sort({ createdAt: -1 });
+    // Get all brands for this store from unified collection
+    const brands = await Brand.find({ storeId: normalizedStoreId }).sort({ createdAt: -1 });
 
     res.status(200).json({
       success: true,

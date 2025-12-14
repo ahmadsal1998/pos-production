@@ -2,8 +2,8 @@ import { Response } from 'express';
 import { body, validationResult } from 'express-validator';
 import { asyncHandler } from '../middleware/error.middleware';
 import { AuthenticatedRequest } from '../middleware/auth.middleware';
-import { getProductModelForStore } from '../utils/productModel';
-import { findUserByIdAcrossStores } from '../utils/userModel';
+import Product from '../models/Product';
+import { getProductByBarcode as getCachedProductByBarcode, invalidateProductCache, invalidateStoreProductCache, invalidateAllProductBarcodeCaches } from '../utils/productCache';
 import multer from 'multer';
 import { parse } from 'csv-parse/sync';
 
@@ -82,19 +82,8 @@ export const createProduct = asyncHandler(async (req: AuthenticatedRequest, res:
     showInQuickProducts = false,
   } = req.body;
 
-  let storeId = req.user?.storeId || null;
-
-  // If storeId is not in token, try to get it from the user record
-  if (!storeId && req.user?.userId && req.user.userId !== 'admin') {
-    try {
-      const user = await findUserByIdAcrossStores(req.user.userId, req.user.storeId || undefined);
-      if (user && user.storeId) {
-        storeId = user.storeId;
-      }
-    } catch (error: any) {
-      console.error('Error fetching user:', error.message);
-    }
-  }
+  // CRITICAL: storeId MUST come from JWT only (never from request body)
+  const storeId = req.user?.storeId;
 
   // Store users must have a storeId
   if (!storeId) {
@@ -106,11 +95,11 @@ export const createProduct = asyncHandler(async (req: AuthenticatedRequest, res:
   }
 
   try {
-    // Get store-specific Product model
-    const Product = await getProductModelForStore(storeId);
-
-    // Check if product with same barcode exists for this store
-    const existingProduct = await Product.findOne({ barcode: barcode.trim() });
+    // Check if product with same barcode exists for this store (using compound index)
+    const existingProduct = await Product.findOne({ 
+      storeId: storeId.toLowerCase(),
+      barcode: barcode.trim() 
+    });
 
     if (existingProduct) {
       return res.status(400).json({
@@ -119,8 +108,9 @@ export const createProduct = asyncHandler(async (req: AuthenticatedRequest, res:
       });
     }
 
-    // Prepare product data
+    // Prepare product data - ALWAYS include storeId
     const productData: any = {
+      storeId: storeId.toLowerCase(), // REQUIRED for multi-tenant isolation
       name: name.trim(),
       barcode: barcode.trim(),
       costPrice: parseFloat(costPrice),
@@ -154,6 +144,9 @@ export const createProduct = asyncHandler(async (req: AuthenticatedRequest, res:
     if (showInQuickProducts !== undefined) productData.showInQuickProducts = Boolean(showInQuickProducts);
 
     const product = await Product.create(productData);
+
+    // Invalidate cache for all barcodes (main + unit barcodes) to ensure fresh data
+    await invalidateAllProductBarcodeCaches(storeId, product);
 
     res.status(201).json({
       success: true,
@@ -207,27 +200,16 @@ export const getProducts = asyncHandler(async (req: AuthenticatedRequest, res: R
   }
 
   try {
-    // Get Product model for the store
-    let Product;
-    try {
-      Product = await getProductModelForStore(storeId);
-    } catch (modelError: any) {
-      console.error('Error getting Product model:', {
-        message: modelError.message,
-        stack: modelError.stack,
-        storeId: storeId,
-      });
-      return res.status(500).json({
-        success: false,
-        message: `Failed to access product model: ${modelError.message}`,
-        products: [],
-      });
-    }
+    // Use unified Product model with storeId filter
     
     // Pagination parameters with validation
+    // Support "all" parameter to fetch all products (for single-store optimization)
+    const fetchAll = req.query.all === 'true' || req.query.all === true;
     const page = Math.max(1, parseInt(req.query.page as string) || 1);
-    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string) || 20)); // Max 100 items per page
-    const skip = (page - 1) * limit;
+    const limit = fetchAll 
+      ? 10000 // High limit for "all" mode
+      : Math.min(100, Math.max(1, parseInt(req.query.limit as string) || 20)); // Max 100 items per page
+    const skip = fetchAll ? 0 : (page - 1) * limit;
 
     // Search parameter
     const searchTerm = (req.query.search as string)?.trim() || '';
@@ -235,9 +217,12 @@ export const getProducts = asyncHandler(async (req: AuthenticatedRequest, res: R
     // Filter parameters
     const showInQuickProducts = req.query.showInQuickProducts;
     const status = req.query.status as string;
+    const includeCategories = req.query.includeCategories !== 'false'; // Default true for optimization
 
-    // Build query filter
-    const queryFilter: any = {};
+    // Build query filter - ALWAYS include storeId for isolation
+    const queryFilter: any = {
+      storeId: storeId.toLowerCase(),
+    };
 
     // Filter by showInQuickProducts if provided
     if (showInQuickProducts !== undefined) {
@@ -289,7 +274,7 @@ export const getProducts = asyncHandler(async (req: AuthenticatedRequest, res: R
       totalProducts = 0;
     }
 
-    const totalPages = Math.max(1, Math.ceil(totalProducts / limit));
+    const totalPages = fetchAll ? 1 : Math.max(1, Math.ceil(totalProducts / limit));
 
     // Determine which fields to select (for optimization)
     // If showInQuickProducts filter is used, only return essential fields
@@ -298,6 +283,7 @@ export const getProducts = asyncHandler(async (req: AuthenticatedRequest, res: R
       : undefined; // Return all fields if not filtering for quick products
 
     // Fetch products with pagination and search filter
+    // Use compound index (storeId, createdAt) for optimal performance
     let products = [];
     try {
       let query = Product.find(queryFilter);
@@ -322,17 +308,82 @@ export const getProducts = asyncHandler(async (req: AuthenticatedRequest, res: R
       products = [];
     }
 
+    // Enrich products with category names if requested and categoryId exists
+    if (includeCategories && products.length > 0) {
+      try {
+        // Get unique category IDs from products
+        const categoryIds = [...new Set(
+          products
+            .map((p: any) => p.categoryId)
+            .filter((id: any) => id)
+            .map((id: any) => id.toString().trim())
+        )].filter((id: string) => id.length > 0);
+
+        if (categoryIds.length > 0) {
+          // Fetch categories for this store using unified Category model
+          const Category = (await import('../models/Category')).default;
+          
+          // Import mongoose for ObjectId conversion
+          const mongoose = await import('mongoose');
+          
+          // Convert string IDs to ObjectIds for querying (categoryId is string, but _id is ObjectId)
+          const categoryObjectIds = categoryIds
+            .filter((id: string) => mongoose.default.Types.ObjectId.isValid(id))
+            .map((id: string) => new mongoose.default.Types.ObjectId(id));
+          
+          // Query categories by ObjectId
+          const categories = categoryObjectIds.length > 0 
+            ? await Category.find({ _id: { $in: categoryObjectIds } }).lean()
+            : [];
+
+          // Create a map of categoryId -> category data
+          // Use both ObjectId string and original string format for lookup
+          const categoryMap: Record<string, any> = {};
+          categories.forEach((cat: any) => {
+            const catId = cat._id?.toString() || cat.id;
+            const categoryData = {
+              id: catId,
+              name: cat.name,
+              nameAr: cat.name, // For frontend compatibility
+              description: cat.description,
+            };
+            // Store by ObjectId string
+            categoryMap[catId] = categoryData;
+          });
+
+          // Enrich products with category data
+          products = products.map((product: any) => {
+            if (product.categoryId) {
+              const categoryIdStr = product.categoryId.toString().trim();
+              // Try to find category by converting to ObjectId string if valid
+              if (mongoose.default.Types.ObjectId.isValid(categoryIdStr)) {
+                const objectIdStr = new mongoose.default.Types.ObjectId(categoryIdStr).toString();
+                product.category = categoryMap[objectIdStr] || null;
+              } else {
+                // Fallback: try direct string match
+                product.category = categoryMap[categoryIdStr] || null;
+              }
+            }
+            return product;
+          });
+        }
+      } catch (categoryError: any) {
+        console.error('Error enriching products with categories:', categoryError);
+        // Continue without category enrichment - products are still valid
+      }
+    }
+
     res.status(200).json({
       success: true,
       message: 'Products retrieved successfully',
       products: products || [],
       pagination: {
-        currentPage: page,
+        currentPage: fetchAll ? 1 : page,
         totalPages: totalPages,
         totalProducts: totalProducts,
-        limit: limit,
-        hasNextPage: page < totalPages,
-        hasPreviousPage: page > 1,
+        limit: fetchAll ? totalProducts : limit,
+        hasNextPage: fetchAll ? false : page < totalPages,
+        hasPreviousPage: fetchAll ? false : page > 1,
       },
     });
   } catch (error: any) {
@@ -364,8 +415,11 @@ export const getProduct = asyncHandler(async (req: AuthenticatedRequest, res: Re
   }
 
   try {
-    const Product = await getProductModelForStore(storeId);
-    const product = await Product.findById(id);
+    // Use unified model with storeId filter for isolation
+    const product = await Product.findOne({ 
+      _id: id,
+      storeId: storeId.toLowerCase() 
+    });
 
     if (!product) {
       return res.status(404).json({
@@ -403,7 +457,8 @@ export const getProduct = asyncHandler(async (req: AuthenticatedRequest, res: Re
 
 export const updateProduct = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
   const { id } = req.params;
-  const storeId = req.user?.storeId || null;
+  // CRITICAL: storeId MUST come from JWT only
+  const storeId = req.user?.storeId;
 
   if (!storeId) {
     return res.status(400).json({
@@ -413,11 +468,22 @@ export const updateProduct = asyncHandler(async (req: AuthenticatedRequest, res:
   }
 
   try {
-    const Product = await getProductModelForStore(storeId);
-    const product = await Product.findByIdAndUpdate(id, req.body, {
-      new: true,
-      runValidators: true,
-    });
+    // Ensure storeId is not overridden from request body
+    const updateData = { ...req.body };
+    delete updateData.storeId; // Never allow storeId from request body
+    
+    // Get the old product before updating to invalidate old barcodes
+    const oldProduct = await Product.findOne({
+      _id: id,
+      storeId: storeId.toLowerCase(),
+    }).lean();
+
+    // Use unified model with storeId filter for isolation
+    const product = await Product.findOneAndUpdate(
+      { _id: id, storeId: storeId.toLowerCase() },
+      updateData,
+      { new: true, runValidators: true }
+    );
 
     if (!product) {
       return res.status(404).json({
@@ -425,6 +491,17 @@ export const updateProduct = asyncHandler(async (req: AuthenticatedRequest, res:
         message: 'Product not found',
       });
     }
+
+    // Invalidate cache for all barcodes (old and new) to ensure fresh data
+    // This handles cases where:
+    // 1. Main barcode changed
+    // 2. Unit barcodes changed
+    // 3. Quantity or other fields changed (need fresh data)
+    if (oldProduct) {
+      await invalidateAllProductBarcodeCaches(storeId, oldProduct);
+    }
+    // Also invalidate new barcodes in case they're different
+    await invalidateAllProductBarcodeCaches(storeId, product);
 
     res.status(200).json({
       success: true,
@@ -444,7 +521,8 @@ export const updateProduct = asyncHandler(async (req: AuthenticatedRequest, res:
 
 export const deleteProduct = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
   const { id } = req.params;
-  const storeId = req.user?.storeId || null;
+  // CRITICAL: storeId MUST come from JWT only
+  const storeId = req.user?.storeId;
 
   if (!storeId) {
     return res.status(400).json({
@@ -454,14 +532,27 @@ export const deleteProduct = asyncHandler(async (req: AuthenticatedRequest, res:
   }
 
   try {
-    const Product = await getProductModelForStore(storeId);
-    const product = await Product.findByIdAndDelete(id);
-
+    // Get product first to get barcode for cache invalidation
+    const product = await Product.findOne({ 
+      _id: id,
+      storeId: storeId.toLowerCase() 
+    });
+    
     if (!product) {
       return res.status(404).json({
         success: false,
         message: 'Product not found',
       });
+    }
+
+    const barcode = product.barcode;
+    
+    // Delete product
+    await Product.deleteOne({ _id: id, storeId: storeId.toLowerCase() });
+    
+    // Invalidate cache
+    if (barcode) {
+      await invalidateProductCache(storeId, barcode);
     }
 
     res.status(200).json({
@@ -660,7 +751,7 @@ export const importProducts = asyncHandler(async (req: AuthenticatedRequest, res
   // If storeId is not in token, try to get it from the user record
   if (!storeId && req.user?.userId && req.user.userId !== 'admin') {
     try {
-      const user = await findUserByIdAcrossStores(req.user.userId, req.user.storeId || undefined);
+      const user = await User.findById(req.user.userId);
       if (user && user.storeId) {
         storeId = user.storeId;
       }
@@ -708,8 +799,7 @@ export const importProducts = asyncHandler(async (req: AuthenticatedRequest, res
       });
     }
 
-    // Get store-specific Product model
-    const Product = await getProductModelForStore(storeId);
+    // Use unified Product model - storeId will be added to each product
 
     // Validate and normalize products
     const validProducts: Array<{
@@ -744,7 +834,11 @@ export const importProducts = asyncHandler(async (req: AuthenticatedRequest, res
       }
 
       barcodeSet.add(product.barcode);
-      validProducts.push(product);
+      // Add storeId to each product for multi-tenant isolation
+      validProducts.push({
+        ...product,
+        storeId: storeId.toLowerCase(),
+      });
     }
 
     if (validProducts.length === 0) {
@@ -756,8 +850,9 @@ export const importProducts = asyncHandler(async (req: AuthenticatedRequest, res
       });
     }
 
-    // Check for existing products in database
+    // Check for existing products in database (with storeId filter)
     const existingBarcodes = await Product.find({
+      storeId: storeId.toLowerCase(),
       barcode: { $in: validProducts.map((p) => p.barcode) },
     }).select('barcode name');
 
@@ -780,6 +875,7 @@ export const importProducts = asyncHandler(async (req: AuthenticatedRequest, res
         continue;
       }
       productsToImport.push({
+        storeId: storeId.toLowerCase(), // REQUIRED for multi-tenant isolation
         name: product.name,
         barcode: product.barcode,
         costPrice: product.costPrice,
@@ -802,6 +898,9 @@ export const importProducts = asyncHandler(async (req: AuthenticatedRequest, res
     const insertedProducts = await Product.insertMany(productsToImport, {
       ordered: false, // Continue inserting even if some fail
     });
+
+    // Invalidate store product cache after bulk import
+    await invalidateStoreProductCache(storeId);
 
     const summary = {
       totalRows: rows.length,
@@ -871,8 +970,11 @@ export const getProductMetrics = asyncHandler(async (req: AuthenticatedRequest, 
   }
 
   try {
-    const Product = await getProductModelForStore(storeId);
-    const products = await Product.find({ status: 'active' }).lean();
+    // Use unified model with storeId filter
+    const products = await Product.find({ 
+      storeId: storeId.toLowerCase(),
+      status: 'active' 
+    }).lean();
 
     // Calculate total value of real products (cost price * stock)
     let totalValue = 0;
@@ -966,35 +1068,28 @@ export const getProductMetrics = asyncHandler(async (req: AuthenticatedRequest, 
  * Searches both product barcode and unit barcodes
  * Returns the first matching product with the matched unit info
  */
+/**
+ * Get product by barcode (exact match) - OPTIMIZED with Redis caching
+ * This is the critical path for POS barcode scans - must be < 50ms end-to-end
+ * Uses Redis cache for sub-5ms lookups when cached
+ */
 export const getProductByBarcode = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
-  // Log route access for debugging
-  console.log('[Barcode Route] Request received:', {
-    method: req.method,
-    path: req.path,
-    originalUrl: req.originalUrl,
-    params: req.params,
-    query: req.query,
-  });
-
   const { barcode } = req.params;
-  const storeId = req.user?.storeId || null;
-
-  // Decode the barcode in case it was URL encoded
-  const decodedBarcode = decodeURIComponent(barcode || '');
-  console.log('[Barcode Route] Parsed barcode (raw):', barcode);
-  console.log('[Barcode Route] Parsed barcode (decoded):', decodedBarcode);
-  console.log('[Barcode Route] StoreId:', storeId);
+  
+  // CRITICAL: storeId MUST come from JWT only (never from request)
+  const storeId = req.user?.storeId;
 
   if (!storeId) {
-    console.error('[Barcode Route] Missing storeId');
     return res.status(400).json({
       success: false,
       message: 'Store ID is required. Please ensure you are logged in as a store user.',
     });
   }
 
+  // Decode the barcode in case it was URL encoded
+  const decodedBarcode = decodeURIComponent(barcode || '');
+
   if (!decodedBarcode || !decodedBarcode.trim()) {
-    console.error('[Barcode Route] Missing or empty barcode');
     return res.status(400).json({
       success: false,
       message: 'Barcode is required',
@@ -1002,22 +1097,10 @@ export const getProductByBarcode = asyncHandler(async (req: AuthenticatedRequest
   }
 
   try {
-    const Product = await getProductModelForStore(storeId);
     const trimmedBarcode = decodedBarcode.trim();
 
-    // First, try exact match on product barcode (only active products)
-    let product = await Product.findOne({ 
-      barcode: trimmedBarcode,
-      status: 'active',
-    }).lean();
-
-    // If not found, search in unit barcodes (only active products)
-    if (!product) {
-      product = await Product.findOne({
-        'units.barcode': trimmedBarcode,
-        status: 'active',
-      }).lean();
-    }
+    // Use cached lookup (Redis) - this is the critical performance path
+    const product = await getCachedProductByBarcode(storeId, trimmedBarcode);
 
     if (!product) {
       return res.status(404).json({
@@ -1026,10 +1109,10 @@ export const getProductByBarcode = asyncHandler(async (req: AuthenticatedRequest
       });
     }
 
-    // Convert product to plain object and ensure categoryId and mainUnitId are strings
-    const productObj = product.toObject ? product.toObject() : product;
+    // Convert product to plain object
+    const productObj = product as any;
     
-    // Ensure categoryId and mainUnitId are strings (handle ObjectId conversion if needed)
+    // Ensure categoryId and mainUnitId are strings
     if (productObj.categoryId) {
       productObj.categoryId = String(productObj.categoryId);
     }
@@ -1048,7 +1131,7 @@ export const getProductByBarcode = asyncHandler(async (req: AuthenticatedRequest
       message: 'Product retrieved successfully',
       data: {
         product: productObj,
-        matchedUnit: matchedUnit || null, // Include matched unit info if found
+        matchedUnit: matchedUnit || null,
         matchedBarcode: trimmedBarcode,
       },
     });

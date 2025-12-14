@@ -86,8 +86,10 @@ const saleSchema = new Schema<ISale>(
     },
     storeId: {
       type: String,
+      required: [true, 'Store ID is required'],
+      trim: true,
+      lowercase: true,
       index: true,
-      default: null,
     },
     date: {
       type: Date,
@@ -189,11 +191,14 @@ const saleSchema = new Schema<ISale>(
   }
 );
 
-// Indexes for better query performance
-saleSchema.index({ invoiceNumber: 1, storeId: 1 }, { unique: true }); // Unique invoice number per store
-saleSchema.index({ date: -1, storeId: 1 });
-saleSchema.index({ customerId: 1, storeId: 1 });
-saleSchema.index({ status: 1, storeId: 1 });
-saleSchema.index({ paymentMethod: 1, storeId: 1 });
+// CRITICAL INDEXES for performance
+// Unique invoice number per store
+saleSchema.index({ storeId: 1, invoiceNumber: 1 }, { unique: true });
+// Common query patterns
+saleSchema.index({ storeId: 1, date: -1 });
+saleSchema.index({ storeId: 1, customerId: 1 });
+saleSchema.index({ storeId: 1, status: 1 });
+saleSchema.index({ storeId: 1, paymentMethod: 1 });
+saleSchema.index({ storeId: 1, createdAt: -1 });
 
 export const Sale: Model<ISale> = mongoose.model<ISale>('Sale', saleSchema);

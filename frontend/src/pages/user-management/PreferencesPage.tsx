@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { SystemPreferences } from '@/features/user-management/types';
 import { AR_LABELS } from '@/shared/constants';
-import { PreferencesIcon } from '@/shared/assets/icons';
+import { PreferencesIcon, PrintIcon } from '@/shared/assets/icons';
 import { ToggleSwitch } from '@/shared/components/ui/ToggleSwitch';
 import { useCurrency } from '@/shared/contexts/CurrencyContext';
 import { CURRENCIES, CurrencyConfig } from '@/shared/utils/currency';
@@ -22,6 +22,7 @@ const initialPreferences: SystemPreferences = {
   invoiceFooterText: 'شكراً لتعاملكم معنا!',
   autoPrintInvoice: true,
   sellWithoutStock: false,
+  allowSellingZeroStock: true,
   // User Roles
   sessionDuration: 60,
   allowUserCreation: true,
@@ -38,6 +39,18 @@ const initialPreferences: SystemPreferences = {
   enableAutoNotifications: false,
   // Other
   interfaceMode: 'light',
+  // Print Settings
+  printPaperSize: 'A4',
+  printPaperWidth: 210,
+  printPaperHeight: 297,
+  printMarginTop: 0.8,
+  printMarginBottom: 0.8,
+  printMarginLeft: 0.8,
+  printMarginRight: 0.8,
+  printFontSize: 13,
+  printTableFontSize: 12,
+  printShowBorders: true,
+  printCompactMode: false,
 };
 
 // Helpers to parse settings
@@ -352,6 +365,7 @@ const PreferencesPage: React.FC = () => {
                 {renderField(AR_LABELS.invoiceFooterText, 'invoiceFooterText', 'textarea')}
                 {renderToggleField(AR_LABELS.autoPrintInvoice, 'autoPrintInvoice')}
                 {renderToggleField(AR_LABELS.sellWithoutStock, 'sellWithoutStock')}
+                {renderToggleField(AR_LABELS.allowSellingZeroStock, 'allowSellingZeroStock')}
               </>,
               <PreferencesIcon />
             )}
@@ -385,6 +399,38 @@ const PreferencesPage: React.FC = () => {
                 {renderToggleField(AR_LABELS.allowCredit, 'allowCredit')}
               </>,
               <PreferencesIcon />
+            )}
+            
+            {renderSection(
+              'إعدادات الطباعة', 
+              <>
+                {renderSelect('حجم الورق', 'printPaperSize', [
+                  {value: 'A4', label: 'A4 (210 × 297 مم)'},
+                  {value: 'A5', label: 'A5 (148 × 210 مم)'},
+                  {value: '80mm', label: '80 مم (طابعة حرارية)'},
+                  {value: '58mm', label: '58 مم (طابعة حرارية)'},
+                  {value: 'custom', label: 'مخصص'}
+                ])}
+                {prefs.printPaperSize === 'custom' && (
+                  <>
+                    {renderField('عرض الورق (مم)', 'printPaperWidth', 'number')}
+                    {renderField('ارتفاع الورق (مم)', 'printPaperHeight', 'number')}
+                  </>
+                )}
+                <div className="grid grid-cols-2 gap-4">
+                  {renderField('الهامش العلوي (سم)', 'printMarginTop', 'number')}
+                  {renderField('الهامش السفلي (سم)', 'printMarginBottom', 'number')}
+                  {renderField('الهامش الأيمن (سم)', 'printMarginRight', 'number')}
+                  {renderField('الهامش الأيسر (سم)', 'printMarginLeft', 'number')}
+                </div>
+                {renderField('حجم الخط (بكسل)', 'printFontSize', 'number')}
+                {renderField('حجم خط الجدول (بكسل)', 'printTableFontSize', 'number')}
+                {renderToggleField('إظهار حدود الجدول', 'printShowBorders')}
+                {renderToggleField('وضع المدمج (تقليل المسافات)', 'printCompactMode')}
+              </>,
+              <div className="w-6 h-6">
+                <PrintIcon />
+              </div>
             )}
           </div>
         </div>

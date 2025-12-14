@@ -4,7 +4,7 @@ import { parse } from 'csv-parse/sync';
 import { asyncHandler } from '../middleware/error.middleware';
 import { AuthenticatedRequest } from '../middleware/auth.middleware';
 import { getWarehouseModelForStore } from '../utils/warehouseModel';
-import { findUserByIdAcrossStores } from '../utils/userModel';
+import User from '../models/User';
 
 export const validateCreateWarehouse = [
   body('name')
@@ -80,7 +80,7 @@ export const createWarehouse = asyncHandler(async (req: AuthenticatedRequest, re
   // If storeId is not in token, try to get it from the user record
   if (!storeId && req.user?.userId && req.user.userId !== 'admin') {
     try {
-      const user = await findUserByIdAcrossStores(req.user.userId, req.user.storeId || undefined);
+      const user = await User.findById(req.user.userId);
       if (user && user.storeId) {
         storeId = user.storeId;
         console.log('✅ Create Warehouse - Found storeId from user record:', storeId);
@@ -118,8 +118,12 @@ export const createWarehouse = asyncHandler(async (req: AuthenticatedRequest, re
       });
     }
 
+    // Normalize storeId
+    const normalizedStoreId = storeId.toLowerCase().trim();
+
     // Check if warehouse with same name exists for this store
     const existingWarehouse = await Warehouse.findOne({ 
+      storeId: normalizedStoreId,
       name: name.trim(),
     });
     
@@ -131,6 +135,7 @@ export const createWarehouse = asyncHandler(async (req: AuthenticatedRequest, re
     }
 
     const warehouse = await Warehouse.create({
+      storeId: normalizedStoreId,
       name: name.trim(),
       description: description?.trim() || undefined,
       address: address?.trim() || undefined,
@@ -188,11 +193,14 @@ export const getWarehouses = asyncHandler(async (req: AuthenticatedRequest, res:
   }
 
   try {
-    // Get store-specific Warehouse model
+    // Normalize storeId
+    const normalizedStoreId = storeId.toLowerCase().trim();
+    
+    // Get unified Warehouse model
     const Warehouse = await getWarehouseModelForStore(storeId);
     
-    // Get all warehouses from the store-specific collection
-    const warehouses = await Warehouse.find().sort({ createdAt: -1 });
+    // Get all warehouses for this store
+    const warehouses = await Warehouse.find({ storeId: normalizedStoreId }).sort({ createdAt: -1 });
 
     // Calculate product count for each warehouse
     // Note: This assumes products have a warehouseId field. If not, productCount will be 0.
@@ -290,8 +298,14 @@ export const updateWarehouse = asyncHandler(async (req: AuthenticatedRequest, re
   }
 
   try {
+    // Normalize storeId
+    const normalizedStoreId = storeId.toLowerCase().trim();
+    
     const Warehouse = await getWarehouseModelForStore(storeId);
-    const warehouse = await Warehouse.findById(id);
+    const warehouse = await Warehouse.findOne({ 
+      _id: id,
+      storeId: normalizedStoreId 
+    });
 
     if (!warehouse) {
       return res.status(404).json({
@@ -303,6 +317,30 @@ export const updateWarehouse = asyncHandler(async (req: AuthenticatedRequest, re
     // Check if name is being changed and if it conflicts with existing warehouse
     if (name && name.trim() !== warehouse.name) {
       const existingWarehouse = await Warehouse.findOne({ 
+        storeId: normalizedStoreId,
+        name: name.trim(),
+        _id: { $ne: id },
+      });
+      
+      if (existingWarehouse) {
+        return res.status(400).json({
+          success: false,
+          message: 'Warehouse with this name already exists',
+        });
+      }
+    }
+
+    if (!warehouse) {
+      return res.status(404).json({
+        success: false,
+        message: 'Warehouse not found',
+      });
+    }
+
+    // Check if name is being changed and if it conflicts with existing warehouse
+    if (name && name.trim() !== warehouse.name) {
+      const existingWarehouse = await Warehouse.findOne({ 
+        storeId: normalizedStoreId,
         name: name.trim(),
         _id: { $ne: id },
       });
@@ -371,8 +409,14 @@ export const deleteWarehouse = asyncHandler(async (req: AuthenticatedRequest, re
   }
 
   try {
+    // Normalize storeId
+    const normalizedStoreId = storeId.toLowerCase().trim();
+    
     const Warehouse = await getWarehouseModelForStore(storeId);
-    const warehouse = await Warehouse.findById(id);
+    const warehouse = await Warehouse.findOne({ 
+      _id: id,
+      storeId: normalizedStoreId 
+    });
 
     if (!warehouse) {
       return res.status(404).json({
@@ -383,7 +427,7 @@ export const deleteWarehouse = asyncHandler(async (req: AuthenticatedRequest, re
 
     // TODO: Check if warehouse has products before deleting
     // For now, we'll allow deletion but you may want to add a check:
-    // const productCount = await Product.countDocuments({ warehouseId: id });
+    // const productCount = await Product.countDocuments({ warehouseId: id, storeId: normalizedStoreId });
     // if (productCount > 0) {
     //   return res.status(400).json({
     //     success: false,
@@ -391,7 +435,7 @@ export const deleteWarehouse = asyncHandler(async (req: AuthenticatedRequest, re
     //   });
     // }
 
-    await Warehouse.findByIdAndDelete(id);
+    await Warehouse.deleteOne({ _id: id, storeId: normalizedStoreId });
 
     res.status(200).json({
       success: true,
@@ -431,8 +475,11 @@ export const exportWarehouses = asyncHandler(async (req: AuthenticatedRequest, r
   }
 
   try {
+    // Normalize storeId
+    const normalizedStoreId = storeId.toLowerCase().trim();
+    
     const Warehouse = await getWarehouseModelForStore(storeId);
-    const warehouses = await Warehouse.find().sort({ createdAt: -1 });
+    const warehouses = await Warehouse.find({ storeId: normalizedStoreId }).sort({ createdAt: -1 });
 
     const headers = ['name', 'description', 'address', 'status', 'createdAt'];
     const rows = warehouses.map((warehouse) => [
@@ -553,10 +600,17 @@ export const importWarehouses = asyncHandler(async (req: AuthenticatedRequest, r
       const description = getValue(row, 'description', 'details', 'desc', 'وصف').trim();
       const address = getValue(row, 'address', 'location', 'عنوان').trim();
       const status = getValue(row, 'status', 'state', 'حالة').trim() || 'Active';
+      
+      // Normalize storeId
+      const normalizedStoreId = storeId.toLowerCase().trim();
 
-      let existing = await WarehouseModel.findOne({ name });
+      let existing = await WarehouseModel.findOne({ 
+        storeId: normalizedStoreId,
+        name 
+      });
       if (!existing) {
         existing = await WarehouseModel.findOne({
+          storeId: normalizedStoreId,
           name: {
             $regex: new RegExp(`^${escapeRegex(name)}$`, 'i'),
           },
@@ -578,6 +632,7 @@ export const importWarehouses = asyncHandler(async (req: AuthenticatedRequest, r
         updated += 1;
       } else {
         await WarehouseModel.create({
+          storeId: normalizedStoreId,
           name,
           description: description || undefined,
           address: address || undefined,
@@ -587,7 +642,8 @@ export const importWarehouses = asyncHandler(async (req: AuthenticatedRequest, r
       }
     }
 
-    const warehouses = await WarehouseModel.find().sort({ createdAt: -1 });
+    const normalizedStoreId = storeId.toLowerCase().trim();
+    const warehouses = await WarehouseModel.find({ storeId: normalizedStoreId }).sort({ createdAt: -1 });
 
     res.status(200).json({
       success: true,

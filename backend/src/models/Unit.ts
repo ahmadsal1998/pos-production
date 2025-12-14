@@ -1,6 +1,7 @@
 import mongoose, { Schema, Document, Model } from 'mongoose';
 
 export interface UnitDocument extends Document {
+  storeId: string; // REQUIRED: Store ID for multi-tenant isolation
   name: string;
   description?: string;
   createdAt: Date;
@@ -9,6 +10,13 @@ export interface UnitDocument extends Document {
 
 const unitSchema = new Schema<UnitDocument>(
   {
+    storeId: {
+      type: String,
+      required: [true, 'Store ID is required'],
+      trim: true,
+      lowercase: true,
+      index: true,
+    },
     name: {
       type: String,
       required: [true, 'Unit name is required'],
@@ -32,7 +40,11 @@ const unitSchema = new Schema<UnitDocument>(
   }
 );
 
-// Note: Unique constraint is handled per-store in unitModel.ts
+// CRITICAL INDEXES for performance
+// Unique unit name per store
+unitSchema.index({ storeId: 1, name: 1 }, { unique: true });
+// List units
+unitSchema.index({ storeId: 1, createdAt: -1 });
 
 const Unit: Model<UnitDocument> = mongoose.model<UnitDocument>('Unit', unitSchema);
 

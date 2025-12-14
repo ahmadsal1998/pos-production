@@ -107,6 +107,7 @@ export interface SystemPreferences {
   invoiceFooterText: string;
   autoPrintInvoice: boolean;
   sellWithoutStock: boolean;
+  allowSellingZeroStock: boolean;
   // User Roles
   sessionDuration: number;
   allowUserCreation: boolean;

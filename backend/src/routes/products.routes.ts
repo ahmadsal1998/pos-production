@@ -25,12 +25,17 @@ router.get('/', getProducts);
 router.get('/metrics', getProductMetrics);
 
 // Barcode route must come before /:id route to avoid conflicts
+// Using explicit route pattern to ensure it matches correctly
 // Adding logging middleware to debug route matching issues
 router.get('/barcode/:barcode', (req, res, next) => {
-  console.log('[Products Router] ✓ Barcode route matched');
+  console.log('[Products Router] ✓✓✓ Barcode route MATCHED ✓✓✓');
+  console.log('[Products Router] Method:', req.method);
   console.log('[Products Router] Path:', req.path);
   console.log('[Products Router] OriginalUrl:', req.originalUrl);
+  console.log('[Products Router] BaseUrl:', req.baseUrl);
+  console.log('[Products Router] Url:', req.url);
   console.log('[Products Router] Barcode param:', req.params.barcode);
+  console.log('[Products Router] All params:', req.params);
   next();
 }, getProductByBarcode);
 

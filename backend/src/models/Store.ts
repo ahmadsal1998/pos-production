@@ -125,7 +125,6 @@ const storeSchema = new Schema<StoreDocument>(
     storeNumber: {
       type: Number,
       required: [true, 'Store number is required'],
-      unique: true,
       min: [1, 'Store number must be at least 1'],
     },
     storeId: {

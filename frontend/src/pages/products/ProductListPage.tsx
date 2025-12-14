@@ -6,6 +6,8 @@ import ProductAnalytics from '@/features/products/components/ProductAnalytics';
 import ProductQuickActions from '@/features/products/components/ProductQuickActions';
 import { formatDate } from '@/shared/utils';
 import { productsApi, categoriesApi } from '@/lib/api/client';
+import { getCachedProducts, setCachedProducts, getStoreIdFromToken, invalidateProductsCache } from '@/lib/cache/productsCache';
+import { productSync } from '@/lib/sync/productSync';
 import { Pagination } from '@/shared/components';
 import { useCurrency } from '@/shared/contexts/CurrencyContext';
 
@@ -131,10 +133,49 @@ const ProductListPage: React.FC<ProductListPageProps> = () => {
       try {
         setLoadingProducts(true);
         setError(null);
+        
+        const storeId = getStoreIdFromToken();
+        
+        // For regular pagination mode, check cache first
+        if (!isAdvancedMode && !searchTerm && currentPage === 1) {
+          const cached = storeId ? getCachedProducts(storeId) : null;
+          if (cached && cached.products.length > 0) {
+            // Use cached products for first page
+            const paginatedProducts = cached.products.slice(0, itemsPerPage);
+            const mappedProducts: (Product & { categoryId?: string; backendId?: string })[] = paginatedProducts.map((p: BackendProduct) => ({
+              id: idToNumber(p.id || p._id),
+              name: p.name,
+              category: p.categoryId ? (cached.categories[p.categoryId]?.name || categories[p.categoryId] || 'غير محدد') : 'غير محدد',
+              brand: p.brandId || '',
+              price: p.price || 0,
+              cost: p.costPrice || 0,
+              costPrice: p.costPrice || 0,
+              stock: p.stock || 0,
+              barcode: p.barcode || '',
+              expiryDate: p.expiryDate || '',
+              createdAt: p.createdAt || new Date().toISOString(),
+              updatedAt: p.updatedAt || new Date().toISOString(),
+              categoryId: p.categoryId,
+              backendId: p.id || p._id,
+            }));
+            
+            setProducts(mappedProducts);
+            setBackendProducts(paginatedProducts);
+            setTotalPages(Math.ceil(cached.products.length / itemsPerPage));
+            setTotalProducts(cached.products.length);
+            setLoadingProducts(false);
+            
+            // Refresh cache in background
+            // Continue to API call below...
+          }
+        }
 
+        // Fetch from API (with pagination for regular mode, or all for advanced mode)
         const productsRes = await productsApi.getProducts({
-          page: currentPage,
-          limit: itemsPerPage,
+          page: isAdvancedMode ? undefined : currentPage,
+          limit: isAdvancedMode ? undefined : itemsPerPage,
+          all: isAdvancedMode, // Fetch all for advanced mode
+          includeCategories: true, // Include category data
           search: (!isAdvancedMode && searchTerm) ? searchTerm.trim() : undefined,
         });
 
@@ -149,11 +190,19 @@ const ProductListPage: React.FC<ProductListPageProps> = () => {
             setTotalProducts(responseData.pagination.totalProducts);
           }
 
+          // Build enriched category map from embedded category data
+          const enrichedCategoryMap: Record<string, string> = { ...categories };
+          productsData.forEach((p: any) => {
+            if (p.category && p.categoryId) {
+              enrichedCategoryMap[p.categoryId] = p.category.name || p.category.nameAr || categories[p.categoryId] || 'غير محدد';
+            }
+          });
+          
           // Map backend products to frontend Product type with category names
           const mappedProducts: (Product & { categoryId?: string; backendId?: string })[] = productsData.map((p: BackendProduct) => ({
             id: idToNumber(p.id || p._id),
             name: p.name,
-            category: p.categoryId ? categories[p.categoryId] || 'غير محدد' : 'غير محدد',
+            category: p.categoryId ? ((p as any).category?.name || (p as any).category?.nameAr || enrichedCategoryMap[p.categoryId] || 'غير محدد') : 'غير محدد',
             brand: p.brandId || '',
             price: p.price || 0,
             cost: p.costPrice || 0,
@@ -168,6 +217,17 @@ const ProductListPage: React.FC<ProductListPageProps> = () => {
           }));
 
           setProducts(mappedProducts);
+          
+          // Cache products if fetching all
+          if (isAdvancedMode && storeId) {
+            const categoryCacheMap: Record<string, any> = {};
+            productsData.forEach((p: any) => {
+              if (p.category && p.categoryId) {
+                categoryCacheMap[p.categoryId] = p.category;
+              }
+            });
+            setCachedProducts(storeId, productsData, categoryCacheMap);
+          }
         } else {
           setError('فشل تحميل المنتجات');
         }
@@ -182,25 +242,32 @@ const ProductListPage: React.FC<ProductListPageProps> = () => {
     fetchProducts();
   }, [currentPage, itemsPerPage, searchTerm, isAdvancedMode, categories]);
 
-  // Fetch all products for advanced search (with a reasonable limit)
-  const fetchAllProductsForAdvancedSearch = useCallback(async (categoryMap: Record<string, string>, searchTerm?: string) => {
+  // Fetch all products from API (helper function) - defined before use
+  const fetchAllProductsFromAPI = useCallback(async (storeId: string | null, categoryMap: Record<string, string>, searchTerm?: string) => {
     try {
-      // Fetch a large batch (1000 items) for advanced filtering
-      // If search term is provided, use server-side search
+      // Fetch all products for a single store in one request (optimized)
       const productsRes = await productsApi.getProducts({
-        page: 1,
-        limit: 1000,
-        search: searchTerm || undefined,
+        all: true, // Fetch all products
+        includeCategories: true, // Include category data
+        search: searchTerm || undefined, // Optional server-side search
       });
 
       if (productsRes.success) {
         const responseData = productsRes.data as any;
         const productsData = responseData?.products || [];
         
+        // Build category map from embedded category data
+        const enrichedCategoryMap: Record<string, string> = { ...categoryMap };
+        productsData.forEach((p: any) => {
+          if (p.category && p.categoryId) {
+            enrichedCategoryMap[p.categoryId] = p.category.name || p.category.nameAr || categoryMap[p.categoryId] || 'غير محدد';
+          }
+        });
+        
         const mappedProducts: (Product & { categoryId?: string; backendId?: string })[] = productsData.map((p: BackendProduct) => ({
           id: idToNumber(p.id || p._id),
           name: p.name,
-          category: p.categoryId ? categoryMap[p.categoryId] || 'غير محدد' : 'غير محدد',
+          category: p.categoryId ? ((p as any).category?.name || (p as any).category?.nameAr || enrichedCategoryMap[p.categoryId] || 'غير محدد') : 'غير محدد',
           brand: p.brandId || '',
           price: p.price || 0,
           cost: p.costPrice || 0,
@@ -217,11 +284,75 @@ const ProductListPage: React.FC<ProductListPageProps> = () => {
         setAllProducts(mappedProducts);
         // Also store backend products for lookup
         setAllBackendProducts(productsData);
+        
+        // Cache the products and categories
+        if (storeId) {
+          const categoryCacheMap: Record<string, any> = {};
+          productsData.forEach((p: any) => {
+            if (p.category && p.categoryId) {
+              categoryCacheMap[p.categoryId] = p.category;
+            }
+          });
+          setCachedProducts(storeId, productsData, categoryCacheMap);
+        }
       }
+    } catch (err: any) {
+      console.error('Error fetching all products from API:', err);
+      throw err;
+    }
+  }, []);
+
+  // Fetch all products for advanced search (optimized - single request with caching)
+  const fetchAllProductsForAdvancedSearch = useCallback(async (categoryMap: Record<string, string>, searchTerm?: string) => {
+    try {
+      const storeId = getStoreIdFromToken();
+      
+      // Try cache first
+      const cached = storeId ? getCachedProducts(storeId) : null;
+      if (cached && cached.products.length > 0 && !searchTerm) {
+        // Use cached products if available and no search term
+        console.log(`Using ${cached.products.length} cached products for advanced search`);
+        const mappedProducts: (Product & { categoryId?: string; backendId?: string })[] = cached.products.map((p: BackendProduct) => ({
+          id: idToNumber(p.id || p._id),
+          name: p.name,
+          category: p.categoryId ? (cached.categories[p.categoryId]?.name || categoryMap[p.categoryId] || 'غير محدد') : 'غير محدد',
+          brand: p.brandId || '',
+          price: p.price || 0,
+          cost: p.costPrice || 0,
+          costPrice: p.costPrice || 0,
+          stock: p.stock || 0,
+          barcode: p.barcode || '',
+          expiryDate: p.expiryDate || '',
+          createdAt: p.createdAt || new Date().toISOString(),
+          updatedAt: p.updatedAt || new Date().toISOString(),
+          categoryId: p.categoryId,
+          backendId: p.id || p._id,
+        }));
+        
+        // Filter by search term if provided
+        let filtered = mappedProducts;
+        if (searchTerm) {
+          const searchTermTrimmed = searchTerm.trim().toLowerCase();
+          filtered = mappedProducts.filter((product) => 
+            product.name.toLowerCase().includes(searchTermTrimmed) ||
+            product.barcode.toLowerCase().includes(searchTermTrimmed)
+          );
+        }
+        
+        setAllProducts(filtered);
+        setAllBackendProducts(cached.products);
+        
+        // Refresh cache in background
+        fetchAllProductsFromAPI(storeId, categoryMap, searchTerm);
+        return;
+      }
+      
+      // Fetch from API
+      await fetchAllProductsFromAPI(storeId, categoryMap, searchTerm);
     } catch (err: any) {
       console.error('Error fetching all products for advanced search:', err);
     }
-  }, []);
+  }, [fetchAllProductsFromAPI]);
 
   // Update category names when categories are loaded (for products that were loaded before categories)
   useEffect(() => {
@@ -530,9 +661,28 @@ const ProductListPage: React.FC<ProductListPageProps> = () => {
       const response = await productsApi.deleteProduct(productBackendId);
 
       if (response.success) {
+        // Delete product from IndexedDB immediately
+        try {
+          await productSync.syncAfterDelete(productBackendId);
+          console.log('[ProductListPage] Successfully removed product from IndexedDB');
+        } catch (syncError) {
+          console.error('[ProductListPage] Error removing product from IndexedDB:', syncError);
+          // Continue anyway - the product was deleted successfully
+        }
+        
+        // Invalidate cache (backup)
+        const storeId = getStoreIdFromToken();
+        if (storeId) {
+          invalidateProductsCache(storeId);
+        }
+        
         // Remove product from both local states
         setProducts((prev) => prev.filter((p) => p.id !== productId));
         setBackendProducts((prev) =>
+          prev.filter((p) => (p.id || p._id) !== productBackendId)
+        );
+        setAllProducts((prev) => prev.filter((p) => p.id !== productId));
+        setAllBackendProducts((prev) =>
           prev.filter((p) => (p.id || p._id) !== productBackendId)
         );
         alert('تم حذف المنتج بنجاح');
@@ -598,8 +748,8 @@ const ProductListPage: React.FC<ProductListPageProps> = () => {
 
   return (
     <div className="space-y-6">
-      {/* Analytics and Quick Actions */}
-      <div className="space-y-6">
+      {/* Analytics and Quick Actions - Reserve space to prevent layout shift */}
+      <div className="space-y-6 min-h-[200px]">
         <ProductAnalytics />
         <ProductQuickActions
           onAddProduct={() => {}}
@@ -665,16 +815,13 @@ const ProductListPage: React.FC<ProductListPageProps> = () => {
             </div>
           </div>
 
-          {/* Inline loading indicator for product fetches */}
-          {loadingProducts && (
-            <div className="text-sm text-gray-500 dark:text-gray-400 flex justify-end">
-              جاري تحميل المنتجات...
-            </div>
-          )}
+          {/* Inline loading indicator for product fetches - Reserve space */}
+          <div className="text-sm text-gray-500 dark:text-gray-400 flex justify-end min-h-[24px]">
+            {loadingProducts && <span>جاري تحميل المنتجات...</span>}
+          </div>
 
-          {/* Advanced Search Panel */}
-          {showAdvancedSearch && (
-            <div className="border-t border-gray-200 dark:border-gray-700 pt-4 mt-4">
+          {/* Advanced Search Panel - Reserve space to prevent layout shift */}
+          <div className={`border-t border-gray-200 dark:border-gray-700 pt-4 mt-4 transition-all duration-200 overflow-hidden ${showAdvancedSearch ? 'max-h-[500px] opacity-100' : 'max-h-0 opacity-0'}`}>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                 {/* Stock Sort */}
                 <div>
@@ -756,15 +903,33 @@ const ProductListPage: React.FC<ProductListPageProps> = () => {
                 </div>
               )}
             </div>
-          )}
+          </div>
         </div>
-      </div>
 
-      {/* Product Table/Grid */}
+      {/* Product Table/Grid - Reserve space to prevent layout shift */}
       {layout === 'table' ? (
-        <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-slate-200/50 dark:border-slate-700/50 overflow-hidden">
+        <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-slate-200/50 dark:border-slate-700/50 overflow-hidden min-h-[400px]">
           <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700 text-right">
+            {loadingProducts && paginatedProducts.length === 0 ? (
+              // Skeleton table with fixed dimensions
+              <div className="p-6 space-y-4">
+                {Array.from({ length: itemsPerPage }).map((_, index) => (
+                  <div key={`skeleton-row-${index}`} className="flex items-center gap-4 h-16">
+                    <div className="w-12 h-12 bg-gray-200 dark:bg-gray-700 rounded-lg animate-pulse flex-shrink-0"></div>
+                    <div className="flex-1 space-y-2">
+                      <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded animate-pulse w-1/3"></div>
+                      <div className="h-3 bg-gray-200 dark:bg-gray-700 rounded animate-pulse w-1/4"></div>
+                    </div>
+                    <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded animate-pulse w-20 flex-shrink-0"></div>
+                    <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded animate-pulse w-16 flex-shrink-0"></div>
+                    <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded animate-pulse w-16 flex-shrink-0"></div>
+                    <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded animate-pulse w-24 flex-shrink-0"></div>
+                    <div className="h-6 bg-gray-200 dark:bg-gray-700 rounded-full animate-pulse w-24 flex-shrink-0"></div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700 text-right">
               <thead className="bg-gray-50 dark:bg-gray-700/50">
                 <tr>
                   <th scope="col" className="px-6 py-3 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider text-center">#</th>
@@ -820,6 +985,7 @@ const ProductListPage: React.FC<ProductListPageProps> = () => {
                 )}
               </tbody>
             </table>
+            )}
           </div>
           
           {/* Pagination */}
@@ -836,9 +1002,21 @@ const ProductListPage: React.FC<ProductListPageProps> = () => {
           )}
         </div>
       ) : (
-        <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-slate-200/50 dark:border-slate-700/50 overflow-hidden">
+        <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-slate-200/50 dark:border-slate-700/50 overflow-hidden min-h-[400px]">
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 p-6">
-            {paginatedProducts.length > 0 ? paginatedProducts.map((product) => (
+            {loadingProducts && paginatedProducts.length === 0 ? (
+              // Skeleton grid with fixed dimensions
+              Array.from({ length: itemsPerPage }).map((_, index) => (
+                <div key={`skeleton-card-${index}`} className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-slate-200/50 dark:border-slate-700/50 p-6 space-y-3">
+                  <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded animate-pulse"></div>
+                  <div className="h-3 bg-gray-200 dark:bg-gray-700 rounded animate-pulse w-2/3"></div>
+                  <div className="h-3 bg-gray-200 dark:bg-gray-700 rounded animate-pulse w-1/2"></div>
+                  <div className="h-3 bg-gray-200 dark:bg-gray-700 rounded animate-pulse w-3/4"></div>
+                  <div className="h-3 bg-gray-200 dark:bg-gray-700 rounded animate-pulse w-1/3"></div>
+                  <div className="h-8 bg-gray-200 dark:bg-gray-700 rounded animate-pulse mt-4"></div>
+                </div>
+              ))
+            ) : paginatedProducts.length > 0 ? paginatedProducts.map((product) => (
               <div key={product.id} className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-slate-200/50 dark:border-slate-700/50 p-6 space-y-3 flex flex-col justify-between hover:shadow-md transition-all duration-300 group">
                 <div>
                   <div className="flex justify-between items-start mb-2">

@@ -59,14 +59,54 @@ const useUnitManagement = () => {
 
   const fetchUnits = useCallback(async () => {
     try {
+      // Try to get from IndexedDB first
+      try {
+        const { unitSync } = await import('@/lib/sync/unitsSync');
+        const cached = await unitSync.getCachedUnits();
+        if (cached && cached.length > 0) {
+          const normalized = cached.map((unit: any) => {
+            const unitId = unit.id || unit._id?.toString() || unit._id;
+            const unitName = unit.name || unit.nameAr;
+            let createdAt = new Date().toISOString();
+            if (unit.createdAt) {
+              if (typeof unit.createdAt === 'string') {
+                createdAt = unit.createdAt;
+              } else if (unit.createdAt instanceof Date) {
+                createdAt = unit.createdAt.toISOString();
+              } else if (unit.createdAt.toISOString) {
+                createdAt = unit.createdAt.toISOString();
+              }
+            }
+            let updatedAt = createdAt;
+            if (unit.updatedAt) {
+              if (typeof unit.updatedAt === 'string') {
+                updatedAt = unit.updatedAt;
+              } else if (unit.updatedAt instanceof Date) {
+                updatedAt = unit.updatedAt.toISOString();
+              } else if (unit.updatedAt.toISOString) {
+                updatedAt = unit.updatedAt.toISOString();
+              }
+            }
+            return {
+              id: unitId?.toString() || '',
+              nameAr: unitName || '',
+              description: unit.description || '',
+              createdAt: createdAt,
+              updatedAt: updatedAt,
+            };
+          });
+          setUnits(normalized);
+        }
+      } catch (dbError) {
+        console.warn('Failed to load units from IndexedDB:', dbError);
+      }
+      
+      // Always fetch from server to ensure we have the latest
       const response = await unitsApi.getUnits();
       console.log('Units API response:', response);
       
-      // The API client wraps the response, so response.data is the backend response
-      // Backend returns: { success: true, message: '...', units: [...] }
       const backendResponse = response.data as any;
       
-      // Try different possible response structures
       let unitsData = [];
       if (backendResponse?.units) {
         unitsData = backendResponse.units;
@@ -78,15 +118,10 @@ const useUnitManagement = () => {
         unitsData = backendResponse.data;
       }
       
-      console.log('Extracted units data:', unitsData);
-      
-      // Map backend units to frontend format
       const normalized = Array.isArray(unitsData) ? unitsData.map((unit: any) => {
-        // Handle different ID formats
         const unitId = unit.id || unit._id?.toString() || unit._id;
         const unitName = unit.name || unit.nameAr;
         
-        // Handle date formatting
         let createdAt = new Date().toISOString();
         if (unit.createdAt) {
           if (typeof unit.createdAt === 'string') {
@@ -118,11 +153,18 @@ const useUnitManagement = () => {
         };
       }) : [];
       
-      console.log('Normalized units:', normalized);
       setUnits(normalized);
+      
+      // Sync to IndexedDB
+      try {
+        const { unitSync } = await import('@/lib/sync/unitsSync');
+        await unitSync.syncUnits(false);
+      } catch (syncError) {
+        console.warn('Failed to sync units to IndexedDB:', syncError);
+      }
     } catch (error) {
       console.error('Failed to load units', error);
-      setUnits([]); // Set empty array on error to prevent undefined state
+      setUnits([]);
     }
   }, []);
 
@@ -159,6 +201,15 @@ const useUnitManagement = () => {
               const withoutDuplicate = previous.filter((unit) => unit.id !== normalized.id);
               return [normalized, ...withoutDuplicate];
             });
+            
+            // Sync to IndexedDB
+            try {
+              await import('@/lib/sync/unitsSync').then(({ unitSync }) => 
+                unitSync.syncAfterCreateOrUpdate(createdUnit)
+              );
+            } catch (syncError) {
+              console.warn('Failed to sync unit to IndexedDB:', syncError);
+            }
           }
 
           closeModal();
@@ -192,6 +243,15 @@ const useUnitManagement = () => {
               unit.id === normalized.id ? normalized : unit
             )
           );
+          
+          // Sync to IndexedDB
+          try {
+            await import('@/lib/sync/unitsSync').then(({ unitSync }) => 
+              unitSync.syncAfterCreateOrUpdate(updatedUnit)
+            );
+          } catch (syncError) {
+            console.warn('Failed to sync unit to IndexedDB:', syncError);
+          }
         }
 
         closeModal();
@@ -213,6 +273,16 @@ const useUnitManagement = () => {
 
       try {
         await unitsApi.deleteUnit(unitId);
+        
+        // Delete from IndexedDB
+        try {
+          await import('@/lib/sync/unitsSync').then(({ unitSync }) => 
+            unitSync.syncAfterDelete(unitId)
+          );
+        } catch (syncError) {
+          console.warn('Failed to delete unit from IndexedDB:', syncError);
+        }
+        
         setUnits((previous) =>
           previous.filter((item) => item.id !== unitId)
         );

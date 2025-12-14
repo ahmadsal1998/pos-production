@@ -1,10 +1,9 @@
-import mongoose, { Schema, Document, Model, Connection } from 'mongoose';
-import { getDatabaseConnection } from '../utils/databaseManager';
-import { getStoreCollectionName } from '../utils/storeCollections';
+import mongoose, { Schema, Document, Model } from 'mongoose';
 
 export interface ISettings {
   _id: mongoose.Types.ObjectId;
-  key: string; // Unique key for the setting
+  storeId: string; // REQUIRED: Store ID for multi-tenant isolation
+  key: string; // Setting key (unique per store)
   value: string; // Value of the setting
   description?: string; // Description of what this setting does
   createdAt: Date;
@@ -17,10 +16,16 @@ export interface SettingsDocument extends Document, Omit<ISettings, '_id'> {
 
 export const settingsSchema = new Schema<SettingsDocument>(
   {
+    storeId: {
+      type: String,
+      required: [true, 'Store ID is required'],
+      trim: true,
+      lowercase: true,
+      index: true,
+    },
     key: {
       type: String,
       required: [true, 'Setting key is required'],
-      unique: true,
       trim: true,
       lowercase: true,
     },
@@ -47,47 +52,27 @@ export const settingsSchema = new Schema<SettingsDocument>(
   }
 );
 
-// Indexes
-settingsSchema.index({ key: 1 }, { unique: true });
+// CRITICAL INDEXES for performance
+// Unique key per store
+settingsSchema.index({ storeId: 1, key: 1 }, { unique: true });
+// List settings by store
+settingsSchema.index({ storeId: 1, createdAt: -1 });
 
-// Create model
+// Create unified model - single collection with storeId
 const Settings: Model<SettingsDocument> = mongoose.model<SettingsDocument>('Settings', settingsSchema);
 
 /**
- * Cache for store-specific settings models keyed by database and collection
- */
-const storeSettingsModelCache: Map<string, Model<SettingsDocument>> = new Map();
-
-/**
- * Get a store-scoped Settings model that lives in the store's database.
- * This keeps settings isolated per store/database instead of sharing one collection.
+ * @deprecated Use Settings model directly and filter by storeId
+ * Get Settings model - returns the unified Settings model
+ * All settings are stored in a single collection with storeId field
  */
 export async function getStoreSettingsModel(
   prefix: string,
   databaseId: number
 ): Promise<Model<SettingsDocument>> {
-  const collectionName = getStoreCollectionName(prefix, 'settings');
-  const cacheKey = `${databaseId}_${collectionName}`;
-
-  if (storeSettingsModelCache.has(cacheKey)) {
-    const cached = storeSettingsModelCache.get(cacheKey)!;
-    if (cached.db.readyState === 1) {
-      return cached;
-    }
-    storeSettingsModelCache.delete(cacheKey);
-  }
-
-  const connection: Connection = await getDatabaseConnection(databaseId);
-
-  if (connection.models[collectionName]) {
-    const model = connection.models[collectionName] as Model<SettingsDocument>;
-    storeSettingsModelCache.set(cacheKey, model);
-    return model;
-  }
-
-  const model = connection.model<SettingsDocument>(collectionName, settingsSchema, collectionName);
-  storeSettingsModelCache.set(cacheKey, model);
-  return model;
+  // Return the unified Settings model
+  // Always filter queries by storeId when using this model
+  return Settings;
 }
 
 export default Settings;

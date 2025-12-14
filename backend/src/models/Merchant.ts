@@ -23,7 +23,6 @@ const merchantSchema = new Schema<IMerchant>(
       unique: true,
       trim: true,
       uppercase: true,
-      index: true,
     },
     storeId: {
       type: String,
@@ -34,7 +33,6 @@ const merchantSchema = new Schema<IMerchant>(
       type: String,
       enum: ['Active', 'Inactive'],
       default: 'Active',
-      index: true,
     },
     description: {
       type: String,

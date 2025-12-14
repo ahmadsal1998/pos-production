@@ -4,6 +4,7 @@ import { AR_LABELS, PlusIcon, SearchIcon, FilterIcon, GridViewIcon, TableViewIco
 import { Product } from '../../shared/types';
 import { MetricCard } from '../../shared/components/ui/MetricCard';
 import { productsApi, ApiError } from '@/lib/api/client';
+import { getCachedProducts, setCachedProducts, invalidateProductsCache, getStoreIdFromToken } from '@/lib/cache/productsCache';
 
 // Enhanced Product interface with image and status
 interface EnhancedProduct extends Product {
@@ -30,12 +31,76 @@ const ProductsPage: React.FC<ProductsPageProps> = ({ onAddProduct, onProductClic
   const [sortBy, setSortBy] = useState<'name' | 'price' | 'stock' | 'createdAt'>('name');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
 
-  // Fetch products from API
+  // Fetch products from API with caching
   const fetchProducts = useCallback(async () => {
     setIsLoading(true);
     setError(null);
+    
     try {
-      const response = await productsApi.getProducts();
+      // Try to get from cache first
+      const storeId = getStoreIdFromToken();
+      const cached = storeId ? getCachedProducts(storeId) : null;
+      
+      if (cached && cached.products.length > 0) {
+        console.log(`Loading ${cached.products.length} products from cache`);
+        // Transform cached products to EnhancedProduct format
+        const transformedProducts: EnhancedProduct[] = cached.products.map((p: any) => {
+          let status: 'available' | 'out_of_stock' | 'low_stock' = 'available';
+          const stock = p.stock || p.quantity || 0;
+          if (stock === 0) {
+            status = 'out_of_stock';
+          } else if (stock < (p.lowStockAlert || 10)) {
+            status = 'low_stock';
+          }
+
+          return {
+            id: typeof p.id === 'string' ? parseInt(p.id) || 0 : p.id || 0,
+            name: p.name || '',
+            category: p.category?.nameAr || p.category?.name || p.category || '',
+            price: p.retailSellingPrice || p.sellingPrice || p.price || 0,
+            costPrice: p.costPrice || p.cost || 0,
+            stock: stock,
+            barcode: p.primaryBarcode || p.barcode || '',
+            expiryDate: p.expiryDate || '',
+            createdAt: p.createdAt || new Date().toISOString(),
+            image: p.imageUrl || p.image || undefined,
+            status: status,
+            description: p.description || undefined,
+            sku: p.internalSKU || p.sku || undefined,
+          };
+        });
+        
+        setProducts(transformedProducts);
+        setIsLoading(false);
+        
+        // Fetch fresh data in background to update cache
+        fetchProductsFromAPI(storeId);
+        return;
+      }
+
+      // No cache, fetch from API
+      await fetchProductsFromAPI(storeId);
+    } catch (err: any) {
+      const apiError = err as ApiError;
+      console.error('Error fetching products:', apiError);
+      if (apiError.status === 401 || apiError.status === 403) {
+        navigate('/login', { replace: true });
+        return;
+      }
+      setError(apiError.message || 'فشل تحميل المنتجات');
+      setProducts([]);
+      setIsLoading(false);
+    }
+  }, [navigate]);
+
+  // Fetch products from API (helper function)
+  const fetchProductsFromAPI = async (storeId: string | null) => {
+    try {
+      // Fetch all products for a single store in one request
+      const response = await productsApi.getProducts({
+        all: true, // Fetch all products for the store
+        includeCategories: true, // Include category data
+      });
       const backendResponse = response.data;
       
       if (backendResponse?.success && Array.isArray(backendResponse.products)) {
@@ -53,7 +118,7 @@ const ProductsPage: React.FC<ProductsPageProps> = ({ onAddProduct, onProductClic
           return {
             id: typeof p.id === 'string' ? parseInt(p.id) || 0 : p.id || 0,
             name: p.name || '',
-            category: p.category?.nameAr || p.category || '',
+            category: p.category?.nameAr || p.category?.name || p.category || '',
             price: p.retailSellingPrice || p.sellingPrice || p.price || 0,
             costPrice: p.costPrice || p.cost || 0,
             stock: stock,
@@ -68,24 +133,28 @@ const ProductsPage: React.FC<ProductsPageProps> = ({ onAddProduct, onProductClic
         });
         
         setProducts(transformedProducts);
-        console.log(`Loaded ${transformedProducts.length} products from database`);
+        console.log(`Loaded ${transformedProducts.length} products from API`);
+        
+        // Cache the products and categories
+        if (storeId) {
+          const categoryMap: Record<string, any> = {};
+          backendResponse.products.forEach((p: any) => {
+            if (p.category && p.categoryId) {
+              categoryMap[p.categoryId] = p.category;
+            }
+          });
+          setCachedProducts(storeId, backendResponse.products, categoryMap);
+        }
       } else {
         setProducts([]);
         console.log('No products found in database');
       }
     } catch (err: any) {
-      const apiError = err as ApiError;
-      console.error('Error fetching products:', apiError);
-      if (apiError.status === 401 || apiError.status === 403) {
-        navigate('/login', { replace: true });
-        return;
-      }
-      setError(apiError.message || 'فشل تحميل المنتجات');
-      setProducts([]);
+      throw err; // Re-throw to be handled by caller
     } finally {
       setIsLoading(false);
     }
-  }, [navigate]);
+  };
 
   // Fetch products on mount
   useEffect(() => {
@@ -215,12 +284,15 @@ const ProductsPage: React.FC<ProductsPageProps> = ({ onAddProduct, onProductClic
 
   const ProductCard: React.FC<{ product: EnhancedProduct }> = ({ product }) => (
     <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden hover:shadow-md transition-shadow">
-      {/* Product Image */}
-      <div className="relative h-48 bg-gray-200 dark:bg-gray-700">
+      {/* Product Image - Fixed aspect ratio to prevent layout shift */}
+      <div className="relative w-full aspect-[4/3] bg-gray-200 dark:bg-gray-700 overflow-hidden">
         <img
-          src={product.image}
+          src={product.image || 'https://via.placeholder.com/300x200?text=No+Image'}
           alt={product.name}
           className="w-full h-full object-cover"
+          width="300"
+          height="200"
+          loading="lazy"
           onError={(e) => {
             const target = e.target as HTMLImageElement;
             target.src = 'https://via.placeholder.com/300x200?text=No+Image';
@@ -299,11 +371,14 @@ const ProductsPage: React.FC<ProductsPageProps> = ({ onAddProduct, onProductClic
     <tr className="hover:bg-gray-50 dark:hover:bg-gray-700">
       <td className="px-6 py-4 whitespace-nowrap">
         <div className="flex items-center">
-          <div className="flex-shrink-0 h-12 w-12">
+          <div className="flex-shrink-0 h-12 w-12 bg-gray-200 dark:bg-gray-700 rounded-lg overflow-hidden">
             <img
-              className="h-12 w-12 rounded-lg object-cover"
-              src={product.image}
+              className="h-12 w-12 object-cover"
+              src={product.image || 'https://via.placeholder.com/48x48?text=No+Image'}
               alt={product.name}
+              width="48"
+              height="48"
+              loading="lazy"
               onError={(e) => {
                 const target = e.target as HTMLImageElement;
                 target.src = 'https://via.placeholder.com/48x48?text=No+Image';
@@ -373,8 +448,8 @@ const ProductsPage: React.FC<ProductsPageProps> = ({ onAddProduct, onProductClic
         </button>
       </div>
 
-      {/* Metrics */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+      {/* Metrics - Reserve space to prevent layout shift */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 min-h-[120px]">
         {metrics.map(metric => (
           <MetricCard key={metric.id} {...metric} />
         ))}
@@ -461,16 +536,31 @@ const ProductsPage: React.FC<ProductsPageProps> = ({ onAddProduct, onProductClic
         </div>
       </div>
 
-      {/* Products Display */}
-      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm">
+      {/* Products Display - Reserve space to prevent layout shift */}
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm min-h-[400px]">
         {viewMode === 'grid' ? (
           <div className="p-6">
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-              {filteredAndSortedProducts.map(product => (
-                <ProductCard key={product.id} product={product} />
-              ))}
+              {isLoading ? (
+                // Skeleton loaders with fixed dimensions
+                Array.from({ length: 8 }).map((_, index) => (
+                  <div key={`skeleton-${index}`} className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden">
+                    <div className="w-full aspect-[4/3] bg-gray-200 dark:bg-gray-700 animate-pulse"></div>
+                    <div className="p-4 space-y-3">
+                      <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded animate-pulse"></div>
+                      <div className="h-3 bg-gray-200 dark:bg-gray-700 rounded animate-pulse w-2/3"></div>
+                      <div className="h-3 bg-gray-200 dark:bg-gray-700 rounded animate-pulse w-1/2"></div>
+                      <div className="h-8 bg-gray-200 dark:bg-gray-700 rounded animate-pulse mt-4"></div>
+                    </div>
+                  </div>
+                ))
+              ) : (
+                filteredAndSortedProducts.map(product => (
+                  <ProductCard key={product.id} product={product} />
+                ))
+              )}
             </div>
-            {filteredAndSortedProducts.length === 0 && (
+            {!isLoading && filteredAndSortedProducts.length === 0 && (
               <div className="text-center py-12">
                 <div className="text-gray-400 mb-4">
                   <svg className="mx-auto h-12 w-12" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -483,9 +573,27 @@ const ProductsPage: React.FC<ProductsPageProps> = ({ onAddProduct, onProductClic
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-              <thead className="bg-gray-50 dark:bg-gray-700">
-                <tr>
+            {isLoading ? (
+              // Skeleton table with fixed dimensions
+              <div className="p-6 space-y-4">
+                {Array.from({ length: 5 }).map((_, index) => (
+                  <div key={`skeleton-row-${index}`} className="flex items-center gap-4 h-16">
+                    <div className="h-12 w-12 bg-gray-200 dark:bg-gray-700 rounded-lg animate-pulse"></div>
+                    <div className="flex-1 space-y-2">
+                      <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded animate-pulse w-1/3"></div>
+                      <div className="h-3 bg-gray-200 dark:bg-gray-700 rounded animate-pulse w-1/4"></div>
+                    </div>
+                    <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded animate-pulse w-20"></div>
+                    <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded animate-pulse w-16"></div>
+                    <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded animate-pulse w-16"></div>
+                    <div className="h-6 bg-gray-200 dark:bg-gray-700 rounded-full animate-pulse w-24"></div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+                <thead className="bg-gray-50 dark:bg-gray-700">
+                  <tr>
                   <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
                     المنتج
                   </th>
@@ -510,9 +618,10 @@ const ProductsPage: React.FC<ProductsPageProps> = ({ onAddProduct, onProductClic
                 {filteredAndSortedProducts.map(product => (
                   <ProductTableRow key={product.id} product={product} />
                 ))}
-              </tbody>
-            </table>
-            {filteredAndSortedProducts.length === 0 && (
+                  </tbody>
+              </table>
+            )}
+            {!isLoading && filteredAndSortedProducts.length === 0 && (
               <div className="text-center py-12">
                 <div className="text-gray-400 mb-4">
                   <svg className="mx-auto h-12 w-12" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -533,15 +642,6 @@ const ProductsPage: React.FC<ProductsPageProps> = ({ onAddProduct, onProductClic
         </div>
       )}
 
-      {/* Loading State */}
-      {isLoading && (
-        <div className="flex items-center justify-center py-12">
-          <div className="flex flex-col items-center gap-4">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-orange-500"></div>
-            <p className="text-sm text-gray-600 dark:text-gray-400">جاري تحميل المنتجات...</p>
-          </div>
-        </div>
-      )}
 
       {/* Results Summary */}
       {!isLoading && (
