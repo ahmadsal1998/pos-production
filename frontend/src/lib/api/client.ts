@@ -39,6 +39,12 @@ export class ApiClient {
         const token = localStorage.getItem('auth-token');
         if (token) {
           config.headers.Authorization = `Bearer ${token}`;
+        } else {
+          // Log warning if token is missing for API routes (except auth routes)
+          if (config.url && !config.url.startsWith('/auth/')) {
+            console.warn('[API Client] ⚠️ No auth token found in localStorage for request:', config.url);
+            console.warn('[API Client] This request may fail with 401 Unauthorized');
+          }
         }
         // Remove Content-Type header for FormData - axios will set it automatically with boundary
         if (config.data instanceof FormData) {
@@ -64,6 +70,47 @@ export class ApiClient {
           code: error.code,
           details: responseData,
         };
+
+        // Handle authentication errors
+        if (error.response?.status === 401) {
+          console.error('[API Client] ❌ Authentication failed (401):', {
+            url: error.config?.url,
+            message: apiError.message,
+            hasToken: !!localStorage.getItem('auth-token'),
+          });
+          
+          // If token exists but is invalid, it might be expired
+          const token = localStorage.getItem('auth-token');
+          if (token) {
+            try {
+              // Try to decode token to check expiration
+              const payload = JSON.parse(atob(token.split('.')[1]));
+              const exp = payload.exp * 1000; // Convert to milliseconds
+              const now = Date.now();
+              if (exp < now) {
+                console.error('[API Client] Token has expired:', {
+                  expiredAt: new Date(exp).toISOString(),
+                  currentTime: new Date(now).toISOString(),
+                });
+                // Clear expired token
+                localStorage.removeItem('auth-token');
+                // Redirect to login if not already there
+                if (typeof window !== 'undefined' && !window.location.pathname.includes('/login')) {
+                  console.log('[API Client] Redirecting to login due to expired token');
+                  window.location.href = '/login';
+                }
+              }
+            } catch (e) {
+              console.error('[API Client] Error decoding token:', e);
+            }
+          } else {
+            // No token at all - redirect to login
+            if (typeof window !== 'undefined' && !window.location.pathname.includes('/login')) {
+              console.log('[API Client] No token found, redirecting to login');
+              window.location.href = '/login';
+            }
+          }
+        }
 
         // Handle subscription expired error - redirect to expired subscription page
         if (error.response?.status === 403 && responseData?.code === 'SUBSCRIPTION_EXPIRED') {
