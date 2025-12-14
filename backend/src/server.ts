@@ -154,23 +154,36 @@ app.use((req, res, next) => {
   next();
 });
 
-// Log all incoming requests for debugging
+// Log ALL incoming requests immediately after CORS (before any other middleware)
 app.use((req, res, next) => {
-  // Enhanced logging for API routes, especially barcode routes
+  // Log ALL requests to catch barcode routes
+  const isBarcodeRoute = req.path.includes('/barcode') || req.originalUrl.includes('/barcode') || req.url.includes('/barcode');
+  
+  if (isBarcodeRoute) {
+    console.log('═══════════════════════════════════════════════════════════');
+    console.log(`[Request] 🔍🔍🔍 BARCODE REQUEST DETECTED 🔍🔍🔍`);
+    console.log(`[Request] Method: ${req.method}`);
+    console.log(`[Request] Path: ${req.path}`);
+    console.log(`[Request] URL: ${req.url}`);
+    console.log(`[Request] Original URL: ${req.originalUrl}`);
+    console.log(`[Request] Base URL: ${req.baseUrl}`);
+    console.log(`[Request] Query:`, req.query);
+    console.log(`[Request] Params:`, req.params);
+    console.log(`[Request] Headers:`, {
+      authorization: req.headers.authorization ? `Present (${req.headers.authorization.substring(0, 30)}...)` : 'Missing',
+      origin: req.headers.origin || 'none',
+      'content-type': req.headers['content-type'] || 'none',
+    });
+    console.log('═══════════════════════════════════════════════════════════');
+  }
+  
+  // Also log all API routes for general debugging
   if (req.path.startsWith('/api/')) {
-    const isBarcodeRoute = req.path.includes('/barcode') || req.originalUrl.includes('/barcode');
-    if (isBarcodeRoute) {
-      console.log(`[Request] 🔍 BARCODE REQUEST: ${req.method} ${req.path}${req.url !== req.path ? ' (url: ' + req.url + ')' : ''}`);
-      console.log(`[Request] Full URL: ${req.originalUrl}`);
-      console.log(`[Request] Base URL: ${req.baseUrl}`);
-      console.log(`[Request] Headers:`, {
-        authorization: req.headers.authorization ? 'Present' : 'Missing',
-        origin: req.headers.origin || 'none',
-      });
-    } else {
+    if (!isBarcodeRoute) {
       console.log(`[Request] ${req.method} ${req.path}${req.url !== req.path ? ' (url: ' + req.url + ')' : ''} - Origin: ${req.headers.origin || 'none'}`);
     }
   }
+  
   next();
 });
 
