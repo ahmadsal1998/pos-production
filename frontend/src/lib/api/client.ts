@@ -18,6 +18,8 @@ export interface ApiError {
 // API Client class
 export class ApiClient {
   private client: AxiosInstance;
+  private activeRequests: Map<string, { method: string; url: string; timestamp: number }> = new Map();
+  private requestCounter: number = 0;
 
   constructor(baseURL: string = '/api') {
     this.client = axios.create({
@@ -31,14 +33,66 @@ export class ApiClient {
     this.setupInterceptors();
   }
 
+  /**
+   * Check if there are any ongoing requests
+   */
+  hasActiveRequests(): boolean {
+    return this.activeRequests.size > 0;
+  }
+
+  /**
+   * Get the count of active requests
+   */
+  getActiveRequestCount(): number {
+    return this.activeRequests.size;
+  }
+
+  /**
+   * Get all active request URLs (for debugging)
+   */
+  getActiveRequests(): string[] {
+    return Array.from(this.activeRequests.values()).map(
+      req => `${req.method} ${req.url}`
+    );
+  }
+
   private setupInterceptors() {
     // Request interceptor
     this.client.interceptors.request.use(
       (config) => {
-        // Add auth token if available
+        // Generate unique request ID and track active request
+        const requestId = `req_${++this.requestCounter}_${Date.now()}`;
+        const method = config.method?.toUpperCase() || 'GET';
+        const url = config.url || '';
+        
+        // Store request info with unique ID
+        this.activeRequests.set(requestId, {
+          method,
+          url,
+          timestamp: Date.now(),
+        });
+        
+        // Store request ID in config metadata for later retrieval
+        (config as any).__requestId = requestId;
+
+        // Always read token fresh from localStorage for each request
+        // This ensures token is current even if it was updated between requests
         const token = localStorage.getItem('auth-token');
         if (token) {
+          // Ensure Authorization header is set correctly
           config.headers.Authorization = `Bearer ${token}`;
+          
+          // Enhanced logging for pagination requests to help debug auth issues
+          const isPaginationRequest = config.url?.includes('page=') || config.params?.page;
+          if (isPaginationRequest) {
+            console.log('[API Client] 🔐 Pagination request with token:', {
+              url: config.url,
+              page: config.params?.page,
+              hasToken: !!token,
+              tokenLength: token.length,
+              tokenPrefix: token.substring(0, 20) + '...',
+            });
+          }
         } else {
           // Log warning if token is missing for API routes (except auth routes)
           if (config.url && !config.url.startsWith('/auth/')) {
@@ -59,10 +113,20 @@ export class ApiClient {
     // Response interceptor
     this.client.interceptors.response.use(
       (response: AxiosResponse) => {
+        // Remove request from active requests on success using stored request ID
+        const requestId = (response.config as any).__requestId;
+        if (requestId) {
+          this.activeRequests.delete(requestId);
+        }
         // Pass through the raw Axios response. We'll shape it in the methods
         return response;
       },
       (error: AxiosError) => {
+        // Remove request from active requests on error using stored request ID
+        const requestId = (error.config as any)?.__requestId;
+        if (requestId) {
+          this.activeRequests.delete(requestId);
+        }
         const responseData = error.response?.data as any;
         const apiError: ApiError = {
           message: responseData?.message || error.message || 'An error occurred',
@@ -73,10 +137,22 @@ export class ApiClient {
 
         // Handle authentication errors
         if (error.response?.status === 401) {
+          const requestUrl = error.config?.url || 'unknown';
+          const isPaginationRequest = requestUrl.includes('page=') || error.config?.params?.page;
+          
+          const authHeader = error.config?.headers?.Authorization;
+          const authHeaderStr = typeof authHeader === 'string' ? authHeader : 
+                               (Array.isArray(authHeader) ? authHeader[0] : String(authHeader || ''));
+          
           console.error('[API Client] ❌ Authentication failed (401):', {
-            url: error.config?.url,
+            url: requestUrl,
             message: apiError.message,
             hasToken: !!localStorage.getItem('auth-token'),
+            isPaginationRequest,
+            requestHeaders: error.config?.headers ? {
+              hasAuthHeader: !!authHeader,
+              authHeaderPrefix: authHeaderStr ? authHeaderStr.substring(0, 30) + '...' : 'none',
+            } : 'no headers',
           });
           
           // If token exists but is invalid, it might be expired
@@ -87,10 +163,13 @@ export class ApiClient {
               const payload = JSON.parse(atob(token.split('.')[1]));
               const exp = payload.exp * 1000; // Convert to milliseconds
               const now = Date.now();
-              if (exp < now) {
+              const isExpired = exp < now;
+              
+              if (isExpired) {
                 console.error('[API Client] Token has expired:', {
                   expiredAt: new Date(exp).toISOString(),
                   currentTime: new Date(now).toISOString(),
+                  timeSinceExpiry: (now - exp) / 1000 + ' seconds',
                 });
                 // Clear expired token
                 localStorage.removeItem('auth-token');
@@ -99,9 +178,24 @@ export class ApiClient {
                   console.log('[API Client] Redirecting to login due to expired token');
                   window.location.href = '/login';
                 }
+              } else {
+                // Token is not expired but still got 401 - this might be a server issue
+                // Don't clear the token, just log the error
+                console.warn('[API Client] ⚠️ Token is valid but request returned 401. This might be a server-side issue.', {
+                  url: requestUrl,
+                  tokenExpiry: new Date(exp).toISOString(),
+                  timeUntilExpiry: (exp - now) / 1000 / 60 + ' minutes',
+                });
+                
+                // For pagination requests, don't clear token on first 401 - might be temporary
+                if (isPaginationRequest) {
+                  console.warn('[API Client] ⚠️ Pagination request failed with 401 but token is valid. Not clearing token.');
+                }
               }
             } catch (e) {
               console.error('[API Client] Error decoding token:', e);
+              // If we can't decode the token, it's likely malformed - clear it
+              localStorage.removeItem('auth-token');
             }
           } else {
             // No token at all - redirect to login

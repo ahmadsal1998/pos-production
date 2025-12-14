@@ -2,7 +2,7 @@
 // Manages local product cache and synchronizes with server after quantity changes
 // Uses IndexedDB for efficient storage and fast search
 
-import { productsApi, ApiError } from '@/lib/api/client';
+import { productsApi, ApiError, apiClient } from '@/lib/api/client';
 import { getCachedProducts, setCachedProducts, invalidateProductsCache, getStoreIdFromToken } from '@/lib/cache/productsCache';
 import { productsDB } from '@/lib/db/productsDB';
 
@@ -42,8 +42,27 @@ export interface ProductSyncResult {
 class ProductSyncManager {
   private syncInProgress: Set<string> = new Set();
   private lastSyncTime: number = 0;
-  private readonly SYNC_COOLDOWN = 1000; // 1 second cooldown between syncs
+  private readonly SYNC_COOLDOWN = 30 * 1000; // 30 seconds cooldown between syncs (increased to prevent rapid retries)
   private readonly DATA_FRESHNESS_THRESHOLD = 5 * 60 * 1000; // 5 minutes - consider data fresh if updated within this time
+  private readonly MAX_PAGES = 100; // Maximum number of pages to fetch (safety limit)
+  private readonly REQUEST_WAIT_TIMEOUT = 10 * 1000; // 10 seconds max wait for active requests
+
+  /**
+   * Wait for active requests to complete (with timeout)
+   * @returns true if requests completed, false if timeout
+   */
+  private async waitForActiveRequests(): Promise<boolean> {
+    const startTime = Date.now();
+    while (apiClient.hasActiveRequests()) {
+      if (Date.now() - startTime > this.REQUEST_WAIT_TIMEOUT) {
+        console.warn(`[ProductSync] ⚠️ Timeout waiting for active requests (${this.REQUEST_WAIT_TIMEOUT / 1000}s)`);
+        return false;
+      }
+      // Wait 100ms before checking again
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    return true;
+  }
 
   /**
    * Sync products from server and update local cache
@@ -67,7 +86,7 @@ class ProductSyncManager {
 
     // Check if sync is in progress
     if (this.syncInProgress.has(storeId)) {
-      console.log('[ProductSync] Sync already in progress, skipping...');
+      console.log('[ProductSync] ⚠️ Sync already in progress for storeId:', storeId, '- skipping duplicate request');
       return {
         success: false,
         syncedCount: 0,
@@ -75,14 +94,34 @@ class ProductSyncManager {
       };
     }
 
+    // Check for ongoing API requests before starting sync
+    if (apiClient.hasActiveRequests()) {
+      const activeCount = apiClient.getActiveRequestCount();
+      const activeRequests = apiClient.getActiveRequests();
+      console.log(`[ProductSync] ⚠️ ${activeCount} ongoing request(s) detected, waiting before sync:`, activeRequests);
+      
+      // Wait for active requests to complete (with timeout)
+      const waited = await this.waitForActiveRequests();
+      if (!waited) {
+        return {
+          success: false,
+          syncedCount: 0,
+          error: `Cannot start sync: ${activeCount} request(s) still in progress after timeout`,
+        };
+      }
+      console.log(`[ProductSync] ✅ Active requests completed, proceeding with sync`);
+    }
+
     // Check cooldown
     const now = Date.now();
-    if (!forceRefresh && now - this.lastSyncTime < this.SYNC_COOLDOWN) {
-      console.log('[ProductSync] Sync cooldown active, skipping...');
+    const timeSinceLastSync = now - this.lastSyncTime;
+    if (!forceRefresh && timeSinceLastSync < this.SYNC_COOLDOWN) {
+      const remainingCooldown = Math.ceil((this.SYNC_COOLDOWN - timeSinceLastSync) / 1000);
+      console.log(`[ProductSync] ⚠️ Sync cooldown active (${remainingCooldown}s remaining), skipping...`);
       return {
         success: false,
         syncedCount: 0,
-        error: 'Sync cooldown active',
+        error: `Sync cooldown active (${remainingCooldown}s remaining)`,
       };
     }
 
@@ -111,50 +150,218 @@ class ProductSyncManager {
 
     this.syncInProgress.add(storeId);
     this.lastSyncTime = now;
+    
+    console.log(`[ProductSync] 🚀 Starting sync for storeId: ${storeId} (forceRefresh: ${forceRefresh})`);
 
     try {
-      // Fetch all products from server
+      // Try to fetch all products in one request using all=true (more efficient, up to 10,000 products)
+      // Falls back to pagination if needed for stores with more than 10,000 products
       let allProducts: any[] = [];
-      let currentPage = 1;
-      let hasMorePages = true;
-      const pageSize = 1000;
+      const startTime = Date.now();
+      let totalProductsFromServer: number | null = null;
 
-      while (hasMorePages) {
-        try {
-          const response = await productsApi.getProducts({ 
-            page: currentPage, 
-            limit: pageSize 
-          });
+      try {
+        // First, try fetching all products at once (up to 10,000)
+        console.log(`[ProductSync] Attempting to fetch all products at once (all=true)...`);
+        const allResponse = await productsApi.getProducts({ 
+          all: true,
+          includeCategories: true 
+        });
 
-          if (response.success) {
-            const productsData = (response.data as any)?.products || 
-                                (response.data as any)?.data?.products || [];
-            allProducts = [...allProducts, ...productsData];
+        if (allResponse.success) {
+          const responseData = allResponse.data as any;
+          const productsData = responseData?.products || [];
+          const pagination = responseData?.pagination;
+          
+          if (pagination) {
+            totalProductsFromServer = pagination.totalProducts;
+            console.log(`[ProductSync] 📊 Server reports ${totalProductsFromServer} total products`);
+          }
+          
+          allProducts = productsData;
+          console.log(`[ProductSync] ✅ Successfully fetched all products in one request: ${allProducts.length} products`);
+          
+          // Verify we got all products
+          if (totalProductsFromServer !== null && allProducts.length !== totalProductsFromServer) {
+            console.warn(`[ProductSync] ⚠️ Mismatch: Expected ${totalProductsFromServer} products but got ${allProducts.length}. This may indicate a server-side issue.`);
+          }
+        } else {
+          console.warn(`[ProductSync] ⚠️ All-products fetch returned success=false, falling back to pagination`);
+          throw new Error('All-products fetch failed, using pagination fallback');
+        }
+      } catch (allError: any) {
+        // Fallback to pagination if all=true fails or returns insufficient data
+        console.log(`[ProductSync] Falling back to pagination-based fetching...`);
+        
+        let currentPage = 1;
+        let hasMorePages = true;
+        const pageSize = 100; // Backend max is 100 per page
+        allProducts = [];
 
-            const pagination = (response.data as any)?.pagination;
-            if (pagination) {
-              hasMorePages = pagination.hasNextPage === true;
-              currentPage++;
+        while (hasMorePages && currentPage <= this.MAX_PAGES) {
+          try {
+            // Verify token is still present before each request
+            const token = localStorage.getItem('auth-token');
+            if (!token) {
+              console.error(`[ProductSync] ❌ No auth token found before fetching page ${currentPage}. Stopping pagination.`);
+              hasMorePages = false;
+              break;
+            }
+
+            console.log(`[ProductSync] Fetching page ${currentPage} (limit: ${pageSize})...`);
+            const response = await productsApi.getProducts({ 
+              page: currentPage, 
+              limit: pageSize,
+              includeCategories: true 
+            });
+
+            if (response.success) {
+              const responseData = response.data as any;
+              const productsData = responseData?.products || [];
+              const pagination = responseData?.pagination;
+              
+              allProducts = [...allProducts, ...productsData];
+              
+              // Update total from server if available
+              if (pagination && pagination.totalProducts) {
+                totalProductsFromServer = pagination.totalProducts;
+              }
+
+              console.log(`[ProductSync] ✅ Page ${currentPage}: ${productsData.length} products (total so far: ${allProducts.length}${totalProductsFromServer ? ` / ${totalProductsFromServer} expected` : ''})`);
+
+              if (pagination) {
+                hasMorePages = pagination.hasNextPage === true;
+                currentPage++;
+                console.log(`[ProductSync] Has more pages: ${hasMorePages}, next page: ${currentPage}`);
+              } else {
+                console.log(`[ProductSync] No pagination info, assuming no more pages`);
+                hasMorePages = false;
+              }
             } else {
+              console.warn(`[ProductSync] ⚠️ Page ${currentPage} returned success=false, stopping pagination`);
               hasMorePages = false;
             }
+            
+            // Safety check: prevent infinite loops
+            if (currentPage > this.MAX_PAGES) {
+              console.warn(`[ProductSync] ⚠️ Reached maximum page limit (${this.MAX_PAGES}), stopping pagination`);
+              hasMorePages = false;
+              break;
+            }
+          } catch (pageError: any) {
+          console.error(`[ProductSync] ❌ Error fetching page ${currentPage}:`, {
+            status: pageError.status,
+            message: pageError.message,
+            hasToken: !!localStorage.getItem('auth-token'),
+          });
+          
+          // For 401 errors, check if token is still valid
+          if (pageError.status === 401) {
+            const token = localStorage.getItem('auth-token');
+            if (token) {
+              try {
+                // Check if token is expired
+                const payload = JSON.parse(atob(token.split('.')[1]));
+                const exp = payload.exp * 1000;
+                const now = Date.now();
+                if (exp < now) {
+                  console.error(`[ProductSync] Token expired during pagination. Stopping at page ${currentPage}`);
+                  hasMorePages = false;
+                } else {
+                  // Token is still valid but got 401 - might be temporary server issue
+                  // Retry once for pagination requests
+                  console.warn(`[ProductSync] ⚠️ Got 401 but token is valid. Retrying page ${currentPage} once...`);
+                  try {
+                    await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second
+                    const retryResponse = await productsApi.getProducts({ 
+                      page: currentPage, 
+                      limit: pageSize,
+                      includeCategories: true 
+                    });
+                    if (retryResponse.success) {
+                      const retryResponseData = retryResponse.data as any;
+                      const productsData = retryResponseData?.products || [];
+                      allProducts = [...allProducts, ...productsData];
+                      const pagination = retryResponseData?.pagination;
+                      if (pagination) {
+                        hasMorePages = pagination.hasNextPage === true;
+                        currentPage++;
+                        if (pagination.totalProducts) {
+                          totalProductsFromServer = pagination.totalProducts;
+                        }
+                      } else {
+                        hasMorePages = false;
+                      }
+                      console.log(`[ProductSync] ✅ Retry successful for page ${currentPage - 1}`);
+                      continue;
+                    }
+                  } catch (retryError) {
+                    console.error(`[ProductSync] ❌ Retry also failed for page ${currentPage}`);
+                  }
+                  hasMorePages = false;
+                }
+              } catch (e) {
+                console.error(`[ProductSync] Error decoding token:`, e);
+                hasMorePages = false;
+              }
+            } else {
+              console.error(`[ProductSync] No token found after 401 error. Stopping pagination.`);
+              hasMorePages = false;
+            }
+          } else if (pageError.status === 403 || currentPage === 1) {
+            // 403 or error on first page - stop immediately
+            hasMorePages = false;
           } else {
+            // Other errors - stop but keep what we have
+            console.warn(`[ProductSync] Stopping pagination due to error (keeping ${allProducts.length} products)`);
             hasMorePages = false;
           }
-        } catch (pageError: any) {
-          console.error(`[ProductSync] Error fetching page ${currentPage}:`, pageError);
-          if (pageError.status === 401 || pageError.status === 403 || currentPage === 1) {
-            hasMorePages = false;
-          } else {
-            hasMorePages = false; // Stop on error but keep what we have
+          }
+          
+          // Safety check: if we hit max pages, log a warning
+          if (currentPage > this.MAX_PAGES) {
+            console.warn(`[ProductSync] ⚠️ Stopped at maximum page limit (${this.MAX_PAGES}). There may be more products.`);
           }
         }
       }
+      
+      const syncDuration = ((Date.now() - startTime) / 1000).toFixed(2);
+      
+      // Final verification
+      if (totalProductsFromServer !== null && allProducts.length !== totalProductsFromServer) {
+        console.warn(`[ProductSync] ⚠️ FINAL MISMATCH: Server reports ${totalProductsFromServer} total products, but we fetched ${allProducts.length} products. Some products may be missing!`);
+        console.warn(`[ProductSync] ⚠️ Missing: ${totalProductsFromServer - allProducts.length} products`);
+      }
+      
+      console.log(`[ProductSync] ✅ Sync completed: ${allProducts.length} products fetched in ${syncDuration}s${totalProductsFromServer !== null ? ` (server total: ${totalProductsFromServer})` : ''}`);
 
       if (allProducts.length > 0) {
         // Store in IndexedDB (primary storage)
         try {
           await productsDB.storeProducts(allProducts);
+          
+          // Verify the count matches (safety check)
+          const storedCount = await productsDB.getProductCount();
+          if (storedCount !== allProducts.length) {
+            console.warn(`[ProductSync] ⚠️ Count mismatch detected: Expected ${allProducts.length} products, but IndexedDB has ${storedCount}. Running deduplication...`);
+            try {
+              const dedupResult = await productsDB.deduplicateProducts();
+              console.log(`[ProductSync] ✅ Deduplication complete: Removed ${dedupResult.removed} duplicates, kept ${dedupResult.kept} products`);
+              
+              // Verify again after deduplication
+              const finalCount = await productsDB.getProductCount();
+              if (finalCount !== allProducts.length) {
+                console.warn(`[ProductSync] ⚠️ Count still mismatched after deduplication: Expected ${allProducts.length}, got ${finalCount}`);
+              } else {
+                console.log(`[ProductSync] ✅ Count verified: ${finalCount} products match server count`);
+              }
+            } catch (dedupError) {
+              console.error('[ProductSync] Error during deduplication:', dedupError);
+            }
+          } else {
+            console.log(`[ProductSync] ✅ Count verified: ${storedCount} products match server count`);
+          }
+          
           // Notify other tabs
           (productsDB as any).notifyOtherTabs();
         } catch (dbError) {
@@ -194,14 +401,20 @@ class ProductSyncManager {
       }
     } catch (error: any) {
       const apiError = error as ApiError;
-      console.error('[ProductSync] Error syncing products:', apiError);
+      console.error('[ProductSync] ❌ Error syncing products:', {
+        message: apiError.message,
+        status: apiError.status,
+        storeId,
+      });
       return {
         success: false,
         syncedCount: 0,
         error: apiError.message || 'Failed to sync products',
       };
     } finally {
+      // Always clear sync in progress flag, even on error
       this.syncInProgress.delete(storeId);
+      console.log(`[ProductSync] 🏁 Sync finished for storeId: ${storeId}, syncInProgress cleared`);
     }
   }
 
@@ -219,6 +432,24 @@ class ProductSyncManager {
         syncedCount: 0,
         error: 'Store ID not found',
       };
+    }
+
+    // Check for ongoing API requests before starting sync
+    if (apiClient.hasActiveRequests()) {
+      const activeCount = apiClient.getActiveRequestCount();
+      const activeRequests = apiClient.getActiveRequests();
+      console.log(`[ProductSync] ⚠️ ${activeCount} ongoing request(s) detected, waiting before sync:`, activeRequests);
+      
+      // Wait for active requests to complete (with timeout)
+      const waited = await this.waitForActiveRequests();
+      if (!waited) {
+        return {
+          success: false,
+          syncedCount: 0,
+          error: `Cannot start sync: ${activeCount} request(s) still in progress after timeout`,
+        };
+      }
+      console.log(`[ProductSync] ✅ Active requests completed, proceeding with sync`);
     }
 
     try {
@@ -314,6 +545,14 @@ class ProductSyncManager {
    * Use this for critical operations where you need the latest stock
    */
   async queryProductFromServer(productId: string): Promise<any | null> {
+    // Check for ongoing API requests before querying
+    if (apiClient.hasActiveRequests()) {
+      const activeCount = apiClient.getActiveRequestCount();
+      console.log(`[ProductSync] ⚠️ ${activeCount} ongoing request(s) detected, waiting before querying product ${productId}`);
+      // For single product queries, we can still proceed but log a warning
+      // This is less critical than full syncs, but we still want to be aware
+    }
+
     try {
       const response = await productsApi.getProduct(productId);
       const product = (response.data as any)?.data?.product || 
@@ -346,6 +585,24 @@ class ProductSyncManager {
         syncedCount: 0,
         error: 'No product IDs provided',
       };
+    }
+
+    // Check for ongoing API requests before starting sync
+    if (apiClient.hasActiveRequests()) {
+      const activeCount = apiClient.getActiveRequestCount();
+      const activeRequests = apiClient.getActiveRequests();
+      console.log(`[ProductSync] ⚠️ ${activeCount} ongoing request(s) detected, waiting before sync after quantity change:`, activeRequests);
+      
+      // Wait for active requests to complete (with timeout)
+      const waited = await this.waitForActiveRequests();
+      if (!waited) {
+        return {
+          success: false,
+          syncedCount: 0,
+          error: `Cannot start sync: ${activeCount} request(s) still in progress after timeout`,
+        };
+      }
+      console.log(`[ProductSync] ✅ Active requests completed, proceeding with sync after quantity change`);
     }
 
     console.log(`[ProductSync] Syncing ${productIds.length} product(s) after quantity change...`);

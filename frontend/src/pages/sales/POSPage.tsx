@@ -90,6 +90,8 @@ const POSPage: React.FC = () => {
     const [isSearchingCustomersServer, setIsSearchingCustomersServer] = useState(false); // Track server-side customer search state
     const isLoadingCustomersRef = useRef(false); // Prevent multiple simultaneous customer loads
     const isMountedRef = useRef(true); // Track if component is mounted
+    const isProductSyncInProgressRef = useRef(false); // Prevent multiple simultaneous product syncs
+    const lastProductSyncAttemptRef = useRef<number>(0); // Track last sync attempt time
     const [currentInvoice, setCurrentInvoice] = useState<POSInvoice>(() => generateNewInvoice(currentUserName, 'INV-1'));
     const [heldInvoices, setHeldInvoices] = useState<POSInvoice[]>([]);
     const [searchTerm, setSearchTerm] = useState('');
@@ -524,6 +526,7 @@ const POSPage: React.FC = () => {
     }, [normalizeProduct]);
 
     // Load products from IndexedDB on mount
+    // Only syncs if IndexedDB is empty AND data is stale (not just empty)
     const loadProductsFromDB = useCallback(async () => {
         try {
             setIsLoadingFromDB(true);
@@ -540,11 +543,49 @@ const POSPage: React.FC = () => {
                 const normalizedProducts = dbProducts.map((p: any) => normalizeProduct(p));
                 setProducts(normalizedProducts);
                 setProductsLoaded(true);
-                console.log(`[POS] Loaded ${normalizedProducts.length} products from IndexedDB`);
+                console.log(`[POS] Loaded ${normalizedProducts.length} products from IndexedDB (no sync needed)`);
             } else {
-                // No products in IndexedDB, sync from server
-                console.log('[POS] No products in IndexedDB, syncing from server...');
+                // No products in IndexedDB - check if we should sync
+                // Only sync if:
+                // 1. No sync is already in progress
+                // 2. We haven't attempted a sync recently (within 30 seconds)
+                const now = Date.now();
+                const timeSinceLastAttempt = now - lastProductSyncAttemptRef.current;
+                const SYNC_COOLDOWN = 30 * 1000; // 30 seconds cooldown
+                
+                if (isProductSyncInProgressRef.current) {
+                    console.log('[POS] Product sync already in progress, skipping duplicate request');
+                    setProductsLoaded(false);
+                    return;
+                }
+                
+                if (timeSinceLastAttempt < SYNC_COOLDOWN) {
+                    console.log(`[POS] Sync cooldown active (${Math.ceil((SYNC_COOLDOWN - timeSinceLastAttempt) / 1000)}s remaining), skipping sync`);
+                    setProductsLoaded(false);
+                    return;
+                }
+                
+                // Check if data is fresh (even if empty, might have been cleared recently)
+                const DATA_FRESHNESS_THRESHOLD = 5 * 60 * 1000; // 5 minutes
+                const isFresh = await productsDB.isDataFresh(DATA_FRESHNESS_THRESHOLD);
+                
+                if (isFresh && dbProducts.length === 0) {
+                    // Data was recently cleared but is still considered fresh - don't sync
+                    console.log('[POS] IndexedDB is empty but data is fresh (recently cleared), skipping sync');
+                    setProductsLoaded(false);
+                    return;
+                }
+                
+                // Mark sync as in progress
+                isProductSyncInProgressRef.current = true;
+                lastProductSyncAttemptRef.current = now;
+                
+                console.log('[POS] No products in IndexedDB and data is stale, syncing from server...');
                 const syncResult = await productSync.syncProducts({ forceRefresh: false });
+                
+                // Clear sync in progress flag
+                isProductSyncInProgressRef.current = false;
+                
                 if (syncResult.success && syncResult.products) {
                     const normalizedProducts = syncResult.products.map((p: any) => normalizeProduct(p));
                     setProducts(normalizedProducts);
@@ -552,109 +593,94 @@ const POSPage: React.FC = () => {
                     console.log(`[POS] Synced and loaded ${normalizedProducts.length} products`);
                 } else {
                     setProductsLoaded(false);
-                    console.warn('[POS] Failed to sync products from server');
+                    console.warn('[POS] Failed to sync products from server:', syncResult.error);
                 }
             }
         } catch (error: any) {
             console.error('[POS] Error loading products from IndexedDB:', error);
             setProductsLoaded(false);
+            // Clear sync in progress flag on error
+            isProductSyncInProgressRef.current = false;
         } finally {
             setIsLoadingFromDB(false);
         }
     }, [normalizeProduct]);
 
     // Fetch all products for search functionality (lazy load in background)
-    // Now uses IndexedDB as primary storage
+    // Now uses IndexedDB as primary storage - NO SYNC unless IndexedDB is empty AND stale
     const fetchAllProducts = useCallback(async () => {
         try {
-            console.log('[POS] Starting to fetch all products for search...');
+            console.log('[POS] Loading products from IndexedDB for search...');
             
             // First check IndexedDB
             await productsDB.init();
             const dbProducts = await productsDB.getAllProducts();
             
             if (dbProducts && dbProducts.length > 0) {
-                // Use products from IndexedDB
+                // Use products from IndexedDB - no sync needed
                 const allProductsList = dbProducts.map((p: any) => normalizeProduct(p));
                 setProducts(allProductsList);
                 setProductsLoaded(true);
-                console.log(`[POS] Using ${allProductsList.length} products from IndexedDB`);
-                
-                // Check if data is fresh before syncing from server
-                const isFresh = await productsDB.isDataFresh(5 * 60 * 1000); // 5 minutes
-                if (isFresh) {
-                    console.log('[POS] IndexedDB data is fresh, skipping background sync');
-                    return;
-                }
-                
-                // Data is stale, sync from server in background
-                console.log('[POS] IndexedDB data is stale, syncing from server in background...');
-                productSync.syncProducts({ forceRefresh: false }).then((result) => {
-                    if (result.success && result.products) {
-                        const normalizedProducts = result.products.map((p: any) => normalizeProduct(p));
-                        setProducts(normalizedProducts);
-                        console.log(`[POS] Updated with ${normalizedProducts.length} products from server`);
-                    }
-                }).catch(error => {
-                    console.error('[POS] Error syncing products in background:', error);
-                });
-                
+                console.log(`[POS] Using ${allProductsList.length} products from IndexedDB (no sync needed)`);
                 return;
             }
             
-            // No products in IndexedDB, fetch from server
-            let allProductsData: any[] = [];
-            let currentPage = 1;
-            let hasMorePages = true;
-            const pageSize = 1000; // Max allowed by backend
+            // IndexedDB is empty - check if we should sync
+            // Only sync if:
+            // 1. No sync is already in progress
+            // 2. We haven't attempted a sync recently (within 30 seconds)
+            // 3. Data is stale (not fresh)
+            const now = Date.now();
+            const timeSinceLastAttempt = now - lastProductSyncAttemptRef.current;
+            const SYNC_COOLDOWN = 30 * 1000; // 30 seconds cooldown
             
-            // Fetch all pages of products
-            while (hasMorePages) {
-                try {
-                    const response = await productsApi.getProducts({ page: currentPage, limit: pageSize });
-                    if (response.success) {
-                        const productsData = (response.data as any)?.products || (response.data as any)?.data?.products || [];
-                        allProductsData = [...allProductsData, ...productsData];
-                        
-                        // Check if there are more pages
-                        const pagination = (response.data as any)?.pagination;
-                        if (pagination) {
-                            hasMorePages = pagination.hasNextPage === true;
-                            currentPage++;
-                        } else {
-                            hasMorePages = false;
-                        }
-                    } else {
-                        console.warn('[POS] API response was not successful:', response);
-                        hasMorePages = false;
-                    }
-                } catch (pageError: any) {
-                    console.error(`[POS] Error fetching page ${currentPage}:`, pageError);
-                    if (pageError.status === 401 || pageError.status === 403 || currentPage === 1) {
-                        hasMorePages = false;
-                    } else {
-                        hasMorePages = false;
-                    }
-                }
+            if (isProductSyncInProgressRef.current) {
+                console.log('[POS] Product sync already in progress, skipping duplicate request');
+                setProductsLoaded(false);
+                return;
             }
             
-            if (allProductsData.length > 0) {
-                // Store in IndexedDB
-                await productsDB.storeProducts(allProductsData);
-                
-                // Update the main products list
-                const allProductsList = allProductsData.map((p: any) => normalizeProduct(p));
+            if (timeSinceLastAttempt < SYNC_COOLDOWN) {
+                console.log(`[POS] Sync cooldown active (${Math.ceil((SYNC_COOLDOWN - timeSinceLastAttempt) / 1000)}s remaining), skipping sync`);
+                setProductsLoaded(false);
+                return;
+            }
+            
+            // Check if data is fresh (even if empty, might have been cleared recently)
+            const DATA_FRESHNESS_THRESHOLD = 5 * 60 * 1000; // 5 minutes
+            const isFresh = await productsDB.isDataFresh(DATA_FRESHNESS_THRESHOLD);
+            
+            if (isFresh && dbProducts.length === 0) {
+                // Data was recently cleared but is still considered fresh - don't sync
+                console.log('[POS] IndexedDB is empty but data is fresh (recently cleared), skipping sync');
+                setProductsLoaded(false);
+                return;
+            }
+            
+            // Mark sync as in progress
+            isProductSyncInProgressRef.current = true;
+            lastProductSyncAttemptRef.current = now;
+            
+            console.log('[POS] No products in IndexedDB and data is stale, using productSync to fetch from server...');
+            const syncResult = await productSync.syncProducts({ forceRefresh: false });
+            
+            // Clear sync in progress flag
+            isProductSyncInProgressRef.current = false;
+            
+            if (syncResult.success && syncResult.products) {
+                const allProductsList = syncResult.products.map((p: any) => normalizeProduct(p));
                 setProducts(allProductsList);
                 setProductsLoaded(true);
-                
-                console.log(`[POS] Successfully loaded ${allProductsList.length} products and stored in IndexedDB`);
+                console.log(`[POS] Successfully loaded ${allProductsList.length} products via productSync`);
             } else {
-                console.warn('[POS] No products loaded - will use server-side search as fallback');
+                console.warn('[POS] Failed to sync products from server:', syncResult.error);
                 setProductsLoaded(false);
             }
         } catch (err: any) {
             console.error('[POS] Error fetching all products for search:', err);
             setProductsLoaded(false);
+            // Clear sync in progress flag on error
+            isProductSyncInProgressRef.current = false;
         }
     }, [normalizeProduct]);
 
@@ -668,10 +694,11 @@ const POSPage: React.FC = () => {
         // Load products from IndexedDB (fast, handles large datasets)
         loadProductsFromDB();
         
-        // Also fetch all products in background for search (uses IndexedDB)
+        // Note: fetchAllProducts is called by loadProductsFromDB if needed
+        // No need to call it again here to avoid duplicate sync attempts
+        
+        // Sync customers in background (only if needed - customerSync handles this internally)
         const timer = setTimeout(() => {
-            fetchAllProducts();
-            // Also sync customers in background
             customerSync.syncCustomers({ forceRefresh: false }).then((result) => {
                 if (isMountedRef.current && result.success && result.customers) {
                     const transformedCustomers: Customer[] = result.customers
@@ -698,80 +725,18 @@ const POSPage: React.FC = () => {
         return () => {
             clearTimeout(timer);
         };
-    }, [loadCustomersFromDB, fetchQuickProducts, fetchTaxRate, loadProductsFromDB, fetchAllProducts]);
+    }, [loadCustomersFromDB, fetchQuickProducts, fetchTaxRate, loadProductsFromDB]);
 
-    // Reload tax rate and sync products when page becomes visible (in case stock changed in another tab)
+    // Reload tax rate when page becomes visible
+    // Note: Products are NOT synced on visibility change to prevent unnecessary server load
+    // Sync only happens when there's an actual change (invoice created, quantity updated, etc.)
     useEffect(() => {
         const handleVisibilityChange = async () => {
             if (!document.hidden) {
                 fetchTaxRate();
-                
-                // Check if data is fresh before syncing products
-                try {
-                    await productsDB.init();
-                    const isFresh = await productsDB.isDataFresh(5 * 60 * 1000); // 5 minutes
-                    if (isFresh) {
-                        console.log('[POS] Page visible but product data is fresh, skipping sync');
-                    } else {
-                        // Data is stale, sync products in background when page becomes visible (to catch stock changes from other tabs)
-                        console.log('[POS] Page visible and product data is stale, syncing...');
-                        productSync.syncProducts({ forceRefresh: false }).then((result) => {
-                            if (result.success && result.products) {
-                                // Update local product state with synced products
-                                const normalizedProducts = result.products.map((p: any) => normalizeProduct(p));
-                                setProducts(prevProducts => {
-                                    // Merge synced products with existing products
-                                    const productMap = new Map(
-                                        prevProducts.map(p => [String(p.id), p])
-                                    );
-                                    normalizedProducts.forEach((p: POSProduct) => {
-                                        const key = String(p.id);
-                                        const existing = productMap.get(key);
-                                        if (existing) {
-                                            // Update existing product with fresh stock
-                                            productMap.set(key, { ...existing, stock: p.stock });
-                                        } else {
-                                            // Add new product
-                                            productMap.set(key, p);
-                                        }
-                                    });
-                                    return Array.from(productMap.values());
-                                });
-                                console.log('[POS] Products synced after visibility change');
-                            }
-                        }).catch(error => {
-                            console.error('[POS] Error syncing products on visibility change:', error);
-                        });
-                    }
-                } catch (error) {
-                    console.error('[POS] Error checking data freshness on visibility change:', error);
-                }
-                // Sync customers in background when page becomes visible (to catch changes from other tabs)
-                customerSync.syncCustomers({ forceRefresh: false }).then((result) => {
-                    if (isMountedRef.current && result.success && result.customers) {
-                        const transformedCustomers: Customer[] = result.customers
-                            .map((customer: any) => ({
-                                id: customer.id,
-                                name: customer.name || customer.phone,
-                                phone: customer.phone,
-                                address: customer.address,
-                                previousBalance: customer.previousBalance || 0,
-                            }))
-                            .filter((customer: Customer) => !isDummyCustomer(customer));
-                        try {
-                            setAllCustomers(transformedCustomers);
-                            setCustomers(transformedCustomers);
-                            setCustomersLoaded(true);
-                            console.log('[POS] Customers synced after visibility change');
-                        } catch (error) {
-                            console.debug('[POS] State update skipped (component unmounted)');
-                        }
-                    }
-                }).catch(error => {
-                    if (isMountedRef.current) {
-                        console.error('[POS] Error syncing customers on visibility change:', error);
-                    }
-                });
+                // Products sync is handled only when actual changes occur, not on visibility change
+                // This prevents unnecessary server load when just switching tabs
+                console.log('[POS] Page visible - using existing IndexedDB data (no sync)');
             }
         };
         
@@ -781,8 +746,30 @@ const POSPage: React.FC = () => {
                 fetchTaxRate();
             }
             // If products cache was invalidated, sync products
-            if (e.key && e.key.startsWith('pos_products_cache_') || e.key?.startsWith('products_db_changed_')) {
+            // Only sync if not already in progress and enough time has passed
+            if (e.key && (e.key.startsWith('pos_products_cache_') || e.key?.startsWith('products_db_changed_'))) {
+                const now = Date.now();
+                const timeSinceLastAttempt = now - lastProductSyncAttemptRef.current;
+                const SYNC_COOLDOWN = 30 * 1000; // 30 seconds cooldown
+                
+                if (isProductSyncInProgressRef.current) {
+                    console.log('[POS] Product sync already in progress, skipping cache invalidation sync');
+                    return;
+                }
+                
+                if (timeSinceLastAttempt < SYNC_COOLDOWN) {
+                    console.log(`[POS] Sync cooldown active (${Math.ceil((SYNC_COOLDOWN - timeSinceLastAttempt) / 1000)}s remaining), skipping cache invalidation sync`);
+                    return;
+                }
+                
+                // Mark sync as in progress
+                isProductSyncInProgressRef.current = true;
+                lastProductSyncAttemptRef.current = now;
+                
                 productSync.syncProducts({ forceRefresh: true }).then(async (result) => {
+                    // Clear sync in progress flag
+                    isProductSyncInProgressRef.current = false;
+                    
                     if (result.success && result.products) {
                         // Update IndexedDB
                         try {
@@ -798,6 +785,8 @@ const POSPage: React.FC = () => {
                     }
                 }).catch(error => {
                     console.error('[POS] Error syncing products after cache invalidation:', error);
+                    // Clear sync in progress flag on error
+                    isProductSyncInProgressRef.current = false;
                 });
             }
             // If customers cache was invalidated, sync customerssss
@@ -1453,12 +1442,16 @@ const POSPage: React.FC = () => {
 
                 console.log(`[POS] Product found by barcode: ${normalizedProduct.name}`);
                 
-                // CRITICAL: Update IndexedDB and state with fresh product data immediately
+                // Update IndexedDB and state with fresh product data immediately
                 // This ensures stock checks use the latest quantity, not stale cached data
-                // Server is the single source of truth - always sync from server response
+                // NOTE: We use productsDB.storeProduct() directly instead of productSync to avoid
+                // triggering unnecessary server syncs. ProductSync should only run on actual changes
+                // (sales, returns, quantity updates), not on barcode scans or cart additions.
                 try {
-                    // Use productSync to properly sync the product to IndexedDB and notify other tabs
-                    await productSync.syncAfterCreateOrUpdate(productData);
+                    // Store product directly in IndexedDB without triggering a sync
+                    await productsDB.storeProduct(productData);
+                    // Notify other tabs of the update (lightweight, doesn't trigger sync)
+                    productsDB.notifyOtherTabs();
                     console.log(`[POS] Updated IndexedDB with fresh product data from server for: ${normalizedProduct.name}`);
                     
                     // Update products state to replace stale data

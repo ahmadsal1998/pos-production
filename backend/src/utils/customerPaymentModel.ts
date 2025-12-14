@@ -1,7 +1,6 @@
 import mongoose, { Schema, Model, Document, Connection } from 'mongoose';
 import Store from '../models/Store';
 import { getDatabaseConnection, getDatabaseIdForStore, getDatabaseName } from './databaseManager';
-import { getStorePrefix } from './customerModel';
 
 // Customer Payment document interface
 export interface CustomerPaymentDocument extends Document {
@@ -74,6 +73,34 @@ customerPaymentSchema.index({ customerId: 1, storeId: 1 });
 customerPaymentSchema.index({ date: -1, storeId: 1 });
 customerPaymentSchema.index({ method: 1, storeId: 1 });
 customerPaymentSchema.index({ invoiceId: 1, storeId: 1 });
+
+/**
+ * Get store prefix from storeId
+ * @param storeId - Store ID to get prefix for
+ * @returns Store prefix or null if not found
+ */
+async function getStorePrefix(storeId: string): Promise<string | null> {
+  try {
+    const normalizedStoreId = storeId.toLowerCase().trim();
+    
+    // Try to find by storeId first
+    let store = await Store.findOne({ storeId: normalizedStoreId }).lean();
+    
+    // If not found, try by prefix (in case storeId is actually a prefix)
+    if (!store) {
+      store = await Store.findOne({ prefix: normalizedStoreId }).lean();
+    }
+    
+    if (store && store.prefix) {
+      return store.prefix;
+    }
+    
+    return null;
+  } catch (error: any) {
+    console.error(`Error getting store prefix for ${storeId}:`, error);
+    throw new Error(`Failed to get store prefix: ${error.message}`);
+  }
+}
 
 /**
  * Get a Mongoose model for a store-specific Customer Payment collection

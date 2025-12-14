@@ -87,15 +87,33 @@ class ProductsDB {
   }
 
   /**
+   * Normalize product ID to ensure consistent key generation
+   * Handles both id and _id fields, prioritizing id
+   */
+  private normalizeProductId(product: any): string {
+    // Normalize the product to ensure consistent ID field
+    const productId = product.id || product._id;
+    if (!productId) {
+      console.warn('[ProductsDB] Product missing ID:', product);
+      return '';
+    }
+    return String(productId);
+  }
+
+  /**
    * Generate product record ID
    */
   private getProductId(product: any, storeId: string): string {
-    const productId = String(product.id || product._id || '');
+    const productId = this.normalizeProductId(product);
+    if (!productId) {
+      throw new Error('Product ID is required');
+    }
     return `${storeId}_${productId}`;
   }
 
   /**
    * Store products in IndexedDB
+   * Clears existing products for the store before storing new ones to prevent duplicates
    */
   async storeProducts(products: any[]): Promise<void> {
     await this.init();
@@ -108,12 +126,49 @@ class ProductsDB {
       throw new Error('Store ID not found');
     }
 
+    if (!products || products.length === 0) {
+      console.warn('[ProductsDB] No products to store');
+      return;
+    }
+
+    // Normalize products to ensure consistent ID fields
+    const normalizedProducts = products.map((product) => {
+      // Ensure product has a consistent id field (prefer id over _id)
+      const normalizedId = this.normalizeProductId(product);
+      if (!normalizedId) {
+        console.warn('[ProductsDB] Skipping product without ID:', product);
+        return null;
+      }
+      return {
+        ...product,
+        id: normalizedId, // Ensure id field exists
+        _id: normalizedId, // Also set _id for consistency
+      };
+    }).filter((p): p is any => p !== null);
+
+    // Deduplicate products by ID within the batch
+    const productMap = new Map<string, any>();
+    normalizedProducts.forEach((product) => {
+      const productId = this.normalizeProductId(product);
+      if (productId) {
+        // Keep the most recent version if duplicates exist in the batch
+        productMap.set(productId, product);
+      }
+    });
+
+    const uniqueProducts = Array.from(productMap.values());
+    console.log(`[ProductsDB] Storing ${uniqueProducts.length} unique products (${products.length} input, ${products.length - uniqueProducts.length} duplicates removed)`);
+
+    // Clear existing products for this store before storing new ones
+    // This prevents accumulation of duplicates from multiple syncs
+    await this.clearProducts();
+
     const transaction = this.db.transaction([this.storeName], 'readwrite');
     const objectStore = transaction.objectStore(this.storeName);
     const now = Date.now();
 
     // Store all products
-    const promises = products.map((product) => {
+    const promises = uniqueProducts.map((product) => {
       const id = this.getProductId(product, storeId);
       const record: ProductRecord = {
         id,
@@ -125,11 +180,12 @@ class ProductsDB {
     });
 
     await Promise.all(promises);
-    console.log(`[ProductsDB] Stored ${products.length} products`);
+    console.log(`[ProductsDB] Stored ${uniqueProducts.length} products in IndexedDB`);
   }
 
   /**
    * Store a single product
+   * Normalizes the product ID to ensure consistent key generation
    */
   async storeProduct(product: any): Promise<void> {
     await this.init();
@@ -142,12 +198,24 @@ class ProductsDB {
       throw new Error('Store ID not found');
     }
 
+    // Normalize product to ensure consistent ID field
+    const normalizedId = this.normalizeProductId(product);
+    if (!normalizedId) {
+      throw new Error('Product ID is required');
+    }
+
+    const normalizedProduct = {
+      ...product,
+      id: normalizedId, // Ensure id field exists
+      _id: normalizedId, // Also set _id for consistency
+    };
+
     const transaction = this.db.transaction([this.storeName], 'readwrite');
     const objectStore = transaction.objectStore(this.storeName);
-    const id = this.getProductId(product, storeId);
+    const id = this.getProductId(normalizedProduct, storeId);
     const record: ProductRecord = {
       id,
-      product,
+      product: normalizedProduct,
       storeId,
       lastUpdated: Date.now(),
     };
@@ -158,7 +226,7 @@ class ProductsDB {
       request.onerror = () => reject(request.error);
     });
 
-    console.log(`[ProductsDB] Stored product: ${product.name || product.id}`);
+    console.log(`[ProductsDB] Stored product: ${normalizedProduct.name || normalizedId}`);
   }
 
   /**
@@ -247,6 +315,7 @@ class ProductsDB {
 
   /**
    * Get a single product by ID
+   * Normalizes the productId to ensure consistent lookup
    */
   async getProduct(productId: string | number): Promise<any | null> {
     await this.init();
@@ -259,7 +328,9 @@ class ProductsDB {
       return null;
     }
 
-    const id = `${storeId}_${productId}`;
+    // Normalize productId to string
+    const normalizedId = String(productId);
+    const id = `${storeId}_${normalizedId}`;
 
     return new Promise((resolve, reject) => {
       const transaction = this.db!.transaction([this.storeName], 'readonly');
@@ -377,6 +448,7 @@ class ProductsDB {
 
   /**
    * Update product stock in IndexedDB
+   * Normalizes the productId to ensure consistent lookup
    */
   async updateProductStock(productId: string | number, newStock: number): Promise<void> {
     await this.init();
@@ -389,7 +461,9 @@ class ProductsDB {
       throw new Error('Store ID not found');
     }
 
-    const id = `${storeId}_${productId}`;
+    // Normalize productId to string
+    const normalizedId = String(productId);
+    const id = `${storeId}_${normalizedId}`;
 
     return new Promise((resolve, reject) => {
       const transaction = this.db!.transaction([this.storeName], 'readwrite');
@@ -403,12 +477,12 @@ class ProductsDB {
           record.lastUpdated = Date.now();
           const putRequest = objectStore.put(record);
           putRequest.onsuccess = () => {
-            console.log(`[ProductsDB] Updated stock for product ${productId}: ${newStock}`);
+            console.log(`[ProductsDB] Updated stock for product ${normalizedId}: ${newStock}`);
             resolve();
           };
           putRequest.onerror = () => reject(putRequest.error);
         } else {
-          reject(new Error(`Product ${productId} not found in database`));
+          reject(new Error(`Product ${normalizedId} not found in database`));
         }
       };
 
@@ -418,6 +492,7 @@ class ProductsDB {
 
   /**
    * Delete a product from IndexedDB
+   * Normalizes the productId to ensure consistent deletion
    */
   async deleteProduct(productId: string | number): Promise<void> {
     await this.init();
@@ -430,7 +505,9 @@ class ProductsDB {
       throw new Error('Store ID not found');
     }
 
-    const id = `${storeId}_${productId}`;
+    // Normalize productId to string
+    const normalizedId = String(productId);
+    const id = `${storeId}_${normalizedId}`;
 
     return new Promise((resolve, reject) => {
       const transaction = this.db!.transaction([this.storeName], 'readwrite');
@@ -438,7 +515,7 @@ class ProductsDB {
       const request = objectStore.delete(id);
 
       request.onsuccess = () => {
-        console.log(`[ProductsDB] Deleted product ${productId}`);
+        console.log(`[ProductsDB] Deleted product ${normalizedId}`);
         resolve();
       };
 
@@ -505,6 +582,89 @@ class ProductsDB {
 
       request.onsuccess = () => {
         resolve(request.result);
+      };
+
+      request.onerror = () => {
+        reject(request.error);
+      };
+    });
+  }
+
+  /**
+   * Deduplicate products in IndexedDB
+   * Removes duplicate products based on product ID (not IndexedDB key)
+   * Keeps the most recently updated version of each product
+   */
+  async deduplicateProducts(): Promise<{ removed: number; kept: number }> {
+    await this.init();
+    if (!this.db) {
+      throw new Error('Database not initialized');
+    }
+
+    const storeId = this.getStoreId();
+    if (!storeId) {
+      throw new Error('Store ID not found');
+    }
+
+    return new Promise((resolve, reject) => {
+      const transaction = this.db!.transaction([this.storeName], 'readwrite');
+      const objectStore = transaction.objectStore(this.storeName);
+      const index = objectStore.index(this.indexName);
+      const request = index.getAll(storeId);
+
+      request.onsuccess = () => {
+        const records = request.result as ProductRecord[];
+        
+        // Group records by normalized product ID
+        const productMap = new Map<string, ProductRecord>();
+        const duplicatesToDelete: string[] = [];
+
+        records.forEach((record) => {
+          const productId = this.normalizeProductId(record.product);
+          if (!productId) {
+            // Invalid product, mark for deletion
+            duplicatesToDelete.push(record.id);
+            return;
+          }
+
+          const existing = productMap.get(productId);
+          if (!existing) {
+            // First occurrence of this product ID
+            productMap.set(productId, record);
+          } else {
+            // Duplicate found - keep the one with the most recent lastUpdated
+            if (record.lastUpdated > existing.lastUpdated) {
+              // Current record is newer, delete the old one
+              duplicatesToDelete.push(existing.id);
+              productMap.set(productId, record);
+            } else {
+              // Existing record is newer, delete current one
+              duplicatesToDelete.push(record.id);
+            }
+          }
+        });
+
+        // Delete duplicates
+        let deletedCount = 0;
+        const deletePromises = duplicatesToDelete.map((id) => {
+          return new Promise<void>((resolveDelete) => {
+            const deleteRequest = objectStore.delete(id);
+            deleteRequest.onsuccess = () => {
+              deletedCount++;
+              resolveDelete();
+            };
+            deleteRequest.onerror = () => resolveDelete(); // Continue even if one fails
+          });
+        });
+
+        Promise.all(deletePromises).then(() => {
+          const result = {
+            removed: deletedCount,
+            kept: productMap.size,
+          };
+          console.log(`[ProductsDB] Deduplication complete: Removed ${result.removed} duplicates, kept ${result.kept} unique products`);
+          resolve(result);
+        });
       };
 
       request.onerror = () => {
