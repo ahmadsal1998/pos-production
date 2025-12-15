@@ -177,12 +177,7 @@ saleSchema.index({ paymentMethod: 1, storeId: 1 });
  * Use Sale model directly and filter by storeId in queries.
  */
 
-import { Model } from 'mongoose';
-import { Sale, ISale } from '../models/Sale';
-
-export interface SaleDocument extends ISale {
-  _id: any;
-}
+import { Sale } from '../models/Sale';
 
 /**
  * @deprecated Use Sale model directly from ../models/Sale

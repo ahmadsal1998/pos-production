@@ -61,7 +61,7 @@ export const getMerchant = async (req: AuthenticatedRequest, res: Response): Pro
       const store = await Store.findOne({ storeId: merchant.storeId.toLowerCase() });
       if (store && store.terminals && store.terminals.length > 0) {
         terminals = store.terminals.map((term) => ({
-          ...term.toObject(),
+          ...term,
           storeId: store.storeId,
           id: term._id?.toString() || '',
         }));

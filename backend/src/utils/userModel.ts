@@ -254,8 +254,8 @@ export async function findUserAcrossStores(
       const user = await userModel.findOne(query).select('+password');
       if (user) {
         // Cache the mapping for future lookups
-        if (user.email) cacheEmailToStore(user.email, user.storeId);
-        if (user.username) cacheUsernameToStore(user.username, user.storeId);
+        if (user.email) cacheEmailToStore(user.email, user.storeId ?? null);
+        if (user.username) cacheUsernameToStore(user.username, user.storeId ?? null);
         return user;
       }
     } catch (error: any) {
@@ -289,8 +289,8 @@ export async function findUserAcrossStores(
       const user = await userModel.findOne(query).select('+password');
       if (user) {
         // Cache the mapping for future lookups
-        if (user.email) cacheEmailToStore(user.email, user.storeId);
-        if (user.username) cacheUsernameToStore(user.username, user.storeId);
+        if (user.email) cacheEmailToStore(user.email, user.storeId ?? null);
+        if (user.username) cacheUsernameToStore(user.username, user.storeId ?? null);
         return user;
       }
     } catch (error: any) {

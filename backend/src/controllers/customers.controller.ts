@@ -1,5 +1,6 @@
 import { Response } from 'express';
 import { body, validationResult } from 'express-validator';
+import mongoose from 'mongoose';
 import { asyncHandler } from '../middleware/error.middleware';
 import { AuthenticatedRequest } from '../middleware/auth.middleware';
 import Customer from '../models/Customer';
@@ -95,7 +96,7 @@ export const createCustomer = asyncHandler(async (req: AuthenticatedRequest, res
       message: 'Customer created successfully',
       data: {
         customer: {
-          id: customer._id.toString(),
+          id: (customer._id as mongoose.Types.ObjectId).toString(),
           name: customer.name,
           phone: customer.phone,
           address: customer.address,
@@ -183,7 +184,7 @@ export const getCustomers = asyncHandler(async (req: AuthenticatedRequest, res: 
       message: 'Customers fetched successfully',
       data: {
         customers: customers.map(customer => ({
-          id: customer._id.toString(),
+          id: (customer._id as mongoose.Types.ObjectId).toString(),
           name: customer.name,
           phone: customer.phone,
           address: customer.address,
@@ -238,7 +239,7 @@ export const getCustomerById = asyncHandler(async (req: AuthenticatedRequest, re
       message: 'Customer fetched successfully',
       data: {
         customer: {
-          id: customer._id.toString(),
+          id: (customer._id as mongoose.Types.ObjectId).toString(),
           name: customer.name,
           phone: customer.phone,
           address: customer.address,
@@ -371,7 +372,7 @@ export const updateCustomer = asyncHandler(async (req: AuthenticatedRequest, res
       message: 'Customer updated successfully',
       data: {
         customer: {
-          id: updatedCustomer._id.toString(),
+          id: (updatedCustomer._id as mongoose.Types.ObjectId).toString(),
           name: updatedCustomer.name,
           phone: updatedCustomer.phone,
           address: updatedCustomer.address,
@@ -548,7 +549,7 @@ export const createCustomerPayment = asyncHandler(async (req: AuthenticatedReque
       message: 'Customer payment created successfully',
       data: {
         payment: {
-          id: payment._id.toString(),
+          id: (payment._id as mongoose.Types.ObjectId).toString(),
           customerId: payment.customerId,
           date: payment.date,
           amount: payment.amount,

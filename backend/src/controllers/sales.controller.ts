@@ -275,7 +275,8 @@ export const getSales = asyncHandler(async (req: AuthenticatedRequest, res: Resp
   }
 
   if (paymentMethod) {
-    query.paymentMethod = paymentMethod.toLowerCase();
+    const paymentMethodStr = typeof paymentMethod === 'string' ? paymentMethod : Array.isArray(paymentMethod) ? paymentMethod[0] : String(paymentMethod);
+    query.paymentMethod = paymentMethodStr.toLowerCase();
   }
 
   if (startDate || endDate) {

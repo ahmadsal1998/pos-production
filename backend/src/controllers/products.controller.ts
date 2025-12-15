@@ -204,7 +204,7 @@ export const getProducts = asyncHandler(async (req: AuthenticatedRequest, res: R
     
     // Pagination parameters with validation
     // Support "all" parameter to fetch all products (for single-store optimization)
-    const fetchAll = req.query.all === 'true' || req.query.all === true;
+    const fetchAll = req.query.all === 'true' || req.query.all === true || req.query.all === '1';
     const page = Math.max(1, parseInt(req.query.page as string) || 1);
     const limit = fetchAll 
       ? 10000 // High limit for "all" mode
@@ -226,7 +226,10 @@ export const getProducts = asyncHandler(async (req: AuthenticatedRequest, res: R
 
     // Filter by showInQuickProducts if provided
     if (showInQuickProducts !== undefined) {
-      queryFilter.showInQuickProducts = showInQuickProducts === 'true' || showInQuickProducts === true;
+      const showInQuickProductsValue = typeof showInQuickProducts === 'string' 
+        ? (showInQuickProducts === 'true' || showInQuickProducts === '1')
+        : Boolean(showInQuickProducts);
+      queryFilter.showInQuickProducts = showInQuickProductsValue;
     }
 
     // Filter by status if provided
@@ -278,13 +281,16 @@ export const getProducts = asyncHandler(async (req: AuthenticatedRequest, res: R
 
     // Determine which fields to select (for optimization)
     // If showInQuickProducts filter is used, only return essential fields
-    const fieldsToSelect = showInQuickProducts === 'true' || showInQuickProducts === true
+    const showInQuickProductsValue = typeof showInQuickProducts === 'string' 
+      ? (showInQuickProducts === 'true' || showInQuickProducts === '1')
+      : Boolean(showInQuickProducts);
+    const fieldsToSelect = showInQuickProductsValue
       ? 'name price stock barcode showInQuickProducts status units costPrice categoryId brandId description updatedAt'
       : undefined; // Return all fields if not filtering for quick products
 
     // Fetch products with pagination and search filter
     // Use compound index (storeId, createdAt) for optimal performance
-    let products = [];
+    let products: any[] = [];
     try {
       let query = Product.find(queryFilter);
       
@@ -312,7 +318,7 @@ export const getProducts = asyncHandler(async (req: AuthenticatedRequest, res: R
     if (includeCategories && products.length > 0) {
       try {
         // Get unique category IDs from products
-        const categoryIds = [...new Set(
+        const categoryIds: string[] = [...new Set(
           products
             .map((p: any) => p.categoryId)
             .filter((id: any) => id)
@@ -352,7 +358,7 @@ export const getProducts = asyncHandler(async (req: AuthenticatedRequest, res: R
           });
 
           // Enrich products with category data
-          products = products.map((product: any) => {
+          products = products.map((product: any): any => {
             if (product.categoryId) {
               const categoryIdStr = product.categoryId.toString().trim();
               // Try to find category by converting to ObjectId string if valid
@@ -751,6 +757,7 @@ export const importProducts = asyncHandler(async (req: AuthenticatedRequest, res
   // If storeId is not in token, try to get it from the user record
   if (!storeId && req.user?.userId && req.user.userId !== 'admin') {
     try {
+      const User = (await import('../models/User')).default;
       const user = await User.findById(req.user.userId);
       if (user && user.storeId) {
         storeId = user.storeId;
@@ -836,7 +843,10 @@ export const importProducts = asyncHandler(async (req: AuthenticatedRequest, res
       barcodeSet.add(product.barcode);
       // Add storeId to each product for multi-tenant isolation
       validProducts.push({
-        ...product,
+        name: product.name,
+        barcode: product.barcode,
+        costPrice: product.costPrice,
+        price: product.price,
         storeId: storeId.toLowerCase(),
       });
     }
@@ -864,6 +874,7 @@ export const importProducts = asyncHandler(async (req: AuthenticatedRequest, res
       price: number;
       stock: number;
       status: string;
+      storeId: string;
     }> = [];
     const duplicateBarcodes: string[] = [];
 
