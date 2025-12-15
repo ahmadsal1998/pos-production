@@ -5,6 +5,10 @@
 
 import { loadSettings } from './settingsStorage';
 
+// Guard to prevent multiple simultaneous print operations
+let isPrinting = false;
+let currentPrintIframe: HTMLIFrameElement | null = null;
+
 /**
  * Get print settings from preferences with defaults
  */
@@ -254,10 +258,27 @@ export const silentPrint = async (
 ): Promise<void> => {
   return new Promise((resolve, reject) => {
     try {
+      // Prevent multiple simultaneous print operations
+      if (isPrinting) {
+        console.warn('Print operation already in progress, ignoring duplicate request');
+        resolve();
+        return;
+      }
+
+      // Clean up any existing print iframe
+      if (currentPrintIframe && currentPrintIframe.parentNode) {
+        currentPrintIframe.parentNode.removeChild(currentPrintIframe);
+        currentPrintIframe = null;
+      }
+
+      // Set printing flag
+      isPrinting = true;
+
       // Get the printable content
       const content = getPrintableContent(elementId);
       
       if (!content) {
+        isPrinting = false;
         reject(new Error(`No printable content found for element: ${elementId}`));
         return;
       }
@@ -278,11 +299,29 @@ export const silentPrint = async (
       iframe.style.opacity = '0';
       iframe.style.pointerEvents = 'none';
       
+      // Store reference to current iframe
+      currentPrintIframe = iframe;
+      
       // Append to body
       document.body.appendChild(iframe);
 
+      // Flag to prevent printIframe from being called multiple times
+      let printIframeCalled = false;
+
       // Wait for iframe to load, then print
       const printIframe = () => {
+        // Prevent multiple calls
+        if (printIframeCalled) {
+          return;
+        }
+        printIframeCalled = true;
+
+        // Clear fallback timeout since we're printing now
+        if ((iframe as any)._fallbackTimeout) {
+          clearTimeout((iframe as any)._fallbackTimeout);
+          delete (iframe as any)._fallbackTimeout;
+        }
+
         try {
           const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
           
@@ -307,36 +346,55 @@ export const silentPrint = async (
 
                   // Clean up after printing
                   const cleanup = () => {
-                    setTimeout(() => {
-                      if (iframe.parentNode) {
-                        iframe.parentNode.removeChild(iframe);
-                      }
-                      if (options?.onAfterPrint) {
-                        options.onAfterPrint();
-                      }
-                      resolve();
-                    }, 100);
+                    // Reset printing flag
+                    isPrinting = false;
+                    
+                    // Remove iframe if it still exists
+                    if (iframe.parentNode) {
+                      iframe.parentNode.removeChild(iframe);
+                    }
+                    
+                    // Clear iframe reference
+                    if (currentPrintIframe === iframe) {
+                      currentPrintIframe = null;
+                    }
+                    
+                    // Call onAfterPrint callback if provided
+                    if (options?.onAfterPrint) {
+                      options.onAfterPrint();
+                    }
+                    
+                    resolve();
                   };
 
                   // Listen for print dialog close (approximate)
                   // Note: We can't reliably detect when print dialog closes,
                   // so we use a timeout
-                  const timeout = options?.timeout || 1000;
+                  // Use a longer timeout to ensure dialog has closed
+                  const timeout = options?.timeout || 2000;
                   setTimeout(cleanup, timeout);
                 }, 50);
               });
             } catch (printError) {
               console.error('Error triggering print:', printError);
+              isPrinting = false;
               if (iframe.parentNode) {
                 iframe.parentNode.removeChild(iframe);
+              }
+              if (currentPrintIframe === iframe) {
+                currentPrintIframe = null;
               }
               reject(printError);
             }
           }, 200); // Delay to ensure content is rendered
         } catch (error) {
           console.error('Error in printIframe:', error);
+          isPrinting = false;
           if (iframe.parentNode) {
             iframe.parentNode.removeChild(iframe);
+          }
+          if (currentPrintIframe === iframe) {
+            currentPrintIframe = null;
           }
           reject(error);
         }
@@ -346,13 +404,24 @@ export const silentPrint = async (
       iframe.onload = printIframe;
       
       // Fallback: if onload doesn't fire, try after a short delay
-      setTimeout(() => {
-        if (iframe.contentDocument?.readyState === 'complete') {
+      // Only try fallback if we're still printing (not cancelled)
+      const fallbackTimeout = setTimeout(() => {
+        if (isPrinting && iframe.contentDocument?.readyState === 'complete') {
           printIframe();
         }
       }, 100);
+
+      // Store timeout for cleanup if needed
+      (iframe as any)._fallbackTimeout = fallbackTimeout;
     } catch (error) {
       console.error('Error in silentPrint:', error);
+      isPrinting = false;
+      if (currentPrintIframe) {
+        if (currentPrintIframe.parentNode) {
+          currentPrintIframe.parentNode.removeChild(currentPrintIframe);
+        }
+        currentPrintIframe = null;
+      }
       reject(error);
     }
   });
