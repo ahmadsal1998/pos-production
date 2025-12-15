@@ -1,6 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { AR_LABELS, SunIcon, MoonIcon } from '@/shared/constants';
 import { useThemeStore, useAppStore, useAuthStore } from '@/app/store';
+import {
+  isFullscreen,
+  isFullscreenSupported,
+  toggleFullscreen,
+  getFullscreenChangeEventName,
+  getFullscreenErrorEventName,
+} from '@/shared/utils/fullscreenUtils';
 
 interface HeaderProps {
   activePath: string;
@@ -15,28 +22,53 @@ const Header: React.FC<HeaderProps> = ({ onMenuToggle, isMobileMenuOpen }) => {
   const { theme, toggleTheme } = useThemeStore();
   const { isSidebarCollapsed } = useAppStore();
   const { user } = useAuthStore();
-  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [isFullscreenMode, setIsFullscreenMode] = useState(false);
+  const [fullscreenSupported, setFullscreenSupported] = useState(false);
 
   useEffect(() => {
+    // Check if fullscreen is supported
+    setFullscreenSupported(isFullscreenSupported());
+    setIsFullscreenMode(isFullscreen());
+
+    // Listen for fullscreen changes (handles all vendor prefixes)
+    const changeEventName = getFullscreenChangeEventName();
+    const errorEventName = getFullscreenErrorEventName();
+
     const handleFullscreenChange = () => {
-      setIsFullscreen(!!document.fullscreenElement);
+      setIsFullscreenMode(isFullscreen());
     };
 
-    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    const handleFullscreenError = (event: Event) => {
+      console.error('Fullscreen error:', event);
+      // Update state in case of error
+      setIsFullscreenMode(isFullscreen());
+    };
+
+    document.addEventListener(changeEventName, handleFullscreenChange);
+    document.addEventListener(errorEventName, handleFullscreenError);
+
     return () => {
-      document.removeEventListener('fullscreenchange', handleFullscreenChange);
+      document.removeEventListener(changeEventName, handleFullscreenChange);
+      document.removeEventListener(errorEventName, handleFullscreenError);
     };
   }, []);
 
-  const toggleFullscreen = async () => {
+  const handleToggleFullscreen = async (event: React.MouseEvent | React.TouchEvent) => {
+    // Ensure this is triggered by user interaction (required on mobile)
+    // Don't prevent default on mobile to allow natural touch behavior
+    event.stopPropagation();
+
     try {
-      if (!document.fullscreenElement) {
-        await document.documentElement.requestFullscreen();
-      } else {
-        await document.exitFullscreen();
-      }
-    } catch (error) {
+      await toggleFullscreen();
+    } catch (error: any) {
       console.error('Error toggling fullscreen:', error);
+      
+      // Show user-friendly error message on mobile
+      if (error?.message?.includes('denied') || error?.message?.includes('user action')) {
+        // On mobile, some browsers show their own prompts
+        // We can show a helpful message if needed
+        console.warn('Fullscreen request denied. This may require a direct user interaction on mobile browsers.');
+      }
     }
   };
 
@@ -90,15 +122,17 @@ const Header: React.FC<HeaderProps> = ({ onMenuToggle, isMobileMenuOpen }) => {
             </button>
 
             {/* Fullscreen toggle button */}
-            <button
-              onClick={toggleFullscreen}
-              className="group relative inline-flex items-center justify-center w-10 h-10 rounded-xl text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-offset-2 dark:focus:ring-offset-gray-900 transition-all duration-200"
-              aria-label={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
-              title={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
-            >
-              <div className="absolute inset-0 rounded-xl bg-gradient-to-br from-orange-50 to-orange-100 dark:from-orange-950/30 dark:to-orange-900/20 opacity-0 group-hover:opacity-100 transition-opacity duration-200"></div>
-              <span className="relative z-10">
-                {isFullscreen ? (
+            {fullscreenSupported && (
+              <button
+                onClick={handleToggleFullscreen}
+                className="group relative inline-flex items-center justify-center w-10 h-10 rounded-xl text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-offset-2 dark:focus:ring-offset-gray-900 transition-all duration-200 active:scale-95"
+                style={{ touchAction: 'manipulation' }}
+                aria-label={isFullscreenMode ? 'Exit fullscreen' : 'Enter fullscreen'}
+                title={isFullscreenMode ? 'Exit fullscreen' : 'Enter fullscreen'}
+              >
+                <div className="absolute inset-0 rounded-xl bg-gradient-to-br from-orange-50 to-orange-100 dark:from-orange-950/30 dark:to-orange-900/20 opacity-0 group-hover:opacity-100 transition-opacity duration-200"></div>
+                <span className="relative z-10">
+                  {isFullscreenMode ? (
                   <svg
                     className="h-5 w-5"
                     fill="none"
@@ -126,9 +160,10 @@ const Header: React.FC<HeaderProps> = ({ onMenuToggle, isMobileMenuOpen }) => {
                       d="M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0L9 15M20.25 3.75h-4.5m4.5 0v4.5m0-4.5L15 9m5.25 11.25h-4.5m4.5 0v-4.5m0 4.5L15 15"
                     />
                   </svg>
-                )}
-              </span>
-            </button>
+                  )}
+                </span>
+              </button>
+            )}
 
             {/* Settings button - hidden on mobile */}
             <button
