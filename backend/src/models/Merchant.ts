@@ -26,8 +26,8 @@ const merchantSchema = new Schema<IMerchant>(
     },
     storeId: {
       type: String,
-      index: true,
       default: null,
+      // Index is created via compound index below
     },
     status: {
       type: String,
@@ -54,7 +54,7 @@ const merchantSchema = new Schema<IMerchant>(
 );
 
 // Indexes
-merchantSchema.index({ merchantId: 1 });
+// merchantId index is automatically created by unique: true constraint above
 merchantSchema.index({ storeId: 1, status: 1 });
 
 export const Merchant: Model<IMerchant> = mongoose.model<IMerchant>('Merchant', merchantSchema);

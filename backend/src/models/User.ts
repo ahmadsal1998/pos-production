@@ -74,8 +74,8 @@ const userSchema = new Schema(
       trim: true,
       lowercase: true,
       default: null,
-      index: true,
       // null means system/admin user, string means store-specific user
+      // Index is created via compound indexes below
     },
   },
   {
@@ -119,7 +119,7 @@ userSchema.methods.comparePassword = async function (
 
 // CRITICAL INDEXES for performance
 userSchema.index({ role: 1 });
-userSchema.index({ storeId: 1 });
+// storeId index is handled by compound index below
 // Unique username per store (for store users) - same username can exist in different stores
 userSchema.index({ storeId: 1, username: 1 }, { unique: true, partialFilterExpression: { storeId: { $ne: null } } });
 // GLOBAL unique email across ALL stores - prevents same email in multiple stores

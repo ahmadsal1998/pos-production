@@ -82,25 +82,25 @@ const saleSchema = new Schema<ISale>(
     invoiceNumber: {
       type: String,
       required: [true, 'Invoice number is required'],
-      index: true,
+      // Index is created via compound index below
     },
     storeId: {
       type: String,
       required: [true, 'Store ID is required'],
       trim: true,
       lowercase: true,
-      index: true,
+      // Index is created via compound indexes below
     },
     date: {
       type: Date,
       required: [true, 'Sale date is required'],
       default: Date.now,
-      index: true,
+      // Index is created via compound index below
     },
     customerId: {
       type: String,
-      index: true,
       default: null,
+      // Index is created via compound index below
     },
     customerName: {
       type: String,
@@ -154,13 +154,13 @@ const saleSchema = new Schema<ISale>(
       enum: ['cash', 'card', 'credit'],
       required: [true, 'Payment method is required'],
       lowercase: true,
-      index: true,
+      // Index is created via compound index below
     },
     status: {
       type: String,
       enum: ['completed', 'partial_payment', 'pending', 'refunded', 'partial_refund'],
       default: 'completed',
-      index: true,
+      // Index is created via compound index below
     },
     seller: {
       type: String,

@@ -21,7 +21,7 @@ const categorySchema = new Schema(
       required: [true, 'Store ID is required'],
       trim: true,
       lowercase: true,
-      index: true,
+      // Index is created via compound indexes below
     },
     description: {
       type: String,

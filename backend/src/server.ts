@@ -36,24 +36,35 @@ connectDB().catch((error) => {
 
 // Initialize Redis (non-blocking - server will start even if Redis fails)
 // In production, Redis will automatically reconnect if connection is lost
+// In development, Redis is optional - only log if REDIS_URL is explicitly set
 initRedis()
   .then((client) => {
+    const isProduction = process.env.NODE_ENV === 'production';
     if (client) {
-      console.log('✅ Redis: Initialized successfully');
+      // Only log success in production or if REDIS_URL is explicitly set
+      if (isProduction || process.env.REDIS_URL) {
+        console.log('✅ Redis: Initialized successfully');
+      }
     } else {
-      const isProduction = process.env.NODE_ENV === 'production';
-      if (isProduction) {
-        console.warn('⚠️  Redis: Not available. System will continue without caching.');
-        console.warn('   Redis will be retried on next operation.');
-      } else {
-        console.warn('⚠️  Redis: Not available. Caching will be disabled.');
-        console.warn('   To enable caching, start Redis: redis-server');
+      // Only log warning in production or if REDIS_URL is explicitly set
+      if (isProduction || process.env.REDIS_URL) {
+        if (isProduction) {
+          console.warn('⚠️  Redis: Not available. System will continue without caching.');
+          console.warn('   Redis will be retried on next operation.');
+        } else {
+          console.warn('⚠️  Redis: Not available. Caching will be disabled.');
+          console.warn('   To enable caching, start Redis: redis-server');
+        }
       }
     }
   })
   .catch((error) => {
-    console.error('❌ Redis: Initialization error:', error.message);
-    console.warn('⚠️  Server will continue to run, but caching will be disabled');
+    const isProduction = process.env.NODE_ENV === 'production';
+    // Only log errors in production or if REDIS_URL is explicitly set
+    if (isProduction || process.env.REDIS_URL) {
+      console.error('❌ Redis: Initialization error:', error.message);
+      console.warn('⚠️  Server will continue to run, but caching will be disabled');
+    }
     // Don't exit - let the server start and handle errors gracefully
   });
 
