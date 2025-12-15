@@ -15,7 +15,15 @@ const checkUser = async () => {
     // Connect to database
     await connectDB();
 
-    const email = 'salamea1998@gmail.com';
+    // Get email from environment variable
+    const email = process.env.CHECK_USER_EMAIL;
+
+    if (!email) {
+      console.error('❌ Error: CHECK_USER_EMAIL environment variable is not set');
+      console.log('   Please set CHECK_USER_EMAIL in your .env file');
+      console.log('   Example: CHECK_USER_EMAIL=your-email@example.com\n');
+      return;
+    }
 
     console.log('\n🔍 Checking user details...\n');
 

@@ -3,7 +3,8 @@ import Store from '../models/Store';
 import { ISale, ISaleItem } from '../models/Sale';
 
 // Sale document interface (extends ISale)
-export interface SaleDocument extends Document, Omit<ISale, '_id'> {
+// Note: ISale already extends Document, so we extend it directly
+export interface SaleDocument extends ISale {
   _id: mongoose.Types.ObjectId;
 }
 

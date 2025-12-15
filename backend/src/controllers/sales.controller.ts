@@ -275,7 +275,14 @@ export const getSales = asyncHandler(async (req: AuthenticatedRequest, res: Resp
   }
 
   if (paymentMethod) {
-    const paymentMethodStr = typeof paymentMethod === 'string' ? paymentMethod : Array.isArray(paymentMethod) ? paymentMethod[0] : String(paymentMethod);
+    let paymentMethodStr: string;
+    if (typeof paymentMethod === 'string') {
+      paymentMethodStr = paymentMethod;
+    } else if (Array.isArray(paymentMethod) && paymentMethod.length > 0) {
+      paymentMethodStr = String(paymentMethod[0]);
+    } else {
+      paymentMethodStr = String(paymentMethod);
+    }
     query.paymentMethod = paymentMethodStr.toLowerCase();
   }
 

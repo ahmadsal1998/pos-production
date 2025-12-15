@@ -52,7 +52,7 @@ export const getUsers = asyncHandler(
       // Admin users can see all users across all stores
       // Query unified collection - no storeId filter for Admin
       const users = await User.find({}).sort({ createdAt: -1 }).lean();
-      allUsers = users as UserDocument[];
+      allUsers = users as unknown as UserDocument[];
     } else {
       // Non-admin users can only see users from their own store
       if (!requesterStoreId) {
@@ -66,7 +66,7 @@ export const getUsers = asyncHandler(
       const users = await User.find({ 
         storeId: requesterStoreId.toLowerCase() 
       }).sort({ createdAt: -1 }).lean();
-      allUsers = users as UserDocument[];
+      allUsers = users as unknown as UserDocument[];
     }
 
     res.status(200).json({

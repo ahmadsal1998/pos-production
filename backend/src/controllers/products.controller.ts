@@ -204,7 +204,8 @@ export const getProducts = asyncHandler(async (req: AuthenticatedRequest, res: R
     
     // Pagination parameters with validation
     // Support "all" parameter to fetch all products (for single-store optimization)
-    const fetchAll = req.query.all === 'true' || req.query.all === true || req.query.all === '1';
+    const allParam = req.query.all;
+    const fetchAll = allParam === 'true' || allParam === '1' || allParam === 'yes';
     const page = Math.max(1, parseInt(req.query.page as string) || 1);
     const limit = fetchAll 
       ? 10000 // High limit for "all" mode
@@ -814,6 +815,7 @@ export const importProducts = asyncHandler(async (req: AuthenticatedRequest, res
       barcode: string;
       costPrice: number;
       price: number;
+      storeId: string;
     }> = [];
     const errors: string[] = [];
     const skippedProducts: string[] = [];
