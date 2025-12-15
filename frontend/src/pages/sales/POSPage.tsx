@@ -95,6 +95,9 @@ const POSPage: React.FC = () => {
     const isProductSyncInProgressRef = useRef(false); // Prevent multiple simultaneous product syncs
     const lastProductSyncAttemptRef = useRef<number>(0); // Track last sync attempt time
     const posContainerRef = useRef<HTMLDivElement>(null); // Ref for the main POS container
+    // Barcode processing queue to prevent concurrent searches
+    const barcodeQueueRef = useRef<string[]>([]); // Queue of barcodes waiting to be processed
+    const isProcessingBarcodeRef = useRef(false); // Track if a barcode is currently being processed
     const [currentInvoice, setCurrentInvoice] = useState<POSInvoice>(() => generateNewInvoice(currentUserName, 'INV-1'));
     const [heldInvoices, setHeldInvoices] = useState<POSInvoice[]>([]);
     const [searchTerm, setSearchTerm] = useState('');
@@ -1843,6 +1846,75 @@ const POSPage: React.FC = () => {
         }
     }, [normalizeProduct, getPiecesPerMainUnit]);
 
+    // Queue processor for barcodes - ensures sequential processing
+    const processBarcodeQueue = useCallback(async () => {
+        // If already processing, don't start another process
+        if (isProcessingBarcodeRef.current) {
+            return;
+        }
+
+        // If queue is empty, nothing to process
+        if (barcodeQueueRef.current.length === 0) {
+            return;
+        }
+
+        // Mark as processing
+        isProcessingBarcodeRef.current = true;
+
+        // Process barcodes one at a time
+        while (barcodeQueueRef.current.length > 0) {
+            const barcode = barcodeQueueRef.current.shift(); // Get and remove first barcode
+            if (!barcode) continue;
+
+            try {
+                // Process this barcode
+                const barcodeResult = await searchProductByBarcode(barcode);
+                
+                if (barcodeResult.success && barcodeResult.product) {
+                    // Product found - add to cart automatically
+                    handleAddProduct(
+                        barcodeResult.product,
+                        barcodeResult.unitName || 'قطعة',
+                        barcodeResult.unitPrice,
+                        barcodeResult.conversionFactor,
+                        barcodeResult.piecesPerUnit
+                    );
+                    setSearchTerm('');
+                    setProductSuggestionsOpen(false);
+                } else {
+                    // Product not found
+                    alert('المنتج غير موجود');
+                    setSearchTerm('');
+                    setProductSuggestionsOpen(false);
+                }
+            } catch (error) {
+                console.error('[POS] Error processing barcode from queue:', error);
+                // Continue processing next barcode even if this one failed
+            }
+        }
+
+        // Mark as not processing
+        isProcessingBarcodeRef.current = false;
+    }, [searchProductByBarcode, handleAddProduct]);
+
+    // Function to add barcode to queue and trigger processing
+    const queueBarcodeSearch = useCallback((barcode: string) => {
+        const trimmed = barcode.trim();
+        if (!trimmed) return;
+
+        // Add to queue
+        barcodeQueueRef.current.push(trimmed);
+        
+        // Play beep sound immediately when barcode is detected
+        playBeepSound();
+        
+        // Clear search term immediately to prepare for next scan
+        setSearchTerm('');
+        
+        // Start processing queue (will only start if not already processing)
+        processBarcodeQueue();
+    }, [processBarcodeQueue]);
+
     const handleSearch = async (e: React.FormEvent) => {
         e.preventDefault();
         
@@ -1851,29 +1923,8 @@ const POSPage: React.FC = () => {
 
         // Check if input is a barcode (numeric only)
         if (isBarcodeInput(trimmedSearchTerm)) {
-            // Play beep sound immediately when barcode is detected
-            playBeepSound();
-            
-            // Handle barcode search
-            const barcodeResult = await searchProductByBarcode(trimmedSearchTerm);
-            
-            if (barcodeResult.success && barcodeResult.product) {
-                // Product found - add to cart automatically
-                handleAddProduct(
-                    barcodeResult.product,
-                    barcodeResult.unitName || 'قطعة',
-                    barcodeResult.unitPrice,
-                    barcodeResult.conversionFactor,
-                    barcodeResult.piecesPerUnit
-                );
-                setSearchTerm('');
-                setProductSuggestionsOpen(false);
-            } else {
-                // Product not found
-                alert('المنتج غير موجود');
-                setSearchTerm('');
-                setProductSuggestionsOpen(false);
-            }
+            // Use queue-based barcode search to prevent concurrent processing
+            queueBarcodeSearch(trimmedSearchTerm);
             return;
         }
 
@@ -3305,30 +3356,10 @@ const POSPage: React.FC = () => {
                                             e.preventDefault();
                                             const trimmed = searchTerm.trim();
                                             
-                                            // If it's a barcode (numeric only), search immediately
+                                            // If it's a barcode (numeric only), use queue-based search
                                             if (trimmed && isBarcodeInput(trimmed)) {
-                                                // Play beep sound immediately when barcode is detected
-                                                playBeepSound();
-                                                
-                                                const barcodeResult = await searchProductByBarcode(trimmed);
-                                                
-                                                if (barcodeResult.success && barcodeResult.product) {
-                                                    // Product found - add to cart automatically
-                                                    handleAddProduct(
-                                                        barcodeResult.product,
-                                                        barcodeResult.unitName || 'قطعة',
-                                                        barcodeResult.unitPrice,
-                                                        barcodeResult.conversionFactor,
-                                                        barcodeResult.piecesPerUnit
-                                                    );
-                                                    setSearchTerm('');
-                                                    setProductSuggestionsOpen(false);
-                                                } else {
-                                                    // Product not found
-                                                    alert('المنتج غير موجود');
-                                                    setSearchTerm('');
-                                                    setProductSuggestionsOpen(false);
-                                                }
+                                                // Use queue-based barcode search to prevent concurrent processing
+                                                queueBarcodeSearch(trimmed);
                                             } else {
                                                 // Not a barcode - use regular form submit (name search)
                                                 handleSearch(e as any);
