@@ -263,9 +263,19 @@ const POSPage: React.FC = () => {
                 setCustomers(transformedCustomers);
                 setCustomersLoaded(true);
                 console.log(`[POS] Successfully loaded ${transformedCustomers.length} customers and stored in IndexedDB`);
+            } else if (syncResult.success && (!syncResult.customers || syncResult.customers.length === 0)) {
+                // Empty customer list is a valid state
+                setAllCustomers([]);
+                setCustomers([]);
+                setCustomersLoaded(true);
+                console.log(`[POS] Successfully loaded 0 customers from server (empty list)`);
             } else {
                 console.warn('[POS] Failed to sync customers:', syncResult.error);
-                setCustomersLoaded(false);
+                // Even on failure, mark as loaded to prevent infinite loading
+                // POS can continue with empty list and use server-side search as fallback
+                setAllCustomers([]);
+                setCustomers([]);
+                setCustomersLoaded(true);
             }
         } catch (err: any) {
             const apiError = err as ApiError;
@@ -275,8 +285,11 @@ const POSPage: React.FC = () => {
                 status: apiError.status,
                 code: apiError.code
             });
-            setCustomersLoaded(false);
-            // Don't show error to user, will use server-side search as fallback
+            // Even on error, mark as loaded to prevent infinite loading
+            // POS can continue with empty list and use server-side search as fallback
+            setAllCustomers([]);
+            setCustomers([]);
+            setCustomersLoaded(true);
         } finally {
             setIsLoadingCustomers(false);
         }
@@ -310,14 +323,33 @@ const POSPage: React.FC = () => {
                 setCustomersLoaded(true);
                 console.log(`[POS] Loaded ${transformedCustomers.length} customers from IndexedDB`);
             } else {
-                // No customers in IndexedDB, sync from server
+                // No customers in IndexedDB - empty list is valid, but try to sync from server
                 console.log('[POS] No customers in IndexedDB, syncing from server...');
-                await fetchCustomers();
+                // Set empty state first to prevent infinite loading
+                setAllCustomers([]);
+                setCustomers([]);
+                setCustomersLoaded(true);
+                // Try to sync from server (non-blocking)
+                try {
+                    await fetchCustomers();
+                } catch (syncError) {
+                    console.warn('[POS] Failed to sync customers from server, continuing with empty list:', syncError);
+                    // Already set customersLoaded to true above, so POS can continue
+                }
             }
         } catch (error) {
             console.error('[POS] Error loading customers from IndexedDB:', error);
-            // Fallback to server fetch
-            await fetchCustomers();
+            // Even on error, mark as loaded to prevent infinite loading
+            setAllCustomers([]);
+            setCustomers([]);
+            setCustomersLoaded(true);
+            // Try to sync from server (non-blocking)
+            try {
+                await fetchCustomers();
+            } catch (syncError) {
+                console.warn('[POS] Failed to sync customers from server after IndexedDB error:', syncError);
+                // Already set customersLoaded to true above, so POS can continue
+            }
         } finally {
             setIsLoadingCustomers(false);
         }
@@ -855,29 +887,42 @@ const POSPage: React.FC = () => {
                     await customersDB.init();
                     const dbCustomers = await customersDB.getAllCustomers();
                     
-                    if (isMountedRef.current && dbCustomers && dbCustomers.length > 0) {
-                        const transformedCustomers: Customer[] = dbCustomers
-                            .map((customer: any) => ({
-                                id: customer.id,
-                                name: customer.name || customer.phone,
-                                phone: customer.phone,
-                                address: customer.address,
-                                previousBalance: customer.previousBalance || 0,
-                            }))
-                            .filter((customer: Customer) => !isDummyCustomer(customer));
-                        try {
-                            setAllCustomers(transformedCustomers);
-                            setCustomers(transformedCustomers);
+                    if (isMountedRef.current) {
+                        if (dbCustomers && dbCustomers.length > 0) {
+                            const transformedCustomers: Customer[] = dbCustomers
+                                .map((customer: any) => ({
+                                    id: customer.id,
+                                    name: customer.name || customer.phone,
+                                    phone: customer.phone,
+                                    address: customer.address,
+                                    previousBalance: customer.previousBalance || 0,
+                                }))
+                                .filter((customer: Customer) => !isDummyCustomer(customer));
+                            try {
+                                setAllCustomers(transformedCustomers);
+                                setCustomers(transformedCustomers);
+                                setCustomersLoaded(true);
+                                console.log(`[POS] Loaded ${transformedCustomers.length} customers from IndexedDB for dropdown`);
+                            } catch (error) {
+                                // Silently handle if component unmounted
+                                console.debug('[POS] State update skipped (component unmounted)');
+                            }
+                        } else {
+                            // Empty customer list is a valid state - mark as loaded
+                            setAllCustomers([]);
+                            setCustomers([]);
                             setCustomersLoaded(true);
-                            console.log(`[POS] Loaded ${transformedCustomers.length} customers from IndexedDB for dropdown`);
-                        } catch (error) {
-                            // Silently handle if component unmounted
-                            console.debug('[POS] State update skipped (component unmounted)');
+                            console.log(`[POS] Loaded 0 customers from IndexedDB for dropdown`);
                         }
                     }
-                    // If no customers in IndexedDB, don't set empty - let initial load handle it
                 } catch (error) {
                     console.error('[POS] Error loading customers from IndexedDB:', error);
+                    // Even on error, mark as loaded to prevent infinite loading
+                    if (isMountedRef.current) {
+                        setCustomersLoaded(true);
+                        setAllCustomers([]);
+                        setCustomers([]);
+                    }
                 } finally {
                     isLoadingCustomersRef.current = false;
                 }
@@ -2721,37 +2766,16 @@ const POSPage: React.FC = () => {
                                         onFocus={async () => {
                                             if (!isMountedRef.current) return;
                                             setIsCustomerDropdownOpen(true);
-                                            // Ensure customers are loaded when dropdown opens
-                                            if (!customersLoaded || allCustomers.length === 0 || customers.length === 0) {
+                                            // Ensure customers are loaded when dropdown opens (only if not already loaded)
+                                            if (!customersLoaded) {
                                                 try {
                                                     // First try IndexedDB
                                                     await customersDB.init();
                                                     if (!isMountedRef.current) return;
                                                     const dbCustomers = await customersDB.getAllCustomers();
-                                                    if (isMountedRef.current && dbCustomers && dbCustomers.length > 0) {
-                                                        const transformedCustomers: Customer[] = dbCustomers
-                                                            .map((customer: any) => ({
-                                                                id: customer.id,
-                                                                name: customer.name || customer.phone,
-                                                                phone: customer.phone,
-                                                                address: customer.address,
-                                                                previousBalance: customer.previousBalance || 0,
-                                                            }))
-                                                            .filter((customer: Customer) => !isDummyCustomer(customer));
-                                                        try {
-                                                            setAllCustomers(transformedCustomers);
-                                                            setCustomers(transformedCustomers);
-                                                            setCustomersLoaded(true);
-                                                            console.log(`[POS] Loaded ${transformedCustomers.length} customers on focus`);
-                                                        } catch (error) {
-                                                            console.debug('[POS] State update skipped (component unmounted)');
-                                                        }
-                                                    } else if (isMountedRef.current) {
-                                                        // No customers in IndexedDB, trigger sync
-                                                        console.log('[POS] No customers in IndexedDB on focus, syncing from server...');
-                                                        const syncResult = await customerSync.syncCustomers({ forceRefresh: true });
-                                                        if (isMountedRef.current && syncResult.success && syncResult.customers) {
-                                                            const transformedCustomers: Customer[] = syncResult.customers
+                                                    if (isMountedRef.current) {
+                                                        if (dbCustomers && dbCustomers.length > 0) {
+                                                            const transformedCustomers: Customer[] = dbCustomers
                                                                 .map((customer: any) => ({
                                                                     id: customer.id,
                                                                     name: customer.name || customer.phone,
@@ -2764,9 +2788,47 @@ const POSPage: React.FC = () => {
                                                                 setAllCustomers(transformedCustomers);
                                                                 setCustomers(transformedCustomers);
                                                                 setCustomersLoaded(true);
-                                                                console.log(`[POS] Synced ${transformedCustomers.length} customers on focus`);
+                                                                console.log(`[POS] Loaded ${transformedCustomers.length} customers on focus`);
                                                             } catch (error) {
                                                                 console.debug('[POS] State update skipped (component unmounted)');
+                                                            }
+                                                        } else {
+                                                            // Empty customer list is a valid state - mark as loaded
+                                                            setAllCustomers([]);
+                                                            setCustomers([]);
+                                                            setCustomersLoaded(true);
+                                                            console.log(`[POS] Loaded 0 customers from IndexedDB on focus`);
+                                                            // Try to sync from server (non-blocking)
+                                                            try {
+                                                                const syncResult = await customerSync.syncCustomers({ forceRefresh: true });
+                                                                if (isMountedRef.current && syncResult.success && syncResult.customers) {
+                                                                    const transformedCustomers: Customer[] = syncResult.customers
+                                                                        .map((customer: any) => ({
+                                                                            id: customer.id,
+                                                                            name: customer.name || customer.phone,
+                                                                            phone: customer.phone,
+                                                                            address: customer.address,
+                                                                            previousBalance: customer.previousBalance || 0,
+                                                                        }))
+                                                                        .filter((customer: Customer) => !isDummyCustomer(customer));
+                                                                    try {
+                                                                        setAllCustomers(transformedCustomers);
+                                                                        setCustomers(transformedCustomers);
+                                                                        setCustomersLoaded(true);
+                                                                        console.log(`[POS] Synced ${transformedCustomers.length} customers on focus`);
+                                                                    } catch (error) {
+                                                                        console.debug('[POS] State update skipped (component unmounted)');
+                                                                    }
+                                                                } else if (isMountedRef.current && syncResult.success && (!syncResult.customers || syncResult.customers.length === 0)) {
+                                                                    // Empty list from server is also valid
+                                                                    setAllCustomers([]);
+                                                                    setCustomers([]);
+                                                                    setCustomersLoaded(true);
+                                                                    console.log(`[POS] Synced 0 customers on focus (empty list)`);
+                                                                }
+                                                            } catch (syncError) {
+                                                                console.warn('[POS] Failed to sync customers on focus, continuing with empty list:', syncError);
+                                                                // Already set customersLoaded to true above, so POS can continue
                                                             }
                                                         }
                                                     }
