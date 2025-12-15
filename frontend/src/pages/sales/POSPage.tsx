@@ -1730,21 +1730,22 @@ const POSPage: React.FC = () => {
         return /^[0-9]+$/.test(trimmed);
     }, []);
 
-    // Helper function to remove leading zeros from a barcode
-    const removeLeadingZeros = useCallback((barcode: string): string => {
-        return barcode.replace(/^0+/, '') || '0'; // Keep at least one digit if all zeros
-    }, []);
-
     // Barcode search function - searches by exact barcode match
-    // Handles leading zeros by trying original value first, then without leading zeros
     const searchProductByBarcode = useCallback(async (barcode: string): Promise<{ success: boolean; product?: POSProduct; unitName?: string; unitPrice?: number; conversionFactor?: number; piecesPerUnit?: number }> => {
         const trimmed = barcode.trim();
         if (!trimmed) {
             return { success: false };
         }
 
-        // Helper function to process a successful search response
-        const processSearchResponse = async (response: any, searchBarcode: string): Promise<{ success: boolean; product?: POSProduct; unitName?: string; unitPrice?: number; conversionFactor?: number; piecesPerUnit?: number }> => {
+        try {
+            setIsSearchingServer(true);
+            console.log(`[POS] Searching product by barcode: "${trimmed}"`);
+            
+            const response = await productsApi.getProductByBarcode(trimmed);
+
+            // API client wraps the response, so we need to access response.data.data
+            console.log('[POS] Barcode search response:', response);
+            
             if (response.data?.success && response.data?.data?.product) {
                 const productData = response.data.data.product;
                 const matchedUnit = response.data.data.matchedUnit;
@@ -1774,7 +1775,7 @@ const POSPage: React.FC = () => {
                     piecesPerUnit = piecesPerMainUnit;
                 }
 
-                console.log(`[POS] Product found by barcode: ${normalizedProduct.name} (searched with: "${searchBarcode}")`);
+                console.log(`[POS] Product found by barcode: ${normalizedProduct.name}`);
                 
                 // Update IndexedDB and state with fresh product data immediately
                 // This ensures stock checks use the latest quantity, not stale cached data
@@ -1815,65 +1816,18 @@ const POSPage: React.FC = () => {
                     conversionFactor,
                     piecesPerUnit,
                 };
+            } else {
+                console.log(`[POS] Product not found for barcode: "${trimmed}"`);
+                console.log('[POS] Response structure:', {
+                    hasResponse: !!response,
+                    hasData: !!response?.data,
+                    hasSuccess: !!response?.data?.success,
+                    hasDataData: !!response?.data?.data,
+                    hasProduct: !!response?.data?.data?.product,
+                    fullResponse: response
+                });
+                return { success: false };
             }
-            return { success: false };
-        };
-
-        try {
-            setIsSearchingServer(true);
-            
-            // First, try searching with the original barcode value
-            console.log(`[POS] Searching product by barcode: "${trimmed}"`);
-            let response;
-            let productFound = false;
-            
-            try {
-                response = await productsApi.getProductByBarcode(trimmed);
-                console.log('[POS] Barcode search response:', response);
-                
-                const result = await processSearchResponse(response, trimmed);
-                if (result.success) {
-                    return result;
-                }
-                // Product not found in response
-                productFound = false;
-            } catch (err: any) {
-                // If 404, we'll try without leading zeros
-                if (err?.status === 404) {
-                    console.log(`[POS] Product not found (404) for barcode: "${trimmed}", trying without leading zeros...`);
-                    productFound = false;
-                } else {
-                    // For other errors, rethrow to be handled below
-                    throw err;
-                }
-            }
-            
-            // If not found, try searching without leading zeros
-            const normalizedBarcode = removeLeadingZeros(trimmed);
-            if (!productFound && normalizedBarcode !== trimmed && normalizedBarcode !== '0') {
-                console.log(`[POS] Retrying search with normalized barcode (without leading zeros): "${normalizedBarcode}"`);
-                try {
-                    response = await productsApi.getProductByBarcode(normalizedBarcode);
-                    console.log('[POS] Normalized barcode search response:', response);
-                    
-                    const result = await processSearchResponse(response, normalizedBarcode);
-                    if (result.success) {
-                        return result;
-                    }
-                } catch (err: any) {
-                    if (err?.status === 404) {
-                        console.log(`[POS] Product not found (404) for normalized barcode: "${normalizedBarcode}"`);
-                    } else {
-                        throw err;
-                    }
-                }
-            }
-            
-            // Product not found with either variation
-            const triedNormalized = normalizedBarcode !== trimmed && normalizedBarcode !== '0';
-            console.log(`[POS] Product not found for barcode: "${trimmed}"${triedNormalized ? ` (tried original and normalized: "${normalizedBarcode}")` : ''}`);
-            return { success: false };
-            
         } catch (err: any) {
             console.error('[POS] Error searching product by barcode:', err);
             // If it's a 404, the product simply doesn't exist
@@ -1890,7 +1844,7 @@ const POSPage: React.FC = () => {
         } finally {
             setIsSearchingServer(false);
         }
-    }, [normalizeProduct, getPiecesPerMainUnit, removeLeadingZeros]);
+    }, [normalizeProduct, getPiecesPerMainUnit]);
 
     // Queue processor for barcodes - ensures sequential processing
     const processBarcodeQueue = useCallback(async () => {
