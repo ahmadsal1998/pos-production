@@ -1,6 +1,8 @@
 // IndexedDB utility for customer storage and search
 // Handles customer data efficiently with fast local search
 
+import { openIndexedDB, isIndexedDBAvailable } from './indexedDBUtils';
+
 interface CustomerRecord {
   id: string;
   customer: any;
@@ -25,8 +27,16 @@ class CustomersDB {
       return this.initPromise;
     }
 
+    // Check if IndexedDB is available
+    if (!isIndexedDBAvailable()) {
+      this.initPromise = Promise.reject(
+        new Error('IndexedDB is not available in this browser')
+      );
+      return this.initPromise;
+    }
+
     this.initPromise = new Promise((resolve, reject) => {
-      const request = indexedDB.open(this.dbName, this.version);
+      const request = openIndexedDB(this.dbName, this.version);
 
       request.onerror = () => {
         console.error('[CustomersDB] Failed to open database:', request.error);

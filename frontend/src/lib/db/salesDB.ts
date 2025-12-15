@@ -3,6 +3,8 @@
  * Provides fast local access to sales data and sync with backend
  */
 
+import { openIndexedDB, isIndexedDBAvailable } from './indexedDBUtils';
+
 const DB_NAME = 'POS_Sales_DB';
 const DB_VERSION = 1;
 const STORE_NAME = 'sales';
@@ -55,8 +57,16 @@ class SalesDB {
       return this.initPromise;
     }
 
+    // Check if IndexedDB is available
+    if (!isIndexedDBAvailable()) {
+      this.initPromise = Promise.reject(
+        new Error('IndexedDB is not available in this browser')
+      );
+      return this.initPromise;
+    }
+
     this.initPromise = new Promise((resolve, reject) => {
-      const request = indexedDB.open(DB_NAME, DB_VERSION);
+      const request = openIndexedDB(DB_NAME, DB_VERSION);
 
       request.onerror = () => {
         console.error('Failed to open IndexedDB:', request.error);

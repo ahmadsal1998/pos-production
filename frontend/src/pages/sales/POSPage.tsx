@@ -2891,8 +2891,19 @@ const POSPage: React.FC = () => {
             }
         } catch (error: any) {
             console.error('❌ Failed to save sale:', error);
-            // Show alert for errors
-            alert(`تم إنشاء الفاتورة محلياً، لكن حدث خطأ في حفظها: ${error?.message || 'خطأ غير معروف'}`);
+            // Show alert for errors with more helpful message
+            const errorMessage = error?.message || 'خطأ غير معروف';
+            let userMessage = '';
+            
+            if (errorMessage.includes('IndexedDB') || errorMessage.includes('indexedDB')) {
+                // IndexedDB specific error
+                userMessage = `تم حفظ الفاتورة على الخادم بنجاح، لكن حدث خطأ في التخزين المحلي. الفاتورة آمنة على الخادم.\n\nError: ${errorMessage}`;
+            } else {
+                // General error
+                userMessage = `تم إنشاء الفاتورة، لكن حدث خطأ في حفظها: ${errorMessage}`;
+            }
+            
+            alert(userMessage);
         }
 
         // Save to localStorage as backup (legacy support)

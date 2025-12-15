@@ -21,8 +21,14 @@ class SalesSyncService {
    * Initialize sync service
    */
   async init(): Promise<void> {
-    // Initialize IndexedDB
-    await salesDB.init();
+    // Try to initialize IndexedDB (may fail on some mobile browsers)
+    try {
+      await salesDB.init();
+      console.log('✅ Sales sync service initialized with IndexedDB');
+    } catch (error) {
+      console.warn('⚠️ IndexedDB not available, sync service will work without local storage:', error);
+      // Continue anyway - we can still sync to backend
+    }
 
     // Start periodic sync (every 30 seconds)
     this.startPeriodicSync(30000);
@@ -72,7 +78,7 @@ class SalesSyncService {
   /**
    * Sync a single sale to backend
    */
-  async syncSale(sale: SaleRecord, storeId: string): Promise<{ success: boolean; backendId?: string; error?: string }> {
+  async syncSale(sale: SaleRecord, storeId: string, indexedDBAvailable: boolean = true): Promise<{ success: boolean; backendId?: string; error?: string }> {
     try {
       // Prepare sale data for backend (remove local-only fields)
       const saleData = {
@@ -102,10 +108,14 @@ class SalesSyncService {
         const savedSale = (response.data as any).data?.sale;
         const backendId = savedSale?.id || savedSale?._id;
 
-        // Mark as synced in IndexedDB
-        // Pass storeId and invoiceNumber to help find the sale if ID doesn't match
-        if (sale.id) {
-          await salesDB.markAsSynced(sale.id, backendId, sale.storeId, sale.invoiceNumber);
+        // Mark as synced in IndexedDB (only if available)
+        if (indexedDBAvailable && sale.id) {
+          try {
+            await salesDB.markAsSynced(sale.id, backendId, sale.storeId, sale.invoiceNumber);
+          } catch (dbError) {
+            console.warn('⚠️ Failed to mark sale as synced in IndexedDB:', dbError);
+            // Continue anyway - backend sync succeeded
+          }
         }
 
         console.log('✅ Sale synced successfully:', sale.invoiceNumber);
@@ -117,10 +127,14 @@ class SalesSyncService {
       const errorMessage = error?.message || 'Unknown sync error';
       console.error('❌ Failed to sync sale:', sale.invoiceNumber, errorMessage);
 
-      // Mark sync error in IndexedDB
-      // Pass storeId and invoiceNumber to help find the sale if ID doesn't match
-      if (sale.id) {
-        await salesDB.markSyncError(sale.id, errorMessage, sale.storeId, sale.invoiceNumber);
+      // Mark sync error in IndexedDB (only if available)
+      if (indexedDBAvailable && sale.id) {
+        try {
+          await salesDB.markSyncError(sale.id, errorMessage, sale.storeId, sale.invoiceNumber);
+        } catch (dbError) {
+          console.warn('⚠️ Failed to mark sync error in IndexedDB:', dbError);
+          // Continue anyway
+        }
       }
 
       return { success: false, error: errorMessage };
@@ -209,10 +223,10 @@ class SalesSyncService {
    * This is the main method to use when creating a new sale
    */
   async createAndSyncSale(sale: SaleRecord, storeId: string): Promise<{ success: boolean; saleId?: string; error?: string }> {
-    try {
-      // Ensure IndexedDB is initialized
-      await salesDB.init();
+    let indexedDBAvailable = false;
+    let localSaleId: string | undefined;
 
+    try {
       // Ensure storeId is set and normalized
       sale.storeId = storeId.toLowerCase().trim();
 
@@ -223,29 +237,61 @@ class SalesSyncService {
         const random = Math.random().toString(36).substr(2, 9);
         sale.id = `temp_${sale.storeId}_${sale.invoiceNumber}_${timestamp}_${random}`;
       }
+      localSaleId = sale.id;
 
-      // Mark as unsynced initially
-      sale.synced = false;
-
-      // Save to IndexedDB first (for offline support)
-      await salesDB.saveSale(sale);
-
-      console.log('💾 Sale saved to IndexedDB:', sale.invoiceNumber);
+      // Try to save to IndexedDB first (for offline support)
+      try {
+        await salesDB.init();
+        // Mark as unsynced initially
+        sale.synced = false;
+        await salesDB.saveSale(sale);
+        indexedDBAvailable = true;
+        console.log('💾 Sale saved to IndexedDB:', sale.invoiceNumber);
+      } catch (dbError: any) {
+        // IndexedDB not available or failed - log but continue
+        console.warn('⚠️ IndexedDB not available, will sync directly to backend:', dbError?.message);
+        indexedDBAvailable = false;
+        // Continue to sync to backend even if IndexedDB fails
+      }
 
       // Try to sync immediately if online
       if (navigator.onLine) {
-        const syncResult = await this.syncSale(sale, storeId);
-        if (syncResult.success) {
-          return { success: true, saleId: syncResult.backendId || sale.id };
-        } else {
-          // Sale is saved locally, will sync later
-          console.warn('⚠️ Sale saved locally, will sync later:', syncResult.error);
-          return { success: true, saleId: sale.id, error: syncResult.error };
+        try {
+          const syncResult = await this.syncSale(sale, storeId, indexedDBAvailable);
+          if (syncResult.success) {
+            return { success: true, saleId: syncResult.backendId || localSaleId };
+          } else {
+            // Sync failed but sale might be saved locally
+            if (indexedDBAvailable) {
+              console.warn('⚠️ Sale saved locally, will sync later:', syncResult.error);
+              return { success: true, saleId: localSaleId, error: syncResult.error };
+            } else {
+              // No local storage, sync failed
+              return { success: false, error: syncResult.error || 'Failed to sync sale' };
+            }
+          }
+        } catch (syncError: any) {
+          // Sync to backend failed
+          if (indexedDBAvailable) {
+            // At least saved locally
+            console.warn('⚠️ Sale saved locally, sync to backend failed:', syncError?.message);
+            return { success: true, saleId: localSaleId, error: syncError?.message || 'Failed to sync to backend' };
+          } else {
+            // No local storage and sync failed
+            console.error('❌ Failed to save sale (no IndexedDB and sync failed):', syncError);
+            return { success: false, error: syncError?.message || 'Failed to save sale' };
+          }
         }
       } else {
-        // Offline - sale is saved locally, will sync when online
-        console.log('📴 Offline - sale saved locally, will sync when online');
-        return { success: true, saleId: sale.id };
+        // Offline
+        if (indexedDBAvailable) {
+          // Sale is saved locally, will sync when online
+          console.log('📴 Offline - sale saved locally, will sync when online');
+          return { success: true, saleId: localSaleId };
+        } else {
+          // No IndexedDB and offline - cannot save
+          return { success: false, error: 'Cannot save sale: offline and IndexedDB not available' };
+        }
       }
     } catch (error: any) {
       console.error('❌ Failed to create sale:', error);

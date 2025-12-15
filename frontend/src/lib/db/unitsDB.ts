@@ -1,6 +1,8 @@
 // IndexedDB utility for unit storage and search
 // Handles unit data efficiently with fast local search
 
+import { openIndexedDB, isIndexedDBAvailable } from './indexedDBUtils';
+
 interface UnitRecord {
   id: string;
   unit: any;
@@ -25,8 +27,16 @@ class UnitsDB {
       return this.initPromise;
     }
 
+    // Check if IndexedDB is available
+    if (!isIndexedDBAvailable()) {
+      this.initPromise = Promise.reject(
+        new Error('IndexedDB is not available in this browser')
+      );
+      return this.initPromise;
+    }
+
     this.initPromise = new Promise((resolve, reject) => {
-      const request = indexedDB.open(this.dbName, this.version);
+      const request = openIndexedDB(this.dbName, this.version);
 
       request.onerror = () => {
         console.error('[UnitsDB] Failed to open database:', request.error);
