@@ -63,7 +63,9 @@ class CustomersDB {
         return null;
       }
       const payload = JSON.parse(atob(token.split('.')[1]));
-      return payload.storeId || null;
+      const storeId = payload.storeId || null;
+      // Normalize storeId to lowercase to match backend behavior
+      return storeId ? storeId.toLowerCase().trim() : null;
     } catch (error) {
       console.error('[CustomersDB] Error getting storeId from token:', error);
       return null;
@@ -116,6 +118,8 @@ class CustomersDB {
       throw new Error('Store ID not found');
     }
 
+    console.log(`[CustomersDB] Storing customer with storeId: ${storeId}`);
+
     const transaction = this.db.transaction([this.storeName], 'readwrite');
     const objectStore = transaction.objectStore(this.storeName);
     const id = this.getCustomerId(customer, storeId);
@@ -132,19 +136,23 @@ class CustomersDB {
       request.onerror = () => reject(request.error);
     });
 
-    console.log(`[CustomersDB] Stored customer: ${customer.name || customer.id}`);
+    console.log(`[CustomersDB] Stored customer: ${customer.name || customer.id} with storeId: ${storeId}`);
   }
 
   async getAllCustomers(): Promise<any[]> {
     await this.init();
     if (!this.db) {
+      console.warn('[CustomersDB] Database not initialized');
       return [];
     }
 
     const storeId = this.getStoreId();
     if (!storeId) {
+      console.warn('[CustomersDB] No storeId found, returning empty array');
       return [];
     }
+
+    console.log(`[CustomersDB] Getting all customers for storeId: "${storeId}" (type: ${typeof storeId})`);
 
     return new Promise((resolve, reject) => {
       const transaction = this.db!.transaction([this.storeName], 'readonly');
@@ -153,11 +161,66 @@ class CustomersDB {
       const request = index.getAll(storeId);
 
       request.onsuccess = () => {
-        const customers = request.result.map((record: CustomerRecord) => record.customer);
-        resolve(customers);
+        const records = request.result as CustomerRecord[];
+        const customers = records.map((record: CustomerRecord) => record.customer);
+        console.log(`[CustomersDB] Found ${customers.length} customers for storeId: "${storeId}"`);
+        
+        // Enhanced debugging when no customers found
+        if (customers.length === 0) {
+          console.warn(`[CustomersDB] No customers found for storeId: "${storeId}"`);
+          
+          // Check all records to see what storeIds exist
+          const allRecordsRequest = objectStore.getAll();
+          allRecordsRequest.onsuccess = () => {
+            const allRecords = allRecordsRequest.result as CustomerRecord[];
+            console.log(`[CustomersDB] Total records in IndexedDB: ${allRecords.length}`);
+            
+            if (allRecords.length > 0) {
+              const uniqueStoreIds = [...new Set(allRecords.map(r => r.storeId))];
+              console.log(`[CustomersDB] Debug: IndexedDB contains records for storeIds:`, uniqueStoreIds);
+              console.log(`[CustomersDB] Debug: Looking for storeId: "${storeId}" (type: ${typeof storeId})`);
+              
+              // Check for case/whitespace mismatches
+              const normalizedStoreId = storeId.toLowerCase().trim();
+              const matchingStoreIds = uniqueStoreIds.filter(sid => 
+                sid.toLowerCase().trim() === normalizedStoreId
+              );
+              
+              if (matchingStoreIds.length > 0) {
+                console.warn(`[CustomersDB] Found matching storeId with different case/whitespace:`, matchingStoreIds);
+                // Try to get customers with the matching storeId
+                const matchRequest = index.getAll(matchingStoreIds[0]);
+                matchRequest.onsuccess = () => {
+                  const matchedRecords = matchRequest.result as CustomerRecord[];
+                  const matchedCustomers = matchedRecords.map((record: CustomerRecord) => record.customer);
+                  console.log(`[CustomersDB] Found ${matchedCustomers.length} customers with matched storeId`);
+                  resolve(matchedCustomers);
+                };
+                matchRequest.onerror = () => {
+                  console.error('[CustomersDB] Error getting matched customers:', matchRequest.error);
+                  resolve([]);
+                };
+              } else {
+                // No matching storeId found, resolve with empty array
+                resolve([]);
+              }
+            } else {
+              console.log(`[CustomersDB] IndexedDB is empty - no customers stored yet`);
+              resolve([]);
+            }
+          };
+          allRecordsRequest.onerror = () => {
+            console.error('[CustomersDB] Error getting all records for debugging:', allRecordsRequest.error);
+            resolve([]);
+          };
+        } else {
+          // Found customers, resolve normally
+          resolve(customers);
+        }
       };
 
       request.onerror = () => {
+        console.error('[CustomersDB] Error getting customers:', request.error);
         reject(request.error);
       };
     });

@@ -34,7 +34,9 @@ function getStoreIdFromToken(): string | null {
       return null;
     }
     const payload = JSON.parse(atob(token.split('.')[1]));
-    return payload.storeId || null;
+    const storeId = payload.storeId || null;
+    // Normalize storeId to lowercase to match backend behavior
+    return storeId ? storeId.toLowerCase().trim() : null;
   } catch (error) {
     console.error('[CustomerSync] Error getting storeId from token:', error);
     return null;
@@ -108,19 +110,37 @@ class CustomerSyncManager {
 
     try {
       // Fetch all customers from server
+      console.log('[CustomerSync] Fetching customers from server with forceRefresh:', forceRefresh);
       const response = await customersApi.getCustomers();
+
+      console.log('[CustomerSync] API response:', {
+        success: response.success,
+        hasData: !!response.data,
+        dataKeys: response.data ? Object.keys(response.data) : []
+      });
 
       if (response.success) {
         const customersData = (response.data as any)?.data?.customers || [];
+        console.log(`[CustomerSync] Received ${customersData.length} customers from server`);
 
         if (customersData.length > 0) {
           // Store in IndexedDB (primary storage)
           try {
+            console.log('[CustomerSync] Storing customers in IndexedDB...');
             await customersDB.storeCustomers(customersData);
             // Notify other tabs
             (customersDB as any).notifyOtherTabs();
+            console.log('[CustomerSync] Successfully stored customers in IndexedDB');
+            
+            // Verify storage
+            const verifyCustomers = await customersDB.getAllCustomers();
+            console.log(`[CustomerSync] Verification: IndexedDB now contains ${verifyCustomers?.length || 0} customers`);
           } catch (dbError) {
             console.error('[CustomerSync] Error storing customers in IndexedDB:', dbError);
+            console.error('[CustomerSync] DB error details:', {
+              message: dbError instanceof Error ? dbError.message : String(dbError),
+              stack: dbError instanceof Error ? dbError.stack : undefined
+            });
           }
 
           const result: CustomerSyncResult = {
@@ -135,6 +155,7 @@ class CustomerSyncManager {
 
           return result;
         } else {
+          console.log('[CustomerSync] Server returned empty customer list');
           return {
             success: true,
             syncedCount: 0,
@@ -142,6 +163,7 @@ class CustomerSyncManager {
           };
         }
       } else {
+        console.error('[CustomerSync] API response was not successful');
         return {
           success: false,
           syncedCount: 0,
@@ -151,6 +173,12 @@ class CustomerSyncManager {
     } catch (error: any) {
       const apiError = error as ApiError;
       console.error('[CustomerSync] Error syncing customers:', apiError);
+      console.error('[CustomerSync] Error details:', {
+        message: apiError.message,
+        status: apiError.status,
+        code: apiError.code,
+        stack: error instanceof Error ? error.stack : undefined
+      });
       return {
         success: false,
         syncedCount: 0,

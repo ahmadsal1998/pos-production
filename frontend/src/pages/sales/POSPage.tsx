@@ -350,32 +350,49 @@ const POSPage: React.FC = () => {
             // Sync customers from server (this handles IndexedDB storage)
             const syncResult = await customerSync.syncCustomers({ forceRefresh: true });
             
+            console.log('[POS] Sync result:', {
+                success: syncResult.success,
+                syncedCount: syncResult.syncedCount,
+                customersCount: syncResult.customers?.length || 0,
+                error: syncResult.error
+            });
+            
             if (!isMountedRef.current) {
                 return;
             }
             
             if (syncResult.success && syncResult.customers) {
                 // Transform backend data to frontend Customer format and filter out dummy customers
+                // Handle both id and _id fields (backend may return either)
                 const transformedCustomers: Customer[] = syncResult.customers
-                    .map((customer: any) => ({
-                        id: customer.id,
-                        name: customer.name || customer.phone,
-                        phone: customer.phone,
-                        address: customer.address,
-                        previousBalance: customer.previousBalance || 0,
-                    }))
-                    .filter((customer: Customer) => !isDummyCustomer(customer));
+                    .map((customer: any) => {
+                        // Handle both id and _id - backend transforms _id to id in toJSON, but might have either
+                        const customerId = customer.id || customer._id;
+                        return {
+                            id: customerId,
+                            name: customer.name || customer.phone,
+                            phone: customer.phone,
+                            address: customer.address,
+                            previousBalance: customer.previousBalance || 0,
+                        };
+                    })
+                    .filter((customer: Customer) => {
+                        if (!customer.id) return false;
+                        return !isDummyCustomer(customer);
+                    });
                 
                 setAllCustomers(transformedCustomers);
                 setCustomers(transformedCustomers);
                 setCustomersLoaded(true);
                 console.log(`[POS] Successfully loaded ${transformedCustomers.length} customers and stored in IndexedDB`);
+                return syncResult;
             } else if (syncResult.success && (!syncResult.customers || syncResult.customers.length === 0)) {
                 // Empty customer list is a valid state
                 setAllCustomers([]);
                 setCustomers([]);
                 setCustomersLoaded(true);
                 console.log(`[POS] Successfully loaded 0 customers from server (empty list)`);
+                return syncResult;
             } else {
                 console.warn('[POS] Failed to sync customers:', syncResult.error);
                 // Even on failure, mark as loaded to prevent infinite loading
@@ -383,6 +400,7 @@ const POSPage: React.FC = () => {
                 setAllCustomers([]);
                 setCustomers([]);
                 setCustomersLoaded(true);
+                return syncResult;
             }
         } catch (err: any) {
             if (!isMountedRef.current) {
@@ -394,13 +412,15 @@ const POSPage: React.FC = () => {
             console.error('[POS] Error details:', {
                 message: apiError.message,
                 status: apiError.status,
-                code: apiError.code
+                code: apiError.code,
+                stack: err instanceof Error ? err.stack : undefined
             });
             // Even on error, mark as loaded to prevent infinite loading
             // POS can continue with empty list and use server-side search as fallback
             setAllCustomers([]);
             setCustomers([]);
             setCustomersLoaded(true);
+            throw err; // Re-throw to let caller handle it
         } finally {
             if (isMountedRef.current) {
                 setIsLoadingCustomers(false);
@@ -425,17 +445,49 @@ const POSPage: React.FC = () => {
             // Get all customers from IndexedDB
             const dbCustomers = await customersDB.getAllCustomers();
             
+            console.log(`[POS] getAllCustomers returned ${dbCustomers?.length || 0} customers`);
+            
             if (dbCustomers && dbCustomers.length > 0) {
+                // Log first customer structure for debugging
+                if (dbCustomers.length > 0) {
+                    console.log('[POS] Sample customer from IndexedDB:', {
+                        raw: dbCustomers[0],
+                        hasId: !!dbCustomers[0].id,
+                        has_id: !!dbCustomers[0]._id,
+                        id: dbCustomers[0].id,
+                        _id: dbCustomers[0]._id,
+                        name: dbCustomers[0].name,
+                        phone: dbCustomers[0].phone
+                    });
+                }
+                
                 // Transform backend data to frontend Customer format and filter out dummy customers
+                // Handle both id and _id fields (backend may return either)
                 const transformedCustomers: Customer[] = dbCustomers
-                    .map((customer: any) => ({
-                        id: customer.id,
-                        name: customer.name || customer.phone,
-                        phone: customer.phone,
-                        address: customer.address,
-                        previousBalance: customer.previousBalance || 0,
-                    }))
-                    .filter((customer: Customer) => !isDummyCustomer(customer));
+                    .map((customer: any) => {
+                        // Handle both id and _id - backend transforms _id to id in toJSON, but IndexedDB might have either
+                        const customerId = customer.id || customer._id;
+                        if (!customerId) {
+                            console.warn('[POS] Customer missing id field:', customer);
+                        }
+                        return {
+                            id: customerId,
+                            name: customer.name || customer.phone,
+                            phone: customer.phone,
+                            address: customer.address,
+                            previousBalance: customer.previousBalance || 0,
+                        };
+                    })
+                    .filter((customer: Customer) => {
+                        // Filter out customers without id and dummy customers
+                        if (!customer.id) {
+                            console.warn('[POS] Filtering out customer without id:', customer);
+                            return false;
+                        }
+                        return !isDummyCustomer(customer);
+                    });
+                
+                console.log(`[POS] Transformed ${transformedCustomers.length} customers (filtered from ${dbCustomers.length})`);
                 
                 if (isMountedRef.current) {
                     setAllCustomers(transformedCustomers);
@@ -449,9 +501,40 @@ const POSPage: React.FC = () => {
                 // Don't set customersLoaded yet - wait for fetchCustomers to complete
                 // Try to sync from server
                 try {
-                    await fetchCustomers();
+                    const syncResult = await fetchCustomers();
+                    // After sync, verify IndexedDB was updated
+                    if (isMountedRef.current && syncResult?.success && syncResult.customers && syncResult.customers.length > 0) {
+                        // Reload from IndexedDB to ensure we have the latest data
+                        const verifyCustomers = await customersDB.getAllCustomers();
+                        if (verifyCustomers && verifyCustomers.length > 0) {
+                            const transformedCustomers: Customer[] = verifyCustomers
+                                .map((customer: any) => {
+                                    // Handle both id and _id fields
+                                    const customerId = customer.id || customer._id;
+                                    return {
+                                        id: customerId,
+                                        name: customer.name || customer.phone,
+                                        phone: customer.phone,
+                                        address: customer.address,
+                                        previousBalance: customer.previousBalance || 0,
+                                    };
+                                })
+                                .filter((customer: Customer) => {
+                                    if (!customer.id) return false;
+                                    return !isDummyCustomer(customer);
+                                });
+                            setAllCustomers(transformedCustomers);
+                            setCustomers(transformedCustomers);
+                            setCustomersLoaded(true);
+                            console.log(`[POS] Successfully loaded ${transformedCustomers.length} customers after sync in loadCustomersFromDB`);
+                        }
+                    }
                 } catch (syncError) {
-                    console.warn('[POS] Failed to sync customers from server:', syncError);
+                    console.error('[POS] Failed to sync customers from server:', syncError);
+                    console.error('[POS] Sync error details:', {
+                        message: syncError instanceof Error ? syncError.message : String(syncError),
+                        stack: syncError instanceof Error ? syncError.stack : undefined
+                    });
                     // Only set customersLoaded to true if fetchCustomers didn't already set it
                     if (isMountedRef.current) {
                         setAllCustomers([]);
@@ -920,6 +1003,13 @@ const POSPage: React.FC = () => {
                 // Products sync is handled only when actual changes occur, not on visibility change
                 // This prevents unnecessary server load when just switching tabs
                 console.log('[POS] Page visible - using existing IndexedDB data (no sync)');
+                // Reload customers from IndexedDB in case a customer was added while page was hidden
+                // This is lightweight and ensures the dropdown is up-to-date
+                if (!isLoadingCustomersRef.current) {
+                    loadCustomersFromDB().catch(error => {
+                        console.error('[POS] Error reloading customers on visibility change:', error);
+                    });
+                }
             }
         };
         
@@ -1010,19 +1100,25 @@ const POSPage: React.FC = () => {
     // State for server-side customer search results
     const [serverCustomerSearchResults, setServerCustomerSearchResults] = useState<Customer[]>([]);
 
+    // Sync customers list when allCustomers changes (but don't trigger reload)
+    useEffect(() => {
+        if (customersLoaded && !customerSearchTerm.trim() && allCustomers.length > 0) {
+            // Only update customers if they're different to prevent unnecessary re-renders
+            setCustomers(prevCustomers => {
+                if (prevCustomers.length !== allCustomers.length ||
+                    !prevCustomers.every((c, i) => allCustomers[i]?.id === c.id)) {
+                    return allCustomers;
+                }
+                return prevCustomers;
+            });
+        }
+    }, [allCustomers, customersLoaded, customerSearchTerm]);
+
     // Filter customers based on search term (uses IndexedDB for fast local search)
     useEffect(() => {
         if (!customerSearchTerm.trim()) {
             // If no search term, use allCustomers if already loaded
             if (customersLoaded && allCustomers.length > 0) {
-                // Only update customers if they're different to prevent unnecessary re-renders
-                setCustomers(prevCustomers => {
-                    if (prevCustomers.length !== allCustomers.length ||
-                        !prevCustomers.every((c, i) => allCustomers[i]?.id === c.id)) {
-                        return allCustomers;
-                    }
-                    return prevCustomers;
-                });
                 setServerCustomerSearchResults([]);
                 return;
             }
@@ -1062,9 +1158,34 @@ const POSPage: React.FC = () => {
                             // Empty IndexedDB - try to sync from server
                             console.log('[POS] IndexedDB empty, syncing from server for dropdown...');
                             try {
-                                await fetchCustomers();
+                                const syncResult = await fetchCustomers();
+                                // After sync, reload from IndexedDB to verify it was stored
+                                if (isMountedRef.current) {
+                                    const verifyCustomers = await customersDB.getAllCustomers();
+                                    console.log(`[POS] After sync, IndexedDB now has ${verifyCustomers?.length || 0} customers`);
+                                    if (verifyCustomers && verifyCustomers.length > 0) {
+                                        // Reload the transformed customers
+                                        const transformedCustomers: Customer[] = verifyCustomers
+                                            .map((customer: any) => ({
+                                                id: customer.id,
+                                                name: customer.name || customer.phone,
+                                                phone: customer.phone,
+                                                address: customer.address,
+                                                previousBalance: customer.previousBalance || 0,
+                                            }))
+                                            .filter((customer: Customer) => !isDummyCustomer(customer));
+                                        setAllCustomers(transformedCustomers);
+                                        setCustomers(transformedCustomers);
+                                        setCustomersLoaded(true);
+                                        console.log(`[POS] Successfully loaded ${transformedCustomers.length} customers after sync`);
+                                    }
+                                }
                             } catch (syncError) {
-                                console.warn('[POS] Failed to sync customers from server for dropdown:', syncError);
+                                console.error('[POS] Failed to sync customers from server for dropdown:', syncError);
+                                console.error('[POS] Sync error details:', {
+                                    message: syncError instanceof Error ? syncError.message : String(syncError),
+                                    stack: syncError instanceof Error ? syncError.stack : undefined
+                                });
                                 // Mark as loaded even if sync failed
                                 if (isMountedRef.current) {
                                     setAllCustomers([]);
@@ -1166,7 +1287,7 @@ const POSPage: React.FC = () => {
         return () => {
             clearTimeout(timeoutId);
         };
-    }, [customerSearchTerm, customersLoaded, allCustomers, searchCustomersOnServer]);
+    }, [customerSearchTerm, searchCustomersOnServer]);
 
     // Load autoPrintInvoice setting when component mounts or settings change
     useEffect(() => {
@@ -3469,14 +3590,21 @@ const POSPage: React.FC = () => {
                             if (isMountedRef.current) {
                                 const dbCustomers = await customersDB.getAllCustomers();
                                 const transformedCustomers: Customer[] = dbCustomers
-                                    .map((customer: any) => ({
-                                        id: customer.id,
-                                        name: customer.name || customer.phone,
-                                        phone: customer.phone,
-                                        address: customer.address,
-                                        previousBalance: customer.previousBalance || 0,
-                                    }))
-                                    .filter((customer: Customer) => !isDummyCustomer(customer));
+                                    .map((customer: any) => {
+                                        // Handle both id and _id fields
+                                        const customerId = customer.id || customer._id;
+                                        return {
+                                            id: customerId,
+                                            name: customer.name || customer.phone,
+                                            phone: customer.phone,
+                                            address: customer.address,
+                                            previousBalance: customer.previousBalance || 0,
+                                        };
+                                    })
+                                    .filter((customer: Customer) => {
+                                        if (!customer.id) return false;
+                                        return !isDummyCustomer(customer);
+                                    });
                                 
                                 try {
                                     setAllCustomers(transformedCustomers);
