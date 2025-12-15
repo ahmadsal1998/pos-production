@@ -31,68 +31,6 @@ const ProductsPage: React.FC<ProductsPageProps> = ({ onAddProduct, onProductClic
   const [sortBy, setSortBy] = useState<'name' | 'price' | 'stock' | 'createdAt'>('name');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
 
-  // Fetch products from API with caching
-  const fetchProducts = useCallback(async () => {
-    setIsLoading(true);
-    setError(null);
-    
-    try {
-      // Try to get from cache first
-      const storeId = getStoreIdFromToken();
-      const cached = storeId ? getCachedProducts(storeId) : null;
-      
-      if (cached && cached.products.length > 0) {
-        console.log(`Loading ${cached.products.length} products from cache`);
-        // Transform cached products to EnhancedProduct format
-        const transformedProducts: EnhancedProduct[] = cached.products.map((p: any) => {
-          let status: 'available' | 'out_of_stock' | 'low_stock' = 'available';
-          const stock = p.stock || p.quantity || 0;
-          if (stock === 0) {
-            status = 'out_of_stock';
-          } else if (stock < (p.lowStockAlert || 10)) {
-            status = 'low_stock';
-          }
-
-          return {
-            id: typeof p.id === 'string' ? parseInt(p.id) || 0 : p.id || 0,
-            name: p.name || '',
-            category: p.category?.nameAr || p.category?.name || p.category || '',
-            price: p.retailSellingPrice || p.sellingPrice || p.price || 0,
-            costPrice: p.costPrice || p.cost || 0,
-            stock: stock,
-            barcode: p.primaryBarcode || p.barcode || '',
-            expiryDate: p.expiryDate || '',
-            createdAt: p.createdAt || new Date().toISOString(),
-            image: p.imageUrl || p.image || undefined,
-            status: status,
-            description: p.description || undefined,
-            sku: p.internalSKU || p.sku || undefined,
-          };
-        });
-        
-        setProducts(transformedProducts);
-        setIsLoading(false);
-        
-        // Fetch fresh data in background to update cache
-        fetchProductsFromAPI(storeId);
-        return;
-      }
-
-      // No cache, fetch from API
-      await fetchProductsFromAPI(storeId);
-    } catch (err: any) {
-      const apiError = err as ApiError;
-      console.error('Error fetching products:', apiError);
-      if (apiError.status === 401 || apiError.status === 403) {
-        navigate('/login', { replace: true });
-        return;
-      }
-      setError(apiError.message || 'فشل تحميل المنتجات');
-      setProducts([]);
-      setIsLoading(false);
-    }
-  }, [navigate]);
-
   // Fetch products from API (helper function)
   const fetchProductsFromAPI = async (storeId: string | null) => {
     try {
@@ -155,6 +93,68 @@ const ProductsPage: React.FC<ProductsPageProps> = ({ onAddProduct, onProductClic
       setIsLoading(false);
     }
   };
+
+  // Fetch products from API with caching
+  const fetchProducts = useCallback(async () => {
+    setIsLoading(true);
+    setError(null);
+    
+    try {
+      // Try to get from cache first
+      const storeId = getStoreIdFromToken();
+      const cached = storeId ? getCachedProducts(storeId) : null;
+      
+      if (cached && cached.products.length > 0) {
+        console.log(`Loading ${cached.products.length} products from cache`);
+        // Transform cached products to EnhancedProduct format
+        const transformedProducts: EnhancedProduct[] = cached.products.map((p: any) => {
+          let status: 'available' | 'out_of_stock' | 'low_stock' = 'available';
+          const stock = p.stock || p.quantity || 0;
+          if (stock === 0) {
+            status = 'out_of_stock';
+          } else if (stock < (p.lowStockAlert || 10)) {
+            status = 'low_stock';
+          }
+
+          return {
+            id: typeof p.id === 'string' ? parseInt(p.id) || 0 : p.id || 0,
+            name: p.name || '',
+            category: p.category?.nameAr || p.category?.name || p.category || '',
+            price: p.retailSellingPrice || p.sellingPrice || p.price || 0,
+            costPrice: p.costPrice || p.cost || 0,
+            stock: stock,
+            barcode: p.primaryBarcode || p.barcode || '',
+            expiryDate: p.expiryDate || '',
+            createdAt: p.createdAt || new Date().toISOString(),
+            image: p.imageUrl || p.image || undefined,
+            status: status,
+            description: p.description || undefined,
+            sku: p.internalSKU || p.sku || undefined,
+          };
+        });
+        
+        setProducts(transformedProducts);
+        setIsLoading(false);
+        
+        // Fetch fresh data in background to update cache
+        fetchProductsFromAPI(storeId);
+        return;
+      }
+
+      // No cache, fetch from API
+      await fetchProductsFromAPI(storeId);
+    } catch (err: any) {
+      const apiError = err as ApiError;
+      console.error('Error fetching products:', apiError);
+      if (apiError.status === 401 || apiError.status === 403) {
+        navigate('/login', { replace: true });
+        return;
+      }
+      setError(apiError.message || 'فشل تحميل المنتجات');
+      setProducts([]);
+      setIsLoading(false);
+    }
+  }, [navigate]);
 
   // Fetch products on mount
   useEffect(() => {
@@ -339,7 +339,7 @@ const ProductsPage: React.FC<ProductsPageProps> = ({ onAddProduct, onProductClic
             }}
             className="flex-1 flex items-center justify-center gap-1 px-3 py-2 text-xs bg-blue-500 hover:bg-blue-600 text-white rounded-md transition-colors"
           >
-            <ViewIcon className="h-4 w-4" />
+            <ViewIcon />
             عرض
           </button>
           <button
@@ -349,7 +349,7 @@ const ProductsPage: React.FC<ProductsPageProps> = ({ onAddProduct, onProductClic
             }}
             className="flex-1 flex items-center justify-center gap-1 px-3 py-2 text-xs bg-orange-500 hover:bg-orange-600 text-white rounded-md transition-colors"
           >
-            <EditIcon className="h-4 w-4" />
+            <EditIcon />
             تعديل
           </button>
           <button
@@ -359,7 +359,7 @@ const ProductsPage: React.FC<ProductsPageProps> = ({ onAddProduct, onProductClic
             }}
             className="flex-1 flex items-center justify-center gap-1 px-3 py-2 text-xs bg-red-500 hover:bg-red-600 text-white rounded-md transition-colors"
           >
-            <DeleteIcon className="h-4 w-4" />
+            <DeleteIcon />
             حذف
           </button>
         </div>
@@ -410,21 +410,21 @@ const ProductsPage: React.FC<ProductsPageProps> = ({ onAddProduct, onProductClic
             className="text-blue-600 hover:text-blue-900 dark:text-blue-400 dark:hover:text-blue-300"
             title="عرض"
           >
-            <ViewIcon className="h-4 w-4" />
+            <ViewIcon />
           </button>
           <button
             onClick={() => handleEditProduct(product)}
             className="text-orange-600 hover:text-orange-900 dark:text-orange-400 dark:hover:text-orange-300"
             title="تعديل"
           >
-            <EditIcon className="h-4 w-4" />
+            <EditIcon />
           </button>
           <button
             onClick={() => handleDeleteProduct(product)}
             className="text-red-600 hover:text-red-900 dark:text-red-400 dark:hover:text-red-300"
             title="حذف"
           >
-            <DeleteIcon className="h-4 w-4" />
+            <DeleteIcon />
           </button>
         </div>
       </td>
@@ -523,14 +523,14 @@ const ProductsPage: React.FC<ProductsPageProps> = ({ onAddProduct, onProductClic
               className={`px-3 py-2 ${viewMode === 'grid' ? 'bg-orange-500 text-white' : 'bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300'}`}
               title="عرض الشبكة"
             >
-              <GridViewIcon className="h-5 w-5" />
+              <GridViewIcon />
             </button>
             <button
               onClick={() => setViewMode('table')}
               className={`px-3 py-2 ${viewMode === 'table' ? 'bg-orange-500 text-white' : 'bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300'}`}
               title="عرض الجدول"
             >
-              <TableViewIcon className="h-5 w-5" />
+              <TableViewIcon />
             </button>
           </div>
         </div>
