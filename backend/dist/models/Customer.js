@@ -34,31 +34,50 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
 const mongoose_1 = __importStar(require("mongoose"));
-// OTP Schema
-const otpSchema = new mongoose_1.Schema({
-    email: {
+const customerSchema = new mongoose_1.Schema({
+    storeId: {
         type: String,
-        required: [true, 'Email is required'],
+        required: [true, 'Store ID is required'],
         trim: true,
         lowercase: true,
-        index: true,
+        // Index is created via compound indexes below
     },
-    code: {
+    name: {
         type: String,
-        required: [true, 'OTP code is required'],
-        length: 6,
+        required: [true, 'Customer name is required'],
+        trim: true,
     },
-    expiresAt: {
-        type: Date,
-        required: true,
-        index: { expireAfterSeconds: 0 }, // MongoDB TTL index to auto-delete expired documents
+    phone: {
+        type: String,
+        required: [true, 'Phone number is required'],
+        trim: true,
+    },
+    address: {
+        type: String,
+        trim: true,
+    },
+    previousBalance: {
+        type: Number,
+        default: 0,
+        min: 0,
     },
 }, {
     timestamps: true,
-    autoCreate: false, // Prevent automatic collection creation - only create when data is inserted
+    toJSON: {
+        transform: (_doc, ret) => {
+            ret.id = ret._id;
+            delete ret._id;
+            delete ret.__v;
+            return ret;
+        },
+    },
 });
-// Index to ensure one active OTP per email
-otpSchema.index({ email: 1, expiresAt: 1 });
-// Create model
-const OTP = mongoose_1.default.model('OTP', otpSchema);
-exports.default = OTP;
+// CRITICAL INDEXES for performance
+// Unique phone per store
+customerSchema.index({ storeId: 1, phone: 1 }, { unique: true });
+// Search by name
+customerSchema.index({ storeId: 1, name: 1 });
+// List customers
+customerSchema.index({ storeId: 1, createdAt: -1 });
+const Customer = mongoose_1.default.model('Customer', customerSchema);
+exports.default = Customer;

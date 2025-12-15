@@ -1,121 +1,118 @@
 "use strict";
-var __create = Object.create;
-var __defProp = Object.defineProperty;
-var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
-var __getOwnPropNames = Object.getOwnPropertyNames;
-var __getProtoOf = Object.getPrototypeOf;
-var __hasOwnProp = Object.prototype.hasOwnProperty;
-var __export = (target, all) => {
-  for (var name in all)
-    __defProp(target, name, { get: all[name], enumerable: true });
-};
-var __copyProps = (to, from, except, desc) => {
-  if (from && typeof from === "object" || typeof from === "function") {
-    for (let key of __getOwnPropNames(from))
-      if (!__hasOwnProp.call(to, key) && key !== except)
-        __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
-  }
-  return to;
-};
-var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__getProtoOf(mod)) : {}, __copyProps(
-  // If the importer is in node compatibility mode or this is not an ESM
-  // file that has been converted to a CommonJS file using a Babel-
-  // compatible transform (i.e. "__esModule" has not been set), then set
-  // "default" to the CommonJS "module.exports" for node compatibility.
-  isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
-  mod
-));
-var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
-var Payment_exports = {};
-__export(Payment_exports, {
-  Payment: () => Payment
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
 });
-module.exports = __toCommonJS(Payment_exports);
-var import_mongoose = __toESM(require("mongoose"));
-const paymentSchema = new import_mongoose.Schema(
-  {
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.Payment = void 0;
+const mongoose_1 = __importStar(require("mongoose"));
+const paymentSchema = new mongoose_1.Schema({
     invoiceId: {
-      type: String,
-      required: [true, "Invoice ID is required"],
-      index: true
+        type: String,
+        required: [true, 'Invoice ID is required'],
+        index: true,
     },
     storeId: {
-      type: String,
-      index: true,
-      default: null
+        type: String,
+        required: [true, 'Store ID is required'],
+        trim: true,
+        lowercase: true,
+        index: true,
     },
     merchantId: {
-      type: import_mongoose.Schema.Types.ObjectId,
-      ref: "Merchant",
-      default: null,
-      index: false
-      // Explicitly disable automatic index - we use compound indexes instead
+        type: mongoose_1.Schema.Types.ObjectId,
+        ref: 'Merchant',
+        default: null,
+        index: false, // Explicitly disable automatic index - we use compound indexes instead
     },
     terminalId: {
-      type: import_mongoose.Schema.Types.ObjectId,
-      ref: "Terminal",
-      index: true,
-      default: null
+        type: mongoose_1.Schema.Types.ObjectId,
+        ref: 'Terminal',
+        index: true,
+        default: null,
     },
     amount: {
-      type: Number,
-      required: [true, "Payment amount is required"],
-      min: [0, "Amount must be positive"]
+        type: Number,
+        required: [true, 'Payment amount is required'],
+        min: [0, 'Amount must be positive'],
     },
     currency: {
-      type: String,
-      required: [true, "Currency is required"],
-      default: "SAR",
-      uppercase: true
+        type: String,
+        required: [true, 'Currency is required'],
+        default: 'SAR',
+        uppercase: true,
     },
     paymentMethod: {
-      type: String,
-      enum: ["Cash", "Card", "Credit"],
-      required: [true, "Payment method is required"]
+        type: String,
+        enum: ['Cash', 'Card', 'Credit'],
+        required: [true, 'Payment method is required'],
     },
     status: {
-      type: String,
-      enum: ["Pending", "Approved", "Declined", "Error", "Cancelled"],
-      default: "Pending",
-      index: true
+        type: String,
+        enum: ['Pending', 'Approved', 'Declined', 'Error', 'Cancelled'],
+        default: 'Pending',
+        index: true,
     },
     transactionId: {
-      type: String
+        type: String,
     },
     authorizationCode: {
-      type: String
+        type: String,
     },
     terminalResponse: {
-      type: import_mongoose.Schema.Types.Mixed
+        type: mongoose_1.Schema.Types.Mixed,
     },
     errorMessage: {
-      type: String
+        type: String,
     },
     processedAt: {
-      type: Date
-    }
-  },
-  {
+        type: Date,
+    },
+}, {
     timestamps: true,
-    autoCreate: false,
-    // Prevent automatic collection creation - only create when data is inserted
+    autoCreate: false, // Prevent automatic collection creation - only create when data is inserted
     toJSON: {
-      transform: function(doc, ret) {
-        ret.id = ret._id;
-        delete ret._id;
-        delete ret.__v;
-        return ret;
-      }
-    }
-  }
-);
-paymentSchema.index({ invoiceId: 1, storeId: 1 });
-paymentSchema.index({ status: 1, createdAt: -1 });
-paymentSchema.index({ transactionId: 1 });
-paymentSchema.index({ merchantId: 1, terminalId: 1 });
-paymentSchema.index({ merchantId: 1, status: 1 });
-const Payment = import_mongoose.default.model("Payment", paymentSchema);
-// Annotate the CommonJS export names for ESM import in node:
-0 && (module.exports = {
-  Payment
+        transform: function (doc, ret) {
+            ret.id = ret._id;
+            delete ret._id;
+            delete ret.__v;
+            return ret;
+        },
+    },
 });
+// CRITICAL INDEXES for performance
+paymentSchema.index({ storeId: 1, invoiceId: 1 });
+paymentSchema.index({ storeId: 1, status: 1, createdAt: -1 });
+paymentSchema.index({ storeId: 1, transactionId: 1 });
+paymentSchema.index({ storeId: 1, merchantId: 1, terminalId: 1 });
+paymentSchema.index({ storeId: 1, merchantId: 1, status: 1 });
+exports.Payment = mongoose_1.default.model('Payment', paymentSchema);

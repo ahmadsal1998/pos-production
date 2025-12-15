@@ -34,31 +34,48 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
 const mongoose_1 = __importStar(require("mongoose"));
-// OTP Schema
-const otpSchema = new mongoose_1.Schema({
-    email: {
+const warehouseSchema = new mongoose_1.Schema({
+    storeId: {
         type: String,
-        required: [true, 'Email is required'],
+        required: [true, 'Store ID is required'],
         trim: true,
         lowercase: true,
-        index: true,
+        // Index is created via compound indexes below
     },
-    code: {
+    name: {
         type: String,
-        required: [true, 'OTP code is required'],
-        length: 6,
+        required: [true, 'Warehouse name is required'],
+        trim: true,
     },
-    expiresAt: {
-        type: Date,
-        required: true,
-        index: { expireAfterSeconds: 0 }, // MongoDB TTL index to auto-delete expired documents
+    description: {
+        type: String,
+        trim: true,
+    },
+    address: {
+        type: String,
+        trim: true,
+    },
+    status: {
+        type: String,
+        enum: ['Active', 'Inactive'],
+        default: 'Active',
     },
 }, {
     timestamps: true,
-    autoCreate: false, // Prevent automatic collection creation - only create when data is inserted
+    toJSON: {
+        transform: (_doc, ret) => {
+            ret.id = ret._id;
+            delete ret._id;
+            delete ret.__v;
+            return ret;
+        },
+    },
 });
-// Index to ensure one active OTP per email
-otpSchema.index({ email: 1, expiresAt: 1 });
-// Create model
-const OTP = mongoose_1.default.model('OTP', otpSchema);
-exports.default = OTP;
+// CRITICAL INDEXES for performance
+// Unique warehouse name per store
+warehouseSchema.index({ storeId: 1, name: 1 }, { unique: true });
+// List warehouses by store
+warehouseSchema.index({ storeId: 1, status: 1 });
+warehouseSchema.index({ storeId: 1, createdAt: -1 });
+const Warehouse = mongoose_1.default.model('Warehouse', warehouseSchema);
+exports.default = Warehouse;
