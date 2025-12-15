@@ -67,3 +67,28 @@ export * from './salesStorage';
 
 // Export settings storage utilities
 export * from './settingsStorage';
+
+// Export sound utilities
+export * from './soundUtils';
+
+/**
+ * Converts Arabic numerals (٠-٩) to English numerals (0-9)
+ * @param text - The text containing Arabic numerals
+ * @returns The text with Arabic numerals converted to English
+ */
+export const convertArabicToEnglishNumerals = (text: string): string => {
+  const arabicToEnglish: { [key: string]: string } = {
+    '٠': '0',
+    '١': '1',
+    '٢': '2',
+    '٣': '3',
+    '٤': '4',
+    '٥': '5',
+    '٦': '6',
+    '٧': '7',
+    '٨': '8',
+    '٩': '9',
+  };
+  
+  return text.replace(/[٠-٩]/g, (char) => arabicToEnglish[char] || char);
+};

@@ -8,6 +8,8 @@ import { customersApi, productsApi, salesApi, ApiError } from '@/lib/api/client'
 import { useCurrency } from '@/shared/contexts/CurrencyContext';
 import { saveSale } from '@/shared/utils/salesStorage';
 import { loadSettings } from '@/shared/utils/settingsStorage';
+import { playBeepSound, preloadBeepSound } from '@/shared/utils/soundUtils';
+import { convertArabicToEnglishNumerals } from '@/shared/utils';
 import { useAuthStore } from '@/app/store';
 import { printReceipt } from '@/shared/utils/printUtils';
 import { productSync } from '@/lib/sync/productSync';
@@ -92,6 +94,7 @@ const POSPage: React.FC = () => {
     const isMountedRef = useRef(true); // Track if component is mounted
     const isProductSyncInProgressRef = useRef(false); // Prevent multiple simultaneous product syncs
     const lastProductSyncAttemptRef = useRef<number>(0); // Track last sync attempt time
+    const posContainerRef = useRef<HTMLDivElement>(null); // Ref for the main POS container
     const [currentInvoice, setCurrentInvoice] = useState<POSInvoice>(() => generateNewInvoice(currentUserName, 'INV-1'));
     const [heldInvoices, setHeldInvoices] = useState<POSInvoice[]>([]);
     const [searchTerm, setSearchTerm] = useState('');
@@ -193,6 +196,97 @@ const POSPage: React.FC = () => {
         const newTotals = calculateTotals(currentInvoice.items, currentInvoice.invoiceDiscount);
         setCurrentInvoice(inv => ({ ...inv, ...newTotals }));
     }, [currentInvoice.items, currentInvoice.invoiceDiscount, calculateTotals]);
+
+    // Convert Arabic numerals to English in the POS interface
+    useEffect(() => {
+        if (!posContainerRef.current) return;
+
+        let isConverting = false; // Flag to prevent infinite loops
+
+        const convertNumeralsInNode = (node: Node): void => {
+            if (isConverting) return; // Prevent recursive calls
+            
+            if (node.nodeType === Node.TEXT_NODE) {
+                const textNode = node as Text;
+                const originalText = textNode.textContent || '';
+                // Check if text contains Arabic numerals
+                if (/[٠-٩]/.test(originalText)) {
+                    isConverting = true;
+                    const convertedText = convertArabicToEnglishNumerals(originalText);
+                    if (originalText !== convertedText) {
+                        textNode.textContent = convertedText;
+                    }
+                    isConverting = false;
+                }
+            } else if (node.nodeType === Node.ELEMENT_NODE) {
+                const element = node as Element;
+                // Skip input elements to avoid interfering with user input
+                if (element.tagName === 'INPUT' || element.tagName === 'TEXTAREA') {
+                    return;
+                }
+                // Recursively process child nodes
+                Array.from(element.childNodes).forEach(convertNumeralsInNode);
+            }
+        };
+
+        const convertNumeralsInContainer = (): void => {
+            if (posContainerRef.current && !isConverting) {
+                isConverting = true;
+                convertNumeralsInNode(posContainerRef.current);
+                isConverting = false;
+            }
+        };
+
+        // Initial conversion after a short delay to ensure DOM is ready
+        const timeoutId = setTimeout(convertNumeralsInContainer, 100);
+
+        // Set up MutationObserver to watch for DOM changes
+        const observer = new MutationObserver((mutations) => {
+            if (isConverting) return; // Skip if already converting
+            
+            // Use requestAnimationFrame to batch conversions and avoid performance issues
+            requestAnimationFrame(() => {
+                mutations.forEach((mutation) => {
+                    if (mutation.type === 'childList') {
+                        mutation.addedNodes.forEach((node) => {
+                            if (posContainerRef.current && posContainerRef.current.contains(node)) {
+                                convertNumeralsInNode(node);
+                            }
+                        });
+                    } else if (mutation.type === 'characterData') {
+                        // Handle text content changes
+                        const textNode = mutation.target as Text;
+                        // Only convert if the text node is within our container
+                        if (posContainerRef.current && posContainerRef.current.contains(textNode)) {
+                            const originalText = textNode.textContent || '';
+                            // Check if text contains Arabic numerals before converting
+                            if (/[٠-٩]/.test(originalText)) {
+                                isConverting = true;
+                                const convertedText = convertArabicToEnglishNumerals(originalText);
+                                if (originalText !== convertedText) {
+                                    textNode.textContent = convertedText;
+                                }
+                                isConverting = false;
+                            }
+                        }
+                    }
+                });
+            });
+        });
+
+        if (posContainerRef.current) {
+            observer.observe(posContainerRef.current, {
+                childList: true,
+                subtree: true,
+                characterData: true,
+            });
+        }
+
+        return () => {
+            clearTimeout(timeoutId);
+            observer.disconnect();
+        };
+    }, []);
     
     // Fetch next invoice number from API
     const fetchNextInvoiceNumber = useCallback(async (): Promise<string> => {
@@ -230,6 +324,11 @@ const POSPage: React.FC = () => {
         initializeSalesSync();
     }, []);
 
+    // Preload beep sound on mount for instant playback
+    useEffect(() => {
+        preloadBeepSound();
+    }, []);
+
     // Set mounted ref to false on unmount
     useEffect(() => {
         isMountedRef.current = true;
@@ -240,12 +339,20 @@ const POSPage: React.FC = () => {
 
     // Fetch customers from API and sync to IndexedDB
     const fetchCustomers = useCallback(async () => {
+        if (!isMountedRef.current) {
+            return;
+        }
+        
         setIsLoadingCustomers(true);
         try {
-            console.log('[POS] Starting to fetch customers...');
+            console.log('[POS] Starting to fetch customers from server...');
             
             // Sync customers from server (this handles IndexedDB storage)
             const syncResult = await customerSync.syncCustomers({ forceRefresh: true });
+            
+            if (!isMountedRef.current) {
+                return;
+            }
             
             if (syncResult.success && syncResult.customers) {
                 // Transform backend data to frontend Customer format and filter out dummy customers
@@ -278,6 +385,10 @@ const POSPage: React.FC = () => {
                 setCustomersLoaded(true);
             }
         } catch (err: any) {
+            if (!isMountedRef.current) {
+                return;
+            }
+            
             const apiError = err as ApiError;
             console.error('[POS] Error fetching customers:', apiError);
             console.error('[POS] Error details:', {
@@ -291,12 +402,20 @@ const POSPage: React.FC = () => {
             setCustomers([]);
             setCustomersLoaded(true);
         } finally {
-            setIsLoadingCustomers(false);
+            if (isMountedRef.current) {
+                setIsLoadingCustomers(false);
+            }
         }
     }, []);
 
     // Load customers from IndexedDB on mount
     const loadCustomersFromDB = useCallback(async () => {
+        if (isLoadingCustomersRef.current) {
+            console.log('[POS] Customer load already in progress, skipping...');
+            return;
+        }
+        
+        isLoadingCustomersRef.current = true;
         setIsLoadingCustomers(true);
         try {
             console.log('[POS] Loading customers from IndexedDB...');
@@ -318,40 +437,46 @@ const POSPage: React.FC = () => {
                     }))
                     .filter((customer: Customer) => !isDummyCustomer(customer));
                 
-                setAllCustomers(transformedCustomers);
-                setCustomers(transformedCustomers);
-                setCustomersLoaded(true);
-                console.log(`[POS] Loaded ${transformedCustomers.length} customers from IndexedDB`);
+                if (isMountedRef.current) {
+                    setAllCustomers(transformedCustomers);
+                    setCustomers(transformedCustomers);
+                    setCustomersLoaded(true);
+                    console.log(`[POS] Loaded ${transformedCustomers.length} customers from IndexedDB`);
+                }
             } else {
-                // No customers in IndexedDB - empty list is valid, but try to sync from server
+                // No customers in IndexedDB - try to sync from server
                 console.log('[POS] No customers in IndexedDB, syncing from server...');
-                // Set empty state first to prevent infinite loading
-                setAllCustomers([]);
-                setCustomers([]);
-                setCustomersLoaded(true);
-                // Try to sync from server (non-blocking)
+                // Don't set customersLoaded yet - wait for fetchCustomers to complete
+                // Try to sync from server
                 try {
                     await fetchCustomers();
                 } catch (syncError) {
-                    console.warn('[POS] Failed to sync customers from server, continuing with empty list:', syncError);
-                    // Already set customersLoaded to true above, so POS can continue
+                    console.warn('[POS] Failed to sync customers from server:', syncError);
+                    // Only set customersLoaded to true if fetchCustomers didn't already set it
+                    if (isMountedRef.current) {
+                        setAllCustomers([]);
+                        setCustomers([]);
+                        setCustomersLoaded(true); // Mark as loaded even if empty to prevent infinite loading
+                    }
                 }
             }
         } catch (error) {
             console.error('[POS] Error loading customers from IndexedDB:', error);
-            // Even on error, mark as loaded to prevent infinite loading
-            setAllCustomers([]);
-            setCustomers([]);
-            setCustomersLoaded(true);
-            // Try to sync from server (non-blocking)
+            // Try to sync from server as fallback
             try {
                 await fetchCustomers();
             } catch (syncError) {
                 console.warn('[POS] Failed to sync customers from server after IndexedDB error:', syncError);
-                // Already set customersLoaded to true above, so POS can continue
+                // Only set customersLoaded to true if fetchCustomers didn't already set it
+                if (isMountedRef.current) {
+                    setAllCustomers([]);
+                    setCustomers([]);
+                    setCustomersLoaded(true); // Mark as loaded even if empty to prevent infinite loading
+                }
             }
         } finally {
             setIsLoadingCustomers(false);
+            isLoadingCustomersRef.current = false;
         }
     }, [fetchCustomers]);
 
@@ -730,29 +855,55 @@ const POSPage: React.FC = () => {
         // No need to call it again here to avoid duplicate sync attempts
         
         // Sync customers in background (only if needed - customerSync handles this internally)
+        // Only sync if customersLoaded is false (meaning initial load didn't find customers)
         const timer = setTimeout(() => {
-            customerSync.syncCustomers({ forceRefresh: false }).then((result) => {
-                if (isMountedRef.current && result.success && result.customers) {
-                    const transformedCustomers: Customer[] = result.customers
-                        .map((customer: any) => ({
-                            id: customer.id,
-                            name: customer.name || customer.phone,
-                            phone: customer.phone,
-                            address: customer.address,
-                            previousBalance: customer.previousBalance || 0,
-                        }))
-                        .filter((customer: Customer) => !isDummyCustomer(customer));
-                    try {
-                        setAllCustomers(transformedCustomers);
-                        setCustomers(transformedCustomers);
-                        setCustomersLoaded(true);
-                    } catch (error) {
-                        // Silently handle if component unmounted
-                        console.debug('[POS] State update skipped (component unmounted)');
+            // Check if customers are already loaded before syncing
+            if (!customersLoaded || allCustomers.length === 0) {
+                customerSync.syncCustomers({ forceRefresh: true }).then((result) => {
+                    if (!isMountedRef.current) {
+                        return;
                     }
-                }
-            });
-        }, 500); // Small delay to let IndexedDB load first
+                    
+                    if (result.success && result.customers) {
+                        const transformedCustomers: Customer[] = result.customers
+                            .map((customer: any) => ({
+                                id: customer.id,
+                                name: customer.name || customer.phone,
+                                phone: customer.phone,
+                                address: customer.address,
+                                previousBalance: customer.previousBalance || 0,
+                            }))
+                            .filter((customer: Customer) => !isDummyCustomer(customer));
+                        
+                        if (transformedCustomers.length > 0) {
+                            setAllCustomers(transformedCustomers);
+                            setCustomers(transformedCustomers);
+                            setCustomersLoaded(true);
+                            console.log(`[POS] Background sync loaded ${transformedCustomers.length} customers`);
+                        } else if (!customersLoaded) {
+                            // Only set customersLoaded if it wasn't already set
+                            setAllCustomers([]);
+                            setCustomers([]);
+                            setCustomersLoaded(true);
+                            console.log(`[POS] Background sync: no customers found`);
+                        }
+                    } else if (!customersLoaded) {
+                        // Only set customersLoaded if it wasn't already set
+                        setAllCustomers([]);
+                        setCustomers([]);
+                        setCustomersLoaded(true);
+                        console.log(`[POS] Background sync failed: ${result.error || 'Unknown error'}`);
+                    }
+                }).catch((error) => {
+                    if (isMountedRef.current && !customersLoaded) {
+                        console.error('[POS] Background sync error:', error);
+                        setAllCustomers([]);
+                        setCustomers([]);
+                        setCustomersLoaded(true);
+                    }
+                });
+            }
+        }, 1000); // Small delay to let IndexedDB load first
         
         return () => {
             clearTimeout(timer);
@@ -908,20 +1059,35 @@ const POSPage: React.FC = () => {
                                 console.debug('[POS] State update skipped (component unmounted)');
                             }
                         } else {
-                            // Empty customer list is a valid state - mark as loaded
-                            setAllCustomers([]);
-                            setCustomers([]);
-                            setCustomersLoaded(true);
-                            console.log(`[POS] Loaded 0 customers from IndexedDB for dropdown`);
+                            // Empty IndexedDB - try to sync from server
+                            console.log('[POS] IndexedDB empty, syncing from server for dropdown...');
+                            try {
+                                await fetchCustomers();
+                            } catch (syncError) {
+                                console.warn('[POS] Failed to sync customers from server for dropdown:', syncError);
+                                // Mark as loaded even if sync failed
+                                if (isMountedRef.current) {
+                                    setAllCustomers([]);
+                                    setCustomers([]);
+                                    setCustomersLoaded(true);
+                                    console.log(`[POS] Loaded 0 customers (sync failed)`);
+                                }
+                            }
                         }
                     }
                 } catch (error) {
                     console.error('[POS] Error loading customers from IndexedDB:', error);
-                    // Even on error, mark as loaded to prevent infinite loading
-                    if (isMountedRef.current) {
-                        setCustomersLoaded(true);
-                        setAllCustomers([]);
-                        setCustomers([]);
+                    // Try to sync from server as fallback
+                    try {
+                        await fetchCustomers();
+                    } catch (syncError) {
+                        console.warn('[POS] Failed to sync customers from server after IndexedDB error:', syncError);
+                        // Even on error, mark as loaded to prevent infinite loading
+                        if (isMountedRef.current) {
+                            setCustomersLoaded(true);
+                            setAllCustomers([]);
+                            setCustomers([]);
+                        }
                     }
                 } finally {
                     isLoadingCustomersRef.current = false;
@@ -1564,6 +1730,9 @@ const POSPage: React.FC = () => {
 
         // Check if input is a barcode (numeric only)
         if (isBarcodeInput(trimmedSearchTerm)) {
+            // Play beep sound immediately when barcode is detected
+            playBeepSound();
+            
             // Handle barcode search
             const barcodeResult = await searchProductByBarcode(trimmedSearchTerm);
             
@@ -1578,23 +1747,11 @@ const POSPage: React.FC = () => {
                 );
                 setSearchTerm('');
                 setProductSuggestionsOpen(false);
-                
-                // Optional: Play success sound (uncomment if you want audio feedback)
-                // try {
-                //     const audio = new Audio('/sounds/success.mp3');
-                //     audio.play().catch(() => {}); // Ignore errors
-                // } catch {}
             } else {
                 // Product not found
                 alert('المنتج غير موجود');
                 setSearchTerm('');
                 setProductSuggestionsOpen(false);
-                
-                // Optional: Play error sound (uncomment if you want audio feedback)
-                // try {
-                //     const audio = new Audio('/sounds/error.mp3');
-                //     audio.play().catch(() => {}); // Ignore errors
-                // } catch {}
             }
             return;
         }
@@ -2726,7 +2883,7 @@ const POSPage: React.FC = () => {
     }
     
     return (
-        <div className="relative min-h-screen overflow-hidden">
+        <div ref={posContainerRef} className="relative min-h-screen overflow-hidden">
             {/* Modern Animated Background */}
             <div className="absolute inset-0 bg-gradient-to-br from-slate-50 via-orange-50/20 to-amber-100/30 dark:from-slate-950 dark:via-orange-950/20 dark:to-amber-950/30" />
             <div className="absolute -top-40 -right-40 h-80 w-80 rounded-full bg-gradient-to-br from-orange-400/15 to-amber-400/15 blur-3xl animate-pulse" />
@@ -2793,15 +2950,13 @@ const POSPage: React.FC = () => {
                                                                 console.debug('[POS] State update skipped (component unmounted)');
                                                             }
                                                         } else {
-                                                            // Empty customer list is a valid state - mark as loaded
-                                                            setAllCustomers([]);
-                                                            setCustomers([]);
-                                                            setCustomersLoaded(true);
-                                                            console.log(`[POS] Loaded 0 customers from IndexedDB on focus`);
-                                                            // Try to sync from server (non-blocking)
+                                                            // Empty IndexedDB - try to sync from server
+                                                            console.log(`[POS] IndexedDB empty on focus, syncing from server...`);
                                                             try {
                                                                 const syncResult = await customerSync.syncCustomers({ forceRefresh: true });
-                                                                if (isMountedRef.current && syncResult.success && syncResult.customers) {
+                                                                if (!isMountedRef.current) return;
+                                                                
+                                                                if (syncResult.success && syncResult.customers) {
                                                                     const transformedCustomers: Customer[] = syncResult.customers
                                                                         .map((customer: any) => ({
                                                                             id: customer.id,
@@ -2819,16 +2974,27 @@ const POSPage: React.FC = () => {
                                                                     } catch (error) {
                                                                         console.debug('[POS] State update skipped (component unmounted)');
                                                                     }
-                                                                } else if (isMountedRef.current && syncResult.success && (!syncResult.customers || syncResult.customers.length === 0)) {
+                                                                } else if (syncResult.success && (!syncResult.customers || syncResult.customers.length === 0)) {
                                                                     // Empty list from server is also valid
                                                                     setAllCustomers([]);
                                                                     setCustomers([]);
                                                                     setCustomersLoaded(true);
                                                                     console.log(`[POS] Synced 0 customers on focus (empty list)`);
+                                                                } else {
+                                                                    // Sync failed
+                                                                    setAllCustomers([]);
+                                                                    setCustomers([]);
+                                                                    setCustomersLoaded(true);
+                                                                    console.warn(`[POS] Sync failed on focus: ${syncResult.error || 'Unknown error'}`);
                                                                 }
                                                             } catch (syncError) {
-                                                                console.warn('[POS] Failed to sync customers on focus, continuing with empty list:', syncError);
-                                                                // Already set customersLoaded to true above, so POS can continue
+                                                                console.warn('[POS] Failed to sync customers on focus:', syncError);
+                                                                // Mark as loaded even if sync failed
+                                                                if (isMountedRef.current) {
+                                                                    setAllCustomers([]);
+                                                                    setCustomers([]);
+                                                                    setCustomersLoaded(true);
+                                                                }
                                                             }
                                                         }
                                                     }
@@ -2862,12 +3028,15 @@ const POSPage: React.FC = () => {
                                                 <div className="bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg shadow-2xl max-h-60 overflow-y-auto">
                                                     {isLoadingCustomers ? (
                                                         <div className="p-4 text-center text-sm text-gray-500 dark:text-gray-400">جاري التحميل...</div>
-                                                    ) : customers.length === 0 ? (
-                                                        <div className="p-4 text-center text-sm text-gray-500 dark:text-gray-400">
-                                                            {customerSearchTerm ? 'لا توجد نتائج' : 'لا يوجد عملاء'}
-                                                        </div>
-                                                    ) : (
-                                                        customers.map((customer) => (
+                                                    ) : (() => {
+                                                        // Use allCustomers if customers is empty but allCustomers has data
+                                                        const customersToShow = customers.length > 0 ? customers : (allCustomers.length > 0 ? allCustomers : []);
+                                                        return customersToShow.length === 0 ? (
+                                                            <div className="p-4 text-center text-sm text-gray-500 dark:text-gray-400">
+                                                                {customerSearchTerm ? 'لا توجد نتائج' : 'لا يوجد عملاء'}
+                                                            </div>
+                                                        ) : (
+                                                            customersToShow.map((customer) => (
                                                             <button
                                                                 key={customer.id}
                                                                 type="button"
@@ -2889,8 +3058,9 @@ const POSPage: React.FC = () => {
                                                                     )}
                                                                 </div>
                                                             </button>
-                                                        ))
-                                                    )}
+                                                            ))
+                                                        );
+                                                    })()}
                                                 </div>
                                             </div>
                                         </>
@@ -3005,6 +3175,9 @@ const POSPage: React.FC = () => {
                                             
                                             // If it's a barcode (numeric only), search immediately
                                             if (trimmed && isBarcodeInput(trimmed)) {
+                                                // Play beep sound immediately when barcode is detected
+                                                playBeepSound();
+                                                
                                                 const barcodeResult = await searchProductByBarcode(trimmed);
                                                 
                                                 if (barcodeResult.success && barcodeResult.product) {

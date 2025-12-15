@@ -7,6 +7,8 @@ import CustomDropdown, { DropdownOption } from '@/shared/components/ui/CustomDro
 import { formatDate } from '@/shared/utils';
 import { productsApi, ProductMetrics } from '@/lib/api/client';
 import { useCurrency } from '@/shared/contexts/CurrencyContext';
+import { formatCurrency as formatCurrencyUtil } from '@/shared/utils/currency';
+import { AnimatedNumber } from '@/shared/components/ui/AnimatedNumber';
 import {
   DollarIcon,
   PackageIcon,
@@ -16,9 +18,21 @@ import {
 
 const DashboardPage: React.FC = () => {
   const navigate = useNavigate();
-  const { formatCurrency } = useCurrency();
+  const { formatCurrency, currency } = useCurrency();
   const [productMetrics, setProductMetrics] = useState<ProductMetrics | null>(null);
   const [loadingMetrics, setLoadingMetrics] = useState(true);
+
+  // Custom formatter for Total Product Value card to use English numerals (number only, no currency)
+  const formatCurrencyEnglish = (value: number): string => {
+    // Format with English locale to get English numerals
+    const formatter = new Intl.NumberFormat('en-US', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
+    
+    // Return only the formatted number (currency will be displayed separately)
+    return formatter.format(value);
+  };
 
   useEffect(() => {
     const fetchMetrics = async () => {
@@ -51,6 +65,8 @@ const DashboardPage: React.FC = () => {
         id: 'total-value',
         title: 'إجمالي قيمة المنتجات',
         value: formatCurrency(productMetrics.totalValue),
+        numericValue: productMetrics.totalValue,
+        valueType: 'currency' as const,
         icon: <DollarIcon />,
         bgColor: 'bg-emerald-100 dark:bg-emerald-900/30',
         valueColor: 'text-emerald-600 dark:text-emerald-400',
@@ -59,6 +75,8 @@ const DashboardPage: React.FC = () => {
         id: 'profit-margin',
         title: 'هامش الربح الحقيقي',
         value: `${productMetrics.overallProfitMargin.toFixed(2)}%`,
+        numericValue: productMetrics.overallProfitMargin,
+        valueType: 'percentage' as const,
         icon: <ChartLineIcon />,
         bgColor: 'bg-blue-100 dark:bg-blue-900/30',
         valueColor: 'text-blue-600 dark:text-blue-400',
@@ -67,6 +85,8 @@ const DashboardPage: React.FC = () => {
         id: 'low-stock',
         title: 'منتجات مخزون منخفض',
         value: productMetrics.lowStockCount.toString(),
+        numericValue: productMetrics.lowStockCount,
+        valueType: 'number' as const,
         icon: <PackageIcon />,
         bgColor: 'bg-red-100 dark:bg-red-900/30',
         valueColor: 'text-red-600 dark:text-red-400',
@@ -75,12 +95,14 @@ const DashboardPage: React.FC = () => {
         id: 'total-products',
         title: 'إجمالي المنتجات',
         value: productMetrics.totalProducts.toString(),
+        numericValue: productMetrics.totalProducts,
+        valueType: 'number' as const,
         icon: <ShoppingCartIcon />,
         bgColor: 'bg-purple-100 dark:bg-purple-900/30',
         valueColor: 'text-purple-600 dark:text-purple-400',
       },
     ];
-  }, [productMetrics]);
+  }, [productMetrics, formatCurrency]);
 
   return (
     <div className="relative min-h-screen overflow-hidden">
@@ -167,9 +189,45 @@ const DashboardPage: React.FC = () => {
                         <p className="text-sm font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
                           {metric.title}
                         </p>
-                        <p className={`text-2xl font-bold ${metric.valueColor} transition-all duration-300 group-hover:scale-105`}>
-                          {metric.value}
-                        </p>
+                        {metric.id === 'total-value' ? (
+                          <div className="flex flex-col">
+                            <p className={`text-2xl font-bold ${metric.valueColor} transition-all duration-300 group-hover:scale-105`}>
+                              <AnimatedNumber
+                                value={metric.numericValue}
+                                formatFn={formatCurrencyEnglish}
+                                valueType="currency"
+                                duration={1500}
+                              />
+                            </p>
+                            <p className={`text-sm font-semibold ${metric.valueColor} opacity-80`}>
+                              {currency.code}
+                            </p>
+                          </div>
+                        ) : (
+                          <p className={`text-2xl font-bold ${metric.valueColor} transition-all duration-300 group-hover:scale-105`}>
+                            {metric.valueType === 'currency' ? (
+                              <AnimatedNumber
+                                value={metric.numericValue}
+                                formatFn={formatCurrency}
+                                valueType="currency"
+                                duration={1500}
+                              />
+                            ) : metric.valueType === 'percentage' ? (
+                              <AnimatedNumber
+                                value={metric.numericValue}
+                                valueType="percentage"
+                                decimals={2}
+                                duration={1500}
+                              />
+                            ) : (
+                              <AnimatedNumber
+                                value={metric.numericValue}
+                                valueType="number"
+                                duration={1500}
+                              />
+                            )}
+                          </p>
+                        )}
                         {productMetrics && metric.id === 'profit-margin' && (
                           <div className="flex items-center space-x-2 space-x-reverse">
                             <div className="h-1 w-6 rounded-full bg-gradient-to-r from-blue-400 to-blue-500" />
@@ -289,7 +347,30 @@ const DashboardPage: React.FC = () => {
                         {metric.title}
                       </p>
                       <p className={`text-2xl font-bold ${metric.valueColor} transition-all duration-300 group-hover:scale-105`}>
-                        {metric.value}
+                        {(() => {
+                          // Extract numeric value from string
+                          const numericValue = parseFloat(metric.value.toString().replace(/[^\d.-]/g, '')) || 0;
+                          const isCurrency = /[$€£¥₹]/.test(metric.value.toString()) || metric.value.toString().includes('SAR') || metric.value.toString().includes('ريال');
+                          
+                          if (isCurrency) {
+                            return (
+                              <AnimatedNumber
+                                value={numericValue}
+                                formatFn={formatCurrency}
+                                valueType="currency"
+                                duration={1500}
+                              />
+                            );
+                          } else {
+                            return (
+                              <AnimatedNumber
+                                value={numericValue}
+                                valueType="number"
+                                duration={1500}
+                              />
+                            );
+                          }
+                        })()}
                       </p>
                       <div className="flex items-center space-x-2 space-x-reverse">
                         <div className="h-1 w-6 rounded-full bg-gradient-to-r from-emerald-400 to-emerald-500" />
