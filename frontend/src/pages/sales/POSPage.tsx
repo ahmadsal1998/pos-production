@@ -17,6 +17,7 @@ import { productsDB } from '@/lib/db/productsDB';
 import { customerSync } from '@/lib/sync/customerSync';
 import { customersDB } from '@/lib/db/customersDB';
 import { salesSync } from '@/lib/sync/salesSync';
+import { ProductNotFoundModal } from '@/shared/components/ui/ProductNotFoundModal';
 // PaymentProcessingModal removed - using simple payment flow
 
 // Local POS product type with optional units
@@ -131,6 +132,8 @@ const POSPage: React.FC = () => {
     };
     const [autoPrintEnabled, setAutoPrintEnabled] = useState(() => getAutoPrintSetting());
     const [isAddCustomerModalOpen, setIsAddCustomerModalOpen] = useState(false);
+    const [isProductNotFoundModalOpen, setIsProductNotFoundModalOpen] = useState(false);
+    const [notFoundBarcode, setNotFoundBarcode] = useState<string>('');
     
     // Helper function to get tax rate from settings (synchronous for initial state)
     // This is a regular function (not useCallback) so it can be used in useState initializer
@@ -1926,6 +1929,74 @@ const POSPage: React.FC = () => {
         }
     }, [normalizeProduct, extractUnitInfo]);
 
+    // Handler for Quick Add product from ProductNotFoundModal
+    const handleQuickAddProduct = useCallback(async (barcode: string, costPrice: number, sellingPrice: number) => {
+        try {
+            console.log('[POS] Quick adding product:', { barcode, costPrice, sellingPrice });
+
+            // Create product permanently in store database
+            const productData = {
+                name: `منتج ${barcode}`, // Default name using barcode
+                barcode: barcode.trim(),
+                costPrice: costPrice,
+                price: sellingPrice,
+                stock: 0, // Start with 0 stock
+                status: 'active',
+            };
+
+            const response = await productsApi.createProduct(productData);
+
+            // Check response structure: response.data.data.product or response.data.product
+            const createdProduct = (response.data as any)?.data?.product || (response.data as any)?.product;
+
+            if (response.success && createdProduct) {
+                console.log('[POS] Product created successfully:', createdProduct);
+
+                // Normalize the product
+                const normalizedProduct = normalizeProduct(createdProduct);
+
+                // Store in IndexedDB for future instant lookups
+                try {
+                    await productsDB.storeProduct(createdProduct);
+                    productsDB.notifyOtherTabs();
+                    console.log('[POS] Stored quick-added product in IndexedDB');
+                } catch (error) {
+                    console.error('[POS] Error storing product in IndexedDB:', error);
+                }
+
+                // Update products state
+                setProducts(prevProducts => {
+                    const updated = prevProducts.filter(p => {
+                        const matchesById = String(p.id) === String(normalizedProduct.id);
+                        const matchesByOriginalId = normalizedProduct.originalId && 
+                            String(p.originalId) === String(normalizedProduct.originalId);
+                        return !matchesById && !matchesByOriginalId;
+                    });
+                    updated.push(normalizedProduct);
+                    return updated;
+                });
+
+                // Add product to cart immediately
+                const { unitName, unitPrice, conversionFactor, piecesPerUnit } = extractUnitInfo(normalizedProduct, null);
+                await handleAddProduct(
+                    normalizedProduct,
+                    unitName || 'قطعة',
+                    unitPrice,
+                    conversionFactor,
+                    piecesPerUnit
+                );
+
+                console.log('[POS] Quick-added product added to cart successfully');
+            } else {
+                throw new Error((response as any).message || 'Failed to create product');
+            }
+        } catch (error: any) {
+            console.error('[POS] Error in quick add product:', error);
+            const errorMessage = error.response?.data?.message || error.message || 'فشل إضافة المنتج';
+            throw new Error(errorMessage);
+        }
+    }, [normalizeProduct, extractUnitInfo, handleAddProduct]);
+
     // Queue processor for barcodes - ensures sequential processing
     const processBarcodeQueue = useCallback(async () => {
         // If already processing, don't start another process
@@ -1962,8 +2033,9 @@ const POSPage: React.FC = () => {
                     setSearchTerm('');
                     setProductSuggestionsOpen(false);
                 } else {
-                    // Product not found
-                    alert('المنتج غير موجود');
+                    // Product not found - show modal
+                    setNotFoundBarcode(barcode);
+                    setIsProductNotFoundModalOpen(true);
                     setSearchTerm('');
                     setProductSuggestionsOpen(false);
                 }
@@ -3764,6 +3836,15 @@ const POSPage: React.FC = () => {
                         throw err; // Re-throw to let modal handle it
                     }
                 }}
+            />
+            <ProductNotFoundModal
+                isOpen={isProductNotFoundModalOpen}
+                barcode={notFoundBarcode}
+                onClose={() => {
+                    setIsProductNotFoundModalOpen(false);
+                    setNotFoundBarcode('');
+                }}
+                onQuickAdd={handleQuickAddProduct}
             />
         </div>
     );
