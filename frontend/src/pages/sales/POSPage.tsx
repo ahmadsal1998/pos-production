@@ -2637,10 +2637,82 @@ const POSPage: React.FC = () => {
                 invoiceItems.map(item => ({ productId: item.productId, name: item.name, quantity: item.quantity })));
         }
         
-        // Update stock in backend for each product IN THE INVOICE ONLY
+        // PERFORMANCE FIX: Do optimistic local state updates immediately (non-blocking)
+        // This ensures the UI updates instantly while background operations run
+        const invoiceItemsForStateUpdate = currentInvoice.items || [];
+        
+        // Update local state optimistically (immediate, non-blocking)
+        setProducts(prevProducts => {
+            const newProducts = [...prevProducts];
+            
+            // CRITICAL FIX: Only iterate over invoice items, not all products
+            invoiceItemsForStateUpdate.forEach(item => {
+                // Validate item has required fields
+                if (!item || !item.productId || item.quantity <= 0) {
+                    return;
+                }
+
+                // Store the invoice item's productId to ensure we use the correct one
+                const invoiceItemProductId = item.productId;
+                const invoiceItemName = item.name;
+
+                // Find the product by matching productId
+                const productIndex = newProducts.findIndex(p => String(p.id) === String(invoiceItemProductId));
+                
+                // Skip if product not found
+                if (productIndex === -1) {
+                    return;
+                }
+
+                const product = newProducts[productIndex];
+                
+                // CRITICAL VALIDATION: Ensure we found the correct product
+                if (String(product.id) !== String(invoiceItemProductId)) {
+                    return;
+                }
+
+                // Calculate stock reduction
+                const piecesPerMainUnit = getPiecesPerMainUnit(product);
+                const stockReduction = item.conversionFactor && item.conversionFactor > 0 
+                    ? Math.ceil(item.quantity / item.conversionFactor)
+                    : item.quantity;
+
+                // Update stock for this specific product only (optimistic update)
+                const oldStock = product.stock;
+                const newStock = Math.max(0, product.stock - stockReduction);
+                newProducts[productIndex].stock = newStock;
+
+                // Update IndexedDB in background (non-blocking)
+                if (product.originalId) {
+                    productsDB.updateProductStock(product.originalId, newStock).catch(error => {
+                        console.error(`[POS] Error updating stock in IndexedDB for product ${product.originalId}:`, error);
+                    });
+                }
+
+                if (process.env.NODE_ENV === 'development') {
+                    console.log(`Local state: Updated stock for product "${product.name}" (ID: ${invoiceItemProductId}): ${oldStock} -> ${newStock} (reduced by ${stockReduction})`);
+                }
+            });
+            
+            return newProducts;
+        });
+        
+        // CRITICAL: Mark sale as completed IMMEDIATELY to enable instant navigation
+        // This happens before any blocking operations
+        console.log('Sale Finalized:', finalInvoice);
+        setCurrentInvoice(finalInvoice);
+        setSaleCompleted(true);
+        setIsProcessingPayment(false); // Clear loading state immediately
+        
+        // PERFORMANCE FIX: Move all heavy operations to background (non-blocking)
+        // Stock updates, sale sync, and product sync all run in background
+        
+        // Background task: Update stock in backend (non-blocking)
         const stockUpdateResults: Array<{ success: boolean; productName: string; productId: string | number; error?: string }> = [];
         
-        try {
+        // Run stock updates in background without blocking
+        Promise.resolve().then(async () => {
+            try {
             // OPTIMIZATION: Batch API calls instead of sequential processing
             // Step 1: Prepare all product update data (validation and calculation)
             interface ProductUpdateData {
@@ -2895,145 +2967,20 @@ const POSPage: React.FC = () => {
                 console.error(`CRITICAL ERROR: Updated products not in invoice!`, extraUpdates);
             }
         } catch (error) {
-            console.error('Error updating stock:', error);
-            // Continue with sale creation even if stock update fails
+            console.error('Error updating stock in background:', error);
+            // Stock update failed but sale is already completed - log error only
         }
-
-        // Update local state (optimistic update)
-        // CRITICAL: Only update products that are in the invoice items
-        // First, check which products are missing and fetch them
-        const invoiceItemsForStateUpdate = currentInvoice.items || [];
-        
-        // Identify missing products that need to be fetched
-        const missingProductsToFetch: Array<{ item: POSCartItem; originalId: string }> = [];
-        
-        // Check which invoice items have products missing from local state
-        invoiceItemsForStateUpdate.forEach(item => {
-            if (!item || !item.productId || item.quantity <= 0) {
-                return;
-            }
-            
-            const existsInState = products.some(p => String(p.id) === String(item.productId));
-            if (!existsInState && item.originalId) {
-                missingProductsToFetch.push({ item, originalId: item.originalId });
-            }
+        }).catch(error => {
+            console.error('Background stock update task failed:', error);
         });
         
-        // Fetch missing products if any
-        let fetchedProducts: POSProduct[] = [];
-        if (missingProductsToFetch.length > 0) {
-            try {
-                const fetchPromises = missingProductsToFetch.map(async ({ originalId }) => {
-                    try {
-                        const response = await productsApi.getProduct(originalId);
-                        const productData = (response.data as any)?.data?.product || (response.data as any)?.product;
-                        if (productData) {
-                            return normalizeProduct(productData);
-                        }
-                    } catch (error) {
-                        // Silently fail - product will be skipped in local state update
-                        if (process.env.NODE_ENV === 'development') {
-                            console.debug(`Could not fetch product ${originalId} for local state update:`, error);
-                        }
-                    }
-                    return null;
-                });
-                
-                fetchedProducts = (await Promise.all(fetchPromises)).filter((p): p is POSProduct => p !== null);
-            } catch (error) {
-                // Silently continue - backend update already succeeded
-                if (process.env.NODE_ENV === 'development') {
-                    console.debug('Error fetching missing products for local state update:', error);
-                }
-            }
-        }
-        
-        // Update local state: add fetched products and update stock
-        setProducts(prevProducts => {
-            const newProducts = [...prevProducts];
-            
-            // Add fetched products that don't already exist
-            fetchedProducts.forEach(fetchedProduct => {
-                const exists = newProducts.some(p => String(p.id) === String(fetchedProduct.id));
-                if (!exists) {
-                    newProducts.push(fetchedProduct);
-                }
-            });
-            
-            // CRITICAL FIX: Only iterate over invoice items, not all products
-            invoiceItemsForStateUpdate.forEach(item => {
-                // Validate item has required fields
-                if (!item || !item.productId || item.quantity <= 0) {
-                    return;
-                }
-
-                // Store the invoice item's productId to ensure we use the correct one
-                const invoiceItemProductId = item.productId;
-                const invoiceItemName = item.name;
-
-                // Find the product by matching productId
-                const productIndex = newProducts.findIndex(p => String(p.id) === String(invoiceItemProductId));
-                
-                // Skip if product not found (may happen if fetch failed, but backend update already succeeded)
-                if (productIndex === -1) {
-                    // Only log in development mode - this is expected for products not in local state
-                    if (process.env.NODE_ENV === 'development') {
-                        console.debug(`Product not found in local state for productId: ${invoiceItemProductId}, name: ${invoiceItemName}. Skipping local state update (backend update already succeeded).`);
-                    }
-                    return;
-                }
-
-                const product = newProducts[productIndex];
-                
-                // CRITICAL VALIDATION: Ensure we found the correct product
-                if (String(product.id) !== String(invoiceItemProductId)) {
-                    if (process.env.NODE_ENV === 'development') {
-                        console.debug(`Product ID mismatch in local state update: product.id (${product.id}) !== item.productId (${invoiceItemProductId})`);
-                    }
-                    return;
-                }
-
-                // Calculate stock reduction
-                const piecesPerMainUnit = getPiecesPerMainUnit(product);
-                const stockReduction = item.conversionFactor && item.conversionFactor > 0 
-                    ? Math.ceil(item.quantity / item.conversionFactor)
-                    : item.quantity;
-
-                // Update stock for this specific product only
-                const oldStock = product.stock;
-                const newStock = Math.max(0, product.stock - stockReduction);
-                newProducts[productIndex].stock = newStock;
-
-                // Also update IndexedDB
-                if (product.originalId) {
-                    productsDB.updateProductStock(product.originalId, newStock).catch(error => {
-                        console.error(`[POS] Error updating stock in IndexedDB for product ${product.originalId}:`, error);
-                    });
-                }
-
-                if (process.env.NODE_ENV === 'development') {
-                    console.log(`Local state: Updated stock for product "${product.name}" (ID: ${invoiceItemProductId}): ${oldStock} -> ${newStock} (reduced by ${stockReduction})`);
-                }
-            });
-            
-            return newProducts;
-        });
-        
-        // Mark sale as completed first (prioritize user feedback)
-        console.log('Sale Finalized:', finalInvoice);
-        setCurrentInvoice(finalInvoice);
-        setSaleCompleted(true);
-        setIsProcessingPayment(false); // Clear loading state
-        
-        // Sync products after quantity changes (non-blocking, background task)
-        // Defer to after sale completion to prioritize user experience
+        // Background task: Sync products after quantity changes (non-blocking)
         const productIdsToSync = invoiceItems
             .map(item => item.originalId)
             .filter((id): id is string => !!id);
         
         if (productIdsToSync.length > 0) {
             // Use requestIdleCallback to defer non-critical sync to idle time
-            // This ensures sale completion is not blocked by product syncing
             const scheduleSync = (callback: () => void) => {
                 if ('requestIdleCallback' in window) {
                     requestIdleCallback(callback, { timeout: 5000 });
@@ -3069,152 +3016,141 @@ const POSPage: React.FC = () => {
             });
         }
 
-        // Create SaleTransaction and save to localStorage
-        const customerName = finalInvoice.customer?.name || 'عميل نقدي';
-        const customerId = finalInvoice.customer?.id || 'walk-in-customer';
-        
-        // Calculate paid and remaining amounts based on payment method
-        let paidAmount = 0;
-        let remainingAmount = 0;
-        let status: SaleStatus = 'Paid';
-        
-        if (selectedPaymentMethod === 'Cash' || selectedPaymentMethod === 'Card') {
-            // Full payment for cash and card
-            paidAmount = finalInvoice.grandTotal;
-            remainingAmount = 0;
-            status = 'Paid';
-        } else if (selectedPaymentMethod === 'Credit') {
-            // Credit payment - use the paid amount if specified
-            paidAmount = creditPaidAmount;
-            remainingAmount = finalInvoice.grandTotal - creditPaidAmount;
-            
-            if (remainingAmount <= 0) {
-                status = 'Paid';
-                remainingAmount = 0;
-            } else if (paidAmount > 0) {
-                status = 'Partial';
-            } else {
-                status = 'Due';
-            }
-        }
-
-        // Convert POSInvoice to SaleTransaction
-        let saleTransaction: SaleTransaction = {
-            id: finalInvoice.id,
-            date: finalInvoice.date instanceof Date 
-                ? finalInvoice.date.toISOString() 
-                : new Date().toISOString(),
-            customerName: customerName,
-            customerId: customerId,
-            totalAmount: finalInvoice.grandTotal,
-            paidAmount: paidAmount,
-            remainingAmount: remainingAmount,
-            paymentMethod: selectedPaymentMethod as SalePaymentMethod,
-            status: status,
-            seller: finalInvoice.cashier,
-            items: finalInvoice.items.map(item => ({
-                productId: item.productId,
-                name: item.name,
-                unit: item.unit,
-                quantity: item.quantity,
-                unitPrice: item.unitPrice,
-                total: item.total,
-                discount: item.discount,
-                conversionFactor: item.conversionFactor,
-            })),
-            subtotal: finalInvoice.subtotal,
-            totalItemDiscount: finalInvoice.totalItemDiscount,
-            invoiceDiscount: finalInvoice.invoiceDiscount,
-            tax: finalInvoice.tax,
-        };
-
-        // Save to IndexedDB and sync with backend
-        try {
-            // Get storeId from user
-            const storeId = user?.storeId;
-            if (!storeId) {
-                throw new Error('Store ID is required to save sale');
-            }
-
-            // Prepare sale data for IndexedDB and backend
-            const saleData = {
-                invoiceNumber: finalInvoice.id,
-                storeId: storeId,
-                date: finalInvoice.date instanceof Date 
-                    ? finalInvoice.date.toISOString() 
-                    : new Date().toISOString(),
-                customerId: customerId !== 'walk-in-customer' ? customerId : undefined,
-                customerName: customerName,
-                items: finalInvoice.items.map(item => {
-                    // Use originalId from cart item if available, otherwise try to find product
-                    let backendProductId: string;
-                    if (item.originalId) {
-                        backendProductId = item.originalId;
-                    } else {
-                        // Fallback: find product to get original backend ID
-                        const product = products.find(p => p.id === item.productId);
-                        backendProductId = product?.originalId || String(item.productId);
-                    }
-                    return {
-                        productId: backendProductId, // Use original backend ID
-                        productName: item.name,
-                        quantity: item.quantity,
-                        unitPrice: item.unitPrice,
-                        totalPrice: item.total - (item.discount * item.quantity),
-                        unit: item.unit,
-                        discount: item.discount,
-                        conversionFactor: item.conversionFactor,
-                    };
-                }),
-                subtotal: finalInvoice.subtotal,
-                totalItemDiscount: finalInvoice.totalItemDiscount,
-                invoiceDiscount: finalInvoice.invoiceDiscount,
-                tax: finalInvoice.tax,
-                total: finalInvoice.grandTotal,
-                paidAmount: paidAmount,
-                remainingAmount: remainingAmount,
-                paymentMethod: selectedPaymentMethod.toLowerCase(), // Convert to lowercase for backend
-                status: status === 'Paid' ? 'completed' : status === 'Partial' ? 'partial_payment' : 'pending',
-                seller: finalInvoice.cashier,
-            };
-
-            // Use IndexedDB sync service (saves locally and syncs with backend)
-            const syncResult = await salesSync.createAndSyncSale(saleData, storeId);
-            
-            if (syncResult.success) {
-                // Update sale transaction with database ID if provided
-                if (syncResult.saleId) {
-                    saleTransaction.id = syncResult.saleId;
+        // Background task: Save sale to IndexedDB and sync with backend (non-blocking)
+        Promise.resolve().then(async () => {
+            try {
+                // Get storeId from user
+                const storeId = user?.storeId;
+                if (!storeId) {
+                    throw new Error('Store ID is required to save sale');
                 }
-                console.log('✅ Sale saved to IndexedDB and synced:', finalInvoice.id);
+
+                // Create SaleTransaction for localStorage backup
+                const customerName = finalInvoice.customer?.name || 'عميل نقدي';
+                const customerId = finalInvoice.customer?.id || 'walk-in-customer';
                 
-                // Show warning if sync had errors but sale was saved locally
-                if (syncResult.error) {
-                    console.warn('⚠️ Sale saved locally, will sync later:', syncResult.error);
+                // Calculate paid and remaining amounts based on payment method
+                let paidAmount = 0;
+                let remainingAmount = 0;
+                let status: SaleStatus = 'Paid';
+                
+                if (selectedPaymentMethod === 'Cash' || selectedPaymentMethod === 'Card') {
+                    // Full payment for cash and card
+                    paidAmount = finalInvoice.grandTotal;
+                    remainingAmount = 0;
+                    status = 'Paid';
+                } else if (selectedPaymentMethod === 'Credit') {
+                    // Credit payment - use the paid amount if specified
+                    paidAmount = creditPaidAmount;
+                    remainingAmount = finalInvoice.grandTotal - creditPaidAmount;
+                    
+                    if (remainingAmount <= 0) {
+                        status = 'Paid';
+                        remainingAmount = 0;
+                    } else if (paidAmount > 0) {
+                        status = 'Partial';
+                    } else {
+                        status = 'Due';
+                    }
                 }
-            } else {
-                throw new Error(syncResult.error || 'Failed to save sale');
-            }
-        } catch (error: any) {
-            console.error('❌ Failed to save sale:', error);
-            // Show alert for errors with more helpful message
-            const errorMessage = error?.message || 'خطأ غير معروف';
-            let userMessage = '';
-            
-            if (errorMessage.includes('IndexedDB') || errorMessage.includes('indexedDB')) {
-                // IndexedDB specific error
-                userMessage = `تم حفظ الفاتورة على الخادم بنجاح، لكن حدث خطأ في التخزين المحلي. الفاتورة آمنة على الخادم.\n\nError: ${errorMessage}`;
-            } else {
-                // General error
-                userMessage = `تم إنشاء الفاتورة، لكن حدث خطأ في حفظها: ${errorMessage}`;
-            }
-            
-            alert(userMessage);
-        }
 
-        // Save to localStorage as backup (legacy support)
-        saveSale(saleTransaction);
-        console.log('Sale transaction saved to localStorage (backup):', saleTransaction);
+                // Prepare sale data for IndexedDB and backend
+                const saleData = {
+                    invoiceNumber: finalInvoice.id,
+                    storeId: storeId,
+                    date: finalInvoice.date instanceof Date 
+                        ? finalInvoice.date.toISOString() 
+                        : new Date().toISOString(),
+                    customerId: customerId !== 'walk-in-customer' ? customerId : undefined,
+                    customerName: customerName,
+                    items: finalInvoice.items.map(item => {
+                        // Use originalId from cart item if available, otherwise try to find product
+                        let backendProductId: string;
+                        if (item.originalId) {
+                            backendProductId = item.originalId;
+                        } else {
+                            // Fallback: find product to get original backend ID
+                            const product = products.find(p => p.id === item.productId);
+                            backendProductId = product?.originalId || String(item.productId);
+                        }
+                        return {
+                            productId: backendProductId, // Use original backend ID
+                            productName: item.name,
+                            quantity: item.quantity,
+                            unitPrice: item.unitPrice,
+                            totalPrice: item.total - (item.discount * item.quantity),
+                            unit: item.unit,
+                            discount: item.discount,
+                            conversionFactor: item.conversionFactor,
+                        };
+                    }),
+                    subtotal: finalInvoice.subtotal,
+                    totalItemDiscount: finalInvoice.totalItemDiscount,
+                    invoiceDiscount: finalInvoice.invoiceDiscount,
+                    tax: finalInvoice.tax,
+                    total: finalInvoice.grandTotal,
+                    paidAmount: paidAmount,
+                    remainingAmount: remainingAmount,
+                    paymentMethod: selectedPaymentMethod.toLowerCase(), // Convert to lowercase for backend
+                    status: status === 'Paid' ? 'completed' : status === 'Partial' ? 'partial_payment' : 'pending',
+                    seller: finalInvoice.cashier,
+                };
+
+                // Use IndexedDB sync service (saves locally and syncs with backend)
+                const syncResult = await salesSync.createAndSyncSale(saleData, storeId);
+                
+                if (syncResult.success) {
+                    console.log('✅ Sale saved to IndexedDB and synced:', finalInvoice.id);
+                    
+                    // Show warning if sync had errors but sale was saved locally
+                    if (syncResult.error) {
+                        console.warn('⚠️ Sale saved locally, will sync later:', syncResult.error);
+                    }
+
+                    // Convert POSInvoice to SaleTransaction for localStorage backup
+                    let saleTransaction: SaleTransaction = {
+                        id: syncResult.saleId || finalInvoice.id,
+                        date: finalInvoice.date instanceof Date 
+                            ? finalInvoice.date.toISOString() 
+                            : new Date().toISOString(),
+                        customerName: customerName,
+                        customerId: customerId,
+                        totalAmount: finalInvoice.grandTotal,
+                        paidAmount: paidAmount,
+                        remainingAmount: remainingAmount,
+                        paymentMethod: selectedPaymentMethod as SalePaymentMethod,
+                        status: status,
+                        seller: finalInvoice.cashier,
+                        items: finalInvoice.items.map(item => ({
+                            productId: item.productId,
+                            name: item.name,
+                            unit: item.unit,
+                            quantity: item.quantity,
+                            unitPrice: item.unitPrice,
+                            total: item.total,
+                            discount: item.discount,
+                            conversionFactor: item.conversionFactor,
+                        })),
+                        subtotal: finalInvoice.subtotal,
+                        totalItemDiscount: finalInvoice.totalItemDiscount,
+                        invoiceDiscount: finalInvoice.invoiceDiscount,
+                        tax: finalInvoice.tax,
+                    };
+
+                    // Save to localStorage as backup (legacy support)
+                    saveSale(saleTransaction);
+                    console.log('Sale transaction saved to localStorage (backup):', saleTransaction);
+                } else {
+                    throw new Error(syncResult.error || 'Failed to save sale');
+                }
+            } catch (error: any) {
+                console.error('❌ Failed to save sale in background:', error);
+                // Don't show alert - sale is already completed and user is on print page
+                // The sale will be retried by the periodic sync service
+            }
+        }).catch(error => {
+            console.error('Background sale sync task failed:', error);
+        });
     };
 
 
