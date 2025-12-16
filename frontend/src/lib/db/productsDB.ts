@@ -537,6 +537,7 @@ class ProductsDB {
 
   /**
    * Update product stock in IndexedDB
+   * Accepts both originalId (backend MongoDB ID) and normalized ID format
    * Normalizes the productId to ensure consistent lookup
    */
   async updateProductStock(productId: string | number, newStock: number): Promise<void> {
@@ -552,7 +553,17 @@ class ProductsDB {
 
     // Normalize productId to string
     const normalizedId = String(productId);
-    const id = `${storeId}_${normalizedId}`;
+    
+    // Check if productId is already in normalized format (storeId_productId)
+    let id: string;
+    if (normalizedId.includes('_') && normalizedId.startsWith(`${storeId}_`)) {
+      // Already normalized
+      id = normalizedId;
+    } else {
+      // Need to normalize - this is likely an originalId (backend MongoDB ID)
+      // We need to find the product by searching through all products
+      id = `${storeId}_${normalizedId}`;
+    }
 
     return new Promise((resolve, reject) => {
       const transaction = this.db!.transaction([this.storeName], 'readwrite');
@@ -571,7 +582,35 @@ class ProductsDB {
           };
           putRequest.onerror = () => reject(putRequest.error);
         } else {
-          reject(new Error(`Product ${normalizedId} not found in database`));
+          // If not found with normalized ID, try searching by product ID in the product data
+          // This handles cases where the productId passed is the originalId (backend MongoDB ID)
+          const index = objectStore.index(this.indexName);
+          const getAllRequest = index.getAll(storeId);
+          
+          getAllRequest.onsuccess = () => {
+            const records = getAllRequest.result as ProductRecord[];
+            // Find product by matching the originalId or id field in the product data
+            const matchingRecord = records.find(record => {
+              const product = record.product;
+              const productOriginalId = String(product.id || product._id || '');
+              return productOriginalId === normalizedId;
+            });
+            
+            if (matchingRecord) {
+              matchingRecord.product.stock = newStock;
+              matchingRecord.lastUpdated = Date.now();
+              const putRequest = objectStore.put(matchingRecord);
+              putRequest.onsuccess = () => {
+                console.log(`[ProductsDB] Updated stock for product ${normalizedId} (found by search): ${newStock}`);
+                resolve();
+              };
+              putRequest.onerror = () => reject(putRequest.error);
+            } else {
+              reject(new Error(`Product ${normalizedId} not found in database`));
+            }
+          };
+          
+          getAllRequest.onerror = () => reject(getAllRequest.error);
         }
       };
 

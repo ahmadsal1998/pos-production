@@ -897,82 +897,18 @@ const POSPage: React.FC = () => {
     }, [normalizeProduct]);
 
     // Fetch all products for search functionality (lazy load in background)
-    // Now uses IndexedDB as primary storage - NO SYNC unless IndexedDB is empty AND stale
+    // OPTIMIZED: Reuse loadProductsFromDB to avoid duplicate loading
+    // This function is kept for backward compatibility but now delegates to loadProductsFromDB
     const fetchAllProducts = useCallback(async () => {
-        try {
-            console.log('[POS] Loading products from IndexedDB for search...');
-            
-            // First check IndexedDB
-            await productsDB.init();
-            const dbProducts = await productsDB.getAllProducts();
-            
-            if (dbProducts && dbProducts.length > 0) {
-                // Use products from IndexedDB - no sync needed
-                const allProductsList = dbProducts.map((p: any) => normalizeProduct(p));
-                setProducts(allProductsList);
-                setProductsLoaded(true);
-                console.log(`[POS] Using ${allProductsList.length} products from IndexedDB (no sync needed)`);
-                return;
-            }
-            
-            // IndexedDB is empty - check if we should sync
-            // Only sync if:
-            // 1. No sync is already in progress
-            // 2. We haven't attempted a sync recently (within 30 seconds)
-            // 3. Data is stale (not fresh)
-            const now = Date.now();
-            const timeSinceLastAttempt = now - lastProductSyncAttemptRef.current;
-            const SYNC_COOLDOWN = 30 * 1000; // 30 seconds cooldown
-            
-            if (isProductSyncInProgressRef.current) {
-                console.log('[POS] Product sync already in progress, skipping duplicate request');
-                setProductsLoaded(false);
-                return;
-            }
-            
-            if (timeSinceLastAttempt < SYNC_COOLDOWN) {
-                console.log(`[POS] Sync cooldown active (${Math.ceil((SYNC_COOLDOWN - timeSinceLastAttempt) / 1000)}s remaining), skipping sync`);
-                setProductsLoaded(false);
-                return;
-            }
-            
-            // Check if data is fresh (even if empty, might have been cleared recently)
-            const DATA_FRESHNESS_THRESHOLD = 5 * 60 * 1000; // 5 minutes
-            const isFresh = await productsDB.isDataFresh(DATA_FRESHNESS_THRESHOLD);
-            
-            if (isFresh && dbProducts.length === 0) {
-                // Data was recently cleared but is still considered fresh - don't sync
-                console.log('[POS] IndexedDB is empty but data is fresh (recently cleared), skipping sync');
-                setProductsLoaded(false);
-                return;
-            }
-            
-            // Mark sync as in progress
-            isProductSyncInProgressRef.current = true;
-            lastProductSyncAttemptRef.current = now;
-            
-            console.log('[POS] No products in IndexedDB and data is stale, using productSync to fetch from server...');
-            const syncResult = await productSync.syncProducts({ forceRefresh: false });
-            
-            // Clear sync in progress flag
-            isProductSyncInProgressRef.current = false;
-            
-            if (syncResult.success && syncResult.products) {
-                const allProductsList = syncResult.products.map((p: any) => normalizeProduct(p));
-                setProducts(allProductsList);
-                setProductsLoaded(true);
-                console.log(`[POS] Successfully loaded ${allProductsList.length} products via productSync`);
-            } else {
-                console.warn('[POS] Failed to sync products from server:', syncResult.error);
-                setProductsLoaded(false);
-            }
-        } catch (err: any) {
-            console.error('[POS] Error fetching all products for search:', err);
-            setProductsLoaded(false);
-            // Clear sync in progress flag on error
-            isProductSyncInProgressRef.current = false;
+        // If products are already loaded, skip redundant load
+        if (productsLoaded && products.length > 0) {
+            console.log('[POS] Products already loaded, skipping redundant fetchAllProducts call');
+            return;
         }
-    }, [normalizeProduct]);
+        
+        // Delegate to loadProductsFromDB which handles all the logic
+        await loadProductsFromDB();
+    }, [normalizeProduct, productsLoaded, products.length, loadProductsFromDB]);
 
     // Fetch customers and quick products on mount, and load products from IndexedDB
     useEffect(() => {
@@ -1093,15 +1029,20 @@ const POSPage: React.FC = () => {
                     // Clear sync in progress flag
                     isProductSyncInProgressRef.current = false;
                     
-                    if (result.success && result.products) {
-                        // Update IndexedDB
+                    if (result.success && result.products && result.products.length > 0) {
+                        // Update IndexedDB incrementally (no need to reload all products)
                         try {
-                            await productsDB.storeProducts(result.products);
-                            // Reload from IndexedDB
-                            const dbProducts = await productsDB.getAllProducts();
-                            const normalizedProducts = dbProducts.map((p: any) => normalizeProduct(p));
-                            setProducts(normalizedProducts);
-                            console.log('[POS] Products synced and updated in IndexedDB after cache invalidation');
+                            await productsDB.storeProducts(result.products, { clearAll: false });
+                            // Update local state incrementally instead of reloading all
+                            setProducts(prevProducts => {
+                                const productMap = new Map(prevProducts.map(p => [String(p.id), p]));
+                                result.products!.forEach((p: any) => {
+                                    const normalized = normalizeProduct(p);
+                                    productMap.set(String(normalized.id), normalized);
+                                });
+                                return Array.from(productMap.values());
+                            });
+                            console.log('[POS] Products synced and updated incrementally after cache invalidation');
                         } catch (error) {
                             console.error('[POS] Error updating IndexedDB after cache invalidation:', error);
                         }
@@ -2502,18 +2443,20 @@ const POSPage: React.FC = () => {
             
             scheduleSync(() => {
                 productSync.syncAfterQuantityChange(productIdsToSync).then(async (result) => {
-                    if (result.success && result.products) {
+                    if (result.success && result.products && result.products.length > 0) {
                         // Update IndexedDB incrementally (faster than clearing all)
                         try {
                             await productsDB.storeProducts(result.products, { clearAll: false });
-                            // Reload from IndexedDB in background
-                            productsDB.getAllProducts().then(dbProducts => {
-                                const normalizedProducts = dbProducts.map((p: any) => normalizeProduct(p));
-                                setProducts(normalizedProducts);
-                                console.log(`[POS] Updated IndexedDB with ${normalizedProducts.length} synced products after return`);
-                            }).catch(error => {
-                                console.error('[POS] Error reloading products from IndexedDB:', error);
+                            // Update local state incrementally instead of reloading all
+                            setProducts(prevProducts => {
+                                const productMap = new Map(prevProducts.map(p => [String(p.id), p]));
+                                result.products!.forEach((p: any) => {
+                                    const normalized = normalizeProduct(p);
+                                    productMap.set(String(normalized.id), normalized);
+                                });
+                                return Array.from(productMap.values());
                             });
+                            console.log(`[POS] Updated IndexedDB incrementally with ${result.products.length} synced products after return`);
                         } catch (error) {
                             console.error('[POS] Error updating IndexedDB after return sync:', error);
                         }
@@ -3076,14 +3019,21 @@ const POSPage: React.FC = () => {
             return newProducts;
         });
         
+        // Mark sale as completed first (prioritize user feedback)
+        console.log('Sale Finalized:', finalInvoice);
+        setCurrentInvoice(finalInvoice);
+        setSaleCompleted(true);
+        setIsProcessingPayment(false); // Clear loading state
+        
         // Sync products after quantity changes (non-blocking, background task)
-        // Use requestIdleCallback for non-critical operations to avoid blocking UI
+        // Defer to after sale completion to prioritize user experience
         const productIdsToSync = invoiceItems
             .map(item => item.originalId)
             .filter((id): id is string => !!id);
         
         if (productIdsToSync.length > 0) {
             // Use requestIdleCallback to defer non-critical sync to idle time
+            // This ensures sale completion is not blocked by product syncing
             const scheduleSync = (callback: () => void) => {
                 if ('requestIdleCallback' in window) {
                     requestIdleCallback(callback, { timeout: 5000 });
@@ -3095,18 +3045,20 @@ const POSPage: React.FC = () => {
             
             scheduleSync(() => {
                 productSync.syncAfterQuantityChange(productIdsToSync).then(async (result) => {
-                    if (result.success && result.products) {
+                    if (result.success && result.products && result.products.length > 0) {
                         // Update IndexedDB incrementally (faster than clearing all)
                         try {
                             await productsDB.storeProducts(result.products, { clearAll: false });
-                            // Reload from IndexedDB in background
-                            productsDB.getAllProducts().then(dbProducts => {
-                                const normalizedProducts = dbProducts.map((p: any) => normalizeProduct(p));
-                                setProducts(normalizedProducts);
-                                console.log(`[POS] Updated IndexedDB with ${normalizedProducts.length} synced products after sale`);
-                            }).catch(error => {
-                                console.error('[POS] Error reloading products from IndexedDB:', error);
+                            // Update local state incrementally instead of reloading all
+                            setProducts(prevProducts => {
+                                const productMap = new Map(prevProducts.map(p => [String(p.id), p]));
+                                result.products!.forEach((p: any) => {
+                                    const normalized = normalizeProduct(p);
+                                    productMap.set(String(normalized.id), normalized);
+                                });
+                                return Array.from(productMap.values());
                             });
+                            console.log(`[POS] Updated IndexedDB incrementally with ${result.products.length} synced products after sale`);
                         } catch (error) {
                             console.error('[POS] Error updating IndexedDB after sale sync:', error);
                         }
@@ -3116,11 +3068,6 @@ const POSPage: React.FC = () => {
                 });
             });
         }
-        
-        console.log('Sale Finalized:', finalInvoice);
-        setCurrentInvoice(finalInvoice);
-        setSaleCompleted(true);
-        setIsProcessingPayment(false); // Clear loading state
 
         // Create SaleTransaction and save to localStorage
         const customerName = finalInvoice.customer?.name || 'عميل نقدي';
