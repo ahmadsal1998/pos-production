@@ -359,6 +359,74 @@ class ProductsDB {
   }
 
   /**
+   * Get product by barcode (exact match) from IndexedDB
+   * Searches both product barcode and unit barcodes
+   * Returns product and matched unit info if found
+   */
+  async getProductByBarcode(barcode: string): Promise<{ product: any; matchedUnit: any | null } | null> {
+    await this.init();
+    if (!this.db) {
+      return null;
+    }
+
+    const storeId = this.getStoreId();
+    if (!storeId) {
+      return null;
+    }
+
+    const trimmedBarcode = barcode.trim();
+    if (!trimmedBarcode) {
+      return null;
+    }
+
+    return new Promise((resolve, reject) => {
+      const transaction = this.db!.transaction([this.storeName], 'readonly');
+      const objectStore = transaction.objectStore(this.storeName);
+      const index = objectStore.index(this.indexName);
+      const request = index.getAll(storeId);
+
+      request.onsuccess = () => {
+        const records = request.result as ProductRecord[];
+        const products = records.map((record) => record.product);
+
+        // Search for exact barcode match
+        for (const product of products) {
+          // Check product barcode (exact match)
+          const productBarcode = (product.barcode || product.primaryBarcode || '').trim();
+          if (productBarcode === trimmedBarcode) {
+            resolve({
+              product,
+              matchedUnit: null, // Product barcode matched, no specific unit
+            });
+            return;
+          }
+
+          // Check unit barcodes (exact match)
+          if (product.units && Array.isArray(product.units)) {
+            for (const unit of product.units) {
+              const unitBarcode = (unit.barcode || '').trim();
+              if (unitBarcode === trimmedBarcode) {
+                resolve({
+                  product,
+                  matchedUnit: unit, // Unit barcode matched
+                });
+                return;
+              }
+            }
+          }
+        }
+
+        // No match found
+        resolve(null);
+      };
+
+      request.onerror = () => {
+        reject(request.error);
+      };
+    });
+  }
+
+  /**
    * Search products in IndexedDB
    */
   async searchProducts(options: SearchOptions = {}): Promise<any[]> {

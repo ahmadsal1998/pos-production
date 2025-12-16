@@ -1730,67 +1730,157 @@ const POSPage: React.FC = () => {
         return /^[0-9]+$/.test(trimmed);
     }, []);
 
-    // Barcode search function - searches by exact barcode match
+    // Helper function to extract unit info from product and matched unit
+    const extractUnitInfo = useCallback((product: POSProduct, matchedUnit: any | null) => {
+        const piecesPerMainUnit = getPiecesPerMainUnit(product);
+        
+        let unitName = 'قطعة';
+        let unitPrice = product.price;
+        let conversionFactor = 1;
+        let piecesPerUnit = 1;
+        
+        // If a unit was matched, use its information
+        if (matchedUnit) {
+            unitName = matchedUnit.unitName || 'قطعة';
+            unitPrice = matchedUnit.sellingPrice || product.price;
+            conversionFactor = matchedUnit.conversionFactor || piecesPerMainUnit;
+            piecesPerUnit = 1; // Secondary units are counted as 1 piece per scan
+        } else {
+            // Product barcode matched - use default unit
+            unitName = 'قطعة';
+            unitPrice = piecesPerMainUnit > 0 ? product.price / piecesPerMainUnit : product.price;
+            conversionFactor = piecesPerMainUnit;
+            piecesPerUnit = piecesPerMainUnit;
+        }
+        
+        return { unitName, unitPrice, conversionFactor, piecesPerUnit };
+    }, [getPiecesPerMainUnit]);
+
+    // Barcode search function - OPTIMIZED: checks IndexedDB first for instant results
+    // Then validates with server in background to ensure data accuracy
     const searchProductByBarcode = useCallback(async (barcode: string): Promise<{ success: boolean; product?: POSProduct; unitName?: string; unitPrice?: number; conversionFactor?: number; piecesPerUnit?: number }> => {
         const trimmed = barcode.trim();
         if (!trimmed) {
             return { success: false };
         }
 
+        console.log(`[POS] Searching product by barcode: "${trimmed}"`);
+        
+        // STEP 1: Check IndexedDB first for instant response
+        try {
+            const dbResult = await productsDB.getProductByBarcode(trimmed);
+            
+            if (dbResult && dbResult.product) {
+                console.log(`[POS] Product found in IndexedDB (instant): ${dbResult.product.name || 'Unknown'}`);
+                
+                // Normalize the product
+                const normalizedProduct = normalizeProduct(dbResult.product);
+                const { unitName, unitPrice, conversionFactor, piecesPerUnit } = extractUnitInfo(normalizedProduct, dbResult.matchedUnit);
+                
+                // Return immediately with cached product for instant cart addition
+                // Server validation will run in background
+                const instantResult = {
+                    success: true,
+                    product: normalizedProduct,
+                    unitName,
+                    unitPrice,
+                    conversionFactor,
+                    piecesPerUnit,
+                };
+                
+                // STEP 2: Validate with server in background (non-blocking)
+                // This ensures we have the latest data but doesn't delay the UI
+                (async () => {
+                    try {
+                        setIsSearchingServer(true);
+                        console.log(`[POS] Validating product with server in background: "${trimmed}"`);
+                        
+                        const response = await productsApi.getProductByBarcode(trimmed);
+                        
+                        if (response.data?.success && response.data?.data?.product) {
+                            const productData = response.data.data.product;
+                            const serverMatchedUnit = response.data.data.matchedUnit;
+                            const serverProduct = normalizeProduct(productData);
+                            
+                            // Update IndexedDB with fresh server data
+                            try {
+                                await productsDB.storeProduct(productData);
+                                productsDB.notifyOtherTabs();
+                                console.log(`[POS] Updated IndexedDB with fresh server data for: ${serverProduct.name}`);
+                                
+                                // Update products state with fresh data
+                                setProducts(prevProducts => {
+                                    const updated = prevProducts.filter(p => {
+                                        const matchesById = String(p.id) === String(serverProduct.id);
+                                        const matchesByOriginalId = serverProduct.originalId && 
+                                            String(p.originalId) === String(serverProduct.originalId);
+                                        return !matchesById && !matchesByOriginalId;
+                                    });
+                                    updated.push(serverProduct);
+                                    return updated;
+                                });
+                                
+                                // If product data changed significantly (e.g., price, stock), we could update the cart
+                                // For now, we just log it - future enhancement could update cart items if needed
+                                const priceChanged = Math.abs((serverProduct.price || 0) - (normalizedProduct.price || 0)) > 0.01;
+                                const stockChanged = (serverProduct.stock || 0) !== (normalizedProduct.stock || 0);
+                                
+                                if (priceChanged || stockChanged) {
+                                    console.log(`[POS] Product data changed on server for ${serverProduct.name}:`, {
+                                        priceChanged,
+                                        stockChanged,
+                                        oldPrice: normalizedProduct.price,
+                                        newPrice: serverProduct.price,
+                                        oldStock: normalizedProduct.stock,
+                                        newStock: serverProduct.stock
+                                    });
+                                    // Note: Cart items are not automatically updated here to avoid disrupting the user
+                                    // The fresh data is in state/IndexedDB for future scans and stock checks
+                                }
+                            } catch (error) {
+                                console.error('[POS] Error updating IndexedDB with server data:', error);
+                            }
+                        }
+                    } catch (err: any) {
+                        // Server validation failed - log but don't block UI
+                        console.warn('[POS] Background server validation failed (non-critical):', err?.message || err);
+                        // Product is already in cart from IndexedDB, so user can continue
+                    } finally {
+                        setIsSearchingServer(false);
+                    }
+                })();
+                
+                return instantResult;
+            }
+        } catch (error) {
+            console.error('[POS] Error searching IndexedDB for barcode:', error);
+            // Continue to server search fallback
+        }
+        
+        // STEP 3: Fallback to server search if not found in IndexedDB
         try {
             setIsSearchingServer(true);
-            console.log(`[POS] Searching product by barcode: "${trimmed}"`);
+            console.log(`[POS] Product not in IndexedDB, searching server: "${trimmed}"`);
             
             const response = await productsApi.getProductByBarcode(trimmed);
 
-            // API client wraps the response, so we need to access response.data.data
-            console.log('[POS] Barcode search response:', response);
-            
             if (response.data?.success && response.data?.data?.product) {
                 const productData = response.data.data.product;
                 const matchedUnit = response.data.data.matchedUnit;
                 
                 // Normalize the product
                 const normalizedProduct = normalizeProduct(productData);
-                
-                // Determine unit information
-                let unitName = 'قطعة';
-                let unitPrice = normalizedProduct.price;
-                let conversionFactor = 1;
-                let piecesPerUnit = 1;
-                
-                const piecesPerMainUnit = getPiecesPerMainUnit(normalizedProduct);
-                
-                // If a unit was matched, use its information
-                if (matchedUnit) {
-                    unitName = matchedUnit.unitName || 'قطعة';
-                    unitPrice = matchedUnit.sellingPrice || normalizedProduct.price;
-                    conversionFactor = matchedUnit.conversionFactor || piecesPerMainUnit;
-                    piecesPerUnit = 1; // Secondary units are counted as 1 piece per scan
-                } else {
-                    // Product barcode matched - use default unit
-                    unitName = 'قطعة';
-                    unitPrice = piecesPerMainUnit > 0 ? normalizedProduct.price / piecesPerMainUnit : normalizedProduct.price;
-                    conversionFactor = piecesPerMainUnit;
-                    piecesPerUnit = piecesPerMainUnit;
-                }
+                const { unitName, unitPrice, conversionFactor, piecesPerUnit } = extractUnitInfo(normalizedProduct, matchedUnit);
 
-                console.log(`[POS] Product found by barcode: ${normalizedProduct.name}`);
+                console.log(`[POS] Product found on server: ${normalizedProduct.name}`);
                 
-                // Update IndexedDB and state with fresh product data immediately
-                // This ensures stock checks use the latest quantity, not stale cached data
-                // NOTE: We use productsDB.storeProduct() directly instead of productSync to avoid
-                // triggering unnecessary server syncs. ProductSync should only run on actual changes
-                // (sales, returns, quantity updates), not on barcode scans or cart additions.
+                // Store product in IndexedDB for future instant lookups
                 try {
-                    // Store product directly in IndexedDB without triggering a sync
                     await productsDB.storeProduct(productData);
-                    // Notify other tabs of the update (lightweight, doesn't trigger sync)
                     productsDB.notifyOtherTabs();
-                    console.log(`[POS] Updated IndexedDB with fresh product data from server for: ${normalizedProduct.name}`);
+                    console.log(`[POS] Stored product in IndexedDB for future instant lookups: ${normalizedProduct.name}`);
                     
-                    // Update products state to replace stale data
-                    // Match by both id and originalId to ensure we replace the correct product
+                    // Update products state
                     setProducts(prevProducts => {
                         const updated = prevProducts.filter(p => {
                             const matchesById = String(p.id) === String(normalizedProduct.id);
@@ -1798,14 +1888,12 @@ const POSPage: React.FC = () => {
                                 String(p.originalId) === String(normalizedProduct.originalId);
                             return !matchesById && !matchesByOriginalId;
                         });
-                        // Add the fresh product data (this replaces any stale version)
                         updated.push(normalizedProduct);
                         return updated;
                     });
-                    console.log(`[POS] Updated products state with fresh data for: ${normalizedProduct.name}`);
                 } catch (error) {
-                    console.error('[POS] Error updating IndexedDB/state with fresh product data:', error);
-                    // Continue anyway - we still have the fresh product from API
+                    console.error('[POS] Error storing product in IndexedDB:', error);
+                    // Continue anyway - we still have the product from API
                 }
                 
                 return {
@@ -1817,24 +1905,16 @@ const POSPage: React.FC = () => {
                     piecesPerUnit,
                 };
             } else {
-                console.log(`[POS] Product not found for barcode: "${trimmed}"`);
-                console.log('[POS] Response structure:', {
-                    hasResponse: !!response,
-                    hasData: !!response?.data,
-                    hasSuccess: !!response?.data?.success,
-                    hasDataData: !!response?.data?.data,
-                    hasProduct: !!response?.data?.data?.product,
-                    fullResponse: response
-                });
+                console.log(`[POS] Product not found on server for barcode: "${trimmed}"`);
                 return { success: false };
             }
         } catch (err: any) {
-            console.error('[POS] Error searching product by barcode:', err);
+            console.error('[POS] Error searching product by barcode on server:', err);
             // If it's a 404, the product simply doesn't exist
             if (err?.status === 404) {
                 console.log(`[POS] Product not found (404) for barcode: "${trimmed}"`);
             } else {
-                console.error('[POS] Unexpected error during barcode search:', {
+                console.error('[POS] Unexpected error during server barcode search:', {
                     status: err?.status,
                     message: err?.message,
                     details: err?.details
@@ -1844,7 +1924,7 @@ const POSPage: React.FC = () => {
         } finally {
             setIsSearchingServer(false);
         }
-    }, [normalizeProduct, getPiecesPerMainUnit]);
+    }, [normalizeProduct, extractUnitInfo]);
 
     // Queue processor for barcodes - ensures sequential processing
     const processBarcodeQueue = useCallback(async () => {
