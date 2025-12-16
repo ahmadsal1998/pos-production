@@ -1,26 +1,28 @@
 /**
- * @deprecated This file is deprecated. Use the unified Customer model directly from ../models/Customer
+ * Customer Model Utilities
  * 
- * All customers are now stored in a single unified 'customers' collection with storeId field.
- * Use Customer model directly and filter by storeId in queries.
+ * Provides functions to get Customer models with the correct collection name
+ * based on whether a store is a trial account.
  */
 
 import { Model } from 'mongoose';
 import Customer, { CustomerDocument } from '../models/Customer';
+import { getModelForStore } from './trialAccountModels';
 
 /**
- * @deprecated Use Customer model directly from ../models/Customer
- * Get Customer model - returns the unified Customer model
- * All customers are stored in a single collection with storeId field
+ * Get Customer model with correct collection name based on trial status
+ * Trial accounts use 'customers_test' collection, regular accounts use 'customers'
+ * 
+ * @param storeId - The store ID to check
+ * @returns Promise<Model<CustomerDocument>> - The Customer model with correct collection
  */
 export async function getCustomerModelForStore(storeId: string | null | undefined): Promise<Model<CustomerDocument>> {
   if (!storeId) {
     throw new Error('Store ID is required to access customers');
   }
   
-  // Return the unified Customer model
-  // Always filter queries by storeId when using this model
-  return Customer as Model<CustomerDocument>;
+  // Get model with correct collection name based on trial status
+  return getModelForStore<CustomerDocument>(Customer, 'customers', storeId);
 }
 
 // Re-export for backward compatibility

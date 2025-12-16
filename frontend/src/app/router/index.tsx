@@ -46,6 +46,7 @@ import UserManagementPage from '@/pages/user-management/UserManagementPage';
 
 // Admin Pages
 import { AdminDashboard } from '@/pages/admin';
+import TrialAccountsPage from '@/pages/admin/TrialAccountsPage';
 
 export const router = createBrowserRouter([
   // Auth Routes
@@ -382,6 +383,10 @@ export const router = createBrowserRouter([
       {
         path: 'users',
         element: <AdminDashboard />, // Placeholder for users page
+      },
+      {
+        path: 'trial-accounts',
+        element: <TrialAccountsPage />,
       },
     ],
   },

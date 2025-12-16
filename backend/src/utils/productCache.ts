@@ -1,5 +1,6 @@
 import { cache } from './redis';
-import Product, { ProductDocument } from '../models/Product';
+import { ProductDocument } from '../models/Product';
+import { getProductModelForStore } from './productModel';
 
 /**
  * Cache key generator for product barcode lookups
@@ -30,6 +31,9 @@ export async function getProductByBarcode(
   }
 
   // Cache miss - query database
+  // Get trial-aware Product model
+  const Product = await getProductModelForStore(storeId);
+  
   // Use compound index (storeId, barcode) for optimal performance
   const product = await Product.findOne({
     storeId: storeId.toLowerCase(),

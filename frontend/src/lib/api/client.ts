@@ -703,6 +703,57 @@ export const adminApi = {
   
   updateSetting: (key: string, data: { value: string; description?: string }) =>
     apiClient.put<{ success: boolean; message: string; data: { setting: any } }>(`/admin/settings/${key}`, data),
+  
+  // Trial accounts purge management
+  getTrialAccountsPurgeReport: () =>
+    apiClient.get<{
+      success: boolean;
+      data: {
+        report: {
+          storesFound: number;
+          storesToDelete: Array<{
+            id: string;
+            storeId: string;
+            name: string;
+            createdAt: string;
+            userCount: number;
+          }>;
+          collectionsToPurge: string[];
+          totalDocumentsToDelete: { [key: string]: number };
+          estimatedSize: string;
+        };
+        message: string;
+      };
+    }>('/admin/trial-accounts/purge-report'),
+  
+  purgeAllTrialAccounts: () =>
+    apiClient.post<{
+      success: boolean;
+      data: {
+        report: any;
+        deleted: {
+          stores: number;
+          users: number;
+          collections: { [key: string]: number };
+        };
+        errors: string[];
+      };
+      message: string;
+    }>('/admin/trial-accounts/purge', { confirm: true }),
+  
+  purgeSpecificTrialAccount: (storeId: string, confirm: boolean = false) =>
+    apiClient.post<{
+      success: boolean;
+      data: {
+        store: any;
+        deleted: {
+          users: number;
+          documents: { [key: string]: number };
+        };
+        errors?: string[];
+        message?: string;
+      };
+    }>(`/admin/trial-accounts/${storeId}/purge`, { confirm }),
 };
 
 // Store Settings API endpoints (for store users)

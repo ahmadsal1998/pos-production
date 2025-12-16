@@ -14,6 +14,9 @@ import {
   getSetting,
   updateSetting,
   validateUpdateSetting,
+  getTrialAccountsPurgeReport,
+  purgeAllTrialAccounts,
+  purgeSpecificTrialAccountEndpoint,
 } from '../controllers/admin.controller';
 import { authenticate, authorize } from '../middleware/auth.middleware';
 
@@ -49,6 +52,11 @@ router.patch('/stores/:id/status', toggleStoreStatus);
 router.get('/settings', getSettings);
 router.get('/settings/:key', getSetting);
 router.put('/settings/:key', validateUpdateSetting, updateSetting);
+
+// Trial account purge routes
+router.get('/trial-accounts/purge-report', getTrialAccountsPurgeReport);
+router.post('/trial-accounts/purge', purgeAllTrialAccounts);
+router.post('/trial-accounts/:storeId/purge', purgeSpecificTrialAccountEndpoint);
 
 export default router;
 

@@ -172,25 +172,28 @@ saleSchema.index({ status: 1, storeId: 1 });
 saleSchema.index({ paymentMethod: 1, storeId: 1 });
 
 /**
- * @deprecated This file is deprecated. Use the unified Sale model directly from ../models/Sale
+ * Sale Model Utilities
  * 
- * All sales are now stored in a single unified 'sales' collection with storeId field.
- * Use Sale model directly and filter by storeId in queries.
+ * Provides functions to get Sale models with the correct collection name
+ * based on whether a store is a trial account.
  */
 
+import { Model } from 'mongoose';
 import { Sale } from '../models/Sale';
+import { getModelForStore } from './trialAccountModels';
 
 /**
- * @deprecated Use Sale model directly from ../models/Sale
- * Get Sale model - returns the unified Sale model
- * All sales are stored in a single collection with storeId field
+ * Get Sale model with correct collection name based on trial status
+ * Trial accounts use 'sales_test' collection, regular accounts use 'sales'
+ * 
+ * @param storeId - The store ID to check
+ * @returns Promise<Model<SaleDocument>> - The Sale model with correct collection
  */
 export async function getSaleModelForStore(storeId: string | null | undefined): Promise<Model<SaleDocument>> {
   if (!storeId) {
     throw new Error('Store ID is required to access sales');
   }
   
-  // Return the unified Sale model
-  // Always filter queries by storeId when using this model
-  return Sale as Model<SaleDocument>;
+  // Get model with correct collection name based on trial status
+  return getModelForStore(Sale, 'sales', storeId);
 }

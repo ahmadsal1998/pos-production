@@ -3,8 +3,8 @@ import { body, validationResult } from 'express-validator';
 import mongoose from 'mongoose';
 import { asyncHandler } from '../middleware/error.middleware';
 import { AuthenticatedRequest } from '../middleware/auth.middleware';
-import Customer from '../models/Customer';
 import { getCustomerPaymentModelForStore } from '../utils/customerPaymentModel';
+import { getCustomerModelForStore } from '../utils/customerModel';
 import User from '../models/User';
 
 export const validateCreateCustomer = [
@@ -66,6 +66,9 @@ export const createCustomer = asyncHandler(async (req: AuthenticatedRequest, res
   try {
     // Normalize storeId to lowercase for consistency
     const normalizedStoreId = storeId.toLowerCase().trim();
+
+    // Get trial-aware Customer model
+    const Customer = await getCustomerModelForStore(storeId);
 
     // Check if customer with same phone exists for this store
     const existingCustomer = await Customer.findOne({ 
@@ -153,6 +156,9 @@ export const getCustomers = asyncHandler(async (req: AuthenticatedRequest, res: 
     // Search parameter
     const searchTerm = (req.query.search as string)?.trim() || '';
     
+    // Get trial-aware Customer model
+    const Customer = await getCustomerModelForStore(storeId);
+    
     // Build query filter - always filter by storeId for store isolation
     const queryFilter: any = {
       storeId: normalizedStoreId,
@@ -220,6 +226,9 @@ export const getCustomerById = asyncHandler(async (req: AuthenticatedRequest, re
   try {
     // Normalize storeId to lowercase for consistency
     const normalizedStoreId = storeId.toLowerCase().trim();
+    
+    // Get trial-aware Customer model
+    const Customer = await getCustomerModelForStore(storeId);
     
     // Find customer by ID and storeId to ensure store isolation
     const customer = await Customer.findOne({
@@ -304,6 +313,9 @@ export const updateCustomer = asyncHandler(async (req: AuthenticatedRequest, res
   try {
     // Normalize storeId to lowercase for consistency
     const normalizedStoreId = storeId.toLowerCase().trim();
+
+    // Get trial-aware Customer model
+    const Customer = await getCustomerModelForStore(storeId);
 
     // Find customer by ID and storeId to ensure store isolation
     const customer = await Customer.findOne({
@@ -423,6 +435,9 @@ export const deleteCustomer = asyncHandler(async (req: AuthenticatedRequest, res
     // Normalize storeId to lowercase for consistency
     const normalizedStoreId = storeId.toLowerCase().trim();
 
+    // Get trial-aware Customer model
+    const Customer = await getCustomerModelForStore(storeId);
+
     // Find customer by ID and storeId to ensure store isolation
     const customer = await Customer.findOne({
       _id: id,
@@ -516,6 +531,9 @@ export const createCustomerPayment = asyncHandler(async (req: AuthenticatedReque
   try {
     // Normalize storeId to lowercase for consistency
     const normalizedStoreId = storeId.toLowerCase().trim();
+    
+    // Get trial-aware Customer model
+    const Customer = await getCustomerModelForStore(storeId);
     
     // Verify customer exists and belongs to this store
     const customer = await Customer.findOne({

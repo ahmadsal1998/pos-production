@@ -1,17 +1,20 @@
 /**
- * @deprecated This file is deprecated. Use the unified Product model directly from ../models/Product
+ * Product Model Utilities
  * 
- * All products are now stored in a single unified 'products' collection with storeId field.
- * Use Product model directly and filter by storeId in queries.
+ * Provides functions to get Product models with the correct collection name
+ * based on whether a store is a trial account.
  */
 
 import { Model } from 'mongoose';
 import Product, { ProductDocument } from '../models/Product';
+import { getModelForStore } from './trialAccountModels';
 
 /**
- * @deprecated Use Product model directly from ../models/Product
- * Get Product model - returns the unified Product model
- * All products are stored in a single collection with storeId field
+ * Get Product model with correct collection name based on trial status
+ * Trial accounts use 'products_test' collection, regular accounts use 'products'
+ * 
+ * @param storeId - The store ID to check
+ * @returns Promise<Model<ProductDocument>> - The Product model with correct collection
  */
 export async function getProductModelForStore(
   storeId: string | null | undefined
@@ -20,9 +23,8 @@ export async function getProductModelForStore(
     throw new Error('Store ID is required to access products');
   }
   
-  // Return the unified Product model
-  // Always filter queries by storeId when using this model
-  return Product as Model<ProductDocument>;
+  // Get model with correct collection name based on trial status
+  return getModelForStore<ProductDocument>(Product, 'products', storeId);
 }
 
 // Re-export for backward compatibility

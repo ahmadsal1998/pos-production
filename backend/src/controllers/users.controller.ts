@@ -27,6 +27,10 @@
  *      * This prevents accidental deletion of critical admin accounts
  *    - Non-admin users: Can be deleted by Admin or Manager (with store restrictions)
  *    - Manager users: Can only delete users from their own store
+ *    - CRITICAL SAFETY: Only the user account is deleted
+ *      * Products, customers, sales, inventory, and all other store data remain intact
+ *      * Store data is isolated by storeId, not user ownership
+ *      * Deleting a user does NOT affect any business data or operations
  * 
  * All store-level filtering is enforced at the controller level to ensure
  * complete data isolation between stores.
@@ -548,12 +552,18 @@ export const deleteUser = asyncHandler(
       }
     }
 
-    // Delete user from unified collection
+    // CRITICAL: Only delete the user account - store data remains intact
+    // This operation ONLY removes the user record from the users collection.
+    // All store-related data (products, customers, sales, inventory, etc.) 
+    // remains completely unaffected and will continue to function normally.
+    // 
+    // Store data is isolated by storeId, not by user ownership, so deleting
+    // a user does not impact any business data.
     await User.deleteOne({ _id: id });
 
     res.status(200).json({
       success: true,
-      message: 'User deleted successfully',
+      message: 'User deleted successfully. All store data (products, customers, sales, inventory) remains intact.',
     });
   }
 );

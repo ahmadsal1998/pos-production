@@ -8,6 +8,12 @@ import { determineDatabaseForStore } from '../utils/databaseManager';
 import { createStoreCollections } from '../utils/storeCollections';
 import User from '../models/User';
 import { reactivateStore } from '../utils/subscriptionManager';
+import { clearTrialStatusCache } from '../utils/trialAccountModels';
+import {
+  generatePurgeReport,
+  purgeTrialAccounts,
+  purgeSpecificTrialAccount,
+} from '../utils/purgeTrialAccounts';
 
 // Get all stores
 export const getStores = asyncHandler(
@@ -69,6 +75,7 @@ export const createStore = asyncHandler(
       defaultAdminName,
       subscriptionDuration, // e.g., '1month', '2months', '1year', '2years'
       subscriptionEndDate, // Manual date selection (ISO string)
+      isTrialAccount, // Whether this is a trial account (uses _test collections)
     } = req.body;
 
     // Check if storeId already exists
@@ -168,6 +175,7 @@ export const createStore = asyncHandler(
       subscriptionStartDate: startDate,
       subscriptionEndDate: endDate,
       isActive: true, // Store starts as active
+      isTrialAccount: Boolean(isTrialAccount), // Trial account flag
     });
 
     // Collections are now unified with storeId and created automatically by Mongoose
@@ -315,8 +323,12 @@ export const updateStore = asyncHandler(
     if (address !== undefined) store.address = address || undefined;
     if (city !== undefined) store.city = city || undefined;
     if (country !== undefined) store.country = country || undefined;
+    // Note: isTrialAccount should not be changed after store creation for data integrity
 
     await store.save();
+    
+    // Clear trial status cache if store was updated
+    clearTrialStatusCache(store.storeId);
 
     res.status(200).json({
       success: true,
@@ -674,4 +686,115 @@ export const validateUpdateSetting = [
     .isLength({ max: 500 })
     .withMessage('Description must be at most 500 characters'),
 ];
+
+// Get purge report for trial accounts (dry-run)
+export const getTrialAccountsPurgeReport = asyncHandler(
+  async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+    try {
+      const report = await generatePurgeReport();
+      res.status(200).json({
+        success: true,
+        data: {
+          report,
+          message: 'This is a dry-run report. No data has been deleted.',
+        },
+      });
+    } catch (error: any) {
+      res.status(500).json({
+        success: false,
+        message: error.message || 'Failed to generate purge report',
+      });
+    }
+  }
+);
+
+// Purge all trial accounts
+export const purgeAllTrialAccounts = asyncHandler(
+  async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+    const { confirm } = req.body;
+
+    if (!confirm) {
+      return res.status(400).json({
+        success: false,
+        message: 'Confirmation required. Set confirm: true to proceed with deletion.',
+      });
+    }
+
+    try {
+      const result = await purgeTrialAccounts(false, true);
+      res.status(200).json({
+        success: result.success,
+        data: {
+          report: result.report,
+          deleted: result.deleted,
+          errors: result.errors,
+        },
+        message: result.success
+          ? 'Trial accounts purged successfully'
+          : 'Purge completed with some errors',
+      });
+    } catch (error: any) {
+      res.status(500).json({
+        success: false,
+        message: error.message || 'Failed to purge trial accounts',
+      });
+    }
+  }
+);
+
+// Purge specific trial account
+export const purgeSpecificTrialAccountEndpoint = asyncHandler(
+  async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+    const { storeId } = req.params;
+    const { confirm } = req.body;
+
+    if (!storeId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Store ID is required',
+      });
+    }
+
+    if (!confirm) {
+      // Return dry-run report
+      try {
+        const result = await purgeSpecificTrialAccount(storeId, true, false);
+        res.status(200).json({
+          success: true,
+          data: {
+            store: result.store,
+            deleted: result.deleted,
+            message: 'This is a dry-run report. Set confirm: true to proceed with deletion.',
+          },
+        });
+      } catch (error: any) {
+        res.status(404).json({
+          success: false,
+          message: error.message || 'Trial account not found',
+        });
+      }
+    } else {
+      // Actually purge
+      try {
+        const result = await purgeSpecificTrialAccount(storeId, false, true);
+        res.status(200).json({
+          success: result.success,
+          data: {
+            store: result.store,
+            deleted: result.deleted,
+            errors: result.errors,
+          },
+          message: result.success
+            ? 'Trial account purged successfully'
+            : 'Purge completed with some errors',
+        });
+      } catch (error: any) {
+        res.status(500).json({
+          success: false,
+          message: error.message || 'Failed to purge trial account',
+        });
+      }
+    }
+  }
+);
 

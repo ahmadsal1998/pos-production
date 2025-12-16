@@ -16,7 +16,8 @@
     "build:low-memory": "NODE_OPTIONS='--max-old-space-size=1536' tsc --incremental --skipLibCheck",
     "start": "node dist/index.js",
     "seed": "ts-node src/utils/seedDatabase.ts",
-    "migrate:stores": "ts-node src/utils/migrateStores.ts"
+    "migrate:stores": "ts-node src/utils/migrateStores.ts",
+    "purge-trials": "ts-node src/scripts/purgeTrialAccounts.ts"
   },
   "keywords": [
     "pos",

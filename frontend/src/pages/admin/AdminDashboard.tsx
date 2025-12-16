@@ -14,6 +14,7 @@ interface Store {
   createdAt: string;
   updatedAt: string;
   isActive?: boolean;
+  isTrialAccount?: boolean;
   subscriptionEndDate?: string;
   subscriptionStartDate?: string;
   email?: string;
@@ -48,6 +49,7 @@ const AdminDashboard = () => {
     subscriptionType: 'duration' as 'duration' | 'custom',
     subscriptionDuration: '1month' as '1month' | '2months' | '1year' | '2years',
     subscriptionEndDate: '',
+    isTrialAccount: false,
   });
   const [renewFormData, setRenewFormData] = useState({
     subscriptionType: 'duration' as 'duration' | 'custom',
@@ -141,6 +143,7 @@ const AdminDashboard = () => {
         subscriptionType: 'duration',
         subscriptionDuration: '1month',
         subscriptionEndDate: '',
+        isTrialAccount: (store as any).isTrialAccount || false,
       });
     } else {
       setEditingStore(null);
@@ -160,6 +163,7 @@ const AdminDashboard = () => {
         subscriptionType: 'duration',
         subscriptionDuration: '1month',
         subscriptionEndDate: '',
+        isTrialAccount: false,
       });
     }
     setShowModal(true);
@@ -197,14 +201,15 @@ const AdminDashboard = () => {
       address: '',
       city: '',
       country: '',
-      createDefaultAdmin: false,
-      defaultAdminEmail: '',
-      defaultAdminPassword: '',
-      defaultAdminName: '',
-      subscriptionType: 'duration',
-      subscriptionDuration: '1month',
-      subscriptionEndDate: '',
-    });
+        createDefaultAdmin: false,
+        defaultAdminEmail: '',
+        defaultAdminPassword: '',
+        defaultAdminName: '',
+        subscriptionType: 'duration',
+        subscriptionDuration: '1month',
+        subscriptionEndDate: '',
+        isTrialAccount: false,
+      });
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -240,6 +245,11 @@ const AdminDashboard = () => {
           payload.defaultAdminEmail = formData.defaultAdminEmail;
           payload.defaultAdminPassword = formData.defaultAdminPassword;
           payload.defaultAdminName = formData.defaultAdminName || `Store Admin - ${formData.name}`;
+        }
+        
+        // Include trial account flag
+        if (formData.isTrialAccount) {
+          payload.isTrialAccount = true;
         }
         
         const response = await adminApi.createStore(payload);
@@ -719,6 +729,26 @@ const AdminDashboard = () => {
                     />
                     <p className="mt-1 text-xs text-slate-400">
                       {AR_LABELS.usedForCollectionNames.replace('{prefix}', formData.prefix || 'store1')}
+                    </p>
+                  </div>
+                  
+                  {/* Trial Account Option */}
+                  <div className="mt-4 pt-4 border-t border-slate-600">
+                    <div className="flex items-center">
+                      <input
+                        type="checkbox"
+                        id="isTrialAccount"
+                        checked={formData.isTrialAccount}
+                        onChange={(e) => setFormData({ ...formData, isTrialAccount: e.target.checked })}
+                        className="w-4 h-4 text-blue-600 bg-slate-700 border-slate-600 rounded focus:ring-blue-500"
+                      />
+                      <label htmlFor="isTrialAccount" className="ml-2 text-sm font-medium text-slate-300">
+                        حساب تجريبي (Trial Account)
+                      </label>
+                    </div>
+                    <p className="mt-2 text-xs text-slate-400 pl-6">
+                      عند تفعيل هذا الخيار، سيتم حفظ جميع بيانات المتجر في مجموعات الاختبار (_test) بدلاً من المجموعات الرئيسية. 
+                      هذا يسمح باختبار النظام دون التأثير على بيانات الإنتاج الحقيقية.
                     </p>
                   </div>
                   

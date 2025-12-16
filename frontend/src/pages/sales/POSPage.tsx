@@ -3332,13 +3332,13 @@ const POSPage: React.FC = () => {
                     </h1>
                 </div>
 
-                {/* Three Column Layout - Proportional widths: 25% - 50% - 25% */}
-                <div className="grid grid-cols-1 md:grid-cols-[1fr_2fr_1fr] gap-3 sm:gap-4 h-auto md:h-[calc(100vh-12rem)] w-full overflow-x-hidden">
-                   {/* Column 1: Customer & Quick Products (25%) */}
+                {/* Three Column Layout - Proportional widths: ~19% - 50% - 31% */}
+                <div className="grid grid-cols-1 md:grid-cols-[0.75fr_2.3fr_1fr] gap-3 sm:gap-4 h-auto md:h-[calc(100vh-12rem)] w-full overflow-x-hidden">
+                {/* Column 1: Customer & Quick Products (25%) */}
                     <div className="flex flex-col gap-3 sm:gap-4 min-h-0 min-w-0">
-                        {/* Held Invoices */}
-                        <div className="bg-white/95 dark:bg-gray-800/95 rounded-xl sm:rounded-2xl shadow-sm p-4 sm:p-6 backdrop-blur-xl border border-slate-200/50 dark:border-slate-700/50 space-y-3 sm:space-y-4 flex flex-col min-h-0 relative z-10">
-                            {heldInvoices.length > 0 && (
+                        {/* Held Invoices - Only visible when there are held invoices */}
+                        {heldInvoices.length > 0 && (
+                            <div className="bg-white/95 dark:bg-gray-800/95 rounded-xl sm:rounded-2xl shadow-sm p-4 sm:p-6 backdrop-blur-xl border border-slate-200/50 dark:border-slate-700/50 space-y-3 sm:space-y-4 flex flex-col min-h-0 relative z-10">
                                 <div className="border-t border-gray-200 dark:border-gray-700 pt-3 sm:pt-4 flex-shrink-0">
                                     <h3 className="font-bold text-sm sm:text-base text-gray-700 dark:text-gray-200 text-right mb-2">{AR_LABELS.heldInvoices}</h3>
                                     <div className="space-y-2 max-h-20 sm:max-h-24 overflow-y-auto">
@@ -3350,8 +3350,8 @@ const POSPage: React.FC = () => {
                                         ))}
                                     </div>
                                 </div>
-                            )}
-                        </div>
+                            </div>
+                        )}
                         {/* Quick Products */}
                         <div className="bg-white/95 dark:bg-gray-800/95 rounded-xl sm:rounded-2xl shadow-sm p-4 sm:p-6 backdrop-blur-xl border border-slate-200/50 dark:border-slate-700/50 flex-grow overflow-y-auto relative z-0">
                             <h3 className="font-bold text-sm sm:text-base text-gray-900 dark:text-gray-100 text-right mb-3 sm:mb-4">{AR_LABELS.quickProducts}</h3>
@@ -3386,6 +3386,26 @@ const POSPage: React.FC = () => {
 
                     {/* Column 2: Transaction/Cart (50% - Center, wider) */}
                     <div className="flex flex-col bg-white/95 dark:bg-gray-800/95 rounded-xl sm:rounded-2xl shadow-sm backdrop-blur-xl border border-slate-200/50 dark:border-slate-700/50 min-h-0 min-w-0 overflow-hidden">
+                        {/* Fixed Action Buttons at Top */}
+                        <div className="bg-white/95 dark:bg-gray-800/95 backdrop-blur-sm border-b border-gray-200 dark:border-gray-700 p-3 sm:p-4 z-10">
+                            <div className="flex flex-row gap-2 sm:gap-3">
+                                <button 
+                                    onClick={handleHoldSale} 
+                                    disabled={currentInvoice.items.length === 0} 
+                                    className="flex-1 inline-flex items-center justify-center px-4 py-2.5 rounded-xl border-2 border-yellow-400 dark:border-yellow-600 text-sm font-medium text-yellow-700 dark:text-yellow-300 bg-yellow-50 dark:bg-yellow-900/30 hover:bg-yellow-100 dark:hover:bg-yellow-900/50 disabled:opacity-50 transition-all duration-200 shadow-sm hover:shadow-md"
+                                >
+                                   <span className="h-4 w-4 sm:h-5 sm:w-5 block"><HandIcon /></span>
+                                   <span className="mr-2">{AR_LABELS.holdSale}</span>
+                                </button>
+                                <button 
+                                    onClick={() => startNewSale()} 
+                                    className="flex-1 inline-flex items-center justify-center px-4 py-2.5 rounded-xl border-2 border-red-400 dark:border-red-600 text-sm font-medium text-red-700 dark:text-red-300 bg-red-50 dark:bg-red-900/30 hover:bg-red-100 dark:hover:bg-red-900/50 transition-all duration-200 shadow-sm hover:shadow-md"
+                                >
+                                    <span className="w-4 h-4 block"><CancelIcon /></span>
+                                    <span className="mr-2">{AR_LABELS.cancel}</span>
+                                </button>
+                            </div>
+                        </div>
                         {/* Header */}
                         <div className="p-3 sm:p-4 md:p-6 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 text-xs sm:text-sm text-gray-700 dark:text-gray-300 flex flex-col sm:flex-row justify-between gap-2 sm:gap-0 rounded-t-xl sm:rounded-t-2xl flex-shrink-0">
                             <span className="font-semibold truncate">{AR_LABELS.invoiceNumber}: <span className="font-mono text-orange-600">{currentInvoice.id}</span></span>
@@ -3518,27 +3538,6 @@ const POSPage: React.FC = () => {
                                     ))}
                                     </tbody>
                                 </table>
-                            </div>
-                            
-                            {/* Fixed Action Buttons at Bottom */}
-                            <div className="sticky bottom-0 left-0 right-0 bg-white/95 dark:bg-gray-800/95 backdrop-blur-sm border-t border-gray-200 dark:border-gray-700 p-3 sm:p-4 z-10">
-                                <div className="flex flex-row gap-2 sm:gap-3">
-                                    <button 
-                                        onClick={handleHoldSale} 
-                                        disabled={currentInvoice.items.length === 0} 
-                                        className="flex-1 inline-flex items-center justify-center px-4 py-2.5 rounded-xl border-2 border-yellow-400 dark:border-yellow-600 text-sm font-medium text-yellow-700 dark:text-yellow-300 bg-yellow-50 dark:bg-yellow-900/30 hover:bg-yellow-100 dark:hover:bg-yellow-900/50 disabled:opacity-50 transition-all duration-200 shadow-sm hover:shadow-md"
-                                    >
-                                       <span className="h-4 w-4 sm:h-5 sm:w-5 block"><HandIcon /></span>
-                                       <span className="mr-2">{AR_LABELS.holdSale}</span>
-                                    </button>
-                                    <button 
-                                        onClick={() => startNewSale()} 
-                                        className="flex-1 inline-flex items-center justify-center px-4 py-2.5 rounded-xl border-2 border-red-400 dark:border-red-600 text-sm font-medium text-red-700 dark:text-red-300 bg-red-50 dark:bg-red-900/30 hover:bg-red-100 dark:hover:bg-red-900/50 transition-all duration-200 shadow-sm hover:shadow-md"
-                                    >
-                                        <span className="w-4 h-4 block"><CancelIcon /></span>
-                                        <span className="mr-2">{AR_LABELS.cancel}</span>
-                                    </button>
-                                </div>
                             </div>
                         </div>
                     </div>
@@ -3763,7 +3762,7 @@ const POSPage: React.FC = () => {
                                         <span className="text-xs sm:text-sm text-gray-600 dark:text-gray-400">{AR_LABELS.tax} ({(taxRate * 100).toFixed(2)}%):</span>
                                         <span className="text-sm sm:text-base font-semibold text-gray-900 dark:text-gray-100">{formatCurrency(currentInvoice.tax)}</span>
                                     </div>
-                                    <div className="border-t-2 border-orange-300 dark:border-orange-700 pt-3 mt-2">
+                                    <div className="border-t-2 border-orange-300 dark:border-orange-700 pt-3 mt-2 bg-gradient-to-r from-orange-50 to-amber-50 dark:from-orange-900/30 dark:to-amber-900/30 border-2 border-orange-400 dark:border-orange-600 rounded-lg p-3 sm:p-4 shadow-md ring-2 ring-orange-200 dark:ring-orange-800/50">
                                         <div className="flex justify-between items-center">
                                             <span className="text-base sm:text-lg font-bold text-gray-800 dark:text-gray-200">{AR_LABELS.grandTotal}:</span>
                                             <span className="text-xl sm:text-2xl font-bold text-orange-600 dark:text-orange-400">{formatCurrency(currentInvoice.grandTotal)}</span>

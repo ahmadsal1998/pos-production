@@ -2,8 +2,8 @@ import { Response } from 'express';
 import { body, validationResult } from 'express-validator';
 import { asyncHandler } from '../middleware/error.middleware';
 import { AuthenticatedRequest } from '../middleware/auth.middleware';
-import Product from '../models/Product';
 import { getProductByBarcode as getCachedProductByBarcode, invalidateProductCache, invalidateStoreProductCache, invalidateAllProductBarcodeCaches } from '../utils/productCache';
+import { getProductModelForStore } from '../utils/productModel';
 import multer from 'multer';
 import { parse } from 'csv-parse/sync';
 
@@ -95,6 +95,9 @@ export const createProduct = asyncHandler(async (req: AuthenticatedRequest, res:
   }
 
   try {
+    // Get trial-aware Product model
+    const Product = await getProductModelForStore(storeId);
+    
     // Check if product with same barcode exists for this store (using compound index)
     const existingProduct = await Product.findOne({ 
       storeId: storeId.toLowerCase(),
@@ -263,6 +266,9 @@ export const getProducts = asyncHandler(async (req: AuthenticatedRequest, res: R
       }
     }
 
+    // Get trial-aware Product model
+    const Product = await getProductModelForStore(storeId);
+    
     // Get total count for pagination metadata
     let totalProducts: number = 0;
     try {
@@ -422,6 +428,9 @@ export const getProduct = asyncHandler(async (req: AuthenticatedRequest, res: Re
   }
 
   try {
+    // Get trial-aware Product model
+    const Product = await getProductModelForStore(storeId);
+    
     // Use unified model with storeId filter for isolation
     const product = await Product.findOne({ 
       _id: id,
@@ -475,6 +484,9 @@ export const updateProduct = asyncHandler(async (req: AuthenticatedRequest, res:
   }
 
   try {
+    // Get trial-aware Product model
+    const Product = await getProductModelForStore(storeId);
+    
     // Ensure storeId is not overridden from request body
     const updateData = { ...req.body };
     delete updateData.storeId; // Never allow storeId from request body
@@ -539,6 +551,9 @@ export const deleteProduct = asyncHandler(async (req: AuthenticatedRequest, res:
   }
 
   try {
+    // Get trial-aware Product model
+    const Product = await getProductModelForStore(storeId);
+    
     // Get product first to get barcode for cache invalidation
     const product = await Product.findOne({ 
       _id: id,
@@ -862,6 +877,9 @@ export const importProducts = asyncHandler(async (req: AuthenticatedRequest, res
       });
     }
 
+    // Get trial-aware Product model
+    const Product = await getProductModelForStore(storeId);
+    
     // Check for existing products in database (with storeId filter)
     const existingBarcodes = await Product.find({
       storeId: storeId.toLowerCase(),
@@ -983,6 +1001,9 @@ export const getProductMetrics = asyncHandler(async (req: AuthenticatedRequest, 
   }
 
   try {
+    // Get trial-aware Product model
+    const Product = await getProductModelForStore(storeId);
+    
     // Use unified model with storeId filter
     const products = await Product.find({ 
       storeId: storeId.toLowerCase(),

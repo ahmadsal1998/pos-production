@@ -30,6 +30,7 @@ export interface IStore {
   subscriptionStartDate: Date; // Subscription start date
   subscriptionEndDate: Date; // Subscription end date
   isActive: boolean; // Whether the store account is active (subscription status)
+  isTrialAccount: boolean; // Whether this is a trial account (uses _test collections)
   // Contact information
   email?: string;
   phone?: string;
@@ -171,6 +172,11 @@ const storeSchema = new Schema<StoreDocument>(
     isActive: {
       type: Boolean,
       default: true,
+      index: true,
+    },
+    isTrialAccount: {
+      type: Boolean,
+      default: false,
       index: true,
     },
     // Contact information
