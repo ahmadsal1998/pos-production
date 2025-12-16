@@ -5,7 +5,7 @@ import { AR_LABELS, UUID, SearchIcon, PlusIcon, EditIcon, DeleteIcon, PrintIcon,
 import { GridViewIcon, TableViewIcon } from '@/shared/constants/routes';
 import { MetricCard } from '@/shared/components/ui/MetricCard';
 import CustomDropdown from '@/shared/components/ui/CustomDropdown/CustomDropdown';
-import { formatDate } from '@/shared/utils';
+import { formatDate, formatNumber } from '@/shared/utils';
 import { customersApi, salesApi, ApiError } from '@/lib/api/client';
 import { useCurrency } from '@/shared/contexts/CurrencyContext';
 import { useAuthStore } from '@/app/store';
@@ -73,7 +73,7 @@ const SaleDetailsModal: React.FC<{ sale: SaleTransaction | null, onClose: () => 
                                     return (
                                     <tr key={item.productId || `receipt-item-${idx}`} className="border-b border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700/50">
                                         <td className="py-2.5 px-3 text-right border border-gray-300 dark:border-gray-600 font-medium">{item.name}</td>
-                                        <td className="py-2.5 px-3 text-center border border-gray-300 dark:border-gray-600">{Math.abs(item.quantity)}</td>
+                                        <td className="py-2.5 px-3 text-center border border-gray-300 dark:border-gray-600">{formatNumber(Math.abs(item.quantity))}</td>
                                         <td className={`py-2.5 px-3 text-center border border-gray-300 dark:border-gray-600 ${isReturn ? 'text-red-600 dark:text-red-400' : 'text-gray-700 dark:text-gray-300'}`}>{formatCurrency(itemUnitPrice)}</td>
                                         <td className={`py-2.5 px-3 text-left border border-gray-300 dark:border-gray-600 font-semibold ${isReturn ? 'text-red-600 dark:text-red-400' : 'text-gray-900 dark:text-gray-100'}`}>{formatCurrency(itemTotal)}</td>
                                     </tr>
@@ -1028,7 +1028,7 @@ const SalesPage: React.FC<SalesPageProps> = ({ setActivePath }) => {
                         <MetricCard id={1} title={cardTitles.totalSales} value={isLoadingStats ? '...' : formatCurrency(statistics.totalSales)} icon={<div className="w-6 h-6 bg-green-500 rounded"></div>} bgColor="bg-green-100" valueColor="text-green-600" />
                         <MetricCard id={2} title={cardTitles.totalPayments} value={isLoadingStats ? '...' : formatCurrency(statistics.totalPayments)} icon={<div className="w-6 h-6 bg-blue-500 rounded"></div>} bgColor="bg-blue-100" valueColor="text-blue-600" />
                         <MetricCard id={3} title={cardTitles.creditSales} value={isLoadingStats ? '...' : formatCurrency(statistics.creditSales)} icon={<div className="w-6 h-6 bg-yellow-500 rounded"></div>} bgColor="bg-yellow-100" valueColor="text-yellow-600" />
-                        <MetricCard id={4} title={cardTitles.invoiceCount} value={isLoadingStats ? '...' : statistics.invoiceCount.toString()} icon={<div className="w-6 h-6 bg-purple-500 rounded"></div>} bgColor="bg-purple-100" valueColor="text-purple-600" />
+                        <MetricCard id={4} title={cardTitles.invoiceCount} value={isLoadingStats ? '...' : formatNumber(statistics.invoiceCount)} icon={<div className="w-6 h-6 bg-purple-500 rounded"></div>} bgColor="bg-purple-100" valueColor="text-purple-600" />
                     </div>
                 )}
 
@@ -1293,7 +1293,7 @@ const SalesTableView: React.FC<{
                 {totalPages > 1 && (
                     <div className="flex items-center justify-between border-t border-gray-200 dark:border-gray-700 pt-4">
                         <div className="text-sm text-gray-700 dark:text-gray-300">
-                            عرض {((currentPage - 1) * pageSize) + 1} - {Math.min(currentPage * pageSize, totalSales)} من {totalSales} فاتورة
+                            عرض {formatNumber(((currentPage - 1) * pageSize) + 1)} - {formatNumber(Math.min(currentPage * pageSize, totalSales))} من {formatNumber(totalSales)} فاتورة
                         </div>
                         <div className="flex items-center gap-2">
                             <button
@@ -1308,7 +1308,7 @@ const SalesTableView: React.FC<{
                                 السابق
                             </button>
                             <span className="px-4 py-2 text-sm text-gray-700 dark:text-gray-300">
-                                صفحة {currentPage} من {totalPages}
+                                صفحة {formatNumber(currentPage)} من {formatNumber(totalPages)}
                             </span>
                             <button
                                 onClick={() => onPageChange(currentPage + 1)}
@@ -1521,7 +1521,7 @@ const ReportsView: React.FC<{ sales: SaleTransaction[], customers: Customer[], p
                     { 'المؤشر': AR_LABELS.totalSales, 'القيمة': formatCurrency(totalSales) },
                     { 'المؤشر': AR_LABELS.paid, 'القيمة': formatCurrency(totalPaid) },
                     { 'المؤشر': AR_LABELS.remaining, 'القيمة': formatCurrency(totalRemaining) },
-                    { 'المؤشر': AR_LABELS.invoiceCount, 'القيمة': filteredSales.length },
+                    { 'المؤشر': AR_LABELS.invoiceCount, 'القيمة': formatNumber(filteredSales.length) },
                 ];
                 break;
             }
@@ -1542,7 +1542,7 @@ const ReportsView: React.FC<{ sales: SaleTransaction[], customers: Customer[], p
                 // FIX: Explicitly type the mapped parameter 'c' to resolve 'unknown' type error.
                 data = Object.values(byCustomer).map((c: { name: string; count: number; total: number; paid: number; remaining: number }) => ({
                     [AR_LABELS.customerName]: c.name,
-                    [AR_LABELS.invoiceCount]: c.count,
+                    [AR_LABELS.invoiceCount]: formatNumber(c.count),
                     [AR_LABELS.totalSales]: formatCurrency(c.total),
                     [AR_LABELS.paid]: formatCurrency(c.paid),
                     [AR_LABELS.remaining]: formatCurrency(c.remaining),
@@ -1566,7 +1566,7 @@ const ReportsView: React.FC<{ sales: SaleTransaction[], customers: Customer[], p
                 // FIX: Explicitly type the mapped parameter 'u' to resolve 'unknown' type error.
                 data = Object.entries(byUser).map(([seller, u]: [string, { count: number; total: number; paid: number; remaining: number }]) => ({
                     [AR_LABELS.seller]: seller,
-                    [AR_LABELS.invoiceCount]: u.count,
+                    [AR_LABELS.invoiceCount]: formatNumber(u.count),
                     [AR_LABELS.totalSales]: formatCurrency(u.total),
                     [AR_LABELS.paid]: formatCurrency(u.paid),
                     [AR_LABELS.remaining]: formatCurrency(u.remaining),
@@ -1591,7 +1591,7 @@ const ReportsView: React.FC<{ sales: SaleTransaction[], customers: Customer[], p
                 // FIX: Explicitly type the mapped parameter 'p' to resolve 'unknown' type error.
                 data = Object.entries(byPayment).map(([method, p]: [string, { count: number; total: number; paid: number; remainingAmount: number }]) => ({
                     [AR_LABELS.paymentType]: method,
-                    [AR_LABELS.invoiceCount]: p.count,
+                    [AR_LABELS.invoiceCount]: formatNumber(p.count),
                     [AR_LABELS.totalSales]: formatCurrency(p.total),
                     [AR_LABELS.paid]: formatCurrency(p.paid),
                     [AR_LABELS.remaining]: formatCurrency(p.remainingAmount),
@@ -2382,7 +2382,7 @@ const CustomerAccountsView: React.FC<{
                 <MetricCard 
                     id={1} 
                     title="إجمالي عدد العملاء" 
-                    value={statistics.totalCustomers.toString()} 
+                    value={formatNumber(statistics.totalCustomers)} 
                     icon={<div className="w-6 h-6 bg-blue-500 rounded"></div>} 
                     bgColor="bg-blue-100" 
                     valueColor="text-blue-600" 
@@ -2398,7 +2398,7 @@ const CustomerAccountsView: React.FC<{
                 <MetricCard 
                     id={3} 
                     title={`عدد العملاء ذوي الدين ${balanceFilter === 'has_balance' ? '(مفلتر)' : ''}`}
-                    value={statistics.customersWithDebt.toString()} 
+                    value={formatNumber(statistics.customersWithDebt)} 
                     icon={<div className="w-6 h-6 bg-orange-500 rounded"></div>} 
                     bgColor="bg-orange-100" 
                     valueColor="text-orange-600" 
@@ -2406,7 +2406,7 @@ const CustomerAccountsView: React.FC<{
                 <MetricCard 
                     id={4} 
                     title={`عدد المدفوعات ${getFilterLabelSuffix()}`}
-                    value={statistics.numberOfPayments.toString()} 
+                    value={formatNumber(statistics.numberOfPayments)} 
                     icon={<div className="w-6 h-6 bg-green-500 rounded"></div>} 
                     bgColor="bg-green-100" 
                     valueColor="text-green-600" 
@@ -2757,7 +2757,7 @@ const CustomerAccountsView: React.FC<{
             {totalPages > 1 && (
                 <div className="flex items-center justify-between border-t border-gray-200 dark:border-gray-700 pt-4">
                     <div className="text-sm text-gray-700 dark:text-gray-300">
-                        عرض {((currentPage - 1) * pageSize) + 1} - {Math.min(currentPage * pageSize, filteredAndSortedCustomers.length)} من {filteredAndSortedCustomers.length} عميل
+                        عرض {formatNumber(((currentPage - 1) * pageSize) + 1)} - {formatNumber(Math.min(currentPage * pageSize, filteredAndSortedCustomers.length))} من {formatNumber(filteredAndSortedCustomers.length)} عميل
                     </div>
                     <div className="flex items-center gap-2">
                         <button
@@ -2772,7 +2772,7 @@ const CustomerAccountsView: React.FC<{
                             السابق
                         </button>
                         <span className="px-4 py-2 text-sm text-gray-700 dark:text-gray-300">
-                            صفحة {currentPage} من {totalPages}
+                            صفحة {formatNumber(currentPage)} من {formatNumber(totalPages)}
                         </span>
                         <button
                             onClick={() => setCurrentPage(currentPage + 1)}

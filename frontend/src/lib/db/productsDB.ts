@@ -179,29 +179,67 @@ class ProductsDB {
       console.log('[ProductsDB] Updating products incrementally (faster)');
     }
 
-    const transaction = this.db.transaction([this.storeName], 'readwrite');
-    const objectStore = transaction.objectStore(this.storeName);
     const now = Date.now();
+    const BATCH_SIZE = 100; // Process 100 products per transaction to avoid blocking
 
-    // Store/update all products in a single transaction
-    // Using put() will update existing records or create new ones
-    const promises = uniqueProducts.map((product) => {
-      const id = this.getProductId(product, storeId);
-      const record: ProductRecord = {
-        id,
-        product,
-        storeId,
-        lastUpdated: now,
-      };
-      return new Promise<void>((resolve, reject) => {
-        const request = objectStore.put(record);
-        request.onsuccess = () => resolve();
-        request.onerror = () => reject(request.error);
+    // For large batches, process in chunks to avoid blocking the main thread
+    if (uniqueProducts.length > BATCH_SIZE) {
+      console.log(`[ProductsDB] Processing ${uniqueProducts.length} products in batches of ${BATCH_SIZE}`);
+      
+      for (let i = 0; i < uniqueProducts.length; i += BATCH_SIZE) {
+        const batch = uniqueProducts.slice(i, i + BATCH_SIZE);
+        const transaction = this.db.transaction([this.storeName], 'readwrite');
+        const objectStore = transaction.objectStore(this.storeName);
+        
+        const promises = batch.map((product) => {
+          const id = this.getProductId(product, storeId);
+          const record: ProductRecord = {
+            id,
+            product,
+            storeId,
+            lastUpdated: now,
+          };
+          return new Promise<void>((resolve, reject) => {
+            const request = objectStore.put(record);
+            request.onsuccess = () => resolve();
+            request.onerror = () => reject(request.error);
+          });
+        });
+
+        await Promise.all(promises);
+        
+        // Small delay between batches to avoid blocking (except for last batch)
+        if (i + BATCH_SIZE < uniqueProducts.length) {
+          await new Promise(resolve => setTimeout(resolve, 10));
+        }
+      }
+      
+      console.log(`[ProductsDB] Stored/updated ${uniqueProducts.length} products in IndexedDB (batched)`);
+    } else {
+      // For smaller batches, use a single transaction (faster)
+      const transaction = this.db.transaction([this.storeName], 'readwrite');
+      const objectStore = transaction.objectStore(this.storeName);
+
+      // Store/update all products in a single transaction
+      // Using put() will update existing records or create new ones
+      const promises = uniqueProducts.map((product) => {
+        const id = this.getProductId(product, storeId);
+        const record: ProductRecord = {
+          id,
+          product,
+          storeId,
+          lastUpdated: now,
+        };
+        return new Promise<void>((resolve, reject) => {
+          const request = objectStore.put(record);
+          request.onsuccess = () => resolve();
+          request.onerror = () => reject(request.error);
+        });
       });
-    });
 
-    await Promise.all(promises);
-    console.log(`[ProductsDB] Stored/updated ${uniqueProducts.length} products in IndexedDB`);
+      await Promise.all(promises);
+      console.log(`[ProductsDB] Stored/updated ${uniqueProducts.length} products in IndexedDB`);
+    }
   }
 
   /**
@@ -538,6 +576,7 @@ class ProductsDB {
   /**
    * Update product stock in IndexedDB
    * Normalizes the productId to ensure consistent lookup
+   * Supports both frontend IDs and backend originalIds
    */
   async updateProductStock(productId: string | number, newStock: number): Promise<void> {
     await this.init();
@@ -571,7 +610,36 @@ class ProductsDB {
           };
           putRequest.onerror = () => reject(putRequest.error);
         } else {
-          reject(new Error(`Product ${normalizedId} not found in database`));
+          // Product not found with this ID - try to find by searching all products
+          // This handles cases where the productId might be a frontend ID but we need to find by originalId
+          const index = objectStore.index(this.indexName);
+          const searchRequest = index.getAll(storeId);
+          
+          searchRequest.onsuccess = () => {
+            const records = searchRequest.result as ProductRecord[];
+            // Try to find product by matching either id or originalId
+            const foundRecord = records.find(r => {
+              const p = r.product;
+              const pId = String(p.id || p._id);
+              const originalId = String(p.originalId || '');
+              return pId === normalizedId || originalId === normalizedId;
+            });
+            
+            if (foundRecord) {
+              foundRecord.product.stock = newStock;
+              foundRecord.lastUpdated = Date.now();
+              const putRequest = objectStore.put(foundRecord);
+              putRequest.onsuccess = () => {
+                console.log(`[ProductsDB] Updated stock for product ${normalizedId} (found by search): ${newStock}`);
+                resolve();
+              };
+              putRequest.onerror = () => reject(putRequest.error);
+            } else {
+              reject(new Error(`Product ${normalizedId} not found in database (searched by id and originalId)`));
+            }
+          };
+          
+          searchRequest.onerror = () => reject(searchRequest.error);
         }
       };
 

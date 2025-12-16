@@ -337,9 +337,10 @@ class ProductSyncManager {
 
       if (allProducts.length > 0) {
         // Store in IndexedDB (primary storage)
-        // Use clearAll=true for full sync to ensure consistency
+        // Use incremental updates (clearAll=false) for better performance
+        // Only clear all if explicitly requested via forceRefresh
         try {
-          await productsDB.storeProducts(allProducts, { clearAll: true });
+          await productsDB.storeProducts(allProducts, { clearAll: forceRefresh });
           
           // Verify the count matches (safety check)
           const storedCount = await productsDB.getProductCount();
@@ -454,29 +455,52 @@ class ProductSyncManager {
     }
 
     try {
-      // Fetch each product individually
-      const syncPromises = productIds.map(async (productId) => {
-        try {
-          const response = await productsApi.getProduct(productId);
-          const product = (response.data as any)?.data?.product || 
-                        (response.data as any)?.product;
-          return product;
-        } catch (error) {
-          console.error(`[ProductSync] Error fetching product ${productId}:`, error);
-          return null;
+      // Process products in chunks to avoid blocking the main thread
+      const CHUNK_SIZE = 5; // Process 5 products at a time
+      const updatedProducts: any[] = [];
+      
+      // Process products in chunks with small delays between chunks
+      for (let i = 0; i < productIds.length; i += CHUNK_SIZE) {
+        const chunk = productIds.slice(i, i + CHUNK_SIZE);
+        
+        // Fetch chunk of products
+        const chunkPromises = chunk.map(async (productId) => {
+          try {
+            const response = await productsApi.getProduct(productId);
+            const product = (response.data as any)?.data?.product || 
+                          (response.data as any)?.product;
+            return product;
+          } catch (error) {
+            console.error(`[ProductSync] Error fetching product ${productId}:`, error);
+            return null;
+          }
+        });
+        
+        const chunkResults = (await Promise.all(chunkPromises))
+          .filter((p): p is any => p !== null);
+        updatedProducts.push(...chunkResults);
+        
+        // Small delay between chunks to avoid blocking (except for last chunk)
+        if (i + CHUNK_SIZE < productIds.length) {
+          await new Promise(resolve => setTimeout(resolve, 50));
         }
-      });
-
-      const updatedProducts = (await Promise.all(syncPromises))
-        .filter((p): p is any => p !== null);
+      }
 
       if (updatedProducts.length > 0) {
-        // Update IndexedDB with new product data
+        // Update IndexedDB with new product data in chunks
         try {
-          // Store each updated product
-          await Promise.all(
-            updatedProducts.map((product: any) => productsDB.storeProduct(product))
-          );
+          // Store products in chunks to avoid blocking
+          for (let i = 0; i < updatedProducts.length; i += CHUNK_SIZE) {
+            const chunk = updatedProducts.slice(i, i + CHUNK_SIZE);
+            await Promise.all(
+              chunk.map((product: any) => productsDB.storeProduct(product))
+            );
+            
+            // Small delay between chunks (except for last chunk)
+            if (i + CHUNK_SIZE < updatedProducts.length) {
+              await new Promise(resolve => setTimeout(resolve, 10));
+            }
+          }
           // Notify other tabs
           (productsDB as any).notifyOtherTabs();
         } catch (dbError) {

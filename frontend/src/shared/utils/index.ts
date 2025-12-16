@@ -88,7 +88,50 @@ export const convertArabicToEnglishNumerals = (text: string): string => {
     '٧': '7',
     '٨': '8',
     '٩': '9',
+    '٫': '.',
+    '٬': ','
   };
   
-  return text.replace(/[٠-٩]/g, (char) => arabicToEnglish[char] || char);
+  return text.replace(/[٠-٩٫٬]/g, (char) => arabicToEnglish[char] || char);
+};
+
+/**
+ * Formats a number with English numerals (always uses 0-9, never Arabic numerals)
+ * @param value - The number to format
+ * @param options - Formatting options (decimals, locale, etc.)
+ * @returns Formatted number string with English numerals
+ */
+export const formatNumber = (
+  value: number,
+  options?: {
+    minimumFractionDigits?: number;
+    maximumFractionDigits?: number;
+    useGrouping?: boolean;
+  }
+): string => {
+  const {
+    minimumFractionDigits = 0,
+    maximumFractionDigits = 0,
+    useGrouping = true,
+  } = options || {};
+
+  try {
+    // Use 'en-US' locale to ensure English numerals
+    const formatter = new Intl.NumberFormat('en-US', {
+      minimumFractionDigits,
+      maximumFractionDigits,
+      useGrouping,
+    });
+
+    let formatted = formatter.format(value);
+
+    // Safety check: convert any Arabic numerals to English
+    formatted = convertArabicToEnglishNumerals(formatted);
+
+    return formatted;
+  } catch (error) {
+    // Fallback: use simple toFixed and ensure English numerals
+    const formatted = value.toFixed(maximumFractionDigits);
+    return convertArabicToEnglishNumerals(formatted);
+  }
 };
