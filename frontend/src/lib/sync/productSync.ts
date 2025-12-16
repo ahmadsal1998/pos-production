@@ -337,8 +337,9 @@ class ProductSyncManager {
 
       if (allProducts.length > 0) {
         // Store in IndexedDB (primary storage)
+        // Use clearAll=true for full sync to ensure consistency
         try {
-          await productsDB.storeProducts(allProducts);
+          await productsDB.storeProducts(allProducts, { clearAll: true });
           
           // Verify the count matches (safety check)
           const storedCount = await productsDB.getProductCount();

@@ -123,9 +123,10 @@ class ProductsDB {
 
   /**
    * Store products in IndexedDB
-   * Clears existing products for the store before storing new ones to prevent duplicates
+   * Optimized to update incrementally instead of clearing all products
+   * This is much faster for large datasets
    */
-  async storeProducts(products: any[]): Promise<void> {
+  async storeProducts(products: any[], options?: { clearAll?: boolean }): Promise<void> {
     await this.init();
     if (!this.db) {
       throw new Error('Database not initialized');
@@ -169,15 +170,21 @@ class ProductsDB {
     const uniqueProducts = Array.from(productMap.values());
     console.log(`[ProductsDB] Storing ${uniqueProducts.length} unique products (${products.length} input, ${products.length - uniqueProducts.length} duplicates removed)`);
 
-    // Clear existing products for this store before storing new ones
-    // This prevents accumulation of duplicates from multiple syncs
-    await this.clearProducts();
+    // Only clear all products if explicitly requested (e.g., full sync)
+    // Otherwise, update incrementally which is much faster
+    if (options?.clearAll) {
+      console.log('[ProductsDB] Clearing all products before storing (full sync)');
+      await this.clearProducts();
+    } else {
+      console.log('[ProductsDB] Updating products incrementally (faster)');
+    }
 
     const transaction = this.db.transaction([this.storeName], 'readwrite');
     const objectStore = transaction.objectStore(this.storeName);
     const now = Date.now();
 
-    // Store all products
+    // Store/update all products in a single transaction
+    // Using put() will update existing records or create new ones
     const promises = uniqueProducts.map((product) => {
       const id = this.getProductId(product, storeId);
       const record: ProductRecord = {
@@ -186,11 +193,15 @@ class ProductsDB {
         storeId,
         lastUpdated: now,
       };
-      return objectStore.put(record);
+      return new Promise<void>((resolve, reject) => {
+        const request = objectStore.put(record);
+        request.onsuccess = () => resolve();
+        request.onerror = () => reject(request.error);
+      });
     });
 
     await Promise.all(promises);
-    console.log(`[ProductsDB] Stored ${uniqueProducts.length} products in IndexedDB`);
+    console.log(`[ProductsDB] Stored/updated ${uniqueProducts.length} products in IndexedDB`);
   }
 
   /**

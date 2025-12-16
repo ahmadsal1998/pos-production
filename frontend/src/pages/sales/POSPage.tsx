@@ -143,6 +143,7 @@ const POSPage: React.FC = () => {
     const [saleCompleted, setSaleCompleted] = useState(false);
     const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<string>('Cash');
     const [creditPaidAmount, setCreditPaidAmount] = useState(0);
+    const [isProcessingPayment, setIsProcessingPayment] = useState(false); // Track payment processing state
     // Load autoPrintInvoice setting from preferences, default to true
     const getAutoPrintSetting = (): boolean => {
         try {
@@ -2482,28 +2483,44 @@ const POSPage: React.FC = () => {
             console.error('Error updating stock for return:', error);
         }
 
-        // Sync products after quantity changes (non-blocking)
+        // Sync products after quantity changes (non-blocking, background task)
+        // Use requestIdleCallback for non-critical operations to avoid blocking UI
         const productIdsToSync = returnInvoice.items
             .map(item => item.originalId)
             .filter((id): id is string => !!id);
         
         if (productIdsToSync.length > 0) {
-            productSync.syncAfterQuantityChange(productIdsToSync).then(async (result) => {
-                if (result.success && result.products) {
-                    // Update IndexedDB with synced products
-                    try {
-                        await productsDB.storeProducts(result.products);
-                        // Reload from IndexedDB
-                        const dbProducts = await productsDB.getAllProducts();
-                        const normalizedProducts = dbProducts.map((p: any) => normalizeProduct(p));
-                        setProducts(normalizedProducts);
-                        console.log(`[POS] Updated IndexedDB with ${normalizedProducts.length} synced products after return`);
-                    } catch (error) {
-                        console.error('[POS] Error updating IndexedDB after return sync:', error);
-                    }
+            // Use requestIdleCallback to defer non-critical sync to idle time
+            const scheduleSync = (callback: () => void) => {
+                if ('requestIdleCallback' in window) {
+                    requestIdleCallback(callback, { timeout: 5000 });
+                } else {
+                    // Fallback for browsers without requestIdleCallback
+                    setTimeout(callback, 100);
                 }
-            }).catch(error => {
-                console.error('[POS] Error syncing products after return:', error);
+            };
+            
+            scheduleSync(() => {
+                productSync.syncAfterQuantityChange(productIdsToSync).then(async (result) => {
+                    if (result.success && result.products) {
+                        // Update IndexedDB incrementally (faster than clearing all)
+                        try {
+                            await productsDB.storeProducts(result.products, { clearAll: false });
+                            // Reload from IndexedDB in background
+                            productsDB.getAllProducts().then(dbProducts => {
+                                const normalizedProducts = dbProducts.map((p: any) => normalizeProduct(p));
+                                setProducts(normalizedProducts);
+                                console.log(`[POS] Updated IndexedDB with ${normalizedProducts.length} synced products after return`);
+                            }).catch(error => {
+                                console.error('[POS] Error reloading products from IndexedDB:', error);
+                            });
+                        } catch (error) {
+                            console.error('[POS] Error updating IndexedDB after return sync:', error);
+                        }
+                    }
+                }).catch(error => {
+                    console.error('[POS] Error syncing products after return:', error);
+                });
             });
         }
 
@@ -2626,10 +2643,12 @@ const POSPage: React.FC = () => {
                 // Show success and reset
                 setCurrentInvoice(returnInvoice);
                 setSaleCompleted(true);
+                setIsProcessingPayment(false); // Clear loading state
             } catch (error: any) {
                 const apiError = error as ApiError;
                 console.error('Failed to save return:', apiError);
                 alert(`تم إرجاع المنتجات، لكن حدث خطأ في حفظ الفاتورة: ${apiError.message || 'خطأ غير معروف'}`);
+                setIsProcessingPayment(false); // Clear loading state even on error
             }
         }
     
@@ -2652,11 +2671,15 @@ const POSPage: React.FC = () => {
     };
 
     const finalizeSaleWithoutTerminal = async () => {
+        // Show immediate feedback
+        setIsProcessingPayment(true);
+        
         const finalInvoice = { ...currentInvoice, paymentMethod: selectedPaymentMethod };
         
         // Check if this is a return (should not happen here, but safety check)
         if (finalInvoice.originalInvoiceId) {
             console.warn('Attempted to finalize a return invoice through sale flow. Use processReturnInvoice instead.');
+            setIsProcessingPayment(false);
             return;
         }
         
@@ -2675,8 +2698,20 @@ const POSPage: React.FC = () => {
         const stockUpdateResults: Array<{ success: boolean; productName: string; productId: string | number; error?: string }> = [];
         
         try {
-            // CRITICAL FIX: Explicitly iterate only over invoice items, not all products
-            // Process items sequentially to avoid race conditions and ensure correct productId mapping
+            // OPTIMIZATION: Batch API calls instead of sequential processing
+            // Step 1: Prepare all product update data (validation and calculation)
+            interface ProductUpdateData {
+                item: POSCartItem;
+                productIdToUpdate: string;
+                invoiceItemProductId: string | number;
+                invoiceItemName: string;
+                stockChange: number;
+                product?: POSProduct;
+            }
+            
+            const productUpdateDataList: ProductUpdateData[] = [];
+            
+            // First pass: validate and prepare all update data
             for (const item of invoiceItems) {
                 // Validate that item has required fields
                 if (!item || !item.productId || item.quantity <= 0) {
@@ -3041,34 +3076,51 @@ const POSPage: React.FC = () => {
             return newProducts;
         });
         
-        // Sync products after quantity changes (non-blocking)
+        // Sync products after quantity changes (non-blocking, background task)
+        // Use requestIdleCallback for non-critical operations to avoid blocking UI
         const productIdsToSync = invoiceItems
             .map(item => item.originalId)
             .filter((id): id is string => !!id);
         
         if (productIdsToSync.length > 0) {
-            productSync.syncAfterQuantityChange(productIdsToSync).then(async (result) => {
-                if (result.success && result.products) {
-                    // Update IndexedDB with synced products
-                    try {
-                        await productsDB.storeProducts(result.products);
-                        // Reload from IndexedDB
-                        const dbProducts = await productsDB.getAllProducts();
-                        const normalizedProducts = dbProducts.map((p: any) => normalizeProduct(p));
-                        setProducts(normalizedProducts);
-                        console.log(`[POS] Updated IndexedDB with ${normalizedProducts.length} synced products after sale`);
-                    } catch (error) {
-                        console.error('[POS] Error updating IndexedDB after sale sync:', error);
-                    }
+            // Use requestIdleCallback to defer non-critical sync to idle time
+            const scheduleSync = (callback: () => void) => {
+                if ('requestIdleCallback' in window) {
+                    requestIdleCallback(callback, { timeout: 5000 });
+                } else {
+                    // Fallback for browsers without requestIdleCallback
+                    setTimeout(callback, 100);
                 }
-            }).catch(error => {
-                console.error('[POS] Error syncing products after sale:', error);
+            };
+            
+            scheduleSync(() => {
+                productSync.syncAfterQuantityChange(productIdsToSync).then(async (result) => {
+                    if (result.success && result.products) {
+                        // Update IndexedDB incrementally (faster than clearing all)
+                        try {
+                            await productsDB.storeProducts(result.products, { clearAll: false });
+                            // Reload from IndexedDB in background
+                            productsDB.getAllProducts().then(dbProducts => {
+                                const normalizedProducts = dbProducts.map((p: any) => normalizeProduct(p));
+                                setProducts(normalizedProducts);
+                                console.log(`[POS] Updated IndexedDB with ${normalizedProducts.length} synced products after sale`);
+                            }).catch(error => {
+                                console.error('[POS] Error reloading products from IndexedDB:', error);
+                            });
+                        } catch (error) {
+                            console.error('[POS] Error updating IndexedDB after sale sync:', error);
+                        }
+                    }
+                }).catch(error => {
+                    console.error('[POS] Error syncing products after sale:', error);
+                });
             });
         }
         
         console.log('Sale Finalized:', finalInvoice);
         setCurrentInvoice(finalInvoice);
         setSaleCompleted(true);
+        setIsProcessingPayment(false); // Clear loading state
 
         // Create SaleTransaction and save to localStorage
         const customerName = finalInvoice.customer?.name || 'عميل نقدي';
@@ -3840,10 +3892,10 @@ const POSPage: React.FC = () => {
                                     <div className="flex flex-col sm:flex-row gap-2 sm:gap-3">
                                         <button 
                                             onClick={handleFinalizePayment} 
-                                            disabled={currentInvoice.items.length === 0} 
+                                            disabled={currentInvoice.items.length === 0 || isProcessingPayment} 
                                             className="flex-1 px-4 py-3 text-sm sm:text-base font-bold text-white bg-gradient-to-r from-green-500 via-emerald-500 to-green-600 rounded-xl hover:from-green-600 hover:via-emerald-600 hover:to-green-700 disabled:from-gray-400 disabled:via-gray-400 disabled:to-gray-500 dark:disabled:from-gray-600 dark:disabled:via-gray-600 dark:disabled:to-gray-700 shadow-xl hover:shadow-2xl hover:scale-[1.02] transition-all duration-200 disabled:cursor-not-allowed disabled:scale-100"
                                         >
-                                            {AR_LABELS.confirmPayment}
+                                            {isProcessingPayment ? 'جاري المعالجة...' : AR_LABELS.confirmPayment}
                                         </button>
                                         <button 
                                             onClick={handleReturn} 

@@ -288,7 +288,7 @@ export const silentPrint = async (
         options.onBeforePrint();
       }
 
-      // Create a hidden iframe
+      // Create a hidden iframe using srcdoc attribute (modern approach, avoids document.write())
       const iframe = document.createElement('iframe');
       iframe.style.position = 'fixed';
       iframe.style.right = '0';
@@ -298,6 +298,10 @@ export const silentPrint = async (
       iframe.style.border = 'none';
       iframe.style.opacity = '0';
       iframe.style.pointerEvents = 'none';
+      
+      // Use srcdoc attribute to set content without document.write()
+      // This is the modern approach and avoids browser warnings
+      iframe.srcdoc = content;
       
       // Store reference to current iframe
       currentPrintIframe = iframe;
@@ -323,16 +327,10 @@ export const silentPrint = async (
         }
 
         try {
-          const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
-          
-          if (!iframeDoc) {
-            throw new Error('Could not access iframe document');
+          // Verify iframe is ready
+          if (!iframe.contentWindow) {
+            throw new Error('Iframe window not available');
           }
-
-          // Write content to iframe
-          iframeDoc.open();
-          iframeDoc.write(content);
-          iframeDoc.close();
 
           // Wait for content to render, then print
           setTimeout(() => {
@@ -370,9 +368,19 @@ export const silentPrint = async (
                   // Listen for print dialog close (approximate)
                   // Note: We can't reliably detect when print dialog closes,
                   // so we use a timeout
-                  // Use a longer timeout to ensure dialog has closed
+                  // Break timeout into smaller chunks to avoid long handler warnings
                   const timeout = options?.timeout || 2000;
-                  setTimeout(cleanup, timeout);
+                  const chunkSize = 500; // 500ms chunks
+                  let elapsed = 0;
+                  const checkCleanup = () => {
+                    elapsed += chunkSize;
+                    if (elapsed >= timeout) {
+                      cleanup();
+                    } else {
+                      setTimeout(checkCleanup, chunkSize);
+                    }
+                  };
+                  setTimeout(checkCleanup, chunkSize);
                 }, 50);
               });
             } catch (printError) {
