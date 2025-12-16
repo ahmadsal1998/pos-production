@@ -53,12 +53,12 @@ const saleItemSchema = new Schema<ISaleItem>(
     unitPrice: {
       type: Number,
       required: true,
-      min: 0,
+      // Allow negative for return invoices (negative prices represent refunds)
     },
     totalPrice: {
       type: Number,
       required: true,
-      min: 0,
+      // Allow negative for return invoices
     },
     unit: {
       type: String,
@@ -117,32 +117,32 @@ const saleSchema = new Schema<ISale>(
     subtotal: {
       type: Number,
       required: true,
-      min: 0,
+      // Allow negative for return invoices
     },
     totalItemDiscount: {
       type: Number,
       default: 0,
-      min: 0,
+      // Allow negative for return invoices
     },
     invoiceDiscount: {
       type: Number,
       default: 0,
-      min: 0,
+      // Allow negative for return invoices
     },
     tax: {
       type: Number,
       default: 0,
-      min: 0,
+      // Allow negative for return invoices
     },
     total: {
       type: Number,
       required: true,
-      min: 0,
+      // Allow negative for return invoices
     },
     paidAmount: {
       type: Number,
       required: true,
-      min: 0,
+      // Allow negative for return invoices (refunds)
     },
     remainingAmount: {
       type: Number,

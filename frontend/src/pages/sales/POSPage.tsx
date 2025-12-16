@@ -2547,23 +2547,31 @@ const POSPage: React.FC = () => {
                             const product = products.find(p => p.id === item.productId);
                             backendProductId = product?.originalId || String(item.productId);
                         }
+                        // Ensure all values are positive before negating for returns
+                        const positiveQuantity = Math.abs(item.quantity);
+                        const positiveUnitPrice = Math.abs(item.unitPrice);
+                        const positiveDiscount = Math.abs(item.discount || 0);
+                        const positiveTotal = Math.abs(item.total);
+                        // Calculate totalPrice: (unitPrice * quantity) - discount, then negate
+                        const calculatedTotalPrice = (positiveUnitPrice * positiveQuantity) - (positiveDiscount * positiveQuantity);
+                        
                         return {
                             productId: backendProductId, // Use original backend ID
                             productName: item.name,
-                            quantity: item.quantity,
-                            unitPrice: -Math.abs(item.unitPrice), // Negative for returns
-                            totalPrice: -(item.total - (item.discount * item.quantity)), // Negative for returns
+                            quantity: positiveQuantity, // Positive quantity
+                            unitPrice: -positiveUnitPrice, // Negative for returns
+                            totalPrice: -Math.abs(calculatedTotalPrice), // Negative for returns, ensure non-negative
                             unit: item.unit,
-                            discount: item.discount,
+                            discount: positiveDiscount, // Positive discount value
                             conversionFactor: item.conversionFactor,
                         };
                     }),
-                    subtotal: -Math.abs(returnInvoice.subtotal), // Negative for returns
-                    totalItemDiscount: -Math.abs(returnInvoice.totalItemDiscount), // Negative for returns
-                    invoiceDiscount: -Math.abs(returnInvoice.invoiceDiscount), // Negative for returns
-                    tax: -Math.abs(returnInvoice.tax), // Negative for returns
-                    total: -Math.abs(returnInvoice.grandTotal), // Negative for returns
-                    paidAmount: -Math.abs(returnInvoice.grandTotal), // Negative for returns
+                    subtotal: -Math.abs(returnInvoice.subtotal || 0), // Negative for returns, ensure non-negative
+                    totalItemDiscount: -Math.abs(returnInvoice.totalItemDiscount || 0), // Negative for returns, ensure non-negative
+                    invoiceDiscount: -Math.abs(returnInvoice.invoiceDiscount || 0), // Negative for returns, ensure non-negative
+                    tax: -Math.abs(returnInvoice.tax || 0), // Negative for returns, ensure non-negative
+                    total: -Math.abs(returnInvoice.grandTotal || 0), // Negative for returns, ensure non-negative
+                    paidAmount: -Math.abs(returnInvoice.grandTotal || 0), // Negative for returns, ensure non-negative
                     remainingAmount: 0, // Always 0 for returns (fully refunded)
                     paymentMethod: 'cash', // Returns are typically cash
                     status: 'refunded', // Use 'refunded' status (valid enum value in backend)

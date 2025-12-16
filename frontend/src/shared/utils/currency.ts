@@ -82,6 +82,21 @@ export const formatCurrencyToSettings = (currency: CurrencyConfig): string => {
 };
 
 /**
+ * Convert Arabic numerals to English numerals
+ * @param str - String that may contain Arabic numerals
+ * @returns String with English numerals
+ */
+const convertArabicToEnglishNumerals = (str: string): string => {
+  const arabicToEnglish: Record<string, string> = {
+    '٠': '0', '١': '1', '٢': '2', '٣': '3', '٤': '4',
+    '٥': '5', '٦': '6', '٧': '7', '٨': '8', '٩': '9',
+    '٫': '.', '٬': ','
+  };
+  
+  return str.replace(/[٠-٩٫٬]/g, (char) => arabicToEnglish[char] || char);
+};
+
+/**
  * Format a number as currency
  * @param value - The numeric value to format
  * @param currency - Currency configuration (defaults to SAR)
@@ -95,6 +110,7 @@ export const formatCurrency = (
     minimumFractionDigits?: number;
     maximumFractionDigits?: number;
     showSymbol?: boolean;
+    forceEnglishNumerals?: boolean; // New option to force English numerals
   }
 ): string => {
   const {
@@ -102,30 +118,40 @@ export const formatCurrency = (
     minimumFractionDigits = 2,
     maximumFractionDigits = 2,
     showSymbol = true,
+    forceEnglishNumerals = true, // Default to true to always use English numerals
   } = options || {};
 
   try {
-    // Try to use Intl.NumberFormat with currency code
-    const formatter = new Intl.NumberFormat(locale, {
-      style: 'currency',
-      currency: currency.code,
+    // Use 'en-US' locale for number formatting to ensure English numerals
+    const numberLocale = forceEnglishNumerals ? 'en-US' : locale;
+    
+    // Format the number part only (without currency symbol) to ensure English numerals
+    const numberFormatter = new Intl.NumberFormat(numberLocale, {
       minimumFractionDigits,
       maximumFractionDigits,
     });
 
-    const formatted = formatter.format(value);
+    let numberPart = numberFormatter.format(value);
 
-    // If the formatter doesn't produce the desired symbol, replace it
-    if (showSymbol && !formatted.includes(currency.symbol)) {
-      // Replace the default symbol with our custom symbol
-      return formatted.replace(/[^\d.,\s-]/g, currency.symbol);
+    // Convert Arabic numerals to English if they appear (safety check)
+    if (forceEnglishNumerals) {
+      numberPart = convertArabicToEnglishNumerals(numberPart);
     }
 
-    return formatted;
+    // Add currency symbol if needed
+    if (showSymbol) {
+      // Determine symbol position based on locale (Arabic typically has symbol after)
+      const isRTL = locale === 'ar-SA' || locale.startsWith('ar');
+      return isRTL ? `${numberPart} ${currency.symbol}` : `${currency.symbol} ${numberPart}`;
+    }
+
+    return numberPart;
   } catch (error) {
     // Fallback formatting if Intl.NumberFormat fails
     const formattedValue = value.toFixed(maximumFractionDigits);
-    return showSymbol ? `${formattedValue} ${currency.symbol}` : formattedValue;
+    const numberPart = forceEnglishNumerals ? convertArabicToEnglishNumerals(formattedValue) : formattedValue;
+    const result = showSymbol ? `${numberPart} ${currency.symbol}` : numberPart;
+    return result;
   }
 };
 

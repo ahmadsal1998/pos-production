@@ -77,7 +77,13 @@ export const CurrencyProvider: React.FC<CurrencyProviderProps> = ({ children }) 
       showSymbol?: boolean;
     }
   ): string => {
-    return formatCurrencyUtil(value, currency, { locale: 'ar-SA', ...options });
+    // Use 'en-US' locale for number formatting to ensure English numerals
+    // but keep Arabic locale context for symbol placement
+    return formatCurrencyUtil(value, currency, { 
+      locale: 'ar-SA', 
+      forceEnglishNumerals: true, // Always use English numerals
+      ...options 
+    });
   };
 
   return (
