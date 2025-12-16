@@ -5,7 +5,7 @@ interface ProductNotFoundModalProps {
   isOpen: boolean;
   barcode: string;
   onClose: () => void;
-  onQuickAdd: (barcode: string, costPrice: number, sellingPrice: number) => Promise<void>;
+  onQuickAdd: (barcode: string, costPrice: number, sellingPrice: number, productName?: string) => Promise<void>;
 }
 
 const ProductNotFoundModal: React.FC<ProductNotFoundModalProps> = ({ 
@@ -16,6 +16,7 @@ const ProductNotFoundModal: React.FC<ProductNotFoundModalProps> = ({
 }) => {
   const [costPrice, setCostPrice] = useState('');
   const [sellingPrice, setSellingPrice] = useState('');
+  const [productName, setProductName] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState('');
 
@@ -24,6 +25,7 @@ const ProductNotFoundModal: React.FC<ProductNotFoundModalProps> = ({
     if (isOpen) {
       setCostPrice('');
       setSellingPrice('');
+      setProductName('');
       setError('');
     }
   }, [isOpen]);
@@ -83,7 +85,7 @@ const ProductNotFoundModal: React.FC<ProductNotFoundModalProps> = ({
 
     setIsSubmitting(true);
     try {
-      await onQuickAdd(barcode, costPriceNum, sellingPriceNum);
+      await onQuickAdd(barcode, costPriceNum, sellingPriceNum, productName.trim() || undefined);
       // Close modal after successful add
       onClose();
     } catch (err: any) {
@@ -157,6 +159,19 @@ const ProductNotFoundModal: React.FC<ProductNotFoundModalProps> = ({
                 value={barcode}
                 disabled
                 className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 text-right font-mono"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2 text-right">
+                اسم المنتج
+              </label>
+              <input
+                type="text"
+                value={productName}
+                onChange={(e) => setProductName(e.target.value)}
+                className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 text-right focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+                placeholder="اسم المنتج (اختياري)"
               />
             </div>
 

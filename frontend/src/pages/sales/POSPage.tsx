@@ -1915,13 +1915,13 @@ const POSPage: React.FC = () => {
     }, [normalizeProduct, extractUnitInfo]);
 
     // Handler for Quick Add product from ProductNotFoundModal
-    const handleQuickAddProduct = useCallback(async (barcode: string, costPrice: number, sellingPrice: number) => {
+    const handleQuickAddProduct = useCallback(async (barcode: string, costPrice: number, sellingPrice: number, productName?: string) => {
         try {
-            console.log('[POS] Quick adding product:', { barcode, costPrice, sellingPrice });
+            console.log('[POS] Quick adding product:', { barcode, costPrice, sellingPrice, productName });
 
             // Create product permanently in store database
             const productData = {
-                name: `منتج ${barcode}`, // Default name using barcode
+                name: productName?.trim() || `منتج ${barcode}`, // Use provided name or default name using barcode
                 barcode: barcode.trim(),
                 costPrice: costPrice,
                 price: sellingPrice,
