@@ -2328,10 +2328,59 @@ const POSPage: React.FC = () => {
     const processReturnInvoice = async (returnInvoice: POSInvoice) => {
         const finalInvoice = { ...returnInvoice, paymentMethod: 'Cash' }; // Returns are typically cash
         
-        // Update stock - ADD stock back for returns
+        // PERFORMANCE FIX: Do optimistic local state updates immediately (non-blocking)
+        // This ensures the UI updates instantly while background operations run
+        setProducts(prevProducts => {
+            const newProducts = [...prevProducts];
+            returnInvoice.items.forEach(item => {
+                if (!item || !item.productId || item.quantity <= 0) {
+                    return;
+                }
+                
+                const productIndex = newProducts.findIndex(p => String(p.id) === String(item.productId));
+                if (productIndex !== -1) {
+                    const product = newProducts[productIndex];
+                    const piecesPerMainUnit = getPiecesPerMainUnit(product);
+                    const stockAddition = item.conversionFactor && item.conversionFactor > 0 
+                        ? Math.ceil(item.quantity / item.conversionFactor)
+                        : item.quantity;
+                    
+                    // Update stock optimistically (ADD stock for returns)
+                    const oldStock = product.stock;
+                    const newStock = product.stock + stockAddition;
+                    newProducts[productIndex].stock = newStock;
+                    
+                    // Update IndexedDB in background (non-blocking)
+                    if (product.originalId) {
+                        productsDB.updateProductStock(product.originalId, newStock).catch(error => {
+                            console.error(`[POS] Error updating stock in IndexedDB for product ${product.originalId}:`, error);
+                        });
+                    }
+                    
+                    if (process.env.NODE_ENV === 'development') {
+                        console.log(`Local state: Added stock for product "${product.name}" (ID: ${item.productId}): ${oldStock} -> ${newStock} (+${stockAddition})`);
+                    }
+                }
+            });
+            return newProducts;
+        });
+        
+        // CRITICAL: Mark return as completed IMMEDIATELY to enable instant navigation
+        // This happens before any blocking operations
+        console.log('Return Finalized:', finalInvoice);
+        setCurrentInvoice(finalInvoice);
+        setSaleCompleted(true);
+        setIsProcessingPayment(false); // Clear loading state immediately
+        
+        // PERFORMANCE FIX: Move all heavy operations to background (non-blocking)
+        // Stock updates, sale sync, and product sync all run in background
+        
+        // Background task: Update stock in backend (non-blocking)
         const stockUpdateResults: Array<{ success: boolean; productName: string; productId: string | number; error?: string }> = [];
         
-        try {
+        // Run stock updates in background without blocking
+        Promise.resolve().then(async () => {
+            try {
             for (const item of returnInvoice.items) {
                 if (!item || !item.productId || item.quantity <= 0) {
                     continue;
@@ -2420,12 +2469,28 @@ const POSPage: React.FC = () => {
                     });
                 }
             }
+            
+            // Log summary of stock updates
+            const successful = stockUpdateResults.filter(r => r.success).length;
+            const failed = stockUpdateResults.filter(r => !r.success).length;
+            console.log(`Return stock updates completed: ${successful} successful, ${failed} failed`);
+            
+            if (failed > 0) {
+                const failedProducts = stockUpdateResults
+                    .filter(r => !r.success)
+                    .map(r => `${r.productName} (ID: ${r.productId})`)
+                    .join(', ');
+                console.warn(`Failed to update stock for return: ${failedProducts}`);
+            }
         } catch (error) {
-            console.error('Error updating stock for return:', error);
+            console.error('Error updating stock for return in background:', error);
+            // Stock update failed but return is already completed - log error only
         }
+        }).catch(error => {
+            console.error('Background stock update task failed for return:', error);
+        });
 
-        // Sync products after quantity changes (non-blocking, background task)
-        // Use requestIdleCallback for non-critical operations to avoid blocking UI
+        // Background task: Sync products after quantity changes (non-blocking)
         const productIdsToSync = returnInvoice.items
             .map(item => item.originalId)
             .filter((id): id is string => !!id);
@@ -2467,31 +2532,22 @@ const POSPage: React.FC = () => {
             });
         }
 
-        // Update local product state
-        setProducts(prevProducts => {
-            const newProducts = [...prevProducts];
-            returnInvoice.items.forEach(item => {
-                const productIndex = newProducts.findIndex(p => String(p.id) === String(item.productId));
-                if (productIndex !== -1) {
-                    const product = newProducts[productIndex];
-                    const piecesPerMainUnit = getPiecesPerMainUnit(product);
-                    const stockAddition = item.conversionFactor && item.conversionFactor > 0 
-                        ? Math.ceil(item.quantity / item.conversionFactor)
-                        : item.quantity;
-                    newProducts[productIndex].stock = product.stock + stockAddition;
-                }
-            });
-            return newProducts;
-        });
-
-            // Save return as a new sale with "refunded" status (backend enum value)
+        // Background task: Save return to IndexedDB and sync with backend (non-blocking)
+        Promise.resolve().then(async () => {
             try {
+                // Get storeId from user for sync service
+                const storeId = user?.storeId;
+                if (!storeId) {
+                    throw new Error('Store ID is required to save return');
+                }
+
                 const customerName = returnInvoice.customer?.name || 'عميل نقدي';
                 const customerId = returnInvoice.customer?.id || 'walk-in-customer';
                 
                 // Prepare sale data for backend API (as a return invoice)
                 const saleData = {
                     invoiceNumber: returnInvoice.id,
+                    storeId: storeId, // Required by SaleRecord type
                     date: returnInvoice.date instanceof Date 
                         ? returnInvoice.date.toISOString() 
                         : new Date().toISOString(),
@@ -2539,61 +2595,62 @@ const POSPage: React.FC = () => {
                     seller: returnInvoice.cashier,
                 };
 
-                // Save return sale to database
-                const saleResponse = await salesApi.createSale(saleData);
-                console.log('Return sale saved to database:', saleResponse);
+                // Use IndexedDB sync service (saves locally and syncs with backend)
+                const syncResult = await salesSync.createAndSyncSale(saleData, storeId);
                 
-                // Create SaleTransaction for return (with negative values)
-                const returnTransaction: SaleTransaction = {
-                    id: returnInvoice.id,
-                    date: returnInvoice.date instanceof Date 
-                        ? returnInvoice.date.toISOString() 
-                        : new Date().toISOString(),
-                    customerName: customerName,
-                    customerId: customerId,
-                    totalAmount: -Math.abs(returnInvoice.grandTotal), // Negative for returns
-                    paidAmount: -Math.abs(returnInvoice.grandTotal), // Negative for returns
-                    remainingAmount: 0, // Always 0 for returns (fully refunded)
-                    paymentMethod: 'Cash' as SalePaymentMethod,
-                    status: 'Returned' as SaleStatus,
-                    seller: returnInvoice.cashier,
-                    items: returnInvoice.items.map(item => ({
-                        productId: item.productId,
-                        name: item.name,
-                        unit: item.unit,
-                        quantity: item.quantity,
-                        unitPrice: -Math.abs(item.unitPrice), // Negative for returns
-                        total: -Math.abs(item.total), // Negative for returns
-                        discount: item.discount,
-                        conversionFactor: item.conversionFactor,
-                    })),
-                    subtotal: -Math.abs(returnInvoice.subtotal), // Negative for returns
-                    totalItemDiscount: -Math.abs(returnInvoice.totalItemDiscount), // Negative for returns
-                    invoiceDiscount: -Math.abs(returnInvoice.invoiceDiscount), // Negative for returns
-                    tax: -Math.abs(returnInvoice.tax), // Negative for returns
-                };
+                if (syncResult.success) {
+                    console.log('✅ Return saved to IndexedDB and synced:', returnInvoice.id);
+                    
+                    // Show warning if sync had errors but return was saved locally
+                    if (syncResult.error) {
+                        console.warn('⚠️ Return saved locally, will sync later:', syncResult.error);
+                    }
 
-                // Update transaction ID if provided by backend
-                if (saleResponse.data && (saleResponse.data as any).data?.sale) {
-                    const savedSale = (saleResponse.data as any).data.sale;
-                    returnTransaction.id = savedSale.id || savedSale._id || returnTransaction.id;
+                    // Create SaleTransaction for return (with negative values) for localStorage backup
+                    const returnTransaction: SaleTransaction = {
+                        id: syncResult.saleId || returnInvoice.id,
+                        date: returnInvoice.date instanceof Date 
+                            ? returnInvoice.date.toISOString() 
+                            : new Date().toISOString(),
+                        customerName: customerName,
+                        customerId: customerId,
+                        totalAmount: -Math.abs(returnInvoice.grandTotal), // Negative for returns
+                        paidAmount: -Math.abs(returnInvoice.grandTotal), // Negative for returns
+                        remainingAmount: 0, // Always 0 for returns (fully refunded)
+                        paymentMethod: 'Cash' as SalePaymentMethod,
+                        status: 'Returned' as SaleStatus,
+                        seller: returnInvoice.cashier,
+                        items: returnInvoice.items.map(item => ({
+                            productId: item.productId,
+                            name: item.name,
+                            unit: item.unit,
+                            quantity: item.quantity,
+                            unitPrice: -Math.abs(item.unitPrice), // Negative for returns
+                            total: -Math.abs(item.total), // Negative for returns
+                            discount: item.discount,
+                            conversionFactor: item.conversionFactor,
+                        })),
+                        subtotal: -Math.abs(returnInvoice.subtotal), // Negative for returns
+                        totalItemDiscount: -Math.abs(returnInvoice.totalItemDiscount), // Negative for returns
+                        invoiceDiscount: -Math.abs(returnInvoice.invoiceDiscount), // Negative for returns
+                        tax: -Math.abs(returnInvoice.tax), // Negative for returns
+                    };
+
+                    // Save to localStorage as backup (legacy support)
+                    saveSale(returnTransaction);
+                    console.log('Return transaction saved to localStorage (backup):', returnTransaction);
+                } else {
+                    throw new Error(syncResult.error || 'Failed to save return');
                 }
-
-                // Save to localStorage
-                saveSale(returnTransaction);
-                console.log('Return transaction saved:', returnTransaction);
-                
-                // Show success and reset
-                setCurrentInvoice(returnInvoice);
-                setSaleCompleted(true);
-                setIsProcessingPayment(false); // Clear loading state
             } catch (error: any) {
-                const apiError = error as ApiError;
-                console.error('Failed to save return:', apiError);
-                alert(`تم إرجاع المنتجات، لكن حدث خطأ في حفظ الفاتورة: ${apiError.message || 'خطأ غير معروف'}`);
-                setIsProcessingPayment(false); // Clear loading state even on error
+                console.error('❌ Failed to save return in background:', error);
+                // Don't show alert - return is already completed and user is on print page
+                // The return will be retried by the periodic sync service
             }
-        }
+        }).catch(error => {
+            console.error('Background return sync task failed:', error);
+        });
+    }
     
     const handleFinalizePayment = () => {
         if (currentInvoice.items.length === 0) return;
