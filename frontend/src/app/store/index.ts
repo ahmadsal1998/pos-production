@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import axios from 'axios';
+import { cleanupAllIndexedDB } from '../../lib/db/indexedDBCleanup';
 
 // Auth types
 export interface User {
@@ -35,7 +36,7 @@ interface AuthState {
   
   // Actions
   login: (credentials: LoginCredentials) => Promise<void>;
-  logout: () => void;
+  logout: () => Promise<void>;
   clearError: () => void;
   setUser: (user: User) => void;
   setSubscriptionStatus: (status: SubscriptionStatus | null) => void;
@@ -106,6 +107,14 @@ export const useAuthStore = create<AuthState>()(
 
       logout: async () => {
         try {
+          // Clean up IndexedDB before logout
+          try {
+            await cleanupAllIndexedDB();
+          } catch (cleanupError) {
+            console.error('Error during IndexedDB cleanup:', cleanupError);
+            // Continue with logout even if cleanup fails
+          }
+
           // Clear token from localStorage
           localStorage.removeItem('auth-token');
           

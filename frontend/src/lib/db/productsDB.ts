@@ -828,6 +828,138 @@ class ProductsDB {
   }
 
   /**
+   * Calculate product metrics from IndexedDB
+   * This is much faster than querying the server
+   * Returns the same structure as the backend API
+   */
+  async calculateMetrics(): Promise<{
+    totalValue: number;
+    totalCostValue: number;
+    totalSellingValue: number;
+    averageProfitMargin: number;
+    overallProfitMargin: number;
+    lowStockCount: number;
+    lowStockProducts: Array<{
+      id: string;
+      name: string;
+      stock: number;
+      lowStockAlert: number;
+      unit: string;
+    }>;
+    totalProducts: number;
+    productsWithStock: number;
+  } | null> {
+    await this.init();
+    if (!this.db) {
+      return null;
+    }
+
+    const storeId = this.getStoreId();
+    if (!storeId) {
+      return null;
+    }
+
+    return new Promise((resolve, reject) => {
+      const transaction = this.db!.transaction([this.storeName], 'readonly');
+      const objectStore = transaction.objectStore(this.storeName);
+      const index = objectStore.index(this.indexName);
+      const request = index.getAll(storeId);
+
+      request.onsuccess = () => {
+        const records = request.result as ProductRecord[];
+        const products = records
+          .map((record) => record.product)
+          .filter((product) => product.status === 'active');
+
+        if (products.length === 0) {
+          resolve({
+            totalValue: 0,
+            totalCostValue: 0,
+            totalSellingValue: 0,
+            averageProfitMargin: 0,
+            overallProfitMargin: 0,
+            lowStockCount: 0,
+            lowStockProducts: [],
+            totalProducts: 0,
+            productsWithStock: 0,
+          });
+          return;
+        }
+
+        // Calculate metrics (same logic as backend)
+        let totalValue = 0;
+        let totalCostValue = 0;
+        let totalSellingValue = 0;
+        let productsWithProfit = 0;
+        let totalProfitMargin = 0;
+
+        const lowStockProducts: Array<{
+          id: string;
+          name: string;
+          stock: number;
+          lowStockAlert: number;
+          unit: string;
+        }> = [];
+
+        products.forEach((product) => {
+          const realStockQuantity = product.stock || 0;
+          const productCostValue = (product.costPrice || 0) * realStockQuantity;
+          const productSellingValue = (product.price || 0) * realStockQuantity;
+
+          totalValue += productCostValue;
+          totalCostValue += productCostValue;
+          totalSellingValue += productSellingValue;
+
+          // Calculate profit margin for this product
+          if (product.costPrice > 0 && product.price > 0) {
+            const profitMargin = ((product.price - product.costPrice) / product.costPrice) * 100;
+            totalProfitMargin += profitMargin;
+            productsWithProfit++;
+          }
+
+          // Check for low stock
+          const lowStockAlert = product.lowStockAlert || 10;
+          if (realStockQuantity <= lowStockAlert) {
+            lowStockProducts.push({
+              id: product.id || product._id || '',
+              name: product.name || '',
+              stock: realStockQuantity,
+              lowStockAlert: lowStockAlert,
+              unit: product.mainUnitId || product.unit || 'unit',
+            });
+          }
+        });
+
+        // Calculate average profit margin
+        const averageProfitMargin =
+          productsWithProfit > 0 ? totalProfitMargin / productsWithProfit : 0;
+
+        // Calculate overall profit margin (weighted by stock value)
+        const overallProfitMargin =
+          totalCostValue > 0 ? ((totalSellingValue - totalCostValue) / totalCostValue) * 100 : 0;
+
+        const metrics = {
+          totalValue: parseFloat(totalValue.toFixed(2)),
+          totalCostValue: parseFloat(totalCostValue.toFixed(2)),
+          totalSellingValue: parseFloat(totalSellingValue.toFixed(2)),
+          averageProfitMargin: parseFloat(averageProfitMargin.toFixed(2)),
+          overallProfitMargin: parseFloat(overallProfitMargin.toFixed(2)),
+          lowStockCount: lowStockProducts.length,
+          lowStockProducts: lowStockProducts,
+          totalProducts: products.length,
+          productsWithStock: products.filter((p) => (p.stock || 0) > 0).length,
+        };
+
+        resolve(metrics);
+      };
+
+      request.onerror = () => {
+        reject(request.error);
+      };
+    });
+  }
+
+  /**
    * Close database connection
    */
   close(): void {

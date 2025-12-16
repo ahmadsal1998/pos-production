@@ -100,7 +100,45 @@ const POSPage: React.FC = () => {
     const barcodeQueueRef = useRef<string[]>([]); // Queue of barcodes waiting to be processed
     const isProcessingBarcodeRef = useRef(false); // Track if a barcode is currently being processed
     const [currentInvoice, setCurrentInvoice] = useState<POSInvoice>(() => generateNewInvoice(currentUserName, 'INV-1'));
-    const [heldInvoices, setHeldInvoices] = useState<POSInvoice[]>([]);
+    
+    // Helper functions for held invoices persistence
+    const HELD_INVOICES_STORAGE_KEY = 'pos_held_invoices';
+    
+    // Regular function for loading (can be used in useState initializer)
+    const loadHeldInvoicesFromStorage = (): POSInvoice[] => {
+        try {
+            const stored = localStorage.getItem(HELD_INVOICES_STORAGE_KEY);
+            if (stored) {
+                const parsed = JSON.parse(stored);
+                // Ensure dates are properly parsed
+                return parsed.map((inv: any) => ({
+                    ...inv,
+                    date: inv.date ? new Date(inv.date) : new Date(),
+                }));
+            }
+        } catch (error) {
+            console.error('Error loading held invoices from localStorage:', error);
+        }
+        return [];
+    };
+    
+    const saveHeldInvoicesToStorage = useCallback((invoices: POSInvoice[]) => {
+        try {
+            localStorage.setItem(HELD_INVOICES_STORAGE_KEY, JSON.stringify(invoices));
+        } catch (error) {
+            console.error('Error saving held invoices to localStorage:', error);
+        }
+    }, []);
+    
+    // Initialize held invoices from localStorage
+    const [heldInvoices, setHeldInvoices] = useState<POSInvoice[]>(() => {
+        try {
+            return loadHeldInvoicesFromStorage();
+        } catch (error) {
+            console.error('Error initializing held invoices:', error);
+            return [];
+        }
+    });
     const [searchTerm, setSearchTerm] = useState('');
     const [saleCompleted, setSaleCompleted] = useState(false);
     const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<string>('Cash');
@@ -342,6 +380,11 @@ const POSPage: React.FC = () => {
             isMountedRef.current = false;
         };
     }, []);
+    
+    // Sync held invoices to localStorage whenever they change
+    useEffect(() => {
+        saveHeldInvoicesToStorage(heldInvoices);
+    }, [heldInvoices, saveHeldInvoicesToStorage]);
 
     // Fetch customers from API and sync to IndexedDB
     const fetchCustomers = useCallback(async () => {
@@ -2235,16 +2278,69 @@ const POSPage: React.FC = () => {
 
     const handleHoldSale = async () => {
         if (currentInvoice.items.length === 0) return;
-        setHeldInvoices(prev => [...prev, currentInvoice]);
+        
+        // Create a deep copy of the current invoice to prevent reference issues
+        const invoiceToHold: POSInvoice = {
+            ...currentInvoice,
+            date: new Date(currentInvoice.date),
+            customer: currentInvoice.customer ? { ...currentInvoice.customer } : null,
+            items: currentInvoice.items.map(item => ({
+                ...item,
+                // Ensure all nested properties are copied
+                productId: item.productId,
+                originalId: item.originalId,
+            })),
+        };
+        
+        // Add to held invoices state
+        setHeldInvoices(prev => {
+            const updated = [...prev, invoiceToHold];
+            // Persist to localStorage
+            saveHeldInvoicesToStorage(updated);
+            return updated;
+        });
+        
+        // Fetch next invoice number and create new invoice
+        // This ensures the held invoice is completely isolated from the new one
         const nextInvoiceNumber = await fetchNextInvoiceNumber();
         setCurrentInvoice(generateNewInvoice(currentUserName, nextInvoiceNumber));
+        
+        console.log(`[POS] Invoice ${invoiceToHold.id} suspended. New invoice ${nextInvoiceNumber} created.`);
     };
 
-    const handleRestoreSale = (invoiceId: string) => {
+    const handleRestoreSale = async (invoiceId: string) => {
         const invoiceToRestore = heldInvoices.find(inv => inv.id === invoiceId);
         if (invoiceToRestore) {
-            setHeldInvoices(prev => prev.filter(inv => inv.id !== invoiceId));
-            setCurrentInvoice(invoiceToRestore);
+            // CRITICAL FIX: Fetch a new invoice number when restoring a suspended invoice
+            // This prevents conflicts when the suspended invoice is completed and synced
+            const newInvoiceNumber = await fetchNextInvoiceNumber();
+            
+            // Create a deep copy when restoring to prevent reference issues
+            // IMPORTANT: Assign the new invoice number to avoid conflicts
+            const restoredInvoice: POSInvoice = {
+                ...invoiceToRestore,
+                id: newInvoiceNumber, // Assign new invoice number to prevent conflicts
+                date: new Date(invoiceToRestore.date),
+                customer: invoiceToRestore.customer ? { ...invoiceToRestore.customer } : null,
+                items: invoiceToRestore.items.map(item => ({
+                    ...item,
+                    productId: item.productId,
+                    originalId: item.originalId,
+                })),
+            };
+            
+            // Remove from held invoices and update localStorage
+            setHeldInvoices(prev => {
+                const updated = prev.filter(inv => inv.id !== invoiceId);
+                saveHeldInvoicesToStorage(updated);
+                return updated;
+            });
+            
+            // Set the restored invoice as current with the new invoice number
+            setCurrentInvoice(restoredInvoice);
+            setSaleCompleted(false); // Reset sale completed state
+            
+            console.log(`[POS] Invoice ${invoiceId} restored from suspended invoices with new invoice number ${newInvoiceNumber}.`);
         }
     };
     
@@ -3240,10 +3336,227 @@ const POSPage: React.FC = () => {
                 <div className="grid grid-cols-1 md:grid-cols-[1fr_2fr_1fr] gap-3 sm:gap-4 h-auto md:h-[calc(100vh-12rem)] w-full overflow-x-hidden">
                    {/* Column 1: Customer & Quick Products (25%) */}
                     <div className="flex flex-col gap-3 sm:gap-4 min-h-0 min-w-0">
-                        {/* Customer & Held Invoices */}
+                        {/* Held Invoices */}
                         <div className="bg-white/95 dark:bg-gray-800/95 rounded-xl sm:rounded-2xl shadow-sm p-4 sm:p-6 backdrop-blur-xl border border-slate-200/50 dark:border-slate-700/50 space-y-3 sm:space-y-4 flex flex-col min-h-0 relative z-10">
-                            <div className="flex-shrink-0">
-                                <h3 className="font-bold text-sm sm:text-base text-gray-700 dark:text-gray-200 text-right mb-2">{AR_LABELS.customerName}</h3>
+                            {heldInvoices.length > 0 && (
+                                <div className="border-t border-gray-200 dark:border-gray-700 pt-3 sm:pt-4 flex-shrink-0">
+                                    <h3 className="font-bold text-sm sm:text-base text-gray-700 dark:text-gray-200 text-right mb-2">{AR_LABELS.heldInvoices}</h3>
+                                    <div className="space-y-2 max-h-20 sm:max-h-24 overflow-y-auto">
+                                        {heldInvoices.map(inv => (
+                                            <div key={inv.id} className="flex justify-between items-center p-2 bg-gray-100 dark:bg-gray-700 rounded text-xs sm:text-sm">
+                                                <span className="text-gray-800 dark:text-gray-300 truncate flex-1">{inv.id} ({inv.items.length} أصناف)</span>
+                                                <button onClick={() => handleRestoreSale(inv.id)} className="text-green-600 hover:underline mr-2 flex-shrink-0">{AR_LABELS.restore}</button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                        {/* Quick Products */}
+                        <div className="bg-white/95 dark:bg-gray-800/95 rounded-xl sm:rounded-2xl shadow-sm p-4 sm:p-6 backdrop-blur-xl border border-slate-200/50 dark:border-slate-700/50 flex-grow overflow-y-auto relative z-0">
+                            <h3 className="font-bold text-sm sm:text-base text-gray-900 dark:text-gray-100 text-right mb-3 sm:mb-4">{AR_LABELS.quickProducts}</h3>
+                            {isLoadingQuickProducts ? (
+                                <div className="text-center py-4 text-sm text-gray-500 dark:text-gray-400">
+                                    جاري التحميل...
+                                </div>
+                            ) : quickProducts.length === 0 ? (
+                                <div className="text-center py-4 text-sm text-gray-500 dark:text-gray-400">
+                                    لا توجد منتجات سريعة. قم بتمكين المنتجات من إعدادات المنتج.
+                                </div>
+                            ) : (
+                                <div className="grid grid-cols-2 gap-2 sm:gap-3">
+                                    {quickProducts.map((p, index) => (
+                                        <button 
+                                            key={`quick-product-${p.id}-${index}`} 
+                                            onClick={() => handleAddProduct(p)} 
+                                            disabled={p.stock <= 0}
+                                            className="group p-3 sm:p-4 border border-gray-200 dark:border-gray-700 rounded-lg sm:rounded-xl text-center hover:bg-orange-50 dark:hover:bg-gray-700 hover:border-orange-300 dark:hover:border-orange-600 transition-all duration-200 hover:shadow-md active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+                                        >
+                                            <span className="block text-xs sm:text-sm font-semibold text-gray-800 dark:text-gray-200 mb-1">{p.name}</span>
+                                            <span className="block text-xs font-bold text-orange-600">{formatCurrency(p.price)}</span>
+                                            {p.stock <= 0 && (
+                                                <span className="block text-xs text-red-500 mt-1">نفد المخزون</span>
+                                            )}
+                                        </button>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    </div>
+
+                    {/* Column 2: Transaction/Cart (50% - Center, wider) */}
+                    <div className="flex flex-col bg-white/95 dark:bg-gray-800/95 rounded-xl sm:rounded-2xl shadow-sm backdrop-blur-xl border border-slate-200/50 dark:border-slate-700/50 min-h-0 min-w-0 overflow-hidden">
+                        {/* Header */}
+                        <div className="p-3 sm:p-4 md:p-6 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 text-xs sm:text-sm text-gray-700 dark:text-gray-300 flex flex-col sm:flex-row justify-between gap-2 sm:gap-0 rounded-t-xl sm:rounded-t-2xl flex-shrink-0">
+                            <span className="font-semibold truncate">{AR_LABELS.invoiceNumber}: <span className="font-mono text-orange-600">{currentInvoice.id}</span></span>
+                            <span className="font-semibold truncate">{AR_LABELS.posCashier}: <span className="text-gray-900 dark:text-gray-100">{currentInvoice.cashier}</span></span>
+                        </div>
+                        {/* Search */}
+                        <form onSubmit={handleSearch} className="p-3 sm:p-4 border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
+                            <div className="relative">
+                                <SearchIcon className="absolute left-2 sm:left-3 top-1/2 -translate-y-1/2 h-4 w-4 sm:h-5 sm:w-5 text-gray-400 dark:text-gray-500" />
+                                <input 
+                                    type="text" 
+                                    value={searchTerm} 
+                                    onChange={e => {
+                                        const value = e.target.value;
+                                        setSearchTerm(value);
+                                        // Only show suggestions for non-barcode input (name search)
+                                        if (!isBarcodeInput(value)) {
+                                            setProductSuggestionsOpen(true);
+                                        } else {
+                                            // For barcode input, don't show suggestions while typing
+                                            setProductSuggestionsOpen(false);
+                                        }
+                                    }} 
+                                    onKeyDown={async (e) => {
+                                        // Handle Enter key for barcode search
+                                        if (e.key === 'Enter') {
+                                            e.preventDefault();
+                                            const trimmed = searchTerm.trim();
+                                            
+                                            // If it's a barcode (numeric only), use queue-based search
+                                            if (trimmed && isBarcodeInput(trimmed)) {
+                                                // Use queue-based barcode search to prevent concurrent processing
+                                                queueBarcodeSearch(trimmed);
+                                            } else {
+                                                // Not a barcode - use regular form submit (name search)
+                                                handleSearch(e as any);
+                                            }
+                                        }
+                                    }}
+                                    onFocus={() => {
+                                        // Only show suggestions if not a barcode input
+                                        if (!isBarcodeInput(searchTerm)) {
+                                            setProductSuggestionsOpen(true);
+                                        }
+                                    }}
+                                    placeholder={AR_LABELS.searchProductPlaceholder} 
+                                    className="w-full pl-8 sm:pl-10 pr-3 sm:pr-4 py-2 sm:py-2.5 text-sm sm:text-base rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-orange-500 focus:border-transparent text-right"
+                                />
+                                {productSuggestionsOpen && productSuggestions.length > 0 && (
+                                    <div className="absolute z-20 mt-2 w-full bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg max-h-60 overflow-y-auto">
+                                        {productSuggestions.map((s, idx) => (
+                                            <button
+                                                key={`${s.product.id}-${s.unitName}-${idx}`}
+                                                type="button"
+                                                onClick={() => handleAddProduct(s.product, s.unitName, s.unitPrice, s.conversionFactor, s.piecesPerUnit)}
+                                                className="w-full text-right px-3 py-2 text-sm hover:bg-orange-50 dark:hover:bg-gray-700 border-b border-gray-100 dark:border-gray-700 last:border-b-0"
+                                            >
+                                                <div className="font-semibold text-gray-800 dark:text-gray-100">{s.product.name}</div>
+                                                <div className="text-xs text-gray-500 dark:text-gray-400">
+                                                    {s.unitName} • {s.barcode || s.product.barcode || 'بدون باركود'} • {formatCurrency(s.unitPrice)}
+                                                </div>
+                                            </button>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        </form>
+                        {/* Cart */}
+                        <div className="flex-grow overflow-y-auto overflow-x-auto min-w-0 relative pb-20">
+                            <div className="overflow-x-auto min-w-0">
+                                <table className="w-full text-right min-w-full">
+                                    <thead className="bg-gray-50 dark:bg-gray-700 sticky top-0">
+                                        <tr>
+                                            <th className="px-2 sm:px-3 py-2 sm:py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[5%]">#</th>
+                                            <th className="px-2 sm:px-3 py-2 sm:py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[30%]">{AR_LABELS.productName}</th>
+                                            <th className="px-2 sm:px-3 py-2 sm:py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[12%]">{AR_LABELS.quantity}</th>
+                                            <th className="px-2 sm:px-3 py-2 sm:py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[12%]">{AR_LABELS.price}</th>
+                                            <th className="px-2 sm:px-3 py-2 sm:py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[12%]">{AR_LABELS.discount}</th>
+                                            <th className="px-2 sm:px-3 py-2 sm:py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[15%]">{AR_LABELS.totalAmount}</th>
+                                            <th className="px-2 sm:px-3 py-2 sm:py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[10%]"></th>
+                                        </tr>
+                                    </thead>
+                                <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
+                                   {currentInvoice.items.length === 0 ? (
+                                        <tr><td colSpan={7} className="text-center py-8 sm:py-10 text-xs sm:text-sm text-gray-500 dark:text-gray-400">{AR_LABELS.noItemsInCart}</td></tr>
+                                   ) : currentInvoice.items.map((item, index) => (
+                                        <tr key={item.cartItemId || `item-${index}`} className="hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors duration-150">
+                                            <td className="px-2 sm:px-3 py-3 sm:py-4 text-xs sm:text-sm text-gray-500 dark:text-gray-400">{index + 1}</td>
+                                            <td className="px-2 sm:px-3 py-3 sm:py-4 text-xs sm:text-sm font-medium text-gray-900 dark:text-gray-100 break-words">{item.name}</td>
+                                            <td className="px-2 sm:px-3 py-3 sm:py-4">
+                                                <input 
+                                                    type="number" 
+                                                    value={item.quantity} 
+                                                        onChange={e => {
+                                                            const value = parseFloat(e.target.value);
+                                                            if (item.cartItemId) {
+                                                                handleUpdateQuantity(item.cartItemId, isNaN(value) ? item.quantity : value);
+                                                            }
+                                                        }} 
+                                                    className="w-full max-w-[60px] text-xs sm:text-sm text-center border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent py-1 sm:py-1.5"
+                                                />
+                                            </td>
+                                            <td className="px-2 sm:px-3 py-3 sm:py-4 text-xs sm:text-sm text-gray-700 dark:text-gray-300 whitespace-nowrap">{formatCurrency(item.unitPrice)}</td>
+                                            <td className="px-2 sm:px-3 py-3 sm:py-4">
+                                                <input 
+                                                    type="number" 
+                                                    value={item.discount} 
+                                                    onChange={e => {
+                                                        if (item.cartItemId) {
+                                                            handleUpdateItemDiscount(item.cartItemId, parseFloat(e.target.value) || 0);
+                                                        }
+                                                    }} 
+                                                    className="w-full max-w-[60px] text-xs sm:text-sm text-center border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent py-1 sm:py-1.5"
+                                                />
+                                            </td>
+                                            <td className="px-2 sm:px-3 py-3 sm:py-4 text-xs sm:text-sm font-semibold text-orange-600 whitespace-nowrap">{formatCurrency(item.total - (item.discount * item.quantity))}</td>
+                                            <td className="px-2 sm:px-3 py-3 sm:py-4">
+                                                <button 
+                                                    onClick={() => {
+                                                        if (item.cartItemId) {
+                                                            handleRemoveItem(item.cartItemId);
+                                                        }
+                                                    }} 
+                                                    className="text-red-600 hover:text-red-900 dark:text-red-400 dark:hover:text-red-300 p-1.5 sm:p-2 rounded-lg hover:bg-red-50 dark:hover:bg-gray-700 transition-colors mx-auto"
+                                                >
+                                                    <span className="w-4 h-4 sm:w-5 sm:h-5 block"><DeleteIcon /></span>
+                                                </button>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                            
+                            {/* Fixed Action Buttons at Bottom */}
+                            <div className="sticky bottom-0 left-0 right-0 bg-white/95 dark:bg-gray-800/95 backdrop-blur-sm border-t border-gray-200 dark:border-gray-700 p-3 sm:p-4 z-10">
+                                <div className="flex flex-row gap-2 sm:gap-3">
+                                    <button 
+                                        onClick={handleHoldSale} 
+                                        disabled={currentInvoice.items.length === 0} 
+                                        className="flex-1 inline-flex items-center justify-center px-4 py-2.5 rounded-xl border-2 border-yellow-400 dark:border-yellow-600 text-sm font-medium text-yellow-700 dark:text-yellow-300 bg-yellow-50 dark:bg-yellow-900/30 hover:bg-yellow-100 dark:hover:bg-yellow-900/50 disabled:opacity-50 transition-all duration-200 shadow-sm hover:shadow-md"
+                                    >
+                                       <span className="h-4 w-4 sm:h-5 sm:w-5 block"><HandIcon /></span>
+                                       <span className="mr-2">{AR_LABELS.holdSale}</span>
+                                    </button>
+                                    <button 
+                                        onClick={() => startNewSale()} 
+                                        className="flex-1 inline-flex items-center justify-center px-4 py-2.5 rounded-xl border-2 border-red-400 dark:border-red-600 text-sm font-medium text-red-700 dark:text-red-300 bg-red-50 dark:bg-red-900/30 hover:bg-red-100 dark:hover:bg-red-900/50 transition-all duration-200 shadow-sm hover:shadow-md"
+                                    >
+                                        <span className="w-4 h-4 block"><CancelIcon /></span>
+                                        <span className="mr-2">{AR_LABELS.cancel}</span>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Column 3: Totals, Payment & Actions (25%) */}
+                    <div className="flex flex-col gap-3 sm:gap-4 min-h-0 min-w-0 overflow-y-auto">
+                        <div className="bg-gradient-to-br from-white via-orange-50/30 to-amber-50/30 dark:from-gray-800 dark:via-orange-950/20 dark:to-amber-950/20 rounded-xl sm:rounded-2xl shadow-lg border border-orange-200/50 dark:border-orange-800/50 backdrop-blur-xl p-4 sm:p-5 flex-grow">
+                            {/* Customer Section */}
+                            <div className="flex-shrink-0 mb-4">
+                                <div className="flex items-center justify-between mb-2">
+                                    <h3 className="font-bold text-sm sm:text-base text-gray-700 dark:text-gray-200 text-right">{AR_LABELS.customerName}</h3>
+                                    <button 
+                                        onClick={() => setIsAddCustomerModalOpen(true)}
+                                        className="text-center text-xs sm:text-sm text-orange-600 hover:text-orange-700 dark:text-orange-400 font-medium transition-colors py-1.5"
+                                    >
+                                        {AR_LABELS.addNewCustomer}
+                                    </button>
+                                </div>
                                 
                                 {/* Customer Search Input with Dropdown */}
                                 <div className="relative mb-2 z-[100]">
@@ -3422,222 +3735,6 @@ const POSPage: React.FC = () => {
                                         </div>
                                     </div>
                                 )}
-
-                                <button 
-                                    onClick={() => setIsAddCustomerModalOpen(true)}
-                                    className="w-full text-center text-xs sm:text-sm text-orange-600 hover:text-orange-700 dark:text-orange-400 font-medium transition-colors py-1.5 mt-2"
-                                >
-                                    {AR_LABELS.addNewCustomer}
-                                </button>
-                            </div>
-                            
-                            {heldInvoices.length > 0 && (
-                                <div className="border-t border-gray-200 dark:border-gray-700 pt-3 sm:pt-4 flex-shrink-0">
-                                    <h3 className="font-bold text-sm sm:text-base text-gray-700 dark:text-gray-200 text-right mb-2">{AR_LABELS.heldInvoices}</h3>
-                                    <div className="space-y-2 max-h-20 sm:max-h-24 overflow-y-auto">
-                                        {heldInvoices.map(inv => (
-                                            <div key={inv.id} className="flex justify-between items-center p-2 bg-gray-100 dark:bg-gray-700 rounded text-xs sm:text-sm">
-                                                <span className="text-gray-800 dark:text-gray-300 truncate flex-1">{inv.id} ({inv.items.length} أصناف)</span>
-                                                <button onClick={() => handleRestoreSale(inv.id)} className="text-green-600 hover:underline mr-2 flex-shrink-0">{AR_LABELS.restore}</button>
-                                            </div>
-                                        ))}
-                                    </div>
-                                </div>
-                            )}
-                        </div>
-                        {/* Quick Products */}
-                        <div className="bg-white/95 dark:bg-gray-800/95 rounded-xl sm:rounded-2xl shadow-sm p-4 sm:p-6 backdrop-blur-xl border border-slate-200/50 dark:border-slate-700/50 flex-grow overflow-y-auto relative z-0">
-                            <h3 className="font-bold text-sm sm:text-base text-gray-900 dark:text-gray-100 text-right mb-3 sm:mb-4">{AR_LABELS.quickProducts}</h3>
-                            {isLoadingQuickProducts ? (
-                                <div className="text-center py-4 text-sm text-gray-500 dark:text-gray-400">
-                                    جاري التحميل...
-                                </div>
-                            ) : quickProducts.length === 0 ? (
-                                <div className="text-center py-4 text-sm text-gray-500 dark:text-gray-400">
-                                    لا توجد منتجات سريعة. قم بتمكين المنتجات من إعدادات المنتج.
-                                </div>
-                            ) : (
-                                <div className="grid grid-cols-2 gap-2 sm:gap-3">
-                                    {quickProducts.map((p, index) => (
-                                        <button 
-                                            key={`quick-product-${p.id}-${index}`} 
-                                            onClick={() => handleAddProduct(p)} 
-                                            disabled={p.stock <= 0}
-                                            className="group p-3 sm:p-4 border border-gray-200 dark:border-gray-700 rounded-lg sm:rounded-xl text-center hover:bg-orange-50 dark:hover:bg-gray-700 hover:border-orange-300 dark:hover:border-orange-600 transition-all duration-200 hover:shadow-md active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
-                                        >
-                                            <span className="block text-xs sm:text-sm font-semibold text-gray-800 dark:text-gray-200 mb-1">{p.name}</span>
-                                            <span className="block text-xs font-bold text-orange-600">{formatCurrency(p.price)}</span>
-                                            {p.stock <= 0 && (
-                                                <span className="block text-xs text-red-500 mt-1">نفد المخزون</span>
-                                            )}
-                                        </button>
-                                    ))}
-                                </div>
-                            )}
-                        </div>
-                    </div>
-
-                    {/* Column 2: Transaction/Cart (50% - Center, wider) */}
-                    <div className="flex flex-col bg-white/95 dark:bg-gray-800/95 rounded-xl sm:rounded-2xl shadow-sm backdrop-blur-xl border border-slate-200/50 dark:border-slate-700/50 min-h-0 min-w-0 overflow-hidden">
-                        {/* Header */}
-                        <div className="p-3 sm:p-4 md:p-6 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 text-xs sm:text-sm text-gray-700 dark:text-gray-300 flex flex-col sm:flex-row justify-between gap-2 sm:gap-0 rounded-t-xl sm:rounded-t-2xl flex-shrink-0">
-                            <span className="font-semibold truncate">{AR_LABELS.invoiceNumber}: <span className="font-mono text-orange-600">{currentInvoice.id}</span></span>
-                            <span className="font-semibold truncate">{AR_LABELS.posCashier}: <span className="text-gray-900 dark:text-gray-100">{currentInvoice.cashier}</span></span>
-                        </div>
-                        {/* Search */}
-                        <form onSubmit={handleSearch} className="p-3 sm:p-4 border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
-                            <div className="relative">
-                                <SearchIcon className="absolute left-2 sm:left-3 top-1/2 -translate-y-1/2 h-4 w-4 sm:h-5 sm:w-5 text-gray-400 dark:text-gray-500" />
-                                <input 
-                                    type="text" 
-                                    value={searchTerm} 
-                                    onChange={e => {
-                                        const value = e.target.value;
-                                        setSearchTerm(value);
-                                        // Only show suggestions for non-barcode input (name search)
-                                        if (!isBarcodeInput(value)) {
-                                            setProductSuggestionsOpen(true);
-                                        } else {
-                                            // For barcode input, don't show suggestions while typing
-                                            setProductSuggestionsOpen(false);
-                                        }
-                                    }} 
-                                    onKeyDown={async (e) => {
-                                        // Handle Enter key for barcode search
-                                        if (e.key === 'Enter') {
-                                            e.preventDefault();
-                                            const trimmed = searchTerm.trim();
-                                            
-                                            // If it's a barcode (numeric only), use queue-based search
-                                            if (trimmed && isBarcodeInput(trimmed)) {
-                                                // Use queue-based barcode search to prevent concurrent processing
-                                                queueBarcodeSearch(trimmed);
-                                            } else {
-                                                // Not a barcode - use regular form submit (name search)
-                                                handleSearch(e as any);
-                                            }
-                                        }
-                                    }}
-                                    onFocus={() => {
-                                        // Only show suggestions if not a barcode input
-                                        if (!isBarcodeInput(searchTerm)) {
-                                            setProductSuggestionsOpen(true);
-                                        }
-                                    }}
-                                    placeholder={AR_LABELS.searchProductPlaceholder} 
-                                    className="w-full pl-8 sm:pl-10 pr-3 sm:pr-4 py-2 sm:py-2.5 text-sm sm:text-base rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-orange-500 focus:border-transparent text-right"
-                                />
-                                {productSuggestionsOpen && productSuggestions.length > 0 && (
-                                    <div className="absolute z-20 mt-2 w-full bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg max-h-60 overflow-y-auto">
-                                        {productSuggestions.map((s, idx) => (
-                                            <button
-                                                key={`${s.product.id}-${s.unitName}-${idx}`}
-                                                type="button"
-                                                onClick={() => handleAddProduct(s.product, s.unitName, s.unitPrice, s.conversionFactor, s.piecesPerUnit)}
-                                                className="w-full text-right px-3 py-2 text-sm hover:bg-orange-50 dark:hover:bg-gray-700 border-b border-gray-100 dark:border-gray-700 last:border-b-0"
-                                            >
-                                                <div className="font-semibold text-gray-800 dark:text-gray-100">{s.product.name}</div>
-                                                <div className="text-xs text-gray-500 dark:text-gray-400">
-                                                    {s.unitName} • {s.barcode || s.product.barcode || 'بدون باركود'} • {formatCurrency(s.unitPrice)}
-                                                </div>
-                                            </button>
-                                        ))}
-                                    </div>
-                                )}
-                            </div>
-                        </form>
-                        {/* Cart */}
-                        <div className="flex-grow overflow-y-auto overflow-x-auto min-w-0">
-                            <div className="overflow-x-auto min-w-0">
-                                <table className="w-full text-right min-w-full">
-                                    <thead className="bg-gray-50 dark:bg-gray-700 sticky top-0">
-                                        <tr>
-                                            <th className="px-2 sm:px-3 py-2 sm:py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[5%]">#</th>
-                                            <th className="px-2 sm:px-3 py-2 sm:py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[30%]">{AR_LABELS.productName}</th>
-                                            <th className="px-2 sm:px-3 py-2 sm:py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[12%]">{AR_LABELS.quantity}</th>
-                                            <th className="px-2 sm:px-3 py-2 sm:py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[12%]">{AR_LABELS.price}</th>
-                                            <th className="px-2 sm:px-3 py-2 sm:py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[12%]">{AR_LABELS.discount}</th>
-                                            <th className="px-2 sm:px-3 py-2 sm:py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[15%]">{AR_LABELS.totalAmount}</th>
-                                            <th className="px-2 sm:px-3 py-2 sm:py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[10%]"></th>
-                                        </tr>
-                                    </thead>
-                                <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
-                                   {currentInvoice.items.length === 0 ? (
-                                        <tr><td colSpan={7} className="text-center py-8 sm:py-10 text-xs sm:text-sm text-gray-500 dark:text-gray-400">{AR_LABELS.noItemsInCart}</td></tr>
-                                   ) : currentInvoice.items.map((item, index) => (
-                                        <tr key={item.cartItemId || `item-${index}`} className="hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors duration-150">
-                                            <td className="px-2 sm:px-3 py-3 sm:py-4 text-xs sm:text-sm text-gray-500 dark:text-gray-400">{index + 1}</td>
-                                            <td className="px-2 sm:px-3 py-3 sm:py-4 text-xs sm:text-sm font-medium text-gray-900 dark:text-gray-100 break-words">{item.name}</td>
-                                            <td className="px-2 sm:px-3 py-3 sm:py-4">
-                                                <input 
-                                                    type="number" 
-                                                    value={item.quantity} 
-                                                        onChange={e => {
-                                                            const value = parseFloat(e.target.value);
-                                                            if (item.cartItemId) {
-                                                                handleUpdateQuantity(item.cartItemId, isNaN(value) ? item.quantity : value);
-                                                            }
-                                                        }} 
-                                                    className="w-full max-w-[60px] text-xs sm:text-sm text-center border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent py-1 sm:py-1.5"
-                                                />
-                                            </td>
-                                            <td className="px-2 sm:px-3 py-3 sm:py-4 text-xs sm:text-sm text-gray-700 dark:text-gray-300 whitespace-nowrap">{formatCurrency(item.unitPrice)}</td>
-                                            <td className="px-2 sm:px-3 py-3 sm:py-4">
-                                                <input 
-                                                    type="number" 
-                                                    value={item.discount} 
-                                                    onChange={e => {
-                                                        if (item.cartItemId) {
-                                                            handleUpdateItemDiscount(item.cartItemId, parseFloat(e.target.value) || 0);
-                                                        }
-                                                    }} 
-                                                    className="w-full max-w-[60px] text-xs sm:text-sm text-center border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent py-1 sm:py-1.5"
-                                                />
-                                            </td>
-                                            <td className="px-2 sm:px-3 py-3 sm:py-4 text-xs sm:text-sm font-semibold text-orange-600 whitespace-nowrap">{formatCurrency(item.total - (item.discount * item.quantity))}</td>
-                                            <td className="px-2 sm:px-3 py-3 sm:py-4">
-                                                <button 
-                                                    onClick={() => {
-                                                        if (item.cartItemId) {
-                                                            handleRemoveItem(item.cartItemId);
-                                                        }
-                                                    }} 
-                                                    className="text-red-600 hover:text-red-900 dark:text-red-400 dark:hover:text-red-300 p-1.5 sm:p-2 rounded-lg hover:bg-red-50 dark:hover:bg-gray-700 transition-colors mx-auto"
-                                                >
-                                                    <span className="w-4 h-4 sm:w-5 sm:h-5 block"><DeleteIcon /></span>
-                                                </button>
-                                            </td>
-                                        </tr>
-                                    ))}
-                                    </tbody>
-                                </table>
-                            </div>
-                        </div>
-                    </div>
-
-                    {/* Column 3: Totals, Payment & Actions (25%) */}
-                    <div className="flex flex-col gap-3 sm:gap-4 min-h-0 min-w-0 overflow-y-auto">
-                        <div className="bg-gradient-to-br from-white via-orange-50/30 to-amber-50/30 dark:from-gray-800 dark:via-orange-950/20 dark:to-amber-950/20 rounded-xl sm:rounded-2xl shadow-lg border border-orange-200/50 dark:border-orange-800/50 backdrop-blur-xl p-4 sm:p-5 flex-grow">
-                            {/* Action Buttons */}
-                            <div className="mb-4">
-                                <h3 className="text-xs sm:text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3 text-right">الإجراءات</h3>
-                                <div className="flex flex-col gap-2 sm:gap-3">
-                                    <button 
-                                        onClick={handleHoldSale} 
-                                        disabled={currentInvoice.items.length === 0} 
-                                        className="inline-flex items-center justify-center px-4 py-2.5 rounded-xl border-2 border-yellow-400 dark:border-yellow-600 text-sm font-medium text-yellow-700 dark:text-yellow-300 bg-yellow-50 dark:bg-yellow-900/30 hover:bg-yellow-100 dark:hover:bg-yellow-900/50 disabled:opacity-50 transition-all duration-200 shadow-sm hover:shadow-md"
-                                    >
-                                       <span className="h-4 w-4 sm:h-5 sm:w-5 block"><HandIcon /></span>
-                                       <span className="mr-2">{AR_LABELS.holdSale}</span>
-                                    </button>
-                                    <button 
-                                        onClick={() => startNewSale()} 
-                                        className="inline-flex items-center justify-center px-4 py-2.5 rounded-xl border-2 border-red-400 dark:border-red-600 text-sm font-medium text-red-700 dark:text-red-300 bg-red-50 dark:bg-red-900/30 hover:bg-red-100 dark:hover:bg-red-900/50 transition-all duration-200 shadow-sm hover:shadow-md"
-                                    >
-                                        <span className="w-4 h-4 block"><CancelIcon /></span>
-                                        <span className="mr-2">{AR_LABELS.cancel}</span>
-                                    </button>
-                                </div>
                             </div>
 
                             {/* Totals Summary */}

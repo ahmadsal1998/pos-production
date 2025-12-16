@@ -125,6 +125,26 @@ class SalesSyncService {
       }
     } catch (error: any) {
       const errorMessage = error?.message || 'Unknown sync error';
+      const statusCode = error?.response?.status || error?.status;
+      
+      // Detect 409 Conflict (invoice number already exists)
+      if (statusCode === 409) {
+        const conflictMessage = `Invoice number ${sale.invoiceNumber} already exists on server. This may happen if an invoice was suspended and restored. Please create a new invoice.`;
+        console.error('❌ Invoice number conflict:', sale.invoiceNumber, conflictMessage);
+        
+        // Mark sync error in IndexedDB with specific conflict message
+        if (indexedDBAvailable && sale.id) {
+          try {
+            await salesDB.markSyncError(sale.id, conflictMessage, sale.storeId, sale.invoiceNumber);
+          } catch (dbError) {
+            console.warn('⚠️ Failed to mark sync error in IndexedDB:', dbError);
+            // Continue anyway
+          }
+        }
+        
+        return { success: false, error: conflictMessage };
+      }
+      
       console.error('❌ Failed to sync sale:', sale.invoiceNumber, errorMessage);
 
       // Mark sync error in IndexedDB (only if available)

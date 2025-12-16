@@ -9,6 +9,7 @@ import { productsApi, ProductMetrics } from '@/lib/api/client';
 import { useCurrency } from '@/shared/contexts/CurrencyContext';
 import { formatCurrency as formatCurrencyUtil } from '@/shared/utils/currency';
 import { AnimatedNumber } from '@/shared/components/ui/AnimatedNumber';
+import { productsDB } from '@/lib/db/productsDB';
 import {
   DollarIcon,
   PackageIcon,
@@ -38,6 +39,44 @@ const DashboardPage: React.FC = () => {
     const fetchMetrics = async () => {
       try {
         setLoadingMetrics(true);
+        
+        // First, try to load metrics from IndexedDB (fast, instant display)
+        try {
+          const cachedMetrics = await productsDB.calculateMetrics();
+          if (cachedMetrics) {
+            // Set cached metrics immediately for instant display
+            setProductMetrics(cachedMetrics);
+            setLoadingMetrics(false);
+            
+            // Then fetch from server in the background to get latest data
+            // Use requestIdleCallback if available, otherwise use setTimeout with 0 delay
+            const fetchFromServer = async () => {
+              try {
+                const response = await productsApi.getProductMetrics();
+                if (response.data.success && response.data.data) {
+                  setProductMetrics(response.data.data);
+                }
+              } catch (error) {
+                console.error('Error fetching product metrics from server:', error);
+                // Keep cached metrics if server fetch fails
+              }
+            };
+
+            // Use requestIdleCallback for better performance, fallback to setTimeout
+            if (window.requestIdleCallback) {
+              window.requestIdleCallback(fetchFromServer, { timeout: 2000 });
+            } else {
+              // Fallback: use setTimeout with minimal delay
+              setTimeout(fetchFromServer, 0);
+            }
+            return;
+          }
+        } catch (error) {
+          console.warn('Error calculating metrics from IndexedDB:', error);
+          // Continue to fetch from server
+        }
+
+        // If no cached data, fetch from server
         const response = await productsApi.getProductMetrics();
         if (response.data.success && response.data.data) {
           setProductMetrics(response.data.data);

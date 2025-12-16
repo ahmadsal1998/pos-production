@@ -11,6 +11,7 @@ import AddNewProductPage from './AddNewProductPage';
 import ProductImportPage from './ProductImportPage';
 import { productsApi, ProductMetrics } from '@/lib/api/client';
 import { useCurrency } from '@/shared/contexts/CurrencyContext';
+import { productsDB } from '@/lib/db/productsDB';
 import {
   DollarIcon,
   PackageIcon,
@@ -33,6 +34,43 @@ const ProductDashboard: React.FC<ProductDashboardProps> = ({ setActivePath }) =>
     const fetchMetrics = async () => {
       try {
         setLoadingMetrics(true);
+        
+        // First, try to load metrics from IndexedDB (fast, instant display)
+        try {
+          const cachedMetrics = await productsDB.calculateMetrics();
+          if (cachedMetrics) {
+            // Set cached metrics immediately for instant display
+            setProductMetrics(cachedMetrics);
+            setLoadingMetrics(false);
+            
+            // Then fetch from server in the background to get latest data
+            const fetchFromServer = async () => {
+              try {
+                const response = await productsApi.getProductMetrics();
+                if (response.data.success && response.data.data) {
+                  setProductMetrics(response.data.data);
+                }
+              } catch (error) {
+                console.error('Error fetching product metrics from server:', error);
+                // Keep cached metrics if server fetch fails
+              }
+            };
+
+            // Use requestIdleCallback for better performance, fallback to setTimeout
+            if (window.requestIdleCallback) {
+              window.requestIdleCallback(fetchFromServer, { timeout: 2000 });
+            } else {
+              // Fallback: use setTimeout with minimal delay
+              setTimeout(fetchFromServer, 0);
+            }
+            return;
+          }
+        } catch (error) {
+          console.warn('Error calculating metrics from IndexedDB:', error);
+          // Continue to fetch from server
+        }
+
+        // If no cached data, fetch from server
         const response = await productsApi.getProductMetrics();
         if (response.data.success && response.data.data) {
           setProductMetrics(response.data.data);

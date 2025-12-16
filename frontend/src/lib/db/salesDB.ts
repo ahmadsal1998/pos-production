@@ -713,6 +713,17 @@ class SalesDB {
     const sales = await this.getSalesByStore(storeId);
     return sales.length;
   }
+
+  /**
+   * Close database connection
+   */
+  close(): void {
+    if (this.db) {
+      this.db.close();
+      this.db = null;
+      this.initPromise = null;
+    }
+  }
 }
 
 // Export singleton instance

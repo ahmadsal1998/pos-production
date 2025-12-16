@@ -37,9 +37,15 @@ const ExpiredSubscriptionPage = () => {
     }
   }, [user, navigate]);
 
-  const handleLogout = () => {
-    logout();
-    navigate('/login');
+  const handleLogout = async () => {
+    try {
+      await logout();
+      navigate('/login');
+    } catch (error) {
+      console.error('Logout error:', error);
+      // Navigate anyway even if logout fails
+      navigate('/login');
+    }
   };
 
   return (
