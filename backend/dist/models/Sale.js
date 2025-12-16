@@ -52,12 +52,12 @@ const saleItemSchema = new mongoose_1.Schema({
     unitPrice: {
         type: Number,
         required: true,
-        min: 0,
+        // Allow negative for return invoices (negative prices represent refunds)
     },
     totalPrice: {
         type: Number,
         required: true,
-        min: 0,
+        // Allow negative for return invoices
     },
     unit: {
         type: String,
@@ -112,32 +112,32 @@ const saleSchema = new mongoose_1.Schema({
     subtotal: {
         type: Number,
         required: true,
-        min: 0,
+        // Allow negative for return invoices
     },
     totalItemDiscount: {
         type: Number,
         default: 0,
-        min: 0,
+        // Allow negative for return invoices
     },
     invoiceDiscount: {
         type: Number,
         default: 0,
-        min: 0,
+        // Allow negative for return invoices
     },
     tax: {
         type: Number,
         default: 0,
-        min: 0,
+        // Allow negative for return invoices
     },
     total: {
         type: Number,
         required: true,
-        min: 0,
+        // Allow negative for return invoices
     },
     paidAmount: {
         type: Number,
         required: true,
-        min: 0,
+        // Allow negative for return invoices (refunds)
     },
     remainingAmount: {
         type: Number,
