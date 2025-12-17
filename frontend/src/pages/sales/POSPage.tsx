@@ -138,11 +138,13 @@ const POSPage: React.FC = () => {
         return Math.round(value * 1000) / 1000;
     };
     
+    type HeldInvoice = POSInvoice & { heldKey: string };
+
     // Helper functions for held invoices persistence
     const HELD_INVOICES_STORAGE_KEY = 'pos_held_invoices';
     
     // Regular function for loading (can be used in useState initializer)
-    const loadHeldInvoicesFromStorage = (): POSInvoice[] => {
+    const loadHeldInvoicesFromStorage = (): HeldInvoice[] => {
         try {
             const stored = localStorage.getItem(HELD_INVOICES_STORAGE_KEY);
             if (stored) {
@@ -151,6 +153,8 @@ const POSPage: React.FC = () => {
                 return parsed.map((inv: any) => ({
                     ...inv,
                     date: inv.date ? new Date(inv.date) : new Date(),
+                    // Ensure a stable unique key for React rendering and restore/remove ops
+                    heldKey: inv.heldKey || `held_${inv.id || 'INV'}_${inv.date || Date.now()}_${UUID()}`,
                 }));
             }
         } catch (error) {
@@ -159,7 +163,7 @@ const POSPage: React.FC = () => {
         return [];
     };
     
-    const saveHeldInvoicesToStorage = useCallback((invoices: POSInvoice[]) => {
+    const saveHeldInvoicesToStorage = useCallback((invoices: HeldInvoice[]) => {
         try {
             localStorage.setItem(HELD_INVOICES_STORAGE_KEY, JSON.stringify(invoices));
         } catch (error) {
@@ -168,7 +172,7 @@ const POSPage: React.FC = () => {
     }, []);
     
     // Initialize held invoices from localStorage
-    const [heldInvoices, setHeldInvoices] = useState<POSInvoice[]>(() => {
+    const [heldInvoices, setHeldInvoices] = useState<HeldInvoice[]>(() => {
         try {
             return loadHeldInvoicesFromStorage();
         } catch (error) {
@@ -2248,7 +2252,7 @@ const POSPage: React.FC = () => {
         if (currentInvoice.items.length === 0) return;
         
         // Create a deep copy of the current invoice to prevent reference issues
-        const invoiceToHold: POSInvoice = {
+        const invoiceToHold: HeldInvoice = {
             ...currentInvoice,
             date: new Date(currentInvoice.date),
             customer: currentInvoice.customer ? { ...currentInvoice.customer } : null,
@@ -2258,6 +2262,7 @@ const POSPage: React.FC = () => {
                 productId: item.productId,
                 originalId: item.originalId,
             })),
+            heldKey: `held_${currentInvoice.id}_${Date.now()}_${UUID()}`,
         };
         
         // Add to held invoices state
@@ -2276,8 +2281,8 @@ const POSPage: React.FC = () => {
         console.log(`[POS] Invoice ${invoiceToHold.id} suspended. New invoice ${nextInvoiceNumber} created.`);
     };
 
-    const handleRestoreSale = async (invoiceId: string) => {
-        const invoiceToRestore = heldInvoices.find(inv => inv.id === invoiceId);
+    const handleRestoreSale = async (heldKey: string) => {
+        const invoiceToRestore = heldInvoices.find(inv => inv.heldKey === heldKey);
         if (invoiceToRestore) {
             // CRITICAL FIX: Fetch a new invoice number when restoring a suspended invoice
             // This prevents conflicts when the suspended invoice is completed and synced
@@ -2299,7 +2304,7 @@ const POSPage: React.FC = () => {
             
             // Remove from held invoices and update localStorage
             setHeldInvoices(prev => {
-                const updated = prev.filter(inv => inv.id !== invoiceId);
+                const updated = prev.filter(inv => inv.heldKey !== heldKey);
                 saveHeldInvoicesToStorage(updated);
                 return updated;
             });
@@ -2308,7 +2313,7 @@ const POSPage: React.FC = () => {
             setCurrentInvoice(restoredInvoice);
             setSaleCompleted(false); // Reset sale completed state
             
-            console.log(`[POS] Invoice ${invoiceId} restored from suspended invoices with new invoice number ${newInvoiceNumber}.`);
+            console.log(`[POS] Held invoice restored: ${heldKey} -> new invoice ${newInvoiceNumber}.`);
         }
     };
     
@@ -3380,9 +3385,9 @@ const POSPage: React.FC = () => {
                                     <h3 className="font-bold text-sm sm:text-base text-gray-700 dark:text-gray-200 text-right mb-2">{AR_LABELS.heldInvoices}</h3>
                                     <div className="space-y-2 max-h-20 sm:max-h-24 overflow-y-auto">
                                         {heldInvoices.map(inv => (
-                                            <div key={inv.id} className="flex justify-between items-center p-2 bg-gray-100 dark:bg-gray-700 rounded text-xs sm:text-sm">
+                                            <div key={inv.heldKey} className="flex justify-between items-center p-2 bg-gray-100 dark:bg-gray-700 rounded text-xs sm:text-sm">
                                                 <span className="text-gray-800 dark:text-gray-300 truncate flex-1">{inv.id} ({inv.items.length} أصناف)</span>
-                                                <button onClick={() => handleRestoreSale(inv.id)} className="text-green-600 hover:underline mr-2 flex-shrink-0">{AR_LABELS.restore}</button>
+                                                <button onClick={() => handleRestoreSale(inv.heldKey)} className="text-green-600 hover:underline mr-2 flex-shrink-0">{AR_LABELS.restore}</button>
                                             </div>
                                         ))}
                                     </div>
@@ -3405,14 +3410,18 @@ const POSPage: React.FC = () => {
                                     {quickProducts.map((p, index) => (
                                         <button 
                                             key={`quick-product-${p.id}-${index}`} 
+                                            type="button"
                                             onClick={() => handleAddProduct(p)} 
-                                            disabled={p.stock <= 0}
-                                            className="group p-3 sm:p-4 border border-gray-200 dark:border-gray-700 rounded-lg sm:rounded-xl text-center hover:bg-orange-50 dark:hover:bg-gray-700 hover:border-orange-300 dark:hover:border-orange-600 transition-all duration-200 hover:shadow-md active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+                                            className={`group p-3 sm:p-4 border rounded-lg sm:rounded-xl text-center transition-all duration-200 hover:shadow-md active:scale-95 ${
+                                                p.stock <= 0
+                                                    ? 'border-red-200 dark:border-red-900/50 hover:bg-red-50/50 dark:hover:bg-red-900/10 hover:border-red-300 dark:hover:border-red-800'
+                                                    : 'border-gray-200 dark:border-gray-700 hover:bg-orange-50 dark:hover:bg-gray-700 hover:border-orange-300 dark:hover:border-orange-600'
+                                            }`}
                                         >
                                             <span className="block text-xs sm:text-sm font-semibold text-gray-800 dark:text-gray-200 mb-1">{p.name}</span>
                                             <span className="block text-xs font-bold text-orange-600">{formatCurrency(p.price)}</span>
                                             {p.stock <= 0 && (
-                                                <span className="block text-xs text-red-500 mt-1">نفد المخزون</span>
+                                                <span className="block text-xs text-red-600 dark:text-red-400 mt-1">نفد المخزون</span>
                                             )}
                                         </button>
                                     ))}
