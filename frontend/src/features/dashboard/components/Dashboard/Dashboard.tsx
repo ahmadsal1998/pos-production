@@ -21,16 +21,7 @@ const Dashboard = () => {
           <div className="flex flex-col items-start justify-between gap-8 lg:flex-row lg:items-center">
             <div className="space-y-4">
               <div className="space-y-3">
-                <div className="inline-flex items-center rounded-full bg-gradient-to-r from-blue-500/10 to-indigo-500/10 px-4 py-2 text-sm font-semibold text-blue-600 dark:text-blue-400 border border-blue-200/50 dark:border-blue-800/50">
-                  <div className="mr-2 h-2 w-2 rounded-full bg-blue-500 animate-pulse" />
-                  لوحة القيادة المباشرة
-                </div>
-                <h1 className="bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 bg-clip-text text-4xl font-bold tracking-tight text-transparent dark:from-white dark:via-slate-100 dark:to-white sm:text-5xl lg:text-6xl">
-                  {AR_LABELS.dashboardTitle}
-                </h1>
-                <p className="max-w-2xl text-lg text-slate-600 dark:text-slate-300 leading-relaxed">
-                  {AR_LABELS.dashboardDescription}
-                </p>
+                <div />
               </div>
             </div>
             

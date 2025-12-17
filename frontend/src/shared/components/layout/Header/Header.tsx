@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react';
-import { AR_LABELS, SunIcon, MoonIcon } from '@/shared/constants';
+import React, { useMemo, useState, useEffect } from 'react';
+import { SunIcon, MoonIcon } from '@/shared/constants';
 import { useThemeStore, useAppStore, useAuthStore } from '@/app/store';
+import { AR_LABELS } from '@/shared/constants/ui';
 import {
   isFullscreen,
   isFullscreenSupported,
@@ -18,12 +19,57 @@ interface HeaderProps {
   isMobileMenuOpen: boolean;
 }
 
-const Header: React.FC<HeaderProps> = ({ onMenuToggle, isMobileMenuOpen }) => {
+const getHeaderTitleFromPath = (pathname: string): string => {
+  const path = (pathname || '').split('?')[0].split('#')[0];
+
+  if (path === '/' || path === '') return AR_LABELS.dashboard;
+
+  // POS
+  if (path.startsWith('/pos/2')) return AR_LABELS.wholesalePOS;
+  if (path.startsWith('/pos')) return AR_LABELS.pointOfSales;
+
+  // Sales
+  if (path.startsWith('/sales/history')) return AR_LABELS.salesHistory;
+  if (path.startsWith('/sales/today')) return AR_LABELS.salesToday;
+  if (path.startsWith('/sales/refunds')) return AR_LABELS.refundsManagement;
+  if (path.startsWith('/sales')) return AR_LABELS.salesManagement;
+
+  // Products
+  if (path.startsWith('/products/categories')) return AR_LABELS.categoryManagement;
+  if (path.startsWith('/products/brands')) return AR_LABELS.brandManagement;
+  if (path.startsWith('/products/warehouses')) return AR_LABELS.warehouseManagement;
+  if (path.startsWith('/products/add-multi-unit')) return AR_LABELS.addNewProduct;
+  if (path.startsWith('/products/add-new')) return AR_LABELS.addNewProduct;
+  if (path.startsWith('/products/add')) return AR_LABELS.addNewProduct;
+  if (path.startsWith('/products/edit/')) return AR_LABELS.editProduct;
+  if (path.startsWith('/products/management')) return AR_LABELS.productManagement;
+  if (path.startsWith('/products/list')) return AR_LABELS.productListing;
+  if (path.startsWith('/products/')) return AR_LABELS.products;
+  if (path.startsWith('/products')) return AR_LABELS.products;
+
+  // Financial
+  if (path.startsWith('/financial/purchases') || path.startsWith('/purchases')) return AR_LABELS.purchases;
+  if (path.startsWith('/financial/expenses') || path.startsWith('/expenses')) return AR_LABELS.expenses;
+  if (path.startsWith('/financial/cheques') || path.startsWith('/cheques')) return AR_LABELS.cheques;
+  if (path.startsWith('/financial/payment-methods')) return AR_LABELS.paymentMethodsManagement;
+
+  // User Management
+  if (path.startsWith('/user-management/users') || path.startsWith('/users')) return AR_LABELS.userManagement;
+  if (path.startsWith('/user-management/preferences') || path.startsWith('/preferences')) return AR_LABELS.preferences;
+
+  // Admin (in case any admin route renders this header)
+  if (path.startsWith('/admin')) return AR_LABELS.adminDashboard;
+
+  return '';
+};
+
+const Header: React.FC<HeaderProps> = ({ activePath, onMenuToggle, isMobileMenuOpen }) => {
   const { theme, toggleTheme } = useThemeStore();
   const { isSidebarCollapsed } = useAppStore();
   const { user } = useAuthStore();
   const [isFullscreenMode, setIsFullscreenMode] = useState(false);
   const [fullscreenSupported, setFullscreenSupported] = useState(false);
+  const pageTitle = useMemo(() => getHeaderTitleFromPath(activePath), [activePath]);
 
   useEffect(() => {
     // Check if fullscreen is supported
@@ -74,10 +120,10 @@ const Header: React.FC<HeaderProps> = ({ onMenuToggle, isMobileMenuOpen }) => {
 
   return (
     <header className={`fixed top-0 left-0 z-[60] bg-white/80 dark:bg-gray-900/80 backdrop-blur-xl backdrop-saturate-150 border-b border-gray-200/80 dark:border-gray-800/80 shadow-sm flex-shrink-0 supports-[backdrop-filter]:bg-white/80 supports-[backdrop-filter]:dark:bg-gray-900/80 transition-all duration-300 ${isSidebarCollapsed ? 'lg:right-20' : 'lg:right-64'} right-0`}>
-      <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 w-full">
+      <div className="px-4 sm:px-6 lg:px-8 w-full">
         <div className="flex h-16 md:h-20 items-center justify-between">
           {/* Left section: Mobile menu + Logo */}
-          <div className="flex items-center gap-4 flex-shrink-0">
+          <div className="flex items-center gap-4 min-w-0 flex-1">
             {/* Mobile hamburger menu button */}
             <button
               onClick={onMenuToggle}
@@ -100,16 +146,21 @@ const Header: React.FC<HeaderProps> = ({ onMenuToggle, isMobileMenuOpen }) => {
               </svg>
             </button>
 
-            {/* Logo */}
-            <div className="flex items-center">
-              <h1 className="text-lg sm:text-xl md:text-2xl font-bold bg-gradient-to-r from-orange-500 via-orange-600 to-orange-500 bg-clip-text text-transparent">
-                PoshPointHub
-              </h1>
+            {/* Title */}
+            <div className="flex items-center min-w-0 flex-1 justify-start">
+              {pageTitle ? (
+                <h1
+                  dir="rtl"
+                  className="text-lg sm:text-xl md:text-2xl font-bold tracking-tight text-gray-900 dark:text-gray-100 truncate text-right min-w-0"
+                >
+                  {pageTitle}
+                </h1>
+              ) : null}
             </div>
           </div>
 
           {/* Right section: Actions */}
-          <div className="flex items-center gap-2 sm:gap-2.5 md:gap-3">
+          <div className="flex items-center gap-2 sm:gap-2.5 md:gap-3 flex-shrink-0">
             {/* Theme toggle */}
             <button
               onClick={toggleTheme}

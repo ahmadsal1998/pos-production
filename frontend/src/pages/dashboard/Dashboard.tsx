@@ -159,16 +159,7 @@ const DashboardPage: React.FC = () => {
           <div className="flex flex-col items-start justify-between gap-8 lg:flex-row lg:items-center">
             <div className="space-y-4">
               <div className="space-y-3">
-                <div className="inline-flex items-center rounded-full bg-gradient-to-r from-blue-500/10 to-indigo-500/10 px-4 py-2 text-sm font-semibold text-blue-600 dark:text-blue-400 border border-blue-200/50 dark:border-blue-800/50">
-                  <div className="mr-2 h-2 w-2 rounded-full bg-blue-500 animate-pulse" />
-                  لوحة القيادة المباشرة
-                </div>
-                <h1 className="bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 bg-clip-text text-4xl font-bold tracking-tight text-transparent dark:from-white dark:via-slate-100 dark:to-white sm:text-5xl lg:text-6xl">
-                  {AR_LABELS.dashboardTitle}
-                </h1>
-                <p className="max-w-2xl text-lg text-slate-600 dark:text-slate-300 leading-relaxed">
-                  {AR_LABELS.dashboardDescription}
-                </p>
+                <div />
               </div>
             </div>
             
@@ -193,14 +184,7 @@ const DashboardPage: React.FC = () => {
 
         {/* Real Product Metrics Section */}
         <div className="mb-12">
-          <div className="mb-6">
-            <h2 className="text-2xl font-bold text-slate-900 dark:text-white mb-2">
-              مقاييس المنتجات الحقيقية
-            </h2>
-            <p className="text-slate-600 dark:text-slate-400">
-              بيانات دقيقة عن المخزون والربحية
-            </p>
-          </div>
+          <div className="mb-6" />
           {loadingMetrics ? (
             <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
               {[1, 2, 3, 4].map((i) => (

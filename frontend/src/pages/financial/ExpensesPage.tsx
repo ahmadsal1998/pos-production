@@ -5,6 +5,7 @@ import {
 } from '@/shared/constants';
 import { MetricCard } from '@/shared/components/ui/MetricCard';
 import CustomDropdown from '@/shared/components/ui/CustomDropdown/CustomDropdown';
+import { useConfirmDialog } from '@/shared/contexts';
 import { formatDate } from '@/shared/utils';
 
 // --- MOCK DATA ---
@@ -218,6 +219,7 @@ const ExpenseFormModal: React.FC<{
 
 // --- MAIN PAGE COMPONENT ---
 const ExpensesPage: React.FC = () => {
+    const confirmDialog = useConfirmDialog();
     const [expenses, setExpenses] = useState<Expense[]>(MOCK_EXPENSES);
     const [searchTerm, setSearchTerm] = useState('');
     const [filters, setFilters] = useState({ status: 'all', category: 'all' });
@@ -234,10 +236,12 @@ const ExpensesPage: React.FC = () => {
         setModal({ isOpen: false, data: null });
     };
 
-    const handleDelete = (expenseId: string) => {
-        if (window.confirm('هل أنت متأكد من حذف هذا المصروف؟')) {
-            setExpenses(prev => prev.filter(e => e.id !== expenseId));
-        }
+    const handleDelete = async (expenseId: string) => {
+        const confirmed = await confirmDialog({
+            message: 'هل أنت متأكد من حذف هذا المصروف؟',
+        });
+        if (!confirmed) return;
+        setExpenses(prev => prev.filter(e => e.id !== expenseId));
     };
 
     const filteredExpenses = useMemo(() => {
@@ -285,20 +289,7 @@ const ExpensesPage: React.FC = () => {
             <div className="relative mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8 space-y-8">
                 {/* Modern Professional Header */}
                 <div className="flex flex-col items-start justify-between gap-8 lg:flex-row lg:items-center">
-                    <div className="space-y-4">
-                        <div className="space-y-3">
-                            <div className="inline-flex items-center rounded-full bg-gradient-to-r from-red-500/10 to-rose-500/10 px-4 py-2 text-sm font-semibold text-red-600 dark:text-red-400 border border-red-200/50 dark:border-red-800/50">
-                                <div className="mr-2 h-2 w-2 rounded-full bg-red-500 animate-pulse" />
-                                إدارة المصروفات
-                            </div>
-                            <h1 className="bg-gradient-to-r from-slate-900 via-red-900 to-slate-900 bg-clip-text text-4xl font-bold tracking-tight text-transparent dark:from-white dark:via-red-100 dark:to-white sm:text-5xl">
-                                {AR_LABELS.expenseManagement}
-                            </h1>
-                            <p className="max-w-2xl text-lg text-slate-600 dark:text-slate-300 leading-relaxed">
-                                {AR_LABELS.expenseManagementDescription}
-                            </p>
-                        </div>
-                    </div>
+                    <div />
                     
                     <button 
                         onClick={() => setModal({ isOpen: true, data: null })} 

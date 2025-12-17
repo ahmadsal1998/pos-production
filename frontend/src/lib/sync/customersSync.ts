@@ -26,7 +26,11 @@ export interface CustomerSyncResult {
 }
 
 class CustomerSyncManager {
-  private syncInProgress: Set<string> = new Set();
+  /**
+   * Single-flight map to prevent concurrent syncs per store.
+   * If a sync is already running, additional calls will await the same promise.
+   */
+  private inFlightSyncByStore: Map<string, Promise<CustomerSyncResult>> = new Map();
   private lastSyncTime: number = 0;
   private readonly SYNC_COOLDOWN = 1000;
 
@@ -41,75 +45,78 @@ class CustomerSyncManager {
       };
     }
 
-    if (this.syncInProgress.has(storeId)) {
-      return {
-        success: false,
-        syncedCount: 0,
-        error: 'Sync already in progress',
-      };
+    const inFlight = this.inFlightSyncByStore.get(storeId);
+    if (inFlight) {
+      // Do not surface as an error; join the existing sync.
+      return inFlight;
     }
 
     const now = Date.now();
-    if (!forceRefresh && now - this.lastSyncTime < this.SYNC_COOLDOWN) {
-      return {
-        success: false,
-        syncedCount: 0,
-        error: 'Sync cooldown active',
-      };
-    }
-
-    if (!forceRefresh) {
-      try {
-        const dbCustomers = await customersDB.getAllCustomers();
-        if (dbCustomers && dbCustomers.length > 0) {
-          return {
-            success: true,
-            syncedCount: dbCustomers.length,
-            customers: dbCustomers,
-          };
-        }
-      } catch (error) {
-        console.warn('[CustomerSync] Error reading from IndexedDB, will fetch from server:', error);
-      }
-    }
-
-    this.syncInProgress.add(storeId);
-    this.lastSyncTime = now;
-
-    try {
-      const response = await customersApi.getCustomers();
-
-      if (response.success) {
-        const customers = (response.data as any)?.data?.customers || (response.data as any)?.customers || [];
-        
-        if (customers.length > 0) {
-          await customersDB.storeCustomers(customers);
-          customersDB.notifyOtherTabs();
-        }
-
-        return {
-          success: true,
-          syncedCount: customers.length,
-          customers,
-        };
-      } else {
+    // Create and register the in-flight promise BEFORE any await to avoid races.
+    const syncPromise: Promise<CustomerSyncResult> = (async () => {
+      if (!forceRefresh && now - this.lastSyncTime < this.SYNC_COOLDOWN) {
         return {
           success: false,
           syncedCount: 0,
-          error: 'Failed to fetch customers',
+          error: 'Sync cooldown active',
         };
       }
-    } catch (error: any) {
-      const apiError = error as ApiError;
-      console.error('[CustomerSync] Error syncing customers:', apiError);
-      return {
-        success: false,
-        syncedCount: 0,
-        error: apiError.message || 'Failed to sync customers',
-      };
-    } finally {
-      this.syncInProgress.delete(storeId);
-    }
+
+      if (!forceRefresh) {
+        try {
+          const dbCustomers = await customersDB.getAllCustomers();
+          if (dbCustomers && dbCustomers.length > 0) {
+            return {
+              success: true,
+              syncedCount: dbCustomers.length,
+              customers: dbCustomers,
+            };
+          }
+        } catch (error) {
+          console.warn('[CustomerSync] Error reading from IndexedDB, will fetch from server:', error);
+        }
+      }
+
+      this.lastSyncTime = now;
+
+      try {
+        const response = await customersApi.getCustomers();
+
+        if (response.success) {
+          const customers = (response.data as any)?.data?.customers || (response.data as any)?.customers || [];
+          
+          if (customers.length > 0) {
+            await customersDB.storeCustomers(customers);
+            customersDB.notifyOtherTabs();
+          }
+
+          return {
+            success: true,
+            syncedCount: customers.length,
+            customers,
+          };
+        } else {
+          return {
+            success: false,
+            syncedCount: 0,
+            error: 'Failed to fetch customers',
+          };
+        }
+      } catch (error: any) {
+        const apiError = error as ApiError;
+        console.error('[CustomerSync] Error syncing customers:', apiError);
+        return {
+          success: false,
+          syncedCount: 0,
+          error: apiError.message || 'Failed to sync customers',
+        };
+      } finally {
+        this.inFlightSyncByStore.delete(storeId);
+      }
+    })();
+
+    this.inFlightSyncByStore.set(storeId, syncPromise);
+    return syncPromise;
   }
 
   async syncAfterCreateOrUpdate(customerData: any): Promise<CustomerSyncResult> {

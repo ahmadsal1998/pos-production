@@ -100,6 +100,43 @@ const POSPage: React.FC = () => {
     const barcodeQueueRef = useRef<string[]>([]); // Queue of barcodes waiting to be processed
     const isProcessingBarcodeRef = useRef(false); // Track if a barcode is currently being processed
     const [currentInvoice, setCurrentInvoice] = useState<POSInvoice>(() => generateNewInvoice(currentUserName, 'INV-1'));
+    const [quantityDrafts, setQuantityDrafts] = useState<Record<string, string>>({});
+
+    const QUANTITY_STEP = 0.5;
+    const MIN_QUANTITY = 0.5;
+
+    const formatQuantityForInput = (quantity: number): string => {
+        if (!Number.isFinite(quantity)) return '0';
+        return Number.isInteger(quantity) ? String(quantity) : String(Math.round(quantity * 2) / 2);
+    };
+
+    const isAllowedQuantityDraft = (raw: string): boolean => {
+        const s = raw.trim();
+        if (s === '' || s === '.' || s === '.5') return true;
+        if (/^\d+$/.test(s)) return true;        // 1
+        if (/^\d+\.$/.test(s)) return true;      // 1. (in-progress)
+        if (/^\d+\.5$/.test(s)) return true;     // 1.5
+        return false;
+    };
+
+    const parseQuantityDraft = (raw: string): number | null => {
+        const s = raw.trim();
+        if (!s || s === '.' || /^\d+\.$/.test(s)) return null; // incomplete
+        if (s === '.5') return 0.5;
+        const parsed = Number.parseFloat(s);
+        if (!Number.isFinite(parsed)) return null;
+        return parsed;
+    };
+
+    const coerceToHalfStep = (quantity: number): number => {
+        // Snap to nearest 0.5 to avoid floating point drift.
+        return Math.round(quantity * 2) / 2;
+    };
+
+    const roundForStock = (value: number): number => {
+        // Keep stock calculations stable when dealing with divisions/conversions.
+        return Math.round(value * 1000) / 1000;
+    };
     
     // Helper functions for held invoices persistence
     const HELD_INVOICES_STORAGE_KEY = 'pos_held_invoices';
@@ -143,8 +180,9 @@ const POSPage: React.FC = () => {
     const [saleCompleted, setSaleCompleted] = useState(false);
     const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<string>('Cash');
     const [creditPaidAmount, setCreditPaidAmount] = useState(0);
+    const [creditPaidAmountError, setCreditPaidAmountError] = useState<string | null>(null);
     const [isProcessingPayment, setIsProcessingPayment] = useState(false); // Track payment processing state
-    // Load autoPrintInvoice setting from preferences, default to true
+    // Load autoPrintInvoice setting from preferences, default to false
     const getAutoPrintSetting = (): boolean => {
         try {
             const settings = loadSettings(null);
@@ -154,21 +192,9 @@ const POSPage: React.FC = () => {
         } catch (err) {
             console.error('Failed to load autoPrintInvoice setting:', err);
         }
-        return true; // Default to true if not found
+        return false; // Default to false if not found
     };
     
-    // Helper function to get allowSellingZeroStock setting, default to true
-    const getAllowSellingZeroStockSetting = (): boolean => {
-        try {
-            const settings = loadSettings(null);
-            if (settings && settings.allowSellingZeroStock !== undefined) {
-                return settings.allowSellingZeroStock;
-            }
-        } catch (err) {
-            console.error('Failed to load allowSellingZeroStock setting:', err);
-        }
-        return true; // Default to true if not found
-    };
     const [autoPrintEnabled, setAutoPrintEnabled] = useState(() => getAutoPrintSetting());
     const [isAddCustomerModalOpen, setIsAddCustomerModalOpen] = useState(false);
     const [isProductNotFoundModalOpen, setIsProductNotFoundModalOpen] = useState(false);
@@ -241,6 +267,40 @@ const POSPage: React.FC = () => {
         const newTotals = calculateTotals(currentInvoice.items, currentInvoice.invoiceDiscount);
         setCurrentInvoice(inv => ({ ...inv, ...newTotals }));
     }, [currentInvoice.items, currentInvoice.invoiceDiscount, calculateTotals]);
+
+    const HALF_UNIT_INCREMENT_ERROR =
+        'Please enter a valid amount in half-unit increments (e.g., 0, 0.5, 1, 1.5…)';
+
+    const isValidHalfUnitIncrement = (amount: number): boolean => {
+        if (!Number.isFinite(amount) || amount < 0) return false;
+        // Accept values where amount * 2 is an integer (whole or half units)
+        const doubled = amount * 2;
+        return Math.abs(doubled - Math.round(doubled)) < 1e-9;
+    };
+
+    const handleCreditPaidAmountChange = (value: string) => {
+        // Keep behavior consistent with current code: empty input becomes 0
+        if (value.trim() === '') {
+            setCreditPaidAmount(0);
+            setCreditPaidAmountError(null);
+            return;
+        }
+
+        const nextAmount = Number(value);
+        if (!Number.isFinite(nextAmount)) {
+            setCreditPaidAmountError(HALF_UNIT_INCREMENT_ERROR);
+            return;
+        }
+
+        if (!isValidHalfUnitIncrement(nextAmount)) {
+            // Reject invalid patterns (do not update state), but show the message
+            setCreditPaidAmountError(HALF_UNIT_INCREMENT_ERROR);
+            return;
+        }
+
+        setCreditPaidAmount(nextAmount);
+        setCreditPaidAmountError(null);
+    };
 
     // Convert Arabic numerals to English in the POS interface
     useEffect(() => {
@@ -1445,24 +1505,6 @@ const POSPage: React.FC = () => {
             const currentQuantity = existingItem?.quantity || 0;
             const newQuantity = currentQuantity + piecesPerUnit;
 
-            // Stock check using piece-based quantities
-            const availablePieces = availableStock * piecesPerMainUnit;
-            
-            // Check allowSellingZeroStock setting
-            const allowSellingZeroStock = getAllowSellingZeroStockSetting();
-            
-            // If setting is disabled and stock is zero, block the sale
-            if (!allowSellingZeroStock && availablePieces === 0) {
-                alert(`لا يمكن بيع المنتج "${product.name}" لأنه لا يوجد مخزون متوفر.`);
-                return inv;
-            }
-            
-            // If quantity exceeds available stock (and stock > 0), block the sale
-            if (newQuantity > availablePieces && availablePieces > 0) {
-                alert(`الكمية المطلوبة (${newQuantity}) تتجاوز المخزون المتوفر (${availablePieces}).`);
-                return inv;
-            }
-
             if (existingItem) {
                 // Same product, same unit - update quantity
                 const updatedQuantity = newQuantity;
@@ -2165,39 +2207,23 @@ const POSPage: React.FC = () => {
 
     const handleUpdateQuantity = (cartItemId: string, quantity: number) => {
         const normalizedQuantity = Number.isFinite(quantity) ? quantity : 0;
-        const roundedQuantity = Math.max(0, Math.round(normalizedQuantity));
-        
+        const halfStepQuantity = Math.max(0, coerceToHalfStep(normalizedQuantity));
+
         // Find the item to get product info for stock check
         const item = currentInvoice.items.find(i => i.cartItemId === cartItemId);
         if (!item) return;
-        
-        const p = products.find(prod => prod.id === item.productId);
-        const piecesPerMainUnit = getPiecesPerMainUnit(p);
-        const availablePieces = p ? p.stock * piecesPerMainUnit : Infinity;
-        
-        // Check allowSellingZeroStock setting
-        const allowSellingZeroStock = getAllowSellingZeroStockSetting();
-        
-        // If setting is disabled and stock is zero, block the update
-        if (p && !allowSellingZeroStock && availablePieces === 0 && roundedQuantity > 0) {
-            alert(`لا يمكن بيع المنتج "${p.name}" لأنه لا يوجد مخزون متوفر.`);
-            return;
-        }
-        
-        // If quantity exceeds available stock (and stock > 0), block the update
-        if (p && roundedQuantity > availablePieces && availablePieces > 0) {
-            alert(`الكمية المطلوبة (${roundedQuantity}) تتجاوز المخزون المتوفر (${availablePieces}). لا يمكنك إضافة المزيد.`);
-            return;
-        }
 
-        if (roundedQuantity < 1) {
+        if (halfStepQuantity < MIN_QUANTITY) {
             handleRemoveItem(cartItemId);
             return;
         }
+
         setCurrentInvoice(inv => ({
             ...inv,
             items: inv.items.map(item =>
-                item.cartItemId === cartItemId ? { ...item, quantity: roundedQuantity, total: item.unitPrice * roundedQuantity } : item
+                item.cartItemId === cartItemId
+                    ? { ...item, quantity: halfStepQuantity, total: item.unitPrice * halfStepQuantity }
+                    : item
             ),
         }));
     };
@@ -2292,7 +2318,17 @@ const POSPage: React.FC = () => {
         setCurrentInvoice(generateNewInvoice(currentUserName, nextInvoiceNumber));
         setSelectedPaymentMethod('Cash');
         setCreditPaidAmount(0);
+        setCreditPaidAmountError(null);
     }
+
+    const handleCancelSale = async () => {
+        // Only confirm if there are items that will be removed from the cart
+        if (currentInvoice.items.length > 0) {
+            const confirmed = window.confirm('هل أنت متأكد أنك تريد إزالة المنتجات المحددة من السلة؟');
+            if (!confirmed) return;
+        }
+        await startNewSale();
+    };
     
     const handleReturn = async () => {
         if (currentInvoice.items.length === 0) {
@@ -2341,8 +2377,8 @@ const POSPage: React.FC = () => {
                 if (productIndex !== -1) {
                     const product = newProducts[productIndex];
                     const piecesPerMainUnit = getPiecesPerMainUnit(product);
-                    const stockAddition = item.conversionFactor && item.conversionFactor > 0 
-                        ? Math.ceil(item.quantity / item.conversionFactor)
+                    const stockAddition = item.conversionFactor && item.conversionFactor > 0
+                        ? roundForStock(item.quantity / item.conversionFactor)
                         : item.quantity;
                     
                     // Update stock optimistically (ADD stock for returns)
@@ -2433,7 +2469,7 @@ const POSPage: React.FC = () => {
                 } else {
                     stockAddition = item.quantity;
                 }
-                stockAddition = Math.ceil(stockAddition);
+                stockAddition = roundForStock(stockAddition);
 
                 const productIdToUpdateString = String(productIdToUpdate);
                 
@@ -2665,6 +2701,11 @@ const POSPage: React.FC = () => {
             return;
         }
 
+        if (selectedPaymentMethod === 'Credit' && !isValidHalfUnitIncrement(creditPaidAmount)) {
+            setCreditPaidAmountError(HALF_UNIT_INCREMENT_ERROR);
+            return;
+        }
+
         // For all payment methods (Cash, Credit, Card), proceed directly
         // Card payments are handled without terminal integration
         finalizeSaleWithoutTerminal();
@@ -2730,8 +2771,8 @@ const POSPage: React.FC = () => {
 
                 // Calculate stock reduction
                 const piecesPerMainUnit = getPiecesPerMainUnit(product);
-                const stockReduction = item.conversionFactor && item.conversionFactor > 0 
-                    ? Math.ceil(item.quantity / item.conversionFactor)
+                const stockReduction = item.conversionFactor && item.conversionFactor > 0
+                    ? roundForStock(item.quantity / item.conversionFactor)
                     : item.quantity;
 
                 // Update stock for this specific product only (optimistic update)
@@ -2894,8 +2935,8 @@ const POSPage: React.FC = () => {
                     stockChange = itemQuantity;
                 }
                 
-                // Round up to ensure we don't under-deduct stock
-                stockChange = Math.ceil(stockChange);
+                // Keep conversions stable without forcing integer rounding
+                stockChange = roundForStock(stockChange);
 
                 // CRITICAL: Use the specific product's originalId to update ONLY that product
                 // Store in a const to prevent accidental modification
@@ -3236,13 +3277,13 @@ const POSPage: React.FC = () => {
                 </div>
                 
                 <div className="overflow-x-auto -mx-2 sm:mx-0">
-                    <table className="w-full text-xs min-w-full border-collapse" style={{ borderSpacing: 0 }}>
+                                <table className="w-full text-xs min-w-full border-collapse" style={{ borderSpacing: 0 }}>
                         <thead>
                             <tr className="bg-gray-100 dark:bg-gray-700">
-                                <th className="py-2.5 px-3 text-right font-bold border border-gray-300 dark:border-gray-600" style={{ borderRight: '1px solid #dee2e6', borderLeft: '1px solid #dee2e6', borderTop: '1px solid #dee2e6', borderBottom: '2px solid #495057' }}>اسم المنتج</th>
-                                <th className="py-2.5 px-3 text-center font-bold border border-gray-300 dark:border-gray-600" style={{ borderRight: '1px solid #dee2e6', borderLeft: '1px solid #dee2e6', borderTop: '1px solid #dee2e6', borderBottom: '2px solid #495057' }}>الكمية</th>
-                                <th className="py-2.5 px-3 text-center font-bold border border-gray-300 dark:border-gray-600" style={{ borderRight: '1px solid #dee2e6', borderLeft: '1px solid #dee2e6', borderTop: '1px solid #dee2e6', borderBottom: '2px solid #495057' }}>سعر الوحدة</th>
-                                <th className="py-2.5 px-3 text-left font-bold border border-gray-300 dark:border-gray-600" style={{ borderRight: '1px solid #dee2e6', borderLeft: '1px solid #dee2e6', borderTop: '1px solid #dee2e6', borderBottom: '2px solid #495057' }}>الإجمالي</th>
+                                            <th className="py-2.5 px-3 text-right align-middle font-bold border border-gray-300 dark:border-gray-600" style={{ borderRight: '1px solid #dee2e6', borderLeft: '1px solid #dee2e6', borderTop: '1px solid #dee2e6', borderBottom: '2px solid #495057' }}>اسم المنتج</th>
+                                            <th className="py-2.5 px-3 text-center align-middle font-bold border border-gray-300 dark:border-gray-600" style={{ borderRight: '1px solid #dee2e6', borderLeft: '1px solid #dee2e6', borderTop: '1px solid #dee2e6', borderBottom: '2px solid #495057' }}>الكمية</th>
+                                            <th className="py-2.5 px-3 text-center align-middle font-bold border border-gray-300 dark:border-gray-600" style={{ borderRight: '1px solid #dee2e6', borderLeft: '1px solid #dee2e6', borderTop: '1px solid #dee2e6', borderBottom: '2px solid #495057' }}>سعر الوحدة</th>
+                                            <th className="py-2.5 px-3 text-center align-middle font-bold border border-gray-300 dark:border-gray-600" style={{ borderRight: '1px solid #dee2e6', borderLeft: '1px solid #dee2e6', borderTop: '1px solid #dee2e6', borderBottom: '2px solid #495057' }}>الإجمالي</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -3250,12 +3291,12 @@ const POSPage: React.FC = () => {
                                 const itemUnitPrice = isReturn ? -Math.abs(item.unitPrice) : item.unitPrice;
                                 const itemTotal = isReturn ? -Math.abs(item.total - item.discount * item.quantity) : (item.total - item.discount * item.quantity);
                                 return (
-                                <tr key={item.cartItemId || `receipt-item-${idx}`} className="border-b border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700/50">
-                                    <td className="py-2.5 px-3 text-right border border-gray-300 dark:border-gray-600 font-medium">{item.name}</td>
-                                    <td className="py-2.5 px-3 text-center border border-gray-300 dark:border-gray-600">{Math.abs(item.quantity)}</td>
-                                    <td className={`py-2.5 px-3 text-center border border-gray-300 dark:border-gray-600 ${isReturn ? 'text-red-600 dark:text-red-400' : 'text-gray-700 dark:text-gray-300'}`}>{formatCurrency(itemUnitPrice)}</td>
-                                    <td className={`py-2.5 px-3 text-left border border-gray-300 dark:border-gray-600 font-semibold ${isReturn ? 'text-red-600 dark:text-red-400' : 'text-gray-900 dark:text-gray-100'}`}>{formatCurrency(itemTotal)}</td>
-                                </tr>
+                                            <tr key={item.cartItemId || `receipt-item-${idx}`} className="border-b border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700/50">
+                                                <td className="py-2.5 px-3 text-right align-middle border border-gray-300 dark:border-gray-600 font-medium">{item.name}</td>
+                                                <td className="py-2.5 px-3 text-center align-middle border border-gray-300 dark:border-gray-600">{Math.abs(item.quantity)}</td>
+                                                <td className={`py-2.5 px-3 text-center align-middle border border-gray-300 dark:border-gray-600 ${isReturn ? 'text-red-600 dark:text-red-400' : 'text-gray-700 dark:text-gray-300'}`}>{formatCurrency(itemUnitPrice)}</td>
+                                                <td className={`py-2.5 px-3 text-center align-middle border border-gray-300 dark:border-gray-600 font-semibold ${isReturn ? 'text-red-600 dark:text-red-400' : 'text-gray-900 dark:text-gray-100'}`}>{formatCurrency(itemTotal)}</td>
+                                            </tr>
                                 );
                             })}
                         </tbody>
@@ -3295,7 +3336,14 @@ const POSPage: React.FC = () => {
     
     if (saleCompleted) {
         const isReturnInvoice = currentInvoice.id.startsWith('RET-') || currentInvoice.originalInvoiceId !== undefined;
-        const receiptTitle = isReturnInvoice ? 'Returns' : 'PoshPointHub';
+        const businessName = loadSettings(null)?.businessName;
+        const legacyDefaultBusinessName = String.fromCharCode(80, 111, 115, 104, 80, 111, 105, 110, 116, 72, 117, 98);
+        const receiptTitle =
+            isReturnInvoice
+                ? 'Returns'
+                : businessName && businessName.trim() && businessName !== legacyDefaultBusinessName
+                    ? businessName
+                    : '';
         return (
             <div className="flex flex-col items-center justify-center min-h-screen bg-gray-100 dark:bg-gray-900 p-4 sm:p-6">
                 {saleCompleted && renderReceipt(currentInvoice, receiptTitle)}
@@ -3314,28 +3362,17 @@ const POSPage: React.FC = () => {
     }
     
     return (
-        <div ref={posContainerRef} className="relative min-h-screen overflow-hidden">
+        <div ref={posContainerRef} className="relative min-h-screen overflow-x-hidden">
             {/* Modern Animated Background */}
             <div className="absolute inset-0 bg-gradient-to-br from-slate-50 via-orange-50/20 to-amber-100/30 dark:from-slate-950 dark:via-orange-950/20 dark:to-amber-950/30" />
             <div className="absolute -top-40 -right-40 h-80 w-80 rounded-full bg-gradient-to-br from-orange-400/15 to-amber-400/15 blur-3xl animate-pulse" />
             <div className="absolute -bottom-40 -left-40 h-80 w-80 rounded-full bg-gradient-to-br from-rose-400/15 to-orange-400/15 blur-3xl animate-pulse" style={{ animationDelay: '2s' }} />
             
             <div className="relative w-full px-2 sm:px-4 py-4 sm:py-6 overflow-x-hidden">
-                {/* Modern Header */}
-                <div className="mb-4 sm:mb-6">
-                    <div className="inline-flex items-center rounded-full bg-gradient-to-r from-orange-500/10 to-amber-500/10 px-3 sm:px-4 py-1.5 sm:py-2 text-xs sm:text-sm font-semibold text-orange-600 dark:text-orange-400 border border-orange-200/50 dark:border-orange-800/50 mb-2 sm:mb-3">
-                        <div className="mr-2 h-2 w-2 rounded-full bg-orange-500 animate-pulse" />
-                        نقاط البيع (POS)
-                    </div>
-                    <h1 className="bg-gradient-to-r from-slate-900 via-orange-900 to-slate-900 bg-clip-text text-xl sm:text-2xl md:text-3xl font-bold tracking-tight text-transparent dark:from-white dark:via-orange-100 dark:to-white">
-                        {'نقطة البيع'}
-                    </h1>
-                </div>
-
                 {/* Three Column Layout - Proportional widths: ~19% - 50% - 31% */}
-                <div className="grid grid-cols-1 md:grid-cols-[0.75fr_2.3fr_1fr] gap-3 sm:gap-4 h-auto md:h-[calc(100vh-12rem)] w-full overflow-x-hidden">
+                <div className="grid grid-cols-1 md:grid-cols-[0.75fr_2.3fr_1fr] gap-3 sm:gap-4 h-auto md:min-h-[calc(100vh-12rem)] w-full overflow-x-hidden items-start">
                 {/* Column 1: Customer & Quick Products (25%) */}
-                    <div className="flex flex-col gap-3 sm:gap-4 min-h-0 min-w-0">
+                    <div className="flex flex-col gap-3 sm:gap-4 min-h-0 min-w-0 md:h-[calc(100vh-12rem)]">
                         {/* Held Invoices - Only visible when there are held invoices */}
                         {heldInvoices.length > 0 && (
                             <div className="bg-white/95 dark:bg-gray-800/95 rounded-xl sm:rounded-2xl shadow-sm p-4 sm:p-6 backdrop-blur-xl border border-slate-200/50 dark:border-slate-700/50 space-y-3 sm:space-y-4 flex flex-col min-h-0 relative z-10">
@@ -3385,27 +3422,7 @@ const POSPage: React.FC = () => {
                     </div>
 
                     {/* Column 2: Transaction/Cart (50% - Center, wider) */}
-                    <div className="flex flex-col bg-white/95 dark:bg-gray-800/95 rounded-xl sm:rounded-2xl shadow-sm backdrop-blur-xl border border-slate-200/50 dark:border-slate-700/50 min-h-0 min-w-0 overflow-hidden">
-                        {/* Fixed Action Buttons at Top */}
-                        <div className="bg-white/95 dark:bg-gray-800/95 backdrop-blur-sm border-b border-gray-200 dark:border-gray-700 p-3 sm:p-4 z-10">
-                            <div className="flex flex-row gap-2 sm:gap-3">
-                                <button 
-                                    onClick={handleHoldSale} 
-                                    disabled={currentInvoice.items.length === 0} 
-                                    className="flex-1 inline-flex items-center justify-center px-4 py-2.5 rounded-xl border-2 border-yellow-400 dark:border-yellow-600 text-sm font-medium text-yellow-700 dark:text-yellow-300 bg-yellow-50 dark:bg-yellow-900/30 hover:bg-yellow-100 dark:hover:bg-yellow-900/50 disabled:opacity-50 transition-all duration-200 shadow-sm hover:shadow-md"
-                                >
-                                   <span className="h-4 w-4 sm:h-5 sm:w-5 block"><HandIcon /></span>
-                                   <span className="mr-2">{AR_LABELS.holdSale}</span>
-                                </button>
-                                <button 
-                                    onClick={() => startNewSale()} 
-                                    className="flex-1 inline-flex items-center justify-center px-4 py-2.5 rounded-xl border-2 border-red-400 dark:border-red-600 text-sm font-medium text-red-700 dark:text-red-300 bg-red-50 dark:bg-red-900/30 hover:bg-red-100 dark:hover:bg-red-900/50 transition-all duration-200 shadow-sm hover:shadow-md"
-                                >
-                                    <span className="w-4 h-4 block"><CancelIcon /></span>
-                                    <span className="mr-2">{AR_LABELS.cancel}</span>
-                                </button>
-                            </div>
-                        </div>
+                    <div className="flex flex-col bg-white/95 dark:bg-gray-800/95 rounded-xl sm:rounded-2xl shadow-sm backdrop-blur-xl border border-slate-200/50 dark:border-slate-700/50 min-h-0 min-w-0 overflow-hidden md:h-[calc(100vh-12rem)]">
                         {/* Header */}
                         <div className="p-3 sm:p-4 md:p-6 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 text-xs sm:text-sm text-gray-700 dark:text-gray-300 flex flex-col sm:flex-row justify-between gap-2 sm:gap-0 rounded-t-xl sm:rounded-t-2xl flex-shrink-0">
                             <span className="font-semibold truncate">{AR_LABELS.invoiceNumber}: <span className="font-mono text-orange-600">{currentInvoice.id}</span></span>
@@ -3479,53 +3496,114 @@ const POSPage: React.FC = () => {
                                 <table className="w-full text-right min-w-full">
                                     <thead className="bg-gray-50 dark:bg-gray-700 sticky top-0">
                                         <tr>
-                                            <th className="px-2 sm:px-3 py-2 sm:py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[5%]">#</th>
-                                            <th className="px-2 sm:px-3 py-2 sm:py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[30%]">{AR_LABELS.productName}</th>
-                                            <th className="px-2 sm:px-3 py-2 sm:py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[12%]">{AR_LABELS.quantity}</th>
-                                            <th className="px-2 sm:px-3 py-2 sm:py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[12%]">{AR_LABELS.price}</th>
-                                            <th className="px-2 sm:px-3 py-2 sm:py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[12%]">{AR_LABELS.discount}</th>
-                                            <th className="px-2 sm:px-3 py-2 sm:py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[15%]">{AR_LABELS.totalAmount}</th>
-                                            <th className="px-2 sm:px-3 py-2 sm:py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[10%]"></th>
+                                            <th className="px-2 sm:px-3 py-2 sm:py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[5%] align-middle">#</th>
+                                            <th className="px-2 sm:px-3 py-2 sm:py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[30%] align-middle">{AR_LABELS.productName}</th>
+                                            <th className="px-2 sm:px-3 py-2 sm:py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[12%] text-center align-middle">{AR_LABELS.quantity}</th>
+                                            <th className="px-2 sm:px-3 py-2 sm:py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[12%] text-center align-middle">{AR_LABELS.price}</th>
+                                            <th className="px-2 sm:px-3 py-2 sm:py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[15%] text-center align-middle">{AR_LABELS.totalAmount}</th>
+                                            <th className="px-2 sm:px-3 py-2 sm:py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[10%] text-center align-middle"></th>
                                         </tr>
                                     </thead>
                                 <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
                                    {currentInvoice.items.length === 0 ? (
-                                        <tr><td colSpan={7} className="text-center py-8 sm:py-10 text-xs sm:text-sm text-gray-500 dark:text-gray-400">{AR_LABELS.noItemsInCart}</td></tr>
+                                            <tr><td colSpan={6} className="text-center align-middle py-8 sm:py-10 text-xs sm:text-sm text-gray-500 dark:text-gray-400">{AR_LABELS.noItemsInCart}</td></tr>
                                    ) : currentInvoice.items.map((item, index) => (
                                         <tr key={item.cartItemId || `item-${index}`} className="hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors duration-150">
-                                            <td className="px-2 sm:px-3 py-3 sm:py-4 text-xs sm:text-sm text-gray-500 dark:text-gray-400">{index + 1}</td>
-                                            <td className="px-2 sm:px-3 py-3 sm:py-4 text-xs sm:text-sm font-medium text-gray-900 dark:text-gray-100 break-words">{item.name}</td>
-                                            <td className="px-2 sm:px-3 py-3 sm:py-4">
-                                                <input 
-                                                    type="number" 
-                                                    value={item.quantity} 
-                                                        onChange={e => {
-                                                            const value = parseFloat(e.target.value);
-                                                            if (item.cartItemId) {
-                                                                handleUpdateQuantity(item.cartItemId, isNaN(value) ? item.quantity : value);
+                                                <td className="px-2 sm:px-3 py-3 sm:py-4 text-xs sm:text-sm text-gray-500 dark:text-gray-400 align-middle">{index + 1}</td>
+                                                <td className="px-2 sm:px-3 py-3 sm:py-4 text-xs sm:text-sm font-medium text-gray-900 dark:text-gray-100 break-words align-middle">{item.name}</td>
+                                                <td className="px-2 sm:px-3 py-3 sm:py-4 text-center align-middle">
+                                                <div className="inline-flex items-center justify-center gap-1" dir="ltr">
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => {
+                                                            if (!item.cartItemId) return;
+                                                            setQuantityDrafts(prev => {
+                                                                const next = { ...prev };
+                                                                delete next[item.cartItemId as string];
+                                                                return next;
+                                                            });
+                                                            handleUpdateQuantity(item.cartItemId, item.quantity - QUANTITY_STEP);
+                                                        }}
+                                                        className="w-6 h-6 sm:w-7 sm:h-7 inline-flex items-center justify-center rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-600 focus:ring-2 focus:ring-orange-500"
+                                                        aria-label="إنقاص الكمية"
+                                                        disabled={!item.cartItemId}
+                                                    >
+                                                        −
+                                                    </button>
+                                                    <input
+                                                        type="text"
+                                                        inputMode="decimal"
+                                                        value={item.cartItemId ? (quantityDrafts[item.cartItemId] ?? formatQuantityForInput(item.quantity)) : formatQuantityForInput(item.quantity)}
+                                                        onChange={(e) => {
+                                                            if (!item.cartItemId) return;
+                                                            const raw = e.target.value.replace(',', '.');
+                                                            if (!isAllowedQuantityDraft(raw)) return;
+                                                            setQuantityDrafts(prev => ({ ...prev, [item.cartItemId as string]: raw }));
+
+                                                            const parsed = parseQuantityDraft(raw);
+                                                            if (parsed !== null) {
+                                                                handleUpdateQuantity(item.cartItemId, parsed);
                                                             }
-                                                        }} 
-                                                    className="w-full max-w-[60px] text-xs sm:text-sm text-center border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent py-1 sm:py-1.5"
-                                                />
+                                                        }}
+                                                        onBlur={() => {
+                                                            if (!item.cartItemId) return;
+                                                            const raw = quantityDrafts[item.cartItemId];
+                                                            if (raw === undefined) return;
+
+                                                            const parsed = parseQuantityDraft(raw);
+                                                            if (parsed !== null) {
+                                                                handleUpdateQuantity(item.cartItemId, parsed);
+                                                            }
+
+                                                            setQuantityDrafts(prev => {
+                                                                const next = { ...prev };
+                                                                delete next[item.cartItemId as string];
+                                                                return next;
+                                                            });
+                                                        }}
+                                                        onKeyDown={(e) => {
+                                                            if (!item.cartItemId) return;
+                                                            if (e.key === 'Enter') {
+                                                                (e.currentTarget as HTMLInputElement).blur();
+                                                            }
+                                                            if (e.key === 'Escape') {
+                                                                setQuantityDrafts(prev => {
+                                                                    const next = { ...prev };
+                                                                    delete next[item.cartItemId as string];
+                                                                    return next;
+                                                                });
+                                                                (e.currentTarget as HTMLInputElement).blur();
+                                                            }
+                                                        }}
+                                                        className="w-[52px] sm:w-[60px] text-xs sm:text-sm text-center border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent py-1 sm:py-1.5"
+                                                    />
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => {
+                                                            if (!item.cartItemId) return;
+                                                            setQuantityDrafts(prev => {
+                                                                const next = { ...prev };
+                                                                delete next[item.cartItemId as string];
+                                                                return next;
+                                                            });
+                                                            handleUpdateQuantity(item.cartItemId, item.quantity + QUANTITY_STEP);
+                                                        }}
+                                                        className="w-6 h-6 sm:w-7 sm:h-7 inline-flex items-center justify-center rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-600 focus:ring-2 focus:ring-orange-500"
+                                                        aria-label="زيادة الكمية"
+                                                        disabled={!item.cartItemId}
+                                                    >
+                                                        +
+                                                    </button>
+                                                </div>
                                             </td>
-                                            <td className="px-2 sm:px-3 py-3 sm:py-4 text-xs sm:text-sm text-gray-700 dark:text-gray-300 whitespace-nowrap">{formatCurrency(item.unitPrice)}</td>
-                                            <td className="px-2 sm:px-3 py-3 sm:py-4">
-                                                <input 
-                                                    type="number" 
-                                                    value={item.discount} 
-                                                    onChange={e => {
-                                                        if (item.cartItemId) {
-                                                            handleUpdateItemDiscount(item.cartItemId, parseFloat(e.target.value) || 0);
-                                                        }
-                                                    }} 
-                                                    className="w-full max-w-[60px] text-xs sm:text-sm text-center border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent py-1 sm:py-1.5"
-                                                />
-                                            </td>
-                                            <td className="px-2 sm:px-3 py-3 sm:py-4 text-xs sm:text-sm font-semibold text-orange-600 whitespace-nowrap">{formatCurrency(item.total - (item.discount * item.quantity))}</td>
-                                            <td className="px-2 sm:px-3 py-3 sm:py-4">
+                                            <td className="px-2 sm:px-3 py-3 sm:py-4 text-xs sm:text-sm text-gray-700 dark:text-gray-300 whitespace-nowrap text-center align-middle">{formatCurrency(item.unitPrice)}</td>
+                                            <td className="px-2 sm:px-3 py-3 sm:py-4 text-xs sm:text-sm font-semibold text-orange-600 whitespace-nowrap text-center align-middle">{formatCurrency(item.total - (item.discount * item.quantity))}</td>
+                                            <td className="px-2 sm:px-3 py-3 sm:py-4 text-center align-middle">
                                                 <button 
                                                     onClick={() => {
                                                         if (item.cartItemId) {
+                                                            const confirmed = window.confirm('هل أنت متأكد أنك تريد إزالة هذا المنتج من السلة؟');
+                                                            if (!confirmed) return;
                                                             handleRemoveItem(item.cartItemId);
                                                         }
                                                     }} 
@@ -3543,175 +3621,199 @@ const POSPage: React.FC = () => {
                     </div>
 
                     {/* Column 3: Totals, Payment & Actions (25%) */}
-                    <div className="flex flex-col gap-3 sm:gap-4 min-h-0 min-w-0 overflow-y-auto">
-                        <div className="bg-gradient-to-br from-white via-orange-50/30 to-amber-50/30 dark:from-gray-800 dark:via-orange-950/20 dark:to-amber-950/20 rounded-xl sm:rounded-2xl shadow-lg border border-orange-200/50 dark:border-orange-800/50 backdrop-blur-xl p-4 sm:p-5 flex-grow">
+                    <div className="flex flex-col gap-3 sm:gap-4 min-w-0">
+                        <div className="bg-gradient-to-br from-white via-orange-50/30 to-amber-50/30 dark:from-gray-800 dark:via-orange-950/20 dark:to-amber-950/20 rounded-xl sm:rounded-2xl shadow-lg border border-orange-200/50 dark:border-orange-800/50 backdrop-blur-xl p-4 sm:p-5">
+                            {/* Hold / Cancel Buttons (above Customer Name) */}
+                            <div className="mb-4">
+                                <div className="flex flex-row gap-2 sm:gap-3">
+                                    <button
+                                        onClick={handleHoldSale}
+                                        disabled={currentInvoice.items.length === 0}
+                                        className="flex-1 inline-flex items-center justify-center px-4 py-2.5 rounded-xl border-2 border-yellow-400 dark:border-yellow-600 text-sm font-medium text-yellow-700 dark:text-yellow-300 bg-yellow-50 dark:bg-yellow-900/30 hover:bg-yellow-100 dark:hover:bg-yellow-900/50 disabled:opacity-50 transition-all duration-200 shadow-sm hover:shadow-md"
+                                    >
+                                        <span className="h-4 w-4 sm:h-5 sm:w-5 block"><HandIcon /></span>
+                                        <span className="mr-2">{AR_LABELS.holdSale}</span>
+                                    </button>
+                                    <button
+                                        onClick={handleCancelSale}
+                                        className="flex-1 inline-flex items-center justify-center px-4 py-2.5 rounded-xl border-2 border-red-400 dark:border-red-600 text-sm font-medium text-red-700 dark:text-red-300 bg-red-50 dark:bg-red-900/30 hover:bg-red-100 dark:hover:bg-red-900/50 transition-all duration-200 shadow-sm hover:shadow-md"
+                                    >
+                                        <span className="w-4 h-4 block"><CancelIcon /></span>
+                                        <span className="mr-2">{AR_LABELS.cancel}</span>
+                                    </button>
+                                </div>
+                            </div>
                             {/* Customer Section */}
                             <div className="flex-shrink-0 mb-4">
                                 <div className="flex items-center justify-between mb-2">
                                     <h3 className="font-bold text-sm sm:text-base text-gray-700 dark:text-gray-200 text-right">{AR_LABELS.customerName}</h3>
-                                    <button 
-                                        onClick={() => setIsAddCustomerModalOpen(true)}
-                                        className="text-center text-xs sm:text-sm text-orange-600 hover:text-orange-700 dark:text-orange-400 font-medium transition-colors py-1.5"
-                                    >
-                                        {AR_LABELS.addNewCustomer}
-                                    </button>
                                 </div>
                                 
                                 {/* Customer Search Input with Dropdown */}
-                                <div className="relative mb-2 z-[100]">
-                                    <SearchIcon className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 dark:text-gray-500 z-10" />
-                                    <input
-                                        type="text"
-                                        value={customerSearchTerm}
-                                        onChange={(e) => {
-                                            setCustomerSearchTerm(e.target.value);
-                                            setIsCustomerDropdownOpen(true);
-                                        }}
-                                        onFocus={async () => {
-                                            if (!isMountedRef.current) return;
-                                            setIsCustomerDropdownOpen(true);
-                                            // Ensure customers are loaded when dropdown opens (only if not already loaded)
-                                            if (!customersLoaded) {
-                                                try {
-                                                    // First try IndexedDB
-                                                    await customersDB.init();
-                                                    if (!isMountedRef.current) return;
-                                                    const dbCustomers = await customersDB.getAllCustomers();
-                                                    if (isMountedRef.current) {
-                                                        if (dbCustomers && dbCustomers.length > 0) {
-                                                            const transformedCustomers: Customer[] = dbCustomers
-                                                                .map((customer: any) => ({
-                                                                    id: customer.id,
-                                                                    name: customer.name || customer.phone,
-                                                                    phone: customer.phone,
-                                                                    address: customer.address,
-                                                                    previousBalance: customer.previousBalance || 0,
-                                                                }))
-                                                                .filter((customer: Customer) => !isDummyCustomer(customer));
-                                                            try {
-                                                                setAllCustomers(transformedCustomers);
-                                                                setCustomers(transformedCustomers);
-                                                                setCustomersLoaded(true);
-                                                                console.log(`[POS] Loaded ${transformedCustomers.length} customers on focus`);
-                                                            } catch (error) {
-                                                                console.debug('[POS] State update skipped (component unmounted)');
-                                                            }
-                                                        } else {
-                                                            // Empty IndexedDB - try to sync from server
-                                                            console.log(`[POS] IndexedDB empty on focus, syncing from server...`);
-                                                            try {
-                                                                const syncResult = await customerSync.syncCustomers({ forceRefresh: true });
-                                                                if (!isMountedRef.current) return;
-                                                                
-                                                                if (syncResult.success && syncResult.customers) {
-                                                                    const transformedCustomers: Customer[] = syncResult.customers
-                                                                        .map((customer: any) => ({
-                                                                            id: customer.id,
-                                                                            name: customer.name || customer.phone,
-                                                                            phone: customer.phone,
-                                                                            address: customer.address,
-                                                                            previousBalance: customer.previousBalance || 0,
-                                                                        }))
-                                                                        .filter((customer: Customer) => !isDummyCustomer(customer));
-                                                                    try {
-                                                                        setAllCustomers(transformedCustomers);
-                                                                        setCustomers(transformedCustomers);
-                                                                        setCustomersLoaded(true);
-                                                                        console.log(`[POS] Synced ${transformedCustomers.length} customers on focus`);
-                                                                    } catch (error) {
-                                                                        console.debug('[POS] State update skipped (component unmounted)');
-                                                                    }
-                                                                } else if (syncResult.success && (!syncResult.customers || syncResult.customers.length === 0)) {
-                                                                    // Empty list from server is also valid
-                                                                    setAllCustomers([]);
-                                                                    setCustomers([]);
+                                <div className="flex items-start gap-2 mb-2">
+                                    <div className="relative z-[100] flex-1 min-w-0">
+                                        <SearchIcon className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 dark:text-gray-500 z-10" />
+                                        <input
+                                            type="text"
+                                            value={customerSearchTerm}
+                                            onChange={(e) => {
+                                                setCustomerSearchTerm(e.target.value);
+                                                setIsCustomerDropdownOpen(true);
+                                            }}
+                                            onFocus={async () => {
+                                                if (!isMountedRef.current) return;
+                                                setIsCustomerDropdownOpen(true);
+                                                // Ensure customers are loaded when dropdown opens (only if not already loaded)
+                                                if (!customersLoaded) {
+                                                    try {
+                                                        // First try IndexedDB
+                                                        await customersDB.init();
+                                                        if (!isMountedRef.current) return;
+                                                        const dbCustomers = await customersDB.getAllCustomers();
+                                                        if (isMountedRef.current) {
+                                                            if (dbCustomers && dbCustomers.length > 0) {
+                                                                const transformedCustomers: Customer[] = dbCustomers
+                                                                    .map((customer: any) => ({
+                                                                        id: customer.id,
+                                                                        name: customer.name || customer.phone,
+                                                                        phone: customer.phone,
+                                                                        address: customer.address,
+                                                                        previousBalance: customer.previousBalance || 0,
+                                                                    }))
+                                                                    .filter((customer: Customer) => !isDummyCustomer(customer));
+                                                                try {
+                                                                    setAllCustomers(transformedCustomers);
+                                                                    setCustomers(transformedCustomers);
                                                                     setCustomersLoaded(true);
-                                                                    console.log(`[POS] Synced 0 customers on focus (empty list)`);
-                                                                } else {
-                                                                    // Sync failed
-                                                                    setAllCustomers([]);
-                                                                    setCustomers([]);
-                                                                    setCustomersLoaded(true);
-                                                                    console.warn(`[POS] Sync failed on focus: ${syncResult.error || 'Unknown error'}`);
+                                                                    console.log(`[POS] Loaded ${transformedCustomers.length} customers on focus`);
+                                                                } catch (error) {
+                                                                    console.debug('[POS] State update skipped (component unmounted)');
                                                                 }
-                                                            } catch (syncError) {
-                                                                console.warn('[POS] Failed to sync customers on focus:', syncError);
-                                                                // Mark as loaded even if sync failed
-                                                                if (isMountedRef.current) {
-                                                                    setAllCustomers([]);
-                                                                    setCustomers([]);
-                                                                    setCustomersLoaded(true);
+                                                            } else {
+                                                                // Empty IndexedDB - try to sync from server
+                                                                console.log(`[POS] IndexedDB empty on focus, syncing from server...`);
+                                                                try {
+                                                                    const syncResult = await customerSync.syncCustomers({ forceRefresh: true });
+                                                                    if (!isMountedRef.current) return;
+                                                                    
+                                                                    if (syncResult.success && syncResult.customers) {
+                                                                        const transformedCustomers: Customer[] = syncResult.customers
+                                                                            .map((customer: any) => ({
+                                                                                id: customer.id,
+                                                                                name: customer.name || customer.phone,
+                                                                                phone: customer.phone,
+                                                                                address: customer.address,
+                                                                                previousBalance: customer.previousBalance || 0,
+                                                                            }))
+                                                                            .filter((customer: Customer) => !isDummyCustomer(customer));
+                                                                        try {
+                                                                            setAllCustomers(transformedCustomers);
+                                                                            setCustomers(transformedCustomers);
+                                                                            setCustomersLoaded(true);
+                                                                            console.log(`[POS] Synced ${transformedCustomers.length} customers on focus`);
+                                                                        } catch (error) {
+                                                                            console.debug('[POS] State update skipped (component unmounted)');
+                                                                        }
+                                                                    } else if (syncResult.success && (!syncResult.customers || syncResult.customers.length === 0)) {
+                                                                        // Empty list from server is also valid
+                                                                        setAllCustomers([]);
+                                                                        setCustomers([]);
+                                                                        setCustomersLoaded(true);
+                                                                        console.log(`[POS] Synced 0 customers on focus (empty list)`);
+                                                                    } else {
+                                                                        // Sync failed
+                                                                        setAllCustomers([]);
+                                                                        setCustomers([]);
+                                                                        setCustomersLoaded(true);
+                                                                        console.warn(`[POS] Sync failed on focus: ${syncResult.error || 'Unknown error'}`);
+                                                                    }
+                                                                } catch (syncError) {
+                                                                    console.warn('[POS] Failed to sync customers on focus:', syncError);
+                                                                    // Mark as loaded even if sync failed
+                                                                    if (isMountedRef.current) {
+                                                                        setAllCustomers([]);
+                                                                        setCustomers([]);
+                                                                        setCustomersLoaded(true);
+                                                                    }
                                                                 }
                                                             }
                                                         }
+                                                    } catch (error) {
+                                                        if (isMountedRef.current) {
+                                                            console.error('[POS] Error loading customers on focus:', error);
+                                                        }
                                                     }
-                                                } catch (error) {
-                                                    if (isMountedRef.current) {
-                                                        console.error('[POS] Error loading customers on focus:', error);
+                                                } else if (isMountedRef.current && customers.length === 0 && allCustomers.length > 0) {
+                                                    // If customers state is empty but allCustomers has data, update customers
+                                                    try {
+                                                        setCustomers(allCustomers);
+                                                    } catch (error) {
+                                                        console.debug('[POS] State update skipped (component unmounted)');
                                                     }
                                                 }
-                                            } else if (isMountedRef.current && customers.length === 0 && allCustomers.length > 0) {
-                                                // If customers state is empty but allCustomers has data, update customers
-                                                try {
-                                                    setCustomers(allCustomers);
-                                                } catch (error) {
-                                                    console.debug('[POS] State update skipped (component unmounted)');
-                                                }
-                                            }
-                                        }}
-                                        placeholder="ابحث عن عميل..."
-                                        className="w-full pl-8 pr-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-orange-500 focus:border-transparent text-right"
-                                    />
-                                    
-                                    {/* Customer List Dropdown - positioned relative to input container */}
-                                    {isCustomerDropdownOpen && (
-                                        <>
-                                            {/* Click outside to close dropdown */}
-                                            <div
-                                                className="fixed inset-0 z-[9998]"
-                                                onClick={() => setIsCustomerDropdownOpen(false)}
-                                            />
-                                            <div className="absolute top-full left-0 right-0 z-[9999] mt-1">
-                                                <div className="bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg shadow-2xl max-h-60 overflow-y-auto">
-                                                    {isLoadingCustomers ? (
-                                                        <div className="p-4 text-center text-sm text-gray-500 dark:text-gray-400">جاري التحميل...</div>
-                                                    ) : (() => {
-                                                        // Use allCustomers if customers is empty but allCustomers has data
-                                                        const customersToShow = customers.length > 0 ? customers : (allCustomers.length > 0 ? allCustomers : []);
-                                                        return customersToShow.length === 0 ? (
-                                                            <div className="p-4 text-center text-sm text-gray-500 dark:text-gray-400">
-                                                                {customerSearchTerm ? 'لا توجد نتائج' : 'لا يوجد عملاء'}
-                                                            </div>
-                                                        ) : (
-                                                            customersToShow.map((customer) => (
-                                                            <button
-                                                                key={customer.id}
-                                                                type="button"
-                                                                onClick={(e) => {
-                                                                    e.stopPropagation();
-                                                                    setCurrentInvoice(inv => ({...inv, customer}));
-                                                                    setIsCustomerDropdownOpen(false);
-                                                                    setCustomerSearchTerm('');
-                                                                }}
-                                                                className={`w-full text-right p-3 hover:bg-orange-50 dark:hover:bg-gray-700 transition-colors border-b border-gray-100 dark:border-gray-700 last:border-b-0 ${
-                                                                    currentInvoice.customer?.id === customer.id ? 'bg-orange-100 dark:bg-orange-900/30' : ''
-                                                                }`}
-                                                            >
-                                                                <div className="flex flex-col items-end">
-                                                                    <p className="font-semibold text-sm text-gray-900 dark:text-gray-100">{customer.name}</p>
-                                                                    <p className="text-xs text-gray-600 dark:text-gray-400 mt-1">{customer.phone}</p>
-                                                                    {customer.address && (
-                                                                        <p className="text-xs text-gray-500 dark:text-gray-500 mt-1 truncate w-full">{customer.address}</p>
-                                                                    )}
+                                            }}
+                                            placeholder="ابحث عن عميل..."
+                                            className="w-full pl-8 pr-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-orange-500 focus:border-transparent text-right"
+                                        />
+                                        
+                                        {/* Customer List Dropdown - positioned relative to input container */}
+                                        {isCustomerDropdownOpen && (
+                                            <>
+                                                {/* Click outside to close dropdown */}
+                                                <div
+                                                    className="fixed inset-0 z-[9998]"
+                                                    onClick={() => setIsCustomerDropdownOpen(false)}
+                                                />
+                                                <div className="absolute top-full left-0 right-0 z-[9999] mt-1">
+                                                    <div className="bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg shadow-2xl max-h-60 overflow-y-auto">
+                                                        {isLoadingCustomers ? (
+                                                            <div className="p-4 text-center text-sm text-gray-500 dark:text-gray-400">جاري التحميل...</div>
+                                                        ) : (() => {
+                                                            // Use allCustomers if customers is empty but allCustomers has data
+                                                            const customersToShow = customers.length > 0 ? customers : (allCustomers.length > 0 ? allCustomers : []);
+                                                            return customersToShow.length === 0 ? (
+                                                                <div className="p-4 text-center text-sm text-gray-500 dark:text-gray-400">
+                                                                    {customerSearchTerm ? 'لا توجد نتائج' : 'لا يوجد عملاء'}
                                                                 </div>
-                                                            </button>
-                                                            ))
-                                                        );
-                                                    })()}
+                                                            ) : (
+                                                                customersToShow.map((customer) => (
+                                                                <button
+                                                                    key={customer.id}
+                                                                    type="button"
+                                                                    onClick={(e) => {
+                                                                        e.stopPropagation();
+                                                                        setCurrentInvoice(inv => ({...inv, customer}));
+                                                                        setIsCustomerDropdownOpen(false);
+                                                                        setCustomerSearchTerm('');
+                                                                    }}
+                                                                    className={`w-full text-right p-3 hover:bg-orange-50 dark:hover:bg-gray-700 transition-colors border-b border-gray-100 dark:border-gray-700 last:border-b-0 ${
+                                                                        currentInvoice.customer?.id === customer.id ? 'bg-orange-100 dark:bg-orange-900/30' : ''
+                                                                    }`}
+                                                                >
+                                                                    <div className="flex flex-col items-end">
+                                                                        <p className="font-semibold text-sm text-gray-900 dark:text-gray-100">{customer.name}</p>
+                                                                        <p className="text-xs text-gray-600 dark:text-gray-400 mt-1">{customer.phone}</p>
+                                                                        {customer.address && (
+                                                                            <p className="text-xs text-gray-500 dark:text-gray-500 mt-1 truncate w-full">{customer.address}</p>
+                                                                        )}
+                                                                    </div>
+                                                                </button>
+                                                                ))
+                                                            );
+                                                        })()}
+                                                    </div>
                                                 </div>
-                                            </div>
-                                        </>
-                                    )}
+                                            </>
+                                        )}
+                                    </div>
+
+                                    <button 
+                                        type="button"
+                                        onClick={() => setIsAddCustomerModalOpen(true)}
+                                        className="shrink-0 inline-flex items-center justify-center whitespace-nowrap rounded-lg border border-orange-300 bg-orange-50 px-2.5 py-1.5 text-[11px] sm:text-xs font-semibold text-orange-700 shadow-sm transition-colors hover:bg-orange-100 hover:border-orange-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:border-orange-800/60 dark:bg-orange-950/25 dark:text-orange-200 dark:hover:bg-orange-950/40 dark:focus-visible:ring-offset-gray-800"
+                                    >
+                                        {AR_LABELS.addNewCustomer}
+                                    </button>
                                 </div>
 
                                 {/* Selected Customer Display */}
@@ -3739,33 +3841,59 @@ const POSPage: React.FC = () => {
                             {/* Totals Summary */}
                             <div className="mb-4">
                                 <h3 className="text-xs sm:text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3 text-right">ملخص الفاتورة</h3>
-                                <div className="bg-white/80 dark:bg-gray-800/80 rounded-xl p-4 border border-gray-200/50 dark:border-gray-700/50 backdrop-blur-sm space-y-3">
-                                    <div className="flex justify-between items-center">
-                                        <span className="text-xs sm:text-sm text-gray-600 dark:text-gray-400">{AR_LABELS.subtotal}:</span>
-                                        <span className="text-sm sm:text-base font-semibold text-gray-900 dark:text-gray-100">{formatCurrency(currentInvoice.subtotal)}</span>
+                                <div className="bg-white/85 dark:bg-gray-800/80 rounded-2xl p-4 sm:p-5 border border-gray-200/60 dark:border-gray-700/60 backdrop-blur-sm shadow-sm">
+                                    <div className="divide-y divide-gray-200/70 dark:divide-gray-700/70">
+                                        <div className="py-2 grid grid-cols-[minmax(8.5rem,auto)_1fr] items-center gap-x-6">
+                                            <span className="text-sm sm:text-base font-semibold text-gray-900 dark:text-gray-100 tabular-nums text-left justify-self-start">
+                                                {formatCurrency(currentInvoice.subtotal)}
+                                            </span>
+                                            <span className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 text-right justify-self-end">
+                                                {AR_LABELS.subtotal}:
+                                            </span>
+                                        </div>
+
+                                        <div className="py-2 grid grid-cols-[minmax(8.5rem,auto)_1fr] items-center gap-x-6">
+                                            <div className="justify-self-start">
+                                                <input
+                                                    type="number"
+                                                    id="invoiceDiscount"
+                                                    value={currentInvoice.invoiceDiscount}
+                                                    onChange={e => setCurrentInvoice(inv => ({...inv, invoiceDiscount: parseFloat(e.target.value) || 0}))}
+                                                    className="w-24 sm:w-28 text-xs sm:text-sm text-left border border-orange-300 dark:border-orange-600 bg-white dark:bg-gray-700 rounded-lg font-semibold tabular-nums focus:ring-2 focus:ring-orange-500 focus:border-orange-500 py-1.5 px-2"
+                                                />
+                                            </div>
+                                            <label htmlFor="invoiceDiscount" className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 whitespace-nowrap text-right justify-self-end">
+                                                {AR_LABELS.invoiceDiscount}:
+                                            </label>
+                                        </div>
+
+                                        <div className="py-2 grid grid-cols-[minmax(8.5rem,auto)_1fr] items-center gap-x-6">
+                                            <span className="text-sm sm:text-base font-semibold text-red-600 tabular-nums text-left justify-self-start">
+                                                {formatCurrency(currentInvoice.totalItemDiscount + currentInvoice.invoiceDiscount)}
+                                            </span>
+                                            <span className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 text-right justify-self-end">
+                                                {AR_LABELS.totalDiscount}:
+                                            </span>
+                                        </div>
+
+                                        <div className="py-2 grid grid-cols-[minmax(8.5rem,auto)_1fr] items-center gap-x-6">
+                                            <span className="text-sm sm:text-base font-semibold text-gray-900 dark:text-gray-100 tabular-nums text-left justify-self-start">
+                                                {formatCurrency(currentInvoice.tax)}
+                                            </span>
+                                            <span className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 text-right justify-self-end">
+                                                {AR_LABELS.tax} ({(taxRate * 100).toFixed(2)}%):
+                                            </span>
+                                        </div>
                                     </div>
-                                    <div className="flex items-center justify-end gap-2">
-                                        <label htmlFor="invoiceDiscount" className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 whitespace-nowrap">{AR_LABELS.invoiceDiscount}:</label>
-                                        <input
-                                            type="number"
-                                            id="invoiceDiscount"
-                                            value={currentInvoice.invoiceDiscount}
-                                            onChange={e => setCurrentInvoice(inv => ({...inv, invoiceDiscount: parseFloat(e.target.value) || 0}))}
-                                            className="w-20 sm:w-24 text-xs sm:text-sm text-center border border-orange-300 dark:border-orange-600 bg-white dark:bg-gray-700 rounded-lg font-semibold focus:ring-2 focus:ring-orange-500 focus:border-orange-500 py-1.5"
-                                        />
-                                    </div>
-                                    <div className="flex justify-between items-center">
-                                        <span className="text-xs sm:text-sm text-gray-600 dark:text-gray-400">{AR_LABELS.totalDiscount}:</span>
-                                        <span className="text-sm sm:text-base font-semibold text-red-600">{formatCurrency(currentInvoice.totalItemDiscount + currentInvoice.invoiceDiscount)}</span>
-                                    </div>
-                                    <div className="flex justify-between items-center">
-                                        <span className="text-xs sm:text-sm text-gray-600 dark:text-gray-400">{AR_LABELS.tax} ({(taxRate * 100).toFixed(2)}%):</span>
-                                        <span className="text-sm sm:text-base font-semibold text-gray-900 dark:text-gray-100">{formatCurrency(currentInvoice.tax)}</span>
-                                    </div>
-                                    <div className="border-t-2 border-orange-300 dark:border-orange-700 pt-3 mt-2 bg-gradient-to-r from-orange-50 to-amber-50 dark:from-orange-900/30 dark:to-amber-900/30 border-2 border-orange-400 dark:border-orange-600 rounded-lg p-3 sm:p-4 shadow-md ring-2 ring-orange-200 dark:ring-orange-800/50">
-                                        <div className="flex justify-between items-center">
-                                            <span className="text-base sm:text-lg font-bold text-gray-800 dark:text-gray-200">{AR_LABELS.grandTotal}:</span>
-                                            <span className="text-xl sm:text-2xl font-bold text-orange-600 dark:text-orange-400">{formatCurrency(currentInvoice.grandTotal)}</span>
+
+                                    <div className="mt-3 bg-gradient-to-l from-orange-50 to-amber-50 dark:from-orange-900/30 dark:to-amber-900/30 border-2 border-orange-400 dark:border-orange-600 rounded-xl p-3 sm:p-4 shadow-md ring-2 ring-orange-200 dark:ring-orange-800/50">
+                                        <div className="grid grid-cols-[minmax(8.5rem,auto)_1fr] items-center gap-x-6">
+                                            <span className="text-xl sm:text-2xl font-bold text-orange-600 dark:text-orange-400 tabular-nums text-left justify-self-start">
+                                                {formatCurrency(currentInvoice.grandTotal)}
+                                            </span>
+                                            <span className="text-base sm:text-lg font-bold text-gray-800 dark:text-gray-200 text-right justify-self-end">
+                                                {AR_LABELS.grandTotal}:
+                                            </span>
                                         </div>
                                     </div>
                                 </div>
@@ -3777,7 +3905,7 @@ const POSPage: React.FC = () => {
                                 <div className="bg-white/80 dark:bg-gray-800/80 rounded-xl p-4 border border-gray-200/50 dark:border-gray-700/50 backdrop-blur-sm space-y-3">
                                     <div className="grid grid-cols-3 gap-2">
                                         <button 
-                                            onClick={() => { setSelectedPaymentMethod('Cash'); setCreditPaidAmount(0); }} 
+                                            onClick={() => { setSelectedPaymentMethod('Cash'); setCreditPaidAmount(0); setCreditPaidAmountError(null); }} 
                                             className={`p-2 sm:p-3 rounded-xl border-2 text-center font-semibold text-xs sm:text-sm transition-all duration-200 ${
                                                 selectedPaymentMethod === 'Cash' 
                                                     ? 'border-orange-500 bg-gradient-to-br from-orange-50 to-orange-100 dark:from-orange-900/40 dark:to-orange-800/40 text-orange-700 dark:text-orange-300 shadow-lg scale-105' 
@@ -3787,7 +3915,7 @@ const POSPage: React.FC = () => {
                                             {AR_LABELS.cash}
                                         </button>
                                         <button 
-                                            onClick={() => { setSelectedPaymentMethod('Card'); setCreditPaidAmount(0); }} 
+                                            onClick={() => { setSelectedPaymentMethod('Card'); setCreditPaidAmount(0); setCreditPaidAmountError(null); }} 
                                             className={`p-2 sm:p-3 rounded-xl border-2 text-center font-semibold text-xs sm:text-sm transition-all duration-200 ${
                                                 selectedPaymentMethod === 'Card' 
                                                     ? 'border-orange-500 bg-gradient-to-br from-orange-50 to-orange-100 dark:from-orange-900/40 dark:to-orange-800/40 text-orange-700 dark:text-orange-300 shadow-lg scale-105' 
@@ -3797,7 +3925,7 @@ const POSPage: React.FC = () => {
                                             {AR_LABELS.visa}
                                         </button>
                                         <button 
-                                            onClick={() => setSelectedPaymentMethod('Credit')} 
+                                            onClick={() => { setSelectedPaymentMethod('Credit'); setCreditPaidAmountError(null); }} 
                                             className={`p-2 sm:p-3 rounded-xl border-2 text-center font-semibold text-xs sm:text-sm transition-all duration-200 ${
                                                 selectedPaymentMethod === 'Credit' 
                                                     ? 'border-orange-500 bg-gradient-to-br from-orange-50 to-orange-100 dark:from-orange-900/40 dark:to-orange-800/40 text-orange-700 dark:text-orange-300 shadow-lg scale-105' 
@@ -3813,10 +3941,16 @@ const POSPage: React.FC = () => {
                                             <input 
                                                 type="number" 
                                                 value={creditPaidAmount} 
-                                                onChange={e => setCreditPaidAmount(parseFloat(e.target.value) || 0)} 
+                                                onChange={(e) => handleCreditPaidAmountChange(e.target.value)} 
                                                 className="w-full p-2 text-sm sm:text-base border-2 border-orange-300 dark:border-orange-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-lg text-center font-bold focus:ring-2 focus:ring-orange-500 focus:border-orange-500" 
                                                 min="0" 
+                                                step="0.5"
                                             />
+                                            {creditPaidAmountError && (
+                                                <p className="mt-1.5 text-xs sm:text-sm text-red-600 dark:text-red-400 text-right">
+                                                    {creditPaidAmountError}
+                                                </p>
+                                            )}
                                         </div>
                                     )}
                                     <div className="flex justify-between items-center bg-gray-50 dark:bg-gray-700/50 p-2 sm:p-3 rounded-lg border border-gray-200 dark:border-gray-600">

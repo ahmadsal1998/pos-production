@@ -10,6 +10,7 @@ import { getCachedProducts, setCachedProducts, getStoreIdFromToken, invalidatePr
 import { productSync } from '@/lib/sync/productSync';
 import { Pagination } from '@/shared/components';
 import { useCurrency } from '@/shared/contexts/CurrencyContext';
+import { useConfirmDialog } from '@/shared/contexts';
 
 // Advanced search filter types
 interface AdvancedFilters {
@@ -42,6 +43,7 @@ interface BackendProduct {
 const ProductListPage: React.FC<ProductListPageProps> = () => {
   const navigate = useNavigate();
   const { formatCurrency, currency } = useCurrency();
+  const confirmDialog = useConfirmDialog();
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<Record<string, string>>({});
   const [searchTerm, setSearchTerm] = useState('');
@@ -635,9 +637,11 @@ const ProductListPage: React.FC<ProductListPageProps> = () => {
   };
 
   const handleDeleteProduct = async (productId: number) => {
-    if (!window.confirm(AR_LABELS.delete + ` product with ID ${productId}?`)) {
-      return;
-    }
+    const confirmed = await confirmDialog({
+      title: AR_LABELS.confirmDeleteTitle,
+      message: `هل أنت متأكد من حذف المنتج رقم ${productId}؟`,
+    });
+    if (!confirmed) return;
 
     try {
       // Find the product to get its actual backend ID

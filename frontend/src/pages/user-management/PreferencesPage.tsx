@@ -10,7 +10,7 @@ import { loadSettings, saveSettings } from '@/shared/utils/settingsStorage';
 
 const initialPreferences: SystemPreferences = {
   // General
-  businessName: 'PoshPointHub',
+  businessName: '',
   logoUrl: '',
   defaultCurrency: 'ر.س',
   dateFormat: 'DD/MM/YYYY',
@@ -260,20 +260,7 @@ const PreferencesPage: React.FC = () => {
         {/* Modern Professional Header */}
         <div className="mb-12">
           <div className="flex flex-col items-start justify-between gap-8 lg:flex-row lg:items-center">
-            <div className="space-y-4">
-              <div className="space-y-3">
-                <div className="inline-flex items-center rounded-full bg-gradient-to-r from-orange-500/10 to-amber-500/10 px-4 py-2 text-sm font-semibold text-orange-600 dark:text-orange-400 border border-orange-200/50 dark:border-orange-800/50">
-                  <div className="mr-2 h-2 w-2 rounded-full bg-orange-500 animate-pulse" />
-                  إعدادات النظام
-                </div>
-                <h1 className="bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 bg-clip-text text-4xl font-bold tracking-tight text-transparent dark:from-white dark:via-slate-100 dark:to-white sm:text-5xl lg:text-6xl">
-                  {AR_LABELS.preferences}
-                </h1>
-                <p className="max-w-2xl text-lg text-slate-600 dark:text-slate-300 leading-relaxed">
-                  {AR_LABELS.preferencesDescription}
-                </p>
-              </div>
-            </div>
+            <div />
             
             {/* Modern Status Card */}
             <div className="group relative">

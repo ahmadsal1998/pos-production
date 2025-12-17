@@ -1,5 +1,5 @@
 {
-  "name": "PoshPointHub Dashboard",
+  "name": "Dashboard",
   "description": "A React web application showcasing a modern POS dashboard interface with a sidebar, top navigation, metric cards, and quick actions, styled with Tailwind CSS and supporting RTL for Arabic.",
   "requestFramePermissions": []
 }

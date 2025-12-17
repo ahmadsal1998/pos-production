@@ -4,6 +4,7 @@ import { AR_LABELS } from '../../../../shared/constants';
 import { UserFormModal, UserManagementToolbar, UserTable } from './components';
 import type { UserFilters } from './components/UserManagementToolbar/UserManagementToolbar';
 import { typography } from '../../../../shared/styles/design-tokens';
+import { useConfirmDialog } from '@/shared/contexts';
 
 interface ModalState {
   isOpen: boolean;
@@ -11,6 +12,7 @@ interface ModalState {
 }
 
 const UserManagementPage = () => {
+  const confirmDialog = useConfirmDialog();
   const [users, setUsers] = useState<User[]>(createInitialUsers());
   const [searchTerm, setSearchTerm] = useState('');
   const [filters, setFilters] = useState<UserFilters>({ status: 'all', role: 'all' });
@@ -30,11 +32,13 @@ const UserManagementPage = () => {
     setModal({ isOpen: false, data: null });
   }, []);
 
-  const handleDeleteUser = useCallback((userId: string) => {
-    if (window.confirm('هل أنت متأكد من حذف هذا المستخدم؟')) {
-      setUsers(prev => prev.filter(u => u.id !== userId));
-    }
-  }, []);
+  const handleDeleteUser = useCallback(async (userId: string) => {
+    const confirmed = await confirmDialog({
+      message: 'هل أنت متأكد من حذف هذا المستخدم؟',
+    });
+    if (!confirmed) return;
+    setUsers(prev => prev.filter(u => u.id !== userId));
+  }, [confirmDialog]);
 
   const handleEditUser = useCallback((user: User) => {
     setModal({ isOpen: true, data: user });

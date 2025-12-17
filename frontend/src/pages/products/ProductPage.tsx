@@ -2,6 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { AR_LABELS, EditIcon, DeleteIcon, SearchIcon } from '@/shared/constants';
 import { Product } from '@/shared/types';
 import { formatDate } from '@/shared/utils';
+import { useConfirmDialog } from '@/shared/contexts';
 
 interface ProductPageProps {}
 
@@ -19,6 +20,7 @@ const initialMockProducts: Product[] = [
 ];
 
 const ProductPage: React.FC<ProductPageProps> = () => {
+  const confirmDialog = useConfirmDialog();
   const [products, setProducts] = useState<Product[]>(initialMockProducts);
   const [searchTerm, setSearchTerm] = useState('');
 
@@ -43,10 +45,13 @@ const ProductPage: React.FC<ProductPageProps> = () => {
     alert(AR_LABELS.edit + ` product ${productId}!`);
   };
 
-  const handleDeleteProduct = (productId: number) => {
-    if (window.confirm(AR_LABELS.delete + ` product with ID ${productId}?`)) {
-      setProducts((prev) => prev.filter((p) => p.id !== productId));
-    }
+  const handleDeleteProduct = async (productId: number) => {
+    const confirmed = await confirmDialog({
+      title: AR_LABELS.confirmDeleteTitle,
+      message: `هل أنت متأكد من حذف المنتج رقم ${productId}؟`,
+    });
+    if (!confirmed) return;
+    setProducts((prev) => prev.filter((p) => p.id !== productId));
   };
 
   return (

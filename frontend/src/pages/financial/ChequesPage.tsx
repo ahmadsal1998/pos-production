@@ -177,16 +177,7 @@ const ChequesPage: React.FC = () => {
             <div className="absolute top-1/2 left-1/2 h-60 w-60 -translate-x-1/2 -translate-y-1/2 rounded-full bg-gradient-to-br from-slate-400/10 to-orange-400/10 blur-2xl animate-pulse" style={{ animationDelay: '4s' }} />
 
             <div className="relative mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8 space-y-8">
-                <div>
-                    <div className="inline-flex items-center rounded-full bg-gradient-to-r from-orange-500/10 to-amber-500/10 px-4 py-2 text-sm font-semibold text-orange-600 dark:text-orange-400 border border-orange-200/50 dark:border-orange-800/50 mb-3">
-                        <div className="mr-2 h-2 w-2 rounded-full bg-orange-500 animate-pulse" />
-                        {AR_LABELS.chequeManagement}
-                    </div>
-                    <h1 className="bg-gradient-to-r from-slate-900 via-orange-900 to-slate-900 bg-clip-text text-4xl font-bold tracking-tight text-transparent dark:from-white dark:via-orange-100 dark:to-white">
-                        {AR_LABELS.chequeManagement}
-                    </h1>
-                    <p className="max-w-2xl mt-2 text-slate-600 dark:text-slate-300 leading-relaxed">{AR_LABELS.chequeManagementDescription}</p>
-                </div>
+                <div />
 
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                     <MetricCard id={1} title={AR_LABELS.totalPending} value={summaryMetrics.pending.total.toLocaleString('ar-SA', {style: 'currency', currency: 'SAR'})} icon={<ChequesIcon />} bgColor="bg-blue-100" valueColor="text-blue-600" />

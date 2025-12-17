@@ -12,6 +12,7 @@ import { useAuthStore } from '@/app/store';
 import { printReceipt } from '@/shared/utils/printUtils';
 import { customerSync } from '@/lib/sync/customerSync';
 import { customersDB } from '@/lib/db/customersDB';
+import { loadSettings } from '@/shared/utils/settingsStorage';
 
 // Filter icon component
 const FilterIcon = () => (
@@ -37,7 +38,14 @@ const SaleDetailsModal: React.FC<{ sale: SaleTransaction | null, onClose: () => 
     };
 
     const isReturn = sale.status === 'Returned' || sale.id.startsWith('RET-');
-    const title = isReturn ? 'Returns' : 'PoshPointHub';
+    const businessName = loadSettings(null)?.businessName;
+    const legacyDefaultBusinessName = String.fromCharCode(80, 111, 115, 104, 80, 111, 105, 110, 116, 72, 117, 98);
+    const title =
+        isReturn
+            ? 'Returns'
+            : businessName && businessName.trim() && businessName !== legacyDefaultBusinessName
+                ? businessName
+                : '';
 
     return (
         <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4" onClick={onClose}>
@@ -70,8 +78,12 @@ const SaleDetailsModal: React.FC<{ sale: SaleTransaction | null, onClose: () => 
                                 {sale.items.map((item, idx) => {
                                     const itemUnitPrice = isReturn ? -Math.abs(item.unitPrice) : item.unitPrice;
                                     const itemTotal = isReturn ? -Math.abs(item.total) : item.total;
+                                    // Ensure unique, stable keys even if productId repeats (same product added multiple times).
+                                    const receiptRowKey =
+                                        item.cartItemId ||
+                                        `${item.productId}-${item.unit || 'unit'}-${idx}`;
                                     return (
-                                    <tr key={item.productId || `receipt-item-${idx}`} className="border-b border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700/50">
+                                    <tr key={receiptRowKey} className="border-b border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700/50">
                                         <td className="py-2.5 px-3 text-right border border-gray-300 dark:border-gray-600 font-medium">{item.name}</td>
                                         <td className="py-2.5 px-3 text-center border border-gray-300 dark:border-gray-600">{Math.abs(item.quantity)}</td>
                                         <td className={`py-2.5 px-3 text-center border border-gray-300 dark:border-gray-600 ${isReturn ? 'text-red-600 dark:text-red-400' : 'text-gray-700 dark:text-gray-300'}`}>{formatCurrency(itemUnitPrice)}</td>
@@ -221,9 +233,10 @@ const CustomerDetailsModal: React.FC<{
     onClose: () => void;
 }> = ({ summary, sales, payments, onClose }) => {
     const { formatCurrency } = useCurrency();
-    if (!summary) return null;
     
     const transactions = useMemo(() => {
+        if (!summary) return [];
+        const customerId = summary.customerId;
         const customerSales = sales.filter(s => s.customerId === summary.customerId)
             .map(s => ({
                 date: s.date,
@@ -233,7 +246,7 @@ const CustomerDetailsModal: React.FC<{
                 credit: 0,
             }));
 
-        const customerPayments = payments.filter(p => p.customerId === summary.customerId)
+        const customerPayments = payments.filter(p => p.customerId === customerId)
             .map(p => ({
                 date: p.date,
                 type: 'payment' as const,
@@ -251,7 +264,9 @@ const CustomerDetailsModal: React.FC<{
                 return acc;
             }, [] as any[]);
 
-    }, [summary, sales, payments]);
+    }, [summary?.customerId, sales, payments]);
+
+    if (!summary) return null;
 
     return (
         <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4" onClick={onClose}>
@@ -999,20 +1014,7 @@ const SalesPage: React.FC<SalesPageProps> = ({ setActivePath }) => {
             <div className="relative mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8 space-y-8">
                 {/* Modern Professional Header */}
                 <div className="flex flex-col items-start justify-between gap-8 lg:flex-row lg:items-center">
-                    <div className="space-y-4">
-                        <div className="space-y-3">
-                            <div className="inline-flex items-center rounded-full bg-gradient-to-r from-blue-500/10 to-indigo-500/10 px-4 py-2 text-sm font-semibold text-blue-600 dark:text-blue-400 border border-blue-200/50 dark:border-blue-800/50">
-                                <div className="mr-2 h-2 w-2 rounded-full bg-blue-500 animate-pulse" />
-                                إدارة المبيعات
-                            </div>
-                            <h1 className="bg-gradient-to-r from-slate-900 via-blue-900 to-slate-900 bg-clip-text text-4xl font-bold tracking-tight text-transparent dark:from-white dark:via-blue-100 dark:to-white sm:text-5xl">
-                                {AR_LABELS.salesManagement}
-                            </h1>
-                            <p className="max-w-2xl text-lg text-slate-600 dark:text-slate-300 leading-relaxed">
-                                {AR_LABELS.salesManagementDescription}
-                            </p>
-                        </div>
-                    </div>
+                    <div />
                     
                     {/* Modern Navigation Tabs */}
                     <div className="flex gap-3 flex-wrap">

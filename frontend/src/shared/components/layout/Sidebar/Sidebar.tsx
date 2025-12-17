@@ -286,13 +286,6 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
                 )}
               </svg>
             </button>
-            
-            {/* Logo Text - Hidden when collapsed */}
-            <span className={`text-xl sm:text-2xl font-bold bg-gradient-to-r from-orange-500 via-orange-600 to-orange-500 bg-clip-text text-transparent transition-all duration-300 whitespace-nowrap ${
-              isSidebarCollapsed ? 'opacity-0 w-0 overflow-hidden' : 'opacity-100'
-            }`}>
-              PoshPointHub
-            </span>
           </div>
         </div>
 

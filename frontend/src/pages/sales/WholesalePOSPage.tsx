@@ -164,11 +164,6 @@ const WholesalePOSPage: React.FC = () => {
         const currentQuantityInCart = existingItem?.quantity || 0;
         const totalQuantityRequested = currentQuantityInCart + quantity;
 
-        if (totalQuantityRequested > unit.stock) {
-            alert(`إجمالي الكمية المطلوبة (${totalQuantityRequested}) لـ ${product.name} (${unit.name}) يتجاوز المخزون المتوفر (${unit.stock}).`);
-            return;
-        }
-
         let newItems: WholesalePOSCartItem[];
         if (existingItem) {
             newItems = invoice.items.map(item =>
@@ -239,18 +234,6 @@ const WholesalePOSPage: React.FC = () => {
             return;
         }
 
-        // Validate stock for all items first
-        for (const { unit, quantity } of itemsToAdd) {
-            const existingItem = invoice.items.find(item => String(item.productId) === String(selectedProduct.id) && item.unitName === unit.name);
-            const currentQuantityInCart = existingItem?.quantity || 0;
-            const totalQuantityRequested = currentQuantityInCart + quantity;
-
-            if (totalQuantityRequested > unit.stock) {
-                alert(`إجمالي الكمية المطلوبة (${totalQuantityRequested}) لـ ${selectedProduct.name} (${unit.name}) يتجاوز المخزون المتوفر (${unit.stock}).`);
-                return;
-            }
-        }
-
         // Add all items at once using functional update
         setInvoice(currentInvoice => {
             let newItems = [...currentInvoice.items];
@@ -298,14 +281,6 @@ const WholesalePOSPage: React.FC = () => {
     };
 
     const handleUpdateQuantity = (productId: number, unitName: string, quantity: number) => {
-        const productInDb = MOCK_WHOLESALE_PRODUCTS.find(p => p.id === productId);
-        const unitInDb = productInDb?.units.find(u => u.name === unitName);
-
-        if (unitInDb && quantity > unitInDb.stock) {
-            alert(`الكمية المطلوبة (${quantity}) تتجاوز المخزون المتوفر (${unitInDb.stock}).`);
-            return;
-        }
-
         let newItems = invoice.items.map(item => 
             String(item.productId) === String(productId) && item.unitName === unitName 
             ? {...item, quantity, total: quantity * item.unitPrice} 
@@ -561,17 +536,6 @@ const WholesalePOSPage: React.FC = () => {
             <div className="absolute -bottom-40 -left-40 h-80 w-80 rounded-full bg-gradient-to-br from-rose-400/15 to-orange-400/15 blur-3xl animate-pulse" style={{ animationDelay: '2s' }} />
             
             <div className="relative w-full px-2 sm:px-4 py-4 sm:py-6 overflow-x-hidden">
-                {/* Modern Header */}
-                <div className="mb-4 sm:mb-6">
-                    <div className="inline-flex items-center rounded-full bg-gradient-to-r from-orange-500/10 to-amber-500/10 px-3 sm:px-4 py-1.5 sm:py-2 text-xs sm:text-sm font-semibold text-orange-600 dark:text-orange-400 border border-orange-200/50 dark:border-orange-800/50 mb-2 sm:mb-3">
-                        <div className="mr-2 h-2 w-2 rounded-full bg-orange-500 animate-pulse" />
-                        نقاط البيع (POS)
-                    </div>
-                    <h1 className="bg-gradient-to-r from-slate-900 via-orange-900 to-slate-900 bg-clip-text text-xl sm:text-2xl md:text-3xl font-bold tracking-tight text-transparent dark:from-white dark:via-orange-100 dark:to-white">
-                        نقطة البيع (جملة)
-                    </h1>
-                </div>
-
                 {/* Three Vertical Sections Layout */}
                 <div className="flex flex-col gap-4 sm:gap-6 h-auto w-full overflow-x-hidden">
              
@@ -773,32 +737,54 @@ const WholesalePOSPage: React.FC = () => {
                         {/* Totals */}
                         <div className="flex-shrink-0 space-y-2 sm:space-y-3 mb-3 sm:mb-4">
                             <div className="bg-white/80 dark:bg-gray-800/80 rounded-xl p-3 sm:p-4 border border-gray-200/50 dark:border-gray-700/50 backdrop-blur-sm space-y-2">
-                                <div className="flex justify-between items-center text-xs sm:text-sm">
-                                    <span className="text-gray-600 dark:text-gray-400">{AR_LABELS.totalItems}:</span>
-                                    <span className="font-semibold text-gray-900 dark:text-gray-100">{invoice.items.length}</span>
+                                <div className="divide-y divide-gray-200/70 dark:divide-gray-700/70">
+                                    <div className="py-2 grid grid-cols-[minmax(7.5rem,auto)_1fr] items-center gap-x-6 text-xs sm:text-sm">
+                                        <span className="font-semibold text-gray-900 dark:text-gray-100 tabular-nums text-left justify-self-start">
+                                            {invoice.items.length}
+                                        </span>
+                                        <span className="text-gray-600 dark:text-gray-400 text-right justify-self-end">
+                                            {AR_LABELS.totalItems}:
+                                        </span>
+                                    </div>
+                                    <div className="py-2 grid grid-cols-[minmax(7.5rem,auto)_1fr] items-center gap-x-6 text-xs sm:text-sm">
+                                        <span className="font-semibold text-gray-900 dark:text-gray-100 tabular-nums text-left justify-self-start">
+                                            {invoice.items.reduce((s, i) => s + i.quantity, 0)}
+                                        </span>
+                                        <span className="text-gray-600 dark:text-gray-400 text-right justify-self-end">
+                                            {AR_LABELS.totalQuantity}:
+                                        </span>
+                                    </div>
+                                    <div className="py-2 grid grid-cols-[minmax(7.5rem,auto)_1fr] items-center gap-x-6 text-xs sm:text-sm">
+                                        <span className="font-semibold text-gray-900 dark:text-gray-100 tabular-nums text-left justify-self-start">
+                                            {invoice.subtotal.toFixed(2)} ر.س
+                                        </span>
+                                        <span className="text-gray-600 dark:text-gray-400 text-right justify-self-end">
+                                            {AR_LABELS.subtotal}:
+                                        </span>
+                                    </div>
+                                    <div className="py-2 grid grid-cols-[minmax(7.5rem,auto)_1fr] items-center gap-x-6 text-xs sm:text-sm">
+                                        <div className="justify-self-start">
+                                            <input
+                                                type="number"
+                                                placeholder="0.00"
+                                                value={invoice.totalDiscount || ''}
+                                                onChange={e => handleDiscountChange(parseFloat(e.target.value) || 0)}
+                                                className="w-24 sm:w-28 text-xs sm:text-sm text-left border border-orange-300 dark:border-orange-600 bg-white dark:bg-gray-700 rounded-lg font-semibold tabular-nums focus:ring-2 focus:ring-orange-500 focus:border-orange-500 py-1.5 px-2"
+                                            />
+                                        </div>
+                                        <label className="text-gray-600 dark:text-gray-400 whitespace-nowrap text-right justify-self-end">
+                                            {AR_LABELS.discount}:
+                                        </label>
+                                    </div>
                                 </div>
-                                <div className="flex justify-between items-center text-xs sm:text-sm">
-                                    <span className="text-gray-600 dark:text-gray-400">{AR_LABELS.totalQuantity}:</span>
-                                    <span className="font-semibold text-gray-900 dark:text-gray-100">{invoice.items.reduce((s, i) => s + i.quantity, 0)}</span>
-                                </div>
-                                <div className="flex justify-between items-center text-xs sm:text-sm">
-                                    <span className="text-gray-600 dark:text-gray-400">{AR_LABELS.subtotal}:</span>
-                                    <span className="font-semibold text-gray-900 dark:text-gray-100">{invoice.subtotal.toFixed(2)} ر.س</span>
-                                </div>
-                                <div className="flex items-center justify-end gap-2">
-                                    <input
-                                        type="number"
-                                        placeholder='0.00'
-                                        value={invoice.totalDiscount || ''}
-                                        onChange={e => handleDiscountChange(parseFloat(e.target.value) || 0)}
-                                        className="w-20 sm:w-24 text-xs sm:text-sm text-center border border-orange-300 dark:border-orange-600 bg-white dark:bg-gray-700 rounded-lg font-semibold focus:ring-2 focus:ring-orange-500 focus:border-orange-500 py-1.5"
-                                    />
-                                    <label className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 whitespace-nowrap">{AR_LABELS.discount}:</label>
-                                </div>
-                                <div className="border-t-2 border-orange-300 dark:border-orange-700 pt-2 mt-2">
-                                    <div className="flex justify-between items-center">
-                                        <span className="text-base sm:text-lg font-bold text-gray-800 dark:text-gray-200">{AR_LABELS.grandTotal}:</span>
-                                        <span className="text-xl sm:text-2xl font-bold text-orange-600 dark:text-orange-400">{invoice.grandTotal.toFixed(2)} ر.س</span>
+                                <div className="mt-3 bg-gradient-to-l from-orange-50 to-amber-50 dark:from-orange-900/30 dark:to-amber-900/30 border-2 border-orange-400 dark:border-orange-600 rounded-xl p-3 sm:p-4 shadow-md ring-2 ring-orange-200 dark:ring-orange-800/50">
+                                    <div className="grid grid-cols-[minmax(7.5rem,auto)_1fr] items-center gap-x-6">
+                                        <span className="text-xl sm:text-2xl font-bold text-orange-600 dark:text-orange-400 tabular-nums text-left justify-self-start">
+                                            {invoice.grandTotal.toFixed(2)} ر.س
+                                        </span>
+                                        <span className="text-base sm:text-lg font-bold text-gray-800 dark:text-gray-200 text-right justify-self-end">
+                                            {AR_LABELS.grandTotal}:
+                                        </span>
                                     </div>
                                 </div>
                             </div>
@@ -890,7 +876,6 @@ const WholesalePOSPage: React.FC = () => {
                                         <input
                                             type="number"
                                             min="0"
-                                            max={unit.stock}
                                             placeholder="0"
                                             value={modalQuantities[`${selectedProduct.id}-${unit.name}`] || ''}
                                             onChange={(e) => handleModalQuantityChange(selectedProduct.id, unit.name, e.target.value)}

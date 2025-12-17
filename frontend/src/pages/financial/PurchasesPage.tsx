@@ -294,20 +294,7 @@ const PurchasesPage: React.FC = () => {
             <div className="relative mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8 space-y-8">
                 {/* Modern Professional Header */}
                 <div className="flex flex-col items-start justify-between gap-8 lg:flex-row lg:items-center">
-                    <div className="space-y-4">
-                        <div className="space-y-3">
-                            <div className="inline-flex items-center rounded-full bg-gradient-to-r from-orange-500/10 to-amber-500/10 px-4 py-2 text-sm font-semibold text-orange-600 dark:text-orange-400 border border-orange-200/50 dark:border-orange-800/50">
-                                <div className="mr-2 h-2 w-2 rounded-full bg-orange-500 animate-pulse" />
-                                إدارة المشتريات
-                            </div>
-                            <h1 className="bg-gradient-to-r from-slate-900 via-orange-900 to-slate-900 bg-clip-text text-4xl font-bold tracking-tight text-transparent dark:from-white dark:via-orange-100 dark:to-white sm:text-5xl">
-                                لوحة تحكم المشتريات
-                            </h1>
-                            <p className="max-w-2xl text-lg text-slate-600 dark:text-slate-300 leading-relaxed">
-                                إدارة شاملة للمشتريات والموردين والمدفوعات
-                            </p>
-                        </div>
-                    </div>
+                    <div />
                     
                     {/* Modern Navigation Tabs */}
                     <div className="flex gap-2 sm:gap-3 flex-wrap w-full sm:w-auto">

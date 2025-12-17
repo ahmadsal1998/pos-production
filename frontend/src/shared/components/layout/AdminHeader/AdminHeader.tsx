@@ -1,6 +1,7 @@
 import React from 'react';
 import { SunIcon, MoonIcon } from '@/shared/constants';
 import { useThemeStore, useAppStore } from '@/app/store';
+import { AR_LABELS } from '@/shared/constants/ui';
 
 interface AdminHeaderProps {
   activePath: string;
@@ -11,16 +12,29 @@ interface AdminHeaderProps {
   isMobileMenuOpen: boolean;
 }
 
-const AdminHeader: React.FC<AdminHeaderProps> = ({ onMenuToggle, isMobileMenuOpen }) => {
+const getAdminHeaderTitleFromPath = (pathname: string): string => {
+  const path = (pathname || '').split('?')[0].split('#')[0];
+
+  if (path === '/admin' || path === '/admin/' || path.startsWith('/admin/dashboard')) return AR_LABELS.adminDashboard;
+  if (path.startsWith('/admin/stores')) return AR_LABELS.storeManagement;
+  if (path.startsWith('/admin/settings')) return AR_LABELS.systemSettings;
+  if (path.startsWith('/admin/users')) return AR_LABELS.usersAndPermissions;
+  if (path.startsWith('/admin/trial-accounts')) return AR_LABELS.trialAccounts;
+
+  return AR_LABELS.adminDashboard;
+};
+
+const AdminHeader: React.FC<AdminHeaderProps> = ({ onMenuToggle, isMobileMenuOpen, activePath }) => {
   const { theme, toggleTheme } = useThemeStore();
   const { isSidebarCollapsed } = useAppStore();
+  const pageTitle = getAdminHeaderTitleFromPath(activePath);
 
   return (
     <header className={`fixed top-0 left-0 z-[60] bg-slate-900/95 dark:bg-slate-950/95 backdrop-blur-xl backdrop-saturate-150 border-b border-slate-700/80 dark:border-slate-800/80 shadow-lg flex-shrink-0 supports-[backdrop-filter]:bg-slate-900/95 supports-[backdrop-filter]:dark:bg-slate-950/95 transition-all duration-300 ${isSidebarCollapsed ? 'lg:right-20' : 'lg:right-64'} right-0`}>
-      <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 w-full">
+      <div className="px-4 sm:px-6 lg:px-8 w-full">
         <div className="flex h-16 md:h-20 items-center justify-between">
           {/* Left section: Mobile menu + Title */}
-          <div className="flex items-center gap-4 flex-shrink-0">
+          <div className="flex items-center gap-4 min-w-0 flex-1">
             {/* Mobile hamburger menu button */}
             <button
               onClick={onMenuToggle}
@@ -44,9 +58,12 @@ const AdminHeader: React.FC<AdminHeaderProps> = ({ onMenuToggle, isMobileMenuOpe
             </button>
 
             {/* Title */}
-            <div className="flex items-center">
-              <h1 className="text-lg sm:text-xl md:text-2xl font-bold bg-gradient-to-r from-blue-400 via-blue-500 to-blue-600 bg-clip-text text-transparent">
-                Admin Control Panel
+            <div className="flex items-center min-w-0 flex-1 justify-start">
+              <h1
+                dir="rtl"
+                className="text-lg sm:text-xl md:text-2xl font-bold bg-gradient-to-r from-blue-400 via-blue-500 to-blue-600 bg-clip-text text-transparent truncate text-right min-w-0"
+              >
+                {pageTitle}
               </h1>
             </div>
           </div>
