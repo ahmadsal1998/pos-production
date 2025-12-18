@@ -54,6 +54,8 @@ const initialPreferences: SystemPreferences = {
   printCompactMode: false,
   // Business Day Configuration
   businessDayStartTime: '06:00', // Default: 6:00 AM
+  // Store Address
+  storeAddress: '', // Store location/address for invoices
 };
 
 // Helpers to parse settings
@@ -116,18 +118,47 @@ const PreferencesPage: React.FC = () => {
       }
   };
 
-  // Load preferences from localStorage
+  // Load preferences from localStorage and backend
   useEffect(() => {
-    const loadPreferences = () => {
+    const loadPreferences = async () => {
       try {
         setLoading(true);
         const storedSettings = loadSettings();
+        
+        // Try to load storeAddress from backend if not in localStorage
+        let backendStoreAddress = '';
+        try {
+          const backendSettings = await storeSettingsApi.getSettings();
+          
+          // Handle nested response structure: backendSettings.data.data.settings
+          let settingsData: Record<string, string> | null = null;
+          
+          if (backendSettings.data) {
+            // Check for nested structure: data.data.settings
+            if ('data' in backendSettings.data && backendSettings.data.data && 'settings' in backendSettings.data.data) {
+              settingsData = (backendSettings.data.data as any).settings as Record<string, string>;
+            }
+            // Check for direct structure: data.settings
+            else if ('settings' in backendSettings.data) {
+              settingsData = backendSettings.data.settings as Record<string, string>;
+            }
+          }
+          
+          if (settingsData?.storeaddress) {
+            backendStoreAddress = settingsData.storeaddress;
+          }
+        } catch (error) {
+          console.warn('Failed to load storeAddress from backend:', error);
+          // Continue with localStorage settings
+        }
         
         if (storedSettings) {
           // Merge stored settings with initial preferences to ensure all fields are present
           const updated: SystemPreferences = {
             ...initialPreferences,
             ...storedSettings,
+            // Use backend value if available and localStorage doesn't have it
+            storeAddress: storedSettings.storeAddress || backendStoreAddress || '',
           };
           setPrefs(updated);
 
@@ -139,8 +170,11 @@ const PreferencesPage: React.FC = () => {
             }
           }
         } else {
-          // No stored settings, use defaults
-          setPrefs(initialPreferences);
+          // No stored settings, use defaults but include backend storeAddress if available
+          setPrefs({
+            ...initialPreferences,
+            storeAddress: backendStoreAddress || '',
+          });
         }
       } catch (err) {
         console.error('Failed to load preferences from localStorage:', err);
@@ -175,6 +209,20 @@ const PreferencesPage: React.FC = () => {
         });
       } catch (error) {
         console.warn('Failed to sync businessDayStartTime to backend:', error);
+        // Don't fail the entire save if backend sync fails
+      }
+      
+      // Sync storeAddress to backend
+      try {
+        const addressValue = prefs.storeAddress || '';
+        console.log('[PreferencesPage] Saving store address to backend:', addressValue);
+        await storeSettingsApi.updateSetting('storeaddress', {
+          value: addressValue,
+          description: 'Store location/address displayed on invoices'
+        });
+        console.log('[PreferencesPage] Store address saved successfully to backend');
+      } catch (error) {
+        console.warn('[PreferencesPage] Failed to sync storeAddress to backend:', error);
         // Don't fail the entire save if backend sync fails
       }
       
@@ -370,6 +418,10 @@ const PreferencesPage: React.FC = () => {
                     يتم حساب اليوم التجاري من هذا الوقت حتى نفس الوقت من اليوم التالي. على سبيل المثال، إذا كان الوقت 06:00 صباحاً، فإن اليوم التجاري يبدأ من 06:00 صباحاً حتى 05:59:59 صباحاً من اليوم التالي.
                   </p>
                 </div>
+                {renderField('عنوان المتجر', 'storeAddress', 'text')}
+                <p className="text-xs text-slate-500 dark:text-slate-400 -mt-3">
+                  سيظهر هذا العنوان على الفواتير المطبوعة
+                </p>
               </>,
               <PreferencesIcon />
             )}

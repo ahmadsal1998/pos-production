@@ -449,16 +449,27 @@ const WholesalePOSPage: React.FC = () => {
     }, [hasMore, isLoadingMore, filteredProducts.length]);
 
     const renderReceipt = (invoice: WholesaleInvoice) => {
+        // Load store address and business name from settings
+        const settings = loadSettings(null);
+        const storeAddress = settings?.storeAddress || '';
+        const legacyDefaultBusinessName = String.fromCharCode(80, 111, 115, 104, 80, 111, 105, 110, 116, 72, 117, 98);
+        const businessNameToDisplay = settings?.businessName && settings.businessName.trim() && settings.businessName !== legacyDefaultBusinessName ? settings.businessName.trim() : '';
+        
         return (
             <div id="printable-receipt" className="w-full max-w-md bg-white dark:bg-gray-800 p-4 sm:p-6 rounded-lg shadow-lg text-right">
                 <div className="text-center mb-4 sm:mb-5">
                     <CheckCircleIcon className="w-12 h-12 sm:w-16 sm:h-16 text-green-500 mx-auto print-hidden" />
                     <h2 className="text-xl sm:text-2xl font-bold text-gray-800 dark:text-gray-100 mt-2 print-hidden">{AR_LABELS.saleCompleted}</h2>
                     <h3 className="text-lg sm:text-xl font-bold text-center text-gray-900 dark:text-gray-100 mt-3 sm:mt-4 mb-2">فاتورة جملة</h3>
-                    <p className="text-center text-xs text-gray-500 dark:text-gray-400">123 الشارع التجاري, الرياض, السعودية</p>
+                    {storeAddress && (
+                        <p className="text-center text-xs text-gray-500 dark:text-gray-400">{storeAddress}</p>
+                    )}
                 </div>
 
                 <div className="invoice-info text-xs my-4 space-y-1.5">
+                    {businessNameToDisplay && (
+                        <p><strong>اسم المتجر:</strong> {businessNameToDisplay}</p>
+                    )}
                     <p><strong>{AR_LABELS.invoiceNumber}:</strong> {invoice.id}</p>
                     <p><strong>{AR_LABELS.date}:</strong> {new Date(invoice.date).toLocaleString('ar-SA')}</p>
                     <p><strong>{AR_LABELS.posCashier}:</strong> {invoice.cashier}</p>
@@ -478,7 +489,7 @@ const WholesalePOSPage: React.FC = () => {
                             </tr>
                         </thead>
                         <tbody>
-                            {invoice.items.map(item => (
+                            {invoice.items.slice().reverse().map(item => (
                                 <tr key={`${item.productId}-${item.unitName}`} className="border-b border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700/50">
                                     <td className="py-2.5 px-3 text-right border border-gray-300 dark:border-gray-600 font-medium">{item.name}</td>
                                     <td className="py-2.5 px-3 text-center border border-gray-300 dark:border-gray-600">{item.unitName}</td>
@@ -703,7 +714,7 @@ const WholesalePOSPage: React.FC = () => {
                                 <p className="text-center text-gray-500 dark:text-gray-400 py-8 sm:py-10 text-xs sm:text-sm">{AR_LABELS.noItemsInCart}</p>
                             ) : (
                                 <div className="space-y-2">
-                                    {invoice.items.map(item => (
+                                    {invoice.items.slice().reverse().map(item => (
                                         <div key={`${item.productId}-${item.unitName}`} className="bg-white/80 dark:bg-gray-800/80 rounded-lg p-2 sm:p-3 border border-gray-200 dark:border-gray-700">
                                             <div className="flex items-start justify-between gap-2 mb-2">
                                                 <div className="flex-grow text-right">

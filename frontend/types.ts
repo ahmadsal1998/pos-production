@@ -441,6 +441,7 @@ export interface CustomerPayment {
 export interface CustomerAccountSummary {
   customerId: string;
   customerName: string;
+  address?: string;
   totalSales: number;
   totalPaid: number;
   balance: number;

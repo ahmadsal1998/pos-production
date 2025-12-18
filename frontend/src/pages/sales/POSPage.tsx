@@ -4,10 +4,10 @@ import { Product, Customer, POSInvoice, POSCartItem, SaleTransaction, SaleStatus
 import { AR_LABELS, UUID, SearchIcon, DeleteIcon, PlusIcon, HandIcon, CancelIcon, PrintIcon, CheckCircleIcon } from '@/shared/constants';
 import { ToggleSwitch } from '@/shared/components/ui/ToggleSwitch';
 import CustomDropdown from '@/shared/components/ui/CustomDropdown/CustomDropdown';
-import { customersApi, productsApi, salesApi, ApiError } from '@/lib/api/client';
+import { customersApi, productsApi, salesApi, ApiError, storeSettingsApi } from '@/lib/api/client';
 import { useCurrency } from '@/shared/contexts/CurrencyContext';
 import { saveSale } from '@/shared/utils/salesStorage';
-import { loadSettings } from '@/shared/utils/settingsStorage';
+import { loadSettings, saveSettings } from '@/shared/utils/settingsStorage';
 import { playBeepSound, preloadBeepSound } from '@/shared/utils/soundUtils';
 import { convertArabicToEnglishNumerals } from '@/shared/utils';
 import { useAuthStore } from '@/app/store';
@@ -101,6 +101,8 @@ const POSPage: React.FC = () => {
     const isProcessingBarcodeRef = useRef(false); // Track if a barcode is currently being processed
     const [currentInvoice, setCurrentInvoice] = useState<POSInvoice>(() => generateNewInvoice(currentUserName, 'INV-1'));
     const [quantityDrafts, setQuantityDrafts] = useState<Record<string, string>>({});
+    const [storeAddress, setStoreAddress] = useState<string>(''); // Store address for receipts
+    const [businessName, setBusinessName] = useState<string>(''); // Store business name for receipts
 
     const QUANTITY_STEP = 0.5;
     const MIN_QUANTITY = 0.5;
@@ -1067,6 +1069,20 @@ const POSPage: React.FC = () => {
             // Reload tax rate if settings were changed
             if (e.key && e.key.startsWith('pos_settings_')) {
                 fetchTaxRate();
+                // Also reload store address and business name from localStorage
+                const settings = loadSettings(null);
+                if (settings?.storeAddress) {
+                    setStoreAddress(settings.storeAddress);
+                }
+                if (settings?.businessName) {
+                    const legacyDefaultBusinessName = String.fromCharCode(80, 111, 115, 104, 80, 111, 105, 110, 116, 72, 117, 98);
+                    const name = settings.businessName.trim();
+                    if (name && name !== legacyDefaultBusinessName) {
+                        setBusinessName(name);
+                    } else {
+                        setBusinessName('');
+                    }
+                }
             }
             // If products cache was invalidated, sync products
             // Only sync if not already in progress and enough time has passed
@@ -1351,6 +1367,146 @@ const POSPage: React.FC = () => {
             setAutoPrintEnabled(settings.autoPrintInvoice);
         }
     }, []);
+
+    // Load store address and business name from localStorage and backend when component mounts
+    useEffect(() => {
+        const loadStoreData = async () => {
+            try {
+                // First try localStorage
+                const settings = loadSettings(null);
+                
+                // Load business name from localStorage (it's stored there, not in backend settings)
+                if (settings?.businessName) {
+                    const legacyDefaultBusinessName = String.fromCharCode(80, 111, 115, 104, 80, 111, 105, 110, 116, 72, 117, 98);
+                    const name = settings.businessName.trim();
+                    if (name && name !== legacyDefaultBusinessName) {
+                        setBusinessName(name);
+                    }
+                }
+                
+                if (settings?.storeAddress) {
+                    console.log('[POS] Found store address in localStorage:', settings.storeAddress);
+                    setStoreAddress(settings.storeAddress);
+                    return;
+                } else {
+                    console.log('[POS] No store address in localStorage, checking backend...');
+                }
+
+                // If not in localStorage, try backend
+                try {
+                    const backendSettings = await storeSettingsApi.getSettings();
+                    console.log('[POS] Backend settings response:', backendSettings);
+                    
+                    // Handle nested response structure: backendSettings.data.data.settings
+                    let settingsData: Record<string, string> | null = null;
+                    
+                    if (backendSettings.data) {
+                        // Check for nested structure: data.data.settings
+                        if ('data' in backendSettings.data && backendSettings.data.data && 'settings' in backendSettings.data.data) {
+                            settingsData = (backendSettings.data.data as any).settings as Record<string, string>;
+                            console.log('[POS] Found settings in nested structure (data.data.settings)');
+                        }
+                        // Check for direct structure: data.settings
+                        else if ('settings' in backendSettings.data) {
+                            settingsData = backendSettings.data.settings as Record<string, string>;
+                            console.log('[POS] Found settings in direct structure (data.settings)');
+                        }
+                    }
+                    
+                    if (settingsData) {
+                        console.log('[POS] Settings data:', settingsData);
+                        // Check both lowercase and camelCase keys
+                        const address = settingsData.storeaddress || settingsData.storeAddress || '';
+                        if (address) {
+                            console.log('[POS] Found store address:', address);
+                            setStoreAddress(address);
+                            // Also update localStorage for future use
+                            if (settings) {
+                                const updatedSettings = { ...settings, storeAddress: address };
+                                saveSettings(updatedSettings);
+                            } else {
+                                // Create minimal settings object if none exists
+                                const newSettings = {
+                                    storeAddress: address,
+                                } as any;
+                                saveSettings(newSettings);
+                            }
+                        } else {
+                            console.log('[POS] No store address found in backend settings. Available keys:', Object.keys(settingsData));
+                        }
+                    } else {
+                        console.log('[POS] Settings data not found in response structure');
+                    }
+                } catch (backendError) {
+                    console.warn('[POS] Failed to load storeAddress from backend:', backendError);
+                    // Keep empty string if both fail
+                }
+            } catch (error) {
+                console.error('Error loading store address:', error);
+            }
+        };
+
+        loadStoreData();
+    }, []);
+
+    // Reload store address and business name when sale completes to ensure we have the latest value
+    useEffect(() => {
+        if (saleCompleted) {
+            const reloadStoreData = async () => {
+                try {
+                    // Check localStorage first
+                    const settings = loadSettings(null);
+                    
+                    // Reload business name
+                    if (settings?.businessName) {
+                        const legacyDefaultBusinessName = String.fromCharCode(80, 111, 115, 104, 80, 111, 105, 110, 116, 72, 117, 98);
+                        const name = settings.businessName.trim();
+                        if (name && name !== legacyDefaultBusinessName) {
+                            setBusinessName(name);
+                        } else {
+                            setBusinessName('');
+                        }
+                    }
+                    
+                    if (settings?.storeAddress) {
+                        setStoreAddress(settings.storeAddress);
+                        return;
+                    }
+
+                    // If not in localStorage, try backend
+                    try {
+                        const backendSettings = await storeSettingsApi.getSettings();
+                        
+                        // Handle nested response structure
+                        let settingsData: Record<string, string> | null = null;
+                        
+                        if (backendSettings.data) {
+                            // Check for nested structure: data.data.settings
+                            if ('data' in backendSettings.data && backendSettings.data.data && 'settings' in backendSettings.data.data) {
+                                settingsData = (backendSettings.data.data as any).settings as Record<string, string>;
+                            }
+                            // Check for direct structure: data.settings
+                            else if ('settings' in backendSettings.data) {
+                                settingsData = backendSettings.data.settings as Record<string, string>;
+                            }
+                        }
+                        
+                        if (settingsData) {
+                            const address = settingsData.storeaddress || settingsData.storeAddress || '';
+                            if (address) {
+                                setStoreAddress(address);
+                            }
+                        }
+                    } catch (error) {
+                        console.warn('[POS] Failed to reload storeAddress when sale completed:', error);
+                    }
+                } catch (error) {
+                    console.error('[POS] Error reloading store address on sale completion:', error);
+                }
+            };
+            reloadStoreData();
+        }
+    }, [saleCompleted]);
 
     // Auto-print when sale is completed and autoPrintInvoice is enabled
     useEffect(() => {
@@ -2316,6 +2472,18 @@ const POSPage: React.FC = () => {
             console.log(`[POS] Held invoice restored: ${heldKey} -> new invoice ${newInvoiceNumber}.`);
         }
     };
+
+    const handleDeleteHeldInvoice = (heldKey: string, e: React.MouseEvent) => {
+        e.stopPropagation(); // Prevent triggering restore when clicking delete
+        if (window.confirm('هل أنت متأكد من حذف هذه الفاتورة المعلقة؟')) {
+            setHeldInvoices(prev => {
+                const updated = prev.filter(inv => inv.heldKey !== heldKey);
+                saveHeldInvoicesToStorage(updated);
+                return updated;
+            });
+            console.log(`[POS] Held invoice deleted: ${heldKey}`);
+        }
+    };
     
     const startNewSale = async () => {
         setSaleCompleted(false);
@@ -3263,16 +3431,39 @@ const POSPage: React.FC = () => {
         const isReturn = 'originalInvoiceId' in invoice && invoice.originalInvoiceId !== undefined
             || ('status' in invoice && invoice.status === 'Returned')
             || ('id' in invoice && invoice.id.startsWith('RET-'));
+        
+        // Get store address and business name from state, with fallback to localStorage
+        const settings = loadSettings(null);
+        const addressFromState = storeAddress || '';
+        const addressFromSettings = settings?.storeAddress || '';
+        const addressToDisplay = addressFromState || addressFromSettings || '';
+        
+        // Debug logging
+        console.log('[POS] renderReceipt - Address check:', {
+            storeAddressState: storeAddress,
+            addressFromSettings: addressFromSettings,
+            addressToDisplay: addressToDisplay,
+            hasSettings: !!settings
+        });
+        
+        const legacyDefaultBusinessName = String.fromCharCode(80, 111, 115, 104, 80, 111, 105, 110, 116, 72, 117, 98);
+        const businessNameToDisplay = businessName || (settings?.businessName && settings.businessName.trim() && settings.businessName !== legacyDefaultBusinessName ? settings.businessName.trim() : '');
+        
         return (
             <div id="printable-receipt" className="w-full max-w-md bg-white dark:bg-gray-800 p-4 sm:p-6 rounded-lg shadow-lg text-right">
                 <div className="text-center mb-4 sm:mb-5">
                     <CheckCircleIcon className={`w-12 h-12 sm:w-16 sm:h-16 ${isReturn ? 'text-blue-500' : 'text-green-500'} mx-auto print-hidden`} />
                     <h2 className="text-xl sm:text-2xl font-bold text-gray-800 dark:text-gray-100 mt-2 print-hidden">{isReturn ? AR_LABELS.returnCompleted : AR_LABELS.saleCompleted}</h2>
                     <h3 className="text-lg sm:text-xl font-bold text-center text-gray-900 dark:text-gray-100 mt-3 sm:mt-4 mb-2">{title}</h3>
-                    <p className="text-center text-xs text-gray-500 dark:text-gray-400">123 الشارع التجاري, الرياض, السعودية</p>
+                    {addressToDisplay ? (
+                        <p className="text-center text-xs text-gray-500 dark:text-gray-400">{addressToDisplay}</p>
+                    ) : null}
                 </div>
 
                 <div className="invoice-info text-xs my-4 space-y-1.5">
+                    {businessNameToDisplay && (
+                        <p><strong>اسم المتجر:</strong> {businessNameToDisplay}</p>
+                    )}
                     <p><strong>{AR_LABELS.invoiceNumber}:</strong> {invoice.id}</p>
                     {isReturn && 'originalInvoiceId' in invoice && <p><strong>{AR_LABELS.originalInvoiceNumber}:</strong> {invoice.originalInvoiceId}</p>}
                     <p><strong>{AR_LABELS.date}:</strong> {new Date(invoice.date).toLocaleString('ar-SA')}</p>
@@ -3292,7 +3483,7 @@ const POSPage: React.FC = () => {
                             </tr>
                         </thead>
                         <tbody>
-                            {invoice.items.map((item, idx) => {
+                            {invoice.items.slice().reverse().map((item, idx) => {
                                 const itemUnitPrice = isReturn ? -Math.abs(item.unitPrice) : item.unitPrice;
                                 const itemTotal = isReturn ? -Math.abs(item.total - item.discount * item.quantity) : (item.total - item.discount * item.quantity);
                                 return (
@@ -3373,27 +3564,50 @@ const POSPage: React.FC = () => {
             <div className="absolute -top-40 -right-40 h-80 w-80 rounded-full bg-gradient-to-br from-orange-400/15 to-amber-400/15 blur-3xl animate-pulse" />
             <div className="absolute -bottom-40 -left-40 h-80 w-80 rounded-full bg-gradient-to-br from-rose-400/15 to-orange-400/15 blur-3xl animate-pulse" style={{ animationDelay: '2s' }} />
             
-            <div className="relative w-full px-2 sm:px-4 py-4 sm:py-6 overflow-x-hidden">
+            <div className="relative w-full px-2 sm:px-4 py-4 sm:py-6">
+                {/* Suspended Invoices Horizontal Tabs - Above main grid */}
+                {heldInvoices.length > 0 && (
+                    <div className="sticky top-0 z-50 mb-1.5 sm:mb-2 w-full">
+                        <div className="bg-white/95 dark:bg-gray-800/95 rounded-md sm:rounded-lg shadow-lg p-1.5 sm:p-2 backdrop-blur-xl border border-slate-200/50 dark:border-slate-700/50">
+                            <h3 className="font-bold text-[11px] sm:text-xs text-gray-700 dark:text-gray-200 text-right mb-1 sm:mb-1.5">
+                                {AR_LABELS.heldInvoices}
+                            </h3>
+                            <div className="flex gap-1 sm:gap-1.5 overflow-x-auto pb-0.5 custom-scrollbar">
+                                {heldInvoices.map((inv, index) => (
+                                    <div
+                                        key={inv.heldKey}
+                                        onClick={() => handleRestoreSale(inv.heldKey)}
+                                        className="flex-shrink-0 flex items-center gap-1 px-2.5 py-1.5 sm:px-3 sm:py-1.5 bg-gradient-to-br from-yellow-50 to-amber-50 dark:from-yellow-900/30 dark:to-amber-900/30 border border-yellow-300 dark:border-yellow-700 rounded-md cursor-pointer hover:shadow-md hover:scale-105 transition-all duration-200 min-w-[100px] sm:min-w-[110px] group"
+                                    >
+                                        <div className="flex-1 text-right min-w-0">
+                                            <div className="font-semibold text-[11px] sm:text-xs text-gray-800 dark:text-gray-200 truncate leading-tight">
+                                                فاتورة {index + 1}
+                                            </div>
+                                            <div className="text-[9px] sm:text-[10px] text-gray-600 dark:text-gray-400 truncate leading-tight">
+                                                {inv.id}
+                                            </div>
+                                            <div className="text-[9px] sm:text-[10px] text-gray-500 dark:text-gray-500 leading-tight">
+                                                {inv.items.length} أصناف
+                                            </div>
+                                        </div>
+                                        <button
+                                            onClick={(e) => handleDeleteHeldInvoice(inv.heldKey, e)}
+                                            className="flex-shrink-0 p-0.5 rounded-full hover:bg-red-100 dark:hover:bg-red-900/50 text-red-500 dark:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity duration-200"
+                                            aria-label="حذف الفاتورة"
+                                        >
+                                            <span className="h-3 w-3 sm:h-3.5 sm:w-3.5 block"><DeleteIcon /></span>
+                                        </button>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+                )}
+                
                 {/* Three Column Layout - Proportional widths: ~19% - 50% - 31% */}
                 <div className="grid grid-cols-1 md:grid-cols-[0.75fr_2.3fr_1fr] gap-3 sm:gap-4 h-auto md:min-h-[calc(100vh-12rem)] w-full overflow-x-hidden items-start">
                 {/* Column 1: Customer & Quick Products (25%) */}
                     <div className="flex flex-col gap-3 sm:gap-4 min-h-0 min-w-0 md:h-[calc(100vh-12rem)]">
-                        {/* Held Invoices - Only visible when there are held invoices */}
-                        {heldInvoices.length > 0 && (
-                            <div className="bg-white/95 dark:bg-gray-800/95 rounded-xl sm:rounded-2xl shadow-sm p-4 sm:p-6 backdrop-blur-xl border border-slate-200/50 dark:border-slate-700/50 space-y-3 sm:space-y-4 flex flex-col min-h-0 relative z-10">
-                                <div className="border-t border-gray-200 dark:border-gray-700 pt-3 sm:pt-4 flex-shrink-0">
-                                    <h3 className="font-bold text-sm sm:text-base text-gray-700 dark:text-gray-200 text-right mb-2">{AR_LABELS.heldInvoices}</h3>
-                                    <div className="space-y-2 max-h-20 sm:max-h-24 overflow-y-auto">
-                                        {heldInvoices.map(inv => (
-                                            <div key={inv.heldKey} className="flex justify-between items-center p-2 bg-gray-100 dark:bg-gray-700 rounded text-xs sm:text-sm">
-                                                <span className="text-gray-800 dark:text-gray-300 truncate flex-1">{inv.id} ({inv.items.length} أصناف)</span>
-                                                <button onClick={() => handleRestoreSale(inv.heldKey)} className="text-green-600 hover:underline mr-2 flex-shrink-0">{AR_LABELS.restore}</button>
-                                            </div>
-                                        ))}
-                                    </div>
-                                </div>
-                            </div>
-                        )}
                         {/* Quick Products */}
                         <div className="bg-white/95 dark:bg-gray-800/95 rounded-xl sm:rounded-2xl shadow-sm p-4 sm:p-6 backdrop-blur-xl border border-slate-200/50 dark:border-slate-700/50 flex-grow overflow-y-auto relative z-0">
                             <h3 className="font-bold text-sm sm:text-base text-gray-900 dark:text-gray-100 text-right mb-3 sm:mb-4">{AR_LABELS.quickProducts}</h3>
@@ -3516,7 +3730,7 @@ const POSPage: React.FC = () => {
                                 <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
                                    {currentInvoice.items.length === 0 ? (
                                             <tr><td colSpan={6} className="text-center align-middle py-8 sm:py-10 text-xs sm:text-sm text-gray-500 dark:text-gray-400">{AR_LABELS.noItemsInCart}</td></tr>
-                                   ) : currentInvoice.items.map((item, index) => (
+                                   ) : currentInvoice.items.slice().reverse().map((item, index) => (
                                         <tr key={item.cartItemId || `item-${index}`} className="hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors duration-150">
                                                 <td className="px-2 sm:px-3 py-3 sm:py-4 text-xs sm:text-sm text-gray-500 dark:text-gray-400 align-middle">{index + 1}</td>
                                                 <td className="px-2 sm:px-3 py-3 sm:py-4 text-xs sm:text-sm font-medium text-gray-900 dark:text-gray-100 break-words align-middle">{item.name}</td>

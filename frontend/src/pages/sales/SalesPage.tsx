@@ -6,13 +6,13 @@ import { GridViewIcon, TableViewIcon } from '@/shared/constants/routes';
 import { MetricCard } from '@/shared/components/ui/MetricCard';
 import CustomDropdown from '@/shared/components/ui/CustomDropdown/CustomDropdown';
 import { formatDate } from '@/shared/utils';
-import { customersApi, salesApi, ApiError } from '@/lib/api/client';
+import { customersApi, salesApi, ApiError, storeSettingsApi } from '@/lib/api/client';
 import { useCurrency } from '@/shared/contexts/CurrencyContext';
 import { useAuthStore } from '@/app/store';
 import { printReceipt } from '@/shared/utils/printUtils';
 import { customerSync } from '@/lib/sync/customerSync';
 import { customersDB } from '@/lib/db/customersDB';
-import { loadSettings } from '@/shared/utils/settingsStorage';
+import { loadSettings, saveSettings } from '@/shared/utils/settingsStorage';
 import { getBusinessDateFilterRange, getBusinessDayStartTime } from '@/shared/utils/businessDate';
 
 // Filter icon component
@@ -32,6 +32,83 @@ interface SalesPageProps {
 // --- MODAL COMPONENTS ---
 const SaleDetailsModal: React.FC<{ sale: SaleTransaction | null, onClose: () => void }> = ({ sale, onClose }) => {
     const { formatCurrency } = useCurrency();
+    const [storeAddress, setStoreAddress] = useState<string>('');
+    const [businessName, setBusinessName] = useState<string>('');
+
+    // Load store address and business name when modal opens
+    useEffect(() => {
+        if (!sale) return; // Early return inside useEffect is fine
+        const loadStoreData = async () => {
+            try {
+                // First try localStorage
+                const settings = loadSettings(null);
+                
+                // Load business name
+                if (settings?.businessName) {
+                    const legacyDefaultBusinessName = String.fromCharCode(80, 111, 115, 104, 80, 111, 105, 110, 116, 72, 117, 98);
+                    const name = settings.businessName.trim();
+                    if (name && name !== legacyDefaultBusinessName) {
+                        setBusinessName(name);
+                    }
+                }
+                
+                // Load address from localStorage
+                if (settings?.storeAddress) {
+                    console.log('[SalesPage] Found store address in localStorage:', settings.storeAddress);
+                    setStoreAddress(settings.storeAddress);
+                    return;
+                } else {
+                    console.log('[SalesPage] No store address in localStorage, checking backend...');
+                }
+
+                // If not in localStorage, try backend
+                try {
+                    const backendSettings = await storeSettingsApi.getSettings();
+                    console.log('[SalesPage] Backend settings response:', backendSettings);
+                    
+                    // Handle nested response structure
+                    let settingsData: Record<string, string> | null = null;
+                    
+                    if (backendSettings.data) {
+                        // Check for nested structure: data.data.settings
+                        if ('data' in backendSettings.data && backendSettings.data.data && 'settings' in backendSettings.data.data) {
+                            settingsData = (backendSettings.data.data as any).settings as Record<string, string>;
+                            console.log('[SalesPage] Found settings in nested structure (data.data.settings)');
+                        }
+                        // Check for direct structure: data.settings
+                        else if ('settings' in backendSettings.data) {
+                            settingsData = backendSettings.data.settings as Record<string, string>;
+                            console.log('[SalesPage] Found settings in direct structure (data.settings)');
+                        }
+                    }
+                    
+                    if (settingsData) {
+                        console.log('[SalesPage] Settings data:', settingsData);
+                        const address = settingsData.storeaddress || settingsData.storeAddress || '';
+                        if (address) {
+                            console.log('[SalesPage] Found store address:', address);
+                            setStoreAddress(address);
+                            // Also update localStorage for future use
+                            if (settings) {
+                                const updatedSettings = { ...settings, storeAddress: address };
+                                saveSettings(updatedSettings);
+                            }
+                        } else {
+                            console.log('[SalesPage] No store address found in backend settings. Available keys:', Object.keys(settingsData));
+                        }
+                    }
+                } catch (backendError) {
+                    console.warn('[SalesPage] Failed to load storeAddress from backend:', backendError);
+                }
+            } catch (error) {
+                console.error('[SalesPage] Error loading store data:', error);
+            }
+        };
+
+        loadStoreData();
+    }, [sale]); // Reload when sale changes
+
+    // Early return AFTER all hooks are called
     if (!sale) return null;
 
     const handlePrint = () => {
@@ -39,26 +116,48 @@ const SaleDetailsModal: React.FC<{ sale: SaleTransaction | null, onClose: () => 
     };
 
     const isReturn = sale.status === 'Returned' || sale.id.startsWith('RET-');
-    const businessName = loadSettings(null)?.businessName;
+    const settings = loadSettings(null);
     const legacyDefaultBusinessName = String.fromCharCode(80, 111, 115, 104, 80, 111, 105, 110, 116, 72, 117, 98);
+    
+    // Get business name to display - use state or fallback to localStorage
+    const businessNameToDisplay = businessName || (settings?.businessName && 
+        typeof settings.businessName === 'string' && 
+        settings.businessName.trim() && 
+        settings.businessName.trim() !== legacyDefaultBusinessName 
+        ? settings.businessName.trim() 
+        : '');
+    
+    // Get address to display - use state or fallback to localStorage
+    const addressToDisplay = storeAddress || settings?.storeAddress || '';
+    
+    console.log('[SalesPage] Display values:', { 
+        businessNameToDisplay, 
+        addressToDisplay,
+        storeAddressState: storeAddress,
+        addressFromSettings: settings?.storeAddress
+    });
+    
     const title =
         isReturn
             ? 'Returns'
-            : businessName && businessName.trim() && businessName !== legacyDefaultBusinessName
-                ? businessName
-                : '';
+            : businessNameToDisplay || '';
 
     return (
         <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4" onClick={onClose}>
             <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-2xl text-right" onClick={e => e.stopPropagation()}>
                 <div id="printable-receipt" className="w-full max-w-md bg-white dark:bg-gray-800 p-4 sm:p-6 rounded-lg shadow-lg text-right mx-auto">
-                    <div className="text-center mb-4 sm:mb-5 print-hidden">
-                        <h2 className="text-xl sm:text-2xl font-bold text-gray-800 dark:text-gray-100 mt-2">{isReturn ? AR_LABELS.returnCompleted || 'إرجاع مكتمل' : AR_LABELS.saleCompleted || 'بيع مكتمل'}</h2>
+                    <div className="text-center mb-4 sm:mb-5">
+                        <h2 className="text-xl sm:text-2xl font-bold text-gray-800 dark:text-gray-100 mt-2 print-hidden">{isReturn ? AR_LABELS.returnCompleted || 'إرجاع مكتمل' : AR_LABELS.saleCompleted || 'بيع مكتمل'}</h2>
                         <h3 className="text-lg sm:text-xl font-bold text-center text-gray-900 dark:text-gray-100 mt-3 sm:mt-4 mb-2">{title}</h3>
-                        <p className="text-center text-xs text-gray-500 dark:text-gray-400">123 الشارع التجاري, الرياض, السعودية</p>
+                        {addressToDisplay && (
+                            <p className="text-center text-xs text-gray-500 dark:text-gray-400">{addressToDisplay}</p>
+                        )}
                     </div>
 
                     <div className="invoice-info text-xs my-4 space-y-1.5">
+                        {businessNameToDisplay ? (
+                            <p><strong>اسم المتجر:</strong> {businessNameToDisplay}</p>
+                        ) : null}
                         <p><strong>{AR_LABELS.invoiceNumber}:</strong> {sale.invoiceNumber || sale.id}</p>
                         <p><strong>{AR_LABELS.date}:</strong> {new Date(sale.date).toLocaleString('ar-SA')}</p>
                         <p><strong>{AR_LABELS.seller}:</strong> {sale.seller}</p>
@@ -234,6 +333,71 @@ const CustomerDetailsModal: React.FC<{
     onClose: () => void;
 }> = ({ summary, sales, payments, onClose }) => {
     const { formatCurrency } = useCurrency();
+    const [storeAddress, setStoreAddress] = useState<string>('');
+    const [businessName, setBusinessName] = useState<string>('');
+
+    // Load store address and business name when modal opens
+    useEffect(() => {
+        if (!summary) return;
+        const loadStoreData = async () => {
+            try {
+                // First try localStorage
+                const settings = loadSettings(null);
+                
+                // Load business name
+                if (settings?.businessName) {
+                    const legacyDefaultBusinessName = String.fromCharCode(80, 111, 115, 104, 80, 111, 105, 110, 116, 72, 117, 98);
+                    const name = settings.businessName.trim();
+                    if (name && name !== legacyDefaultBusinessName) {
+                        setBusinessName(name);
+                    }
+                }
+                
+                // Load address from localStorage
+                if (settings?.storeAddress) {
+                    setStoreAddress(settings.storeAddress);
+                    return;
+                }
+
+                // If not in localStorage, try backend
+                try {
+                    const backendSettings = await storeSettingsApi.getSettings();
+                    
+                    // Handle nested response structure
+                    let settingsData: Record<string, string> | null = null;
+                    
+                    if (backendSettings.data) {
+                        // Check for nested structure: data.data.settings
+                        if ('data' in backendSettings.data && backendSettings.data.data && 'settings' in backendSettings.data.data) {
+                            settingsData = (backendSettings.data.data as any).settings as Record<string, string>;
+                        }
+                        // Check for direct structure: data.settings
+                        else if ('settings' in backendSettings.data) {
+                            settingsData = backendSettings.data.settings as Record<string, string>;
+                        }
+                    }
+                    
+                    if (settingsData) {
+                        const address = settingsData.storeaddress || settingsData.storeAddress || '';
+                        if (address) {
+                            setStoreAddress(address);
+                            // Also update localStorage for future use
+                            if (settings) {
+                                const updatedSettings = { ...settings, storeAddress: address };
+                                saveSettings(updatedSettings);
+                            }
+                        }
+                    }
+                } catch (backendError) {
+                    console.warn('[SalesPage] Failed to load storeAddress from backend:', backendError);
+                }
+            } catch (error) {
+                console.error('[SalesPage] Error loading store data:', error);
+            }
+        };
+
+        loadStoreData();
+    }, [summary]); // Reload when summary changes
     
     const transactions = useMemo(() => {
         if (!summary) return [];
@@ -269,14 +433,42 @@ const CustomerDetailsModal: React.FC<{
 
     if (!summary) return null;
 
+    const settings = loadSettings(null);
+    const legacyDefaultBusinessName = String.fromCharCode(80, 111, 115, 104, 80, 111, 105, 110, 116, 72, 117, 98);
+    
+    // Get business name to display - use state or fallback to localStorage
+    const businessNameToDisplay = businessName || (settings?.businessName && 
+        typeof settings.businessName === 'string' && 
+        settings.businessName.trim() && 
+        settings.businessName.trim() !== legacyDefaultBusinessName 
+        ? settings.businessName.trim() 
+        : '');
+    
+    // Get address to display - use state or fallback to localStorage
+    const addressToDisplay = storeAddress || settings?.storeAddress || '';
+
     return (
         <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4" onClick={onClose}>
             <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-3xl text-right" onClick={e => e.stopPropagation()}>
                 <div id="printable-receipt" className="p-6">
+                    {/* Store Header - visible in print */}
+                    {(businessNameToDisplay || addressToDisplay) && (
+                        <div className="text-center mb-4 pb-4 border-b dark:border-gray-700">
+                            {businessNameToDisplay && (
+                                <h3 className="text-lg font-bold text-gray-900 dark:text-gray-100 mb-1">{businessNameToDisplay}</h3>
+                            )}
+                            {addressToDisplay && (
+                                <p className="text-sm text-gray-600 dark:text-gray-400">{addressToDisplay}</p>
+                            )}
+                        </div>
+                    )}
                      <div className="flex justify-between items-start pb-4 border-b dark:border-gray-700">
                         <div>
                             <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100">{AR_LABELS.customerStatement}</h2>
                             <p className="text-lg text-gray-700 dark:text-gray-300">{summary.customerName}</p>
+                            {summary.address && (
+                                <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">{AR_LABELS.address}: {summary.address}</p>
+                            )}
                         </div>
                         <div className="text-left text-sm">
                             <p><strong>{AR_LABELS.totalSales}:</strong> {formatCurrency(summary.totalSales)}</p>
@@ -2087,6 +2279,7 @@ const CustomerAccountsView: React.FC<{
             return {
                 customerId: customer.id,
                 customerName: customer.name,
+                address: customer.address,
                 totalSales,
                 totalPaid,
                 balance: totalSales - totalPaid,

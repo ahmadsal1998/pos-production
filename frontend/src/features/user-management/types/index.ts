@@ -69,6 +69,8 @@ export interface SystemPreferences {
   printCompactMode: boolean;
   // Business Day Configuration
   businessDayStartTime: string; // Format: "HH:mm" (e.g., "06:00")
+  // Store Address
+  storeAddress: string; // Store location/address for invoices
 }
 
 export interface ProfileFormFields {

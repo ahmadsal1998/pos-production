@@ -120,6 +120,12 @@ const getPrintableContent = (elementId: string): string => {
         margin: 0 0 ${printSettings.compactMode ? '8px' : '10px'} 0;
         font-weight: 700;
       }
+      /* Address and store info in header - ensure visible in print */
+      #printable-receipt .text-center p {
+        margin: ${printSettings.compactMode ? '4px 0' : '6px 0'};
+        font-size: ${printSettings.compactMode ? '10px' : '11px'};
+        color: #6c757d;
+      }
       /* Table styles for professional appearance */
       #printable-receipt table {
         width: 100%;
