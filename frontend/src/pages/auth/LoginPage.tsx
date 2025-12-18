@@ -39,7 +39,9 @@ const LoginPage = () => {
       // Small delay to ensure state is updated
       setTimeout(() => {
         const authState = useAuthStore.getState();
-        if (authState.user && (authState.user.id === 'admin' || authState.user.role === 'Admin')) {
+        // Only system admin (userId === 'admin' from .env credentials) should be redirected to admin dashboard
+        // Store owners/users with role 'Admin' should go to regular dashboard
+        if (authState.user && authState.user.id === 'admin') {
           navigate('/admin/dashboard');
         } else {
           navigate('/');

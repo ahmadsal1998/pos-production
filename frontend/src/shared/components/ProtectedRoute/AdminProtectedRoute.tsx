@@ -6,10 +6,12 @@ interface AdminProtectedRouteProps {
 }
 
 /**
- * AdminProtectedRoute component that checks authentication and admin status.
+ * AdminProtectedRoute component that checks authentication and system admin status.
+ * Only users with userId === 'admin' (system admin from .env) can access admin routes.
+ * Store owners/users with role 'Admin' cannot access system admin routes.
  * If user is not authenticated, redirects to /login.
- * If user is authenticated but not admin, redirects to /.
- * If user is admin, renders the children.
+ * If user is authenticated but not system admin, redirects to /.
+ * If user is system admin, renders the children.
  */
 export const AdminProtectedRoute: React.FC<AdminProtectedRouteProps> = ({ children }) => {
   const { isAuthenticated, user } = useAuthStore();
@@ -18,10 +20,11 @@ export const AdminProtectedRoute: React.FC<AdminProtectedRouteProps> = ({ childr
     return <Navigate to="/login" replace />;
   }
 
-  // Check if user is admin
-  const isAdmin = user && (user.id === 'admin' || user.role === 'Admin');
+  // Only system admin (userId === 'admin' from .env credentials) can access admin routes
+  // Store owners/users with role 'Admin' should NOT have access
+  const isSystemAdmin = user && user.id === 'admin';
 
-  if (!isAdmin) {
+  if (!isSystemAdmin) {
     return <Navigate to="/" replace />;
   }
 

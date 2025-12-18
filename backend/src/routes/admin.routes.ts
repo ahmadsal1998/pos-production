@@ -23,11 +23,15 @@ import { authenticate, authorize } from '../middleware/auth.middleware';
 const router = Router();
 
 // All admin routes require authentication
-// Note: Admin check is done via userId === 'admin' in the token
+// Note: Only system admin (userId === 'admin' from .env credentials) can access these routes
+// Store owners/users with role 'Admin' cannot access system admin routes
 router.use(authenticate);
 
-// Admin-only routes (check if user is admin)
+// Admin-only routes (check if user is system admin)
+// Only users with userId === 'admin' (from ADMIN_USERNAME/ADMIN_PASSWORD) can access
 const isAdmin = (req: any, res: any, next: any) => {
+  // Strict check: only system admin (userId === 'admin') can access
+  // Store admins have role 'Admin' but userId is their MongoDB ID, not 'admin'
   if (req.user?.userId === 'admin' && req.user?.role === 'Admin') {
     return next();
   }
