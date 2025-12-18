@@ -14,6 +14,7 @@
 import mongoose from 'mongoose';
 import Store from '../models/Store';
 import { Terminal, ITerminal } from '../models/Terminal';
+import { sanitizeMongoUri } from '../config/database';
 
 export async function migrateTerminalsToStores(dryRun: boolean = true): Promise<void> {
   console.log('🚀 Starting terminal migration to stores...');
@@ -167,9 +168,11 @@ export async function migrateTerminalsToStores(dryRun: boolean = true): Promise<
 if (require.main === module) {
   // Connect to MongoDB
   const mongoUri = process.env.MONGODB_URI || 'mongodb://localhost:27017/pos-production';
+  // Sanitize URI to remove any X.509 parameters
+  const sanitizedUri = sanitizeMongoUri(mongoUri);
   
   mongoose
-    .connect(mongoUri)
+    .connect(sanitizedUri)
     .then(() => {
       console.log('✅ Connected to MongoDB');
       // Run migration in dry-run mode by default

@@ -1,4 +1,5 @@
 import mongoose, { Connection } from 'mongoose';
+import { sanitizeMongoUri } from '../config/database';
 
 /**
  * Configuration for multi-database architecture
@@ -24,7 +25,8 @@ function getBaseMongoUri(): string {
   if (!uri) {
     throw new Error('MONGODB_URI environment variable is not set');
   }
-  return uri;
+  // Sanitize the URI to remove any X.509 parameters
+  return sanitizeMongoUri(uri);
 }
 
 /**

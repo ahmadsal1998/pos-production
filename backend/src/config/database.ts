@@ -1,20 +1,74 @@
 import mongoose from 'mongoose';
 
 /**
+ * Sanitize MongoDB URI by removing X.509 authentication parameters
+ * Ensures only standard username/password authentication is used
+ * @param uri - Original MongoDB URI
+ * @returns Sanitized MongoDB URI without X.509 parameters
+ */
+export function sanitizeMongoUri(uri: string): string {
+  // Parse the URI to extract query parameters
+  const queryIndex = uri.indexOf('?');
+  if (queryIndex === -1) {
+    // No query parameters, return as-is
+    return uri;
+  }
+
+  const uriWithoutQuery = uri.substring(0, queryIndex);
+  const queryString = uri.substring(queryIndex + 1);
+
+  // Parse query parameters
+  const params = new URLSearchParams(queryString);
+
+  // Remove X.509-related parameters
+  const x509Params = [
+    'authMechanism',
+    'authSource',
+    'tlsCertificateKeyFile',
+    'tlsCAFile',
+    'tlsCertificateKeyFilePassword',
+    'tlsAllowInvalidCertificates',
+    'tlsAllowInvalidHostnames',
+  ];
+
+  let removedParams: string[] = [];
+  x509Params.forEach(param => {
+    if (params.has(param)) {
+      removedParams.push(param);
+      params.delete(param);
+    }
+  });
+
+  // If we removed X.509 parameters, log a warning
+  if (removedParams.length > 0) {
+    console.warn(`⚠️ Removed X.509 authentication parameters from MongoDB URI: ${removedParams.join(', ')}`);
+    console.warn('⚠️ Using standard username/password authentication instead');
+  }
+
+  // Reconstruct the URI with cleaned query parameters
+  const cleanedQueryString = params.toString();
+  return cleanedQueryString 
+    ? `${uriWithoutQuery}?${cleanedQueryString}`
+    : uriWithoutQuery;
+}
+
+/**
  * Ensure the MongoDB URI includes the admin_db database name
  * @param uri - Original MongoDB URI
  * @returns MongoDB URI with admin_db as the database name
  */
 export function ensureAdminDatabase(uri: string): string {
+  // First sanitize the URI to remove any X.509 parameters
+  const sanitizedUri = sanitizeMongoUri(uri);
   const ADMIN_DB_NAME = 'admin_db';
   
   // Handle MongoDB Atlas SRV format: mongodb+srv://user:pass@cluster.net/dbname?options
   // Handle standard format: mongodb://user:pass@host:port/dbname?options
   
   // Find the last slash before query parameters (this separates host from database)
-  const queryIndex = uri.indexOf('?');
-  const uriWithoutQuery = queryIndex > 0 ? uri.substring(0, queryIndex) : uri;
-  const queryString = queryIndex > 0 ? uri.substring(queryIndex) : '';
+  const queryIndex = sanitizedUri.indexOf('?');
+  const uriWithoutQuery = queryIndex > 0 ? sanitizedUri.substring(0, queryIndex) : sanitizedUri;
+  const queryString = queryIndex > 0 ? sanitizedUri.substring(queryIndex) : '';
   
   // Find the protocol (mongodb:// or mongodb+srv://)
   const protocolIndex = uriWithoutQuery.indexOf('://');
@@ -59,7 +113,8 @@ const connectDB = async (retryCount: number = 0): Promise<void> => {
       throw new Error('MONGODB_URI environment variable is not set');
     }
     
-    // Ensure the connection string uses admin_db as the database name
+    // Sanitize URI to remove X.509 parameters and ensure standard authentication
+    // Then ensure the connection string uses admin_db as the database name
     const uriWithAdminDb = ensureAdminDatabase(mongoUri);
     
     if (retryCount === 0) {
