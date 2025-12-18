@@ -13,12 +13,12 @@ const initialPreferences: SystemPreferences = {
   // General
   businessName: '',
   logoUrl: '',
-  defaultCurrency: 'ر.س',
+  defaultCurrency: '₪',
   dateFormat: 'DD/MM/YYYY',
   timeFormat: '12-hour',
   defaultLanguage: 'ar',
   // Invoice & Sales
-  vatPercentage: 15,
+  vatPercentage: 0,
   invoiceNumberFormat: 'INV-{N}',
   invoiceFooterText: 'شكراً لتعاملكم معنا!',
   autoPrintInvoice: true,

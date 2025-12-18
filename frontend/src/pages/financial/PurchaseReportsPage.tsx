@@ -3,6 +3,7 @@ import { PurchaseOrder, Supplier, SupplierPayment } from '@/features/financial/t
 import { AR_LABELS, SearchIcon } from '@/shared/constants';
 import { MetricCard } from '@/shared/components/ui/MetricCard';
 import CustomDropdown from '@/shared/components/ui/CustomDropdown/CustomDropdown';
+import { useCurrency } from '@/shared/contexts/CurrencyContext';
 
 interface PurchaseReportsPageProps {
   purchases?: PurchaseOrder[];
@@ -15,6 +16,7 @@ const PurchaseReportsPage: React.FC<PurchaseReportsPageProps> = ({
   payments = [],
   suppliers = []
 }) => {
+  const { formatCurrency } = useCurrency();
   const [dateRange, setDateRange] = useState({
     startDate: new Date(new Date().setMonth(new Date().getMonth() - 1)).toISOString().split('T')[0],
     endDate: new Date().toISOString().split('T')[0],
@@ -145,7 +147,7 @@ const PurchaseReportsPage: React.FC<PurchaseReportsPageProps> = ({
         <MetricCard
           id={2}
           title="إجمالي المبلغ"
-          value={`${analytics.totalAmount.toFixed(2)} ر.س`}
+          value={formatCurrency(analytics.totalAmount)}
           icon={<div className="w-6 h-6 bg-green-500 rounded"></div>}
           bgColor="bg-green-100"
           valueColor="text-green-600"
@@ -188,10 +190,10 @@ const PurchaseReportsPage: React.FC<PurchaseReportsPageProps> = ({
                   <tr key={supplier.supplierId}>
                     <td className="px-4 py-3 text-sm text-gray-900 dark:text-gray-100">{supplier.supplierName}</td>
                     <td className="px-4 py-3 text-sm text-gray-500 dark:text-gray-400 text-center">{supplier.transactionCount}</td>
-                    <td className="px-4 py-3 text-sm text-gray-700 dark:text-gray-300 text-left">{supplier.totalPurchases.toFixed(2)}</td>
-                    <td className="px-4 py-3 text-sm text-green-600 dark:text-green-400 text-left">{supplier.totalPaid.toFixed(2)}</td>
+                    <td className="px-4 py-3 text-sm text-gray-700 dark:text-gray-300 text-left">{formatCurrency(supplier.totalPurchases)}</td>
+                    <td className="px-4 py-3 text-sm text-green-600 dark:text-green-400 text-left">{formatCurrency(supplier.totalPaid)}</td>
                     <td className={`px-4 py-3 text-sm font-semibold text-left ${supplier.balance > 0 ? 'text-red-600 dark:text-red-400' : 'text-gray-600 dark:text-gray-400'}`}>
-                      {supplier.balance.toFixed(2)}
+                      {formatCurrency(supplier.balance)}
                     </td>
                   </tr>
                 ))}
@@ -218,7 +220,7 @@ const PurchaseReportsPage: React.FC<PurchaseReportsPageProps> = ({
                   <tr key={supplier.supplierId}>
                     <td className="px-4 py-3 text-sm text-gray-900 dark:text-gray-100">{supplier.supplierName}</td>
                     <td className="px-4 py-3 text-sm font-semibold text-red-600 dark:text-red-400 text-left">
-                      {supplier.balance.toFixed(2)} ر.س
+                      {formatCurrency(supplier.balance)}
                     </td>
                   </tr>
                 ))}

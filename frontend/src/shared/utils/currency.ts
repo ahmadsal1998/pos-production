@@ -31,7 +31,7 @@ export const CURRENCIES: Record<string, CurrencyConfig> = {
 /**
  * Default currency configuration
  */
-export const DEFAULT_CURRENCY: CurrencyConfig = CURRENCIES.SAR;
+export const DEFAULT_CURRENCY: CurrencyConfig = CURRENCIES.ILS;
 
 /**
  * Parse currency from settings value
@@ -68,7 +68,7 @@ export const parseCurrencyFromSettings = (value: string | null | undefined): Cur
 
   // Default fallback - assume it's a custom currency
   return {
-    code: upperValue || 'SAR',
+    code: upperValue || 'ILS',
     symbol: value,
     name: value,
   };
@@ -99,7 +99,7 @@ const convertArabicToEnglishNumerals = (str: string): string => {
 /**
  * Format a number as currency
  * @param value - The numeric value to format
- * @param currency - Currency configuration (defaults to SAR)
+ * @param currency - Currency configuration (defaults to ILS)
  * @param options - Additional formatting options
  */
 export const formatCurrency = (

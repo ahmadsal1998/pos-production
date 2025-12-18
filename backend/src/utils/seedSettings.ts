@@ -27,7 +27,7 @@ const seedSettings = async () => {
       },
       {
         key: 'currency',
-        value: 'SAR|ر.س|Saudi Riyal',
+        value: 'ILS|₪|Israeli Shekel',
         description: 'Default currency for the system (format: CODE|SYMBOL|NAME)',
       },
     ];
@@ -46,7 +46,7 @@ const seedSettings = async () => {
     }
 
     console.log('📞 Default contact number: 0593202029');
-    console.log('💰 Default currency: SAR (ر.س)');
+    console.log('💰 Default currency: ILS (₪)');
 
     await mongoose.disconnect();
     console.log('✅ Settings seeding completed');
