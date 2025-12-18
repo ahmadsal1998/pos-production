@@ -5,6 +5,7 @@ import { Product } from '../../shared/types';
 import { MetricCard } from '../../shared/components/ui/MetricCard';
 import { productsApi, ApiError } from '@/lib/api/client';
 import { getCachedProducts, setCachedProducts, invalidateProductsCache, getStoreIdFromToken } from '@/lib/cache/productsCache';
+import { useResponsiveViewMode } from '../../shared/hooks';
 
 // Enhanced Product interface with image and status
 interface EnhancedProduct extends Product {
@@ -27,7 +28,7 @@ const ProductsPage: React.FC<ProductsPageProps> = ({ onAddProduct, onProductClic
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [selectedStatus, setSelectedStatus] = useState('all');
-  const [viewMode, setViewMode] = useState<'grid' | 'table'>('grid');
+  const { viewMode, setViewMode } = useResponsiveViewMode('products', 'table', 'grid');
   const [sortBy, setSortBy] = useState<'name' | 'price' | 'stock' | 'createdAt'>('name');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
 

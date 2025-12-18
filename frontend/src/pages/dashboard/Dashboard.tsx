@@ -206,9 +206,9 @@ const DashboardPage: React.FC = () => {
                   style={{ animationDelay: `${index * 100}ms` }}
                 >
                   <div className="absolute -inset-0.5 rounded-2xl bg-gradient-to-r from-slate-200 to-slate-300 opacity-0 blur transition-all duration-500 group-hover:opacity-100 dark:from-slate-700 dark:to-slate-600" />
-                  <div className="relative overflow-hidden rounded-2xl bg-white/95 p-6 shadow-lg backdrop-blur-xl transition-all duration-500 hover:shadow-xl dark:bg-slate-900/95 border border-slate-200/50 dark:border-slate-700/50">
-                    <div className="flex items-start justify-between">
-                      <div className="flex-1 space-y-3">
+                  <div className="relative overflow-hidden rounded-2xl bg-white/95 p-6 shadow-lg backdrop-blur-xl transition-all duration-500 hover:shadow-xl dark:bg-slate-900/95 border border-slate-200/50 dark:border-slate-700/50 min-h-[160px] flex flex-col">
+                    <div className="flex items-start justify-between flex-1">
+                      <div className="flex-1 space-y-3 min-w-0">
                         <p className="text-sm font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
                           {metric.title}
                         </p>
@@ -251,26 +251,30 @@ const DashboardPage: React.FC = () => {
                             )}
                           </p>
                         )}
-                        {productMetrics && metric.id === 'profit-margin' && (
-                          <div className="flex items-center space-x-2 space-x-reverse">
-                            <div className="h-1 w-6 rounded-full bg-gradient-to-r from-blue-400 to-blue-500" />
-                            <span className="text-xs font-medium text-blue-600 dark:text-blue-400">
-                              متوسط: {productMetrics.averageProfitMargin.toFixed(2)}%
-                            </span>
-                          </div>
-                        )}
-                        {productMetrics && metric.id === 'low-stock' && productMetrics.lowStockCount > 0 && (
-                          <div className="flex items-center space-x-2 space-x-reverse">
-                            <div className="h-1 w-6 rounded-full bg-gradient-to-r from-red-400 to-red-500" />
-                            <span className="text-xs font-medium text-red-600 dark:text-red-400">
-                              يحتاج إعادة تموين
-                            </span>
-                          </div>
-                        )}
+                        <div className="min-h-[20px]">
+                          {productMetrics && metric.id === 'profit-margin' && (
+                            <div className="flex items-center space-x-2 space-x-reverse">
+                              <div className="h-1 w-6 rounded-full bg-gradient-to-r from-blue-400 to-blue-500" />
+                              <span className="text-xs font-medium text-blue-600 dark:text-blue-400">
+                                متوسط: {productMetrics.averageProfitMargin.toFixed(2)}%
+                              </span>
+                            </div>
+                          )}
+                          {productMetrics && metric.id === 'low-stock' && productMetrics.lowStockCount > 0 && (
+                            <div className="flex items-center space-x-2 space-x-reverse">
+                              <div className="h-1 w-6 rounded-full bg-gradient-to-r from-red-400 to-red-500" />
+                              <span className="text-xs font-medium text-red-600 dark:text-red-400">
+                                يحتاج إعادة تموين
+                              </span>
+                            </div>
+                          )}
+                        </div>
                       </div>
-                      <div className={`relative rounded-xl p-3 ${metric.bgColor} transition-all duration-500 group-hover:scale-110 group-hover:rotate-3`}>
+                      <div className={`relative rounded-xl p-3 ${metric.bgColor} transition-all duration-500 group-hover:scale-110 group-hover:rotate-3 flex-shrink-0`}>
                         <div className="absolute inset-0 rounded-xl bg-white/20 opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
-                        {metric.icon}
+                        <div className="w-6 h-6">
+                          {metric.icon}
+                        </div>
                       </div>
                     </div>
                     

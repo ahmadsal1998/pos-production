@@ -16,6 +16,7 @@ import QuickReports from '@/features/financial/components/QuickReports';
 import SuppliersPage from './SuppliersPage';
 import SupplierPaymentsPage from './SupplierPaymentsPage';
 import PurchaseReportsPage from './PurchaseReportsPage';
+import { useResponsiveViewMode } from '@/shared/hooks';
 
 type LayoutType = 'table' | 'grid';
 type TabType = 'purchases' | 'suppliers' | 'payments' | 'reports';
@@ -297,28 +298,30 @@ const PurchasesPage: React.FC = () => {
                     <div />
                     
                     {/* Modern Navigation Tabs */}
-                    <div className="flex gap-2 sm:gap-3 flex-wrap w-full sm:w-auto">
-                        {[
-                            { id: 'purchases', label: 'المشتريات' },
-                            { id: 'suppliers', label: 'الموردين' },
-                            { id: 'payments', label: 'المدفوعات' },
-                            { id: 'reports', label: 'التقارير' },
-                        ].map((tab) => (
-                            <button
-                                key={tab.id}
-                                onClick={() => setActiveTab(tab.id as TabType)}
-                                className={`group relative flex-1 sm:flex-none px-4 sm:px-6 py-2 sm:py-3 rounded-xl text-xs sm:text-sm font-medium transition-all duration-300 ${
-                                    activeTab === tab.id
-                                        ? 'bg-gradient-to-r from-orange-500 to-amber-500 text-white shadow-lg shadow-orange-500/50'
-                                        : 'bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl text-slate-700 dark:text-slate-200 border border-slate-200/50 dark:border-slate-700/50 hover:shadow-md'
-                                }`}
-                            >
-                                {activeTab === tab.id && (
-                                    <div className="absolute -inset-0.5 rounded-xl bg-gradient-to-r from-orange-500 to-amber-500 opacity-20 blur" />
-                                )}
-                                <span className="relative">{tab.label}</span>
-                            </button>
-                        ))}
+                    <div className="w-full overflow-x-auto scroll-smooth horizontal-nav-scroll">
+                        <div className="flex gap-2 sm:gap-3 min-w-max pb-2">
+                            {[
+                                { id: 'purchases', label: 'المشتريات' },
+                                { id: 'suppliers', label: 'الموردين' },
+                                { id: 'payments', label: 'المدفوعات' },
+                                { id: 'reports', label: 'التقارير' },
+                            ].map((tab) => (
+                                <button
+                                    key={tab.id}
+                                    onClick={() => setActiveTab(tab.id as TabType)}
+                                    className={`group relative px-4 sm:px-6 py-2 sm:py-3 rounded-xl text-xs sm:text-sm font-medium transition-all duration-300 whitespace-nowrap ${
+                                        activeTab === tab.id
+                                            ? 'bg-gradient-to-r from-orange-500 to-amber-500 text-white shadow-lg shadow-orange-500/50'
+                                            : 'bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl text-slate-700 dark:text-slate-200 border border-slate-200/50 dark:border-slate-700/50 hover:shadow-md'
+                                    }`}
+                                >
+                                    {activeTab === tab.id && (
+                                        <div className="absolute -inset-0.5 rounded-xl bg-gradient-to-r from-orange-500 to-amber-500 opacity-20 blur" />
+                                    )}
+                                    <span className="relative">{tab.label}</span>
+                                </button>
+                            ))}
+                        </div>
                     </div>
                 </div>
 
@@ -459,7 +462,7 @@ const PurchaseOrdersView: React.FC<{
     onEdit: (p: PurchaseOrder) => void;
 }> = ({ purchases, onAdd, onEdit }) => {
     const [searchTerm, setSearchTerm] = useState('');
-    const [layout, setLayout] = useState<LayoutType>('table');
+    const { viewMode: layout, setViewMode: setLayout } = useResponsiveViewMode('purchases', 'table', 'grid');
 
     const filteredPurchases = useMemo(() => {
         return purchases.filter(p => {

@@ -66,3 +66,91 @@ export const useDebounce = <T>(value: T, delay: number): T => {
 
   return debouncedValue;
 };
+
+// Responsive view mode hook
+// Automatically switches between grid (small screens) and table (large screens)
+// Allows manual override which persists across screen size changes
+export const useResponsiveViewMode = (
+  storageKey?: string,
+  defaultLargeScreenView: 'grid' | 'table' = 'table',
+  defaultSmallScreenView: 'grid' | 'table' = 'grid'
+) => {
+  // Check if screen is large (>= 768px, Tailwind's md breakpoint)
+  const [isLargeScreen, setIsLargeScreen] = useState(() => {
+    if (typeof window === 'undefined') return true;
+    return window.matchMedia('(min-width: 768px)').matches;
+  });
+
+  // Track manual override
+  const [manualOverride, setManualOverride] = useState<'grid' | 'table' | null>(() => {
+    if (storageKey && typeof window !== 'undefined') {
+      try {
+        const saved = localStorage.getItem(`viewMode_${storageKey}`);
+        if (saved === 'grid' || saved === 'table') {
+          return saved;
+        }
+      } catch (error) {
+        console.error('Error reading view mode from localStorage:', error);
+      }
+    }
+    return null;
+  });
+
+  // Update screen size on resize
+  useEffect(() => {
+    const mediaQuery = window.matchMedia('(min-width: 768px)');
+    
+    const handleChange = (e: MediaQueryListEvent | MediaQueryList) => {
+      setIsLargeScreen(e.matches);
+    };
+
+    // Modern browsers
+    if (mediaQuery.addEventListener) {
+      mediaQuery.addEventListener('change', handleChange);
+      return () => mediaQuery.removeEventListener('change', handleChange);
+    } else {
+      // Fallback for older browsers
+      mediaQuery.addListener(handleChange);
+      return () => mediaQuery.removeListener(handleChange);
+    }
+  }, []);
+
+  // Calculate current view mode
+  const currentViewMode: 'grid' | 'table' = manualOverride !== null
+    ? manualOverride
+    : isLargeScreen
+    ? defaultLargeScreenView
+    : defaultSmallScreenView;
+
+  // Setter function that allows manual override
+  const setViewMode = (mode: 'grid' | 'table' | null) => {
+    if (mode === null) {
+      // Clear manual override, return to responsive behavior
+      setManualOverride(null);
+      if (storageKey) {
+        try {
+          localStorage.removeItem(`viewMode_${storageKey}`);
+        } catch (error) {
+          console.error('Error removing view mode from localStorage:', error);
+        }
+      }
+    } else {
+      // Set manual override
+      setManualOverride(mode);
+      if (storageKey) {
+        try {
+          localStorage.setItem(`viewMode_${storageKey}`, mode);
+        } catch (error) {
+          console.error('Error saving view mode to localStorage:', error);
+        }
+      }
+    }
+  };
+
+  return {
+    viewMode: currentViewMode,
+    setViewMode,
+    isLargeScreen,
+    isManualOverride: manualOverride !== null,
+  };
+};

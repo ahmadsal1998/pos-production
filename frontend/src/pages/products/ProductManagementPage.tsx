@@ -36,7 +36,7 @@ interface ProductManagementPageProps {}
 const TabButton: React.FC<{ label: string, isActive: boolean, onClick: () => void }> = ({ label, isActive, onClick }) => (
     <button 
       onClick={onClick} 
-      className={`px-6 py-2.5 text-sm font-semibold rounded-lg transition-all duration-200 ${
+      className={`px-6 py-2.5 text-sm font-semibold rounded-lg transition-all duration-200 whitespace-nowrap ${
         isActive 
           ? 'bg-orange-500 text-white shadow-md' 
           : 'text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700'
@@ -78,11 +78,13 @@ const ProductManagementPage: React.FC<ProductManagementPageProps> = () => {
 
             {/* Tabs */}
             <div className="bg-white dark:bg-gray-800 p-2 rounded-xl shadow-sm dark:shadow-gray-900/20 border border-gray-200 dark:border-gray-700">
-                <nav className="flex gap-2">
-                    <TabButton label={AR_LABELS.productListing} isActive={activeTab === 'products'} onClick={() => setActiveTab('products')} />
-                    <TabButton label={AR_LABELS.categoryManagement} isActive={activeTab === 'categories'} onClick={() => setActiveTab('categories')} />
-                    <TabButton label={AR_LABELS.brandManagement} isActive={activeTab === 'brands'} onClick={() => setActiveTab('brands')} />
-                    <TabButton label="إضافة منتج متعدد الوحدات" isActive={activeTab === 'add-product'} onClick={() => setActiveTab('add-product')} />
+                <nav className="w-full overflow-x-auto scroll-smooth horizontal-nav-scroll">
+                    <div className="flex gap-2 min-w-max pb-2">
+                        <TabButton label={AR_LABELS.productListing} isActive={activeTab === 'products'} onClick={() => setActiveTab('products')} />
+                        <TabButton label={AR_LABELS.categoryManagement} isActive={activeTab === 'categories'} onClick={() => setActiveTab('categories')} />
+                        <TabButton label={AR_LABELS.brandManagement} isActive={activeTab === 'brands'} onClick={() => setActiveTab('brands')} />
+                        <TabButton label="إضافة منتج متعدد الوحدات" isActive={activeTab === 'add-product'} onClick={() => setActiveTab('add-product')} />
+                    </div>
                 </nav>
             </div>
             

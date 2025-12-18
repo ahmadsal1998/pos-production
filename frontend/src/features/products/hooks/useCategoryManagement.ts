@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } f
 import { AR_LABELS } from '@/shared/constants';
 import { Category } from '@/shared/types';
 import { ApiError, categoriesApi } from '@/lib/api/client';
+import { useResponsiveViewMode } from '@/shared/hooks';
 
 export type CategoryStatus = 'Active' | 'Inactive';
 export type ModalType = 'add' | 'edit';
@@ -59,7 +60,7 @@ const mapBackendCategory = (category: BackendCategory): Category => ({
 const useCategoryManagement = () => {
   const [categories, setCategories] = useState<Category[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
-  const [layout, setLayout] = useState<LayoutType>('table');
+  const { viewMode: layout, setViewMode: setLayout } = useResponsiveViewMode('categories', 'table', 'grid');
   const [modal, setModal] = useState<ModalState>(DEFAULT_MODAL_STATE);
 
   const searchInputRef = useRef<HTMLInputElement | null>(null);

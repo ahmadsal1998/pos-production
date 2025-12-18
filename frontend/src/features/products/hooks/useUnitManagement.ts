@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } f
 import { AR_LABELS } from '@/shared/constants';
 import { Unit } from '@/shared/types';
 import { ApiError, unitsApi } from '@/lib/api/client';
+import { useResponsiveViewMode } from '@/shared/hooks';
 
 export type ModalType = 'add' | 'edit';
 export type LayoutType = 'table' | 'grid';
@@ -51,7 +52,7 @@ const mapBackendUnit = (unit: BackendUnit): Unit => ({
 const useUnitManagement = () => {
   const [units, setUnits] = useState<Unit[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
-  const [layout, setLayout] = useState<LayoutType>('table');
+  const { viewMode: layout, setViewMode: setLayout } = useResponsiveViewMode('units', 'table', 'grid');
   const [modal, setModal] = useState<ModalState>(DEFAULT_MODAL_STATE);
 
   const searchInputRef = useRef<HTMLInputElement | null>(null);

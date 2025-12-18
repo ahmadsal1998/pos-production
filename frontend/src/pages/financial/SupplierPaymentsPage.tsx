@@ -3,6 +3,7 @@ import { SupplierPayment, Supplier } from '@/features/financial/types';
 import { AR_LABELS, UUID, SearchIcon, PlusIcon, EditIcon, DeleteIcon } from '@/shared/constants';
 import { GridViewIcon, TableViewIcon } from '@/shared/constants';
 import { formatDate } from '@/shared/utils';
+import { useResponsiveViewMode } from '@/shared/hooks';
 
 type LayoutType = 'table' | 'grid';
 
@@ -27,7 +28,7 @@ const SupplierPaymentsPage: React.FC<SupplierPaymentsPageProps> = ({
 }) => {
   const [payments, setPayments] = useState<SupplierPayment[]>(initialPayments);
   const [searchTerm, setSearchTerm] = useState('');
-  const [layout, setLayout] = useState<LayoutType>('table');
+  const { viewMode: layout, setViewMode: setLayout } = useResponsiveViewMode('supplierPayments', 'table', 'grid');
   const [modal, setModal] = useState<{ isOpen: boolean; payment: SupplierPayment | null }>({ isOpen: false, payment: null });
 
   // Sync with parent payments

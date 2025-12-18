@@ -12,6 +12,7 @@ import ProductImportPage from './ProductImportPage';
 import { productsApi, ProductMetrics } from '@/lib/api/client';
 import { useCurrency } from '@/shared/contexts/CurrencyContext';
 import { productsDB } from '@/lib/db/productsDB';
+import { AnimatedNumber } from '@/shared/components/ui/AnimatedNumber';
 import {
   DollarIcon,
   PackageIcon,
@@ -157,85 +158,87 @@ const ProductDashboard: React.FC<ProductDashboardProps> = ({ setActivePath }) =>
             </div>
             
             {/* Navigation Tabs */}
-            <div className="flex gap-3 flex-wrap">
-              <button
-                onClick={() => setActiveView('products')}
-                className={`group relative px-6 py-3 rounded-xl text-sm font-medium transition-all duration-300 ${
-                  activeView === 'products'
-                    ? 'bg-gradient-to-r from-orange-500 to-amber-500 text-white shadow-lg shadow-orange-500/50'
-                    : 'bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl text-slate-700 dark:text-slate-200 border border-slate-200/50 dark:border-slate-700/50 hover:shadow-md'
-                }`}
-              >
-                {activeView === 'products' && (
-                  <div className="absolute -inset-0.5 rounded-xl bg-gradient-to-r from-orange-500 to-amber-500 opacity-20 blur" />
-                )}
-                <span className="relative">قائمة المنتجات</span>
-              </button>
-              <button
-                onClick={() => setActiveView('import')}
-                className={`group relative px-6 py-3 rounded-xl text-sm font-medium transition-all duration-300 ${
-                  activeView === 'import'
-                    ? 'bg-gradient-to-r from-orange-500 to-amber-500 text-white shadow-lg shadow-orange-500/50'
-                    : 'bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl text-slate-700 dark:text-slate-200 border border-slate-200/50 dark:border-slate-700/50 hover:shadow-md'
-                }`}
-              >
-                {activeView === 'import' && (
-                  <div className="absolute -inset-0.5 rounded-xl bg-gradient-to-r from-orange-500 to-amber-500 opacity-20 blur" />
-                )}
-                <span className="relative">استيراد المنتجات</span>
-              </button>
-              <button
-                onClick={() => setActiveView('categories')}
-                className={`group relative px-6 py-3 rounded-xl text-sm font-medium transition-all duration-300 ${
-                  activeView === 'categories'
-                    ? 'bg-gradient-to-r from-orange-500 to-amber-500 text-white shadow-lg shadow-orange-500/50'
-                    : 'bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl text-slate-700 dark:text-slate-200 border border-slate-200/50 dark:border-slate-700/50 hover:shadow-md'
-                }`}
-              >
-                {activeView === 'categories' && (
-                  <div className="absolute -inset-0.5 rounded-xl bg-gradient-to-r from-orange-500 to-amber-500 opacity-20 blur" />
-                )}
-                <span className="relative">إدارة الفئات</span>
-              </button>
-              <button
-                onClick={() => setActiveView('brands')}
-                className={`group relative px-6 py-3 rounded-xl text-sm font-medium transition-all duration-300 ${
-                  activeView === 'brands'
-                    ? 'bg-gradient-to-r from-orange-500 to-amber-500 text-white shadow-lg shadow-orange-500/50'
-                    : 'bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl text-slate-700 dark:text-slate-200 border border-slate-200/50 dark:border-slate-700/50 hover:shadow-md'
-                }`}
-              >
-                {activeView === 'brands' && (
-                  <div className="absolute -inset-0.5 rounded-xl bg-gradient-to-r from-orange-500 to-amber-500 opacity-20 blur" />
-                )}
-                <span className="relative">إدارة العلامات التجارية</span>
-              </button>
-              <button
-                onClick={() => setActiveView('warehouses')}
-                className={`group relative px-6 py-3 rounded-xl text-sm font-medium transition-all duration-300 ${
-                  activeView === 'warehouses'
-                    ? 'bg-gradient-to-r from-orange-500 to-amber-500 text-white shadow-lg shadow-orange-500/50'
-                    : 'bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl text-slate-700 dark:text-slate-200 border border-slate-200/50 dark:border-slate-700/50 hover:shadow-md'
-                }`}
-              >
-                {activeView === 'warehouses' && (
-                  <div className="absolute -inset-0.5 rounded-xl bg-gradient-to-r from-orange-500 to-amber-500 opacity-20 blur" />
-                )}
-                <span className="relative">إدارة المستودعات</span>
-              </button>
-              <button
-                onClick={() => setActiveView('units')}
-                className={`group relative px-6 py-3 rounded-xl text-sm font-medium transition-all duration-300 ${
-                  activeView === 'units'
-                    ? 'bg-gradient-to-r from-orange-500 to-amber-500 text-white shadow-lg shadow-orange-500/50'
-                    : 'bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl text-slate-700 dark:text-slate-200 border border-slate-200/50 dark:border-slate-700/50 hover:shadow-md'
-                }`}
-              >
-                {activeView === 'units' && (
-                  <div className="absolute -inset-0.5 rounded-xl bg-gradient-to-r from-orange-500 to-amber-500 opacity-20 blur" />
-                )}
-                <span className="relative">إدارة الوحدات</span>
-              </button>
+            <div className="w-full overflow-x-auto scroll-smooth horizontal-nav-scroll">
+              <div className="flex gap-3 min-w-max pb-2">
+                <button
+                  onClick={() => setActiveView('products')}
+                  className={`group relative px-6 py-3 rounded-xl text-sm font-medium transition-all duration-300 whitespace-nowrap ${
+                    activeView === 'products'
+                      ? 'bg-gradient-to-r from-orange-500 to-amber-500 text-white shadow-lg shadow-orange-500/50'
+                      : 'bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl text-slate-700 dark:text-slate-200 border border-slate-200/50 dark:border-slate-700/50 hover:shadow-md'
+                  }`}
+                >
+                  {activeView === 'products' && (
+                    <div className="absolute -inset-0.5 rounded-xl bg-gradient-to-r from-orange-500 to-amber-500 opacity-20 blur" />
+                  )}
+                  <span className="relative">قائمة المنتجات</span>
+                </button>
+                <button
+                  onClick={() => setActiveView('import')}
+                  className={`group relative px-6 py-3 rounded-xl text-sm font-medium transition-all duration-300 whitespace-nowrap ${
+                    activeView === 'import'
+                      ? 'bg-gradient-to-r from-orange-500 to-amber-500 text-white shadow-lg shadow-orange-500/50'
+                      : 'bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl text-slate-700 dark:text-slate-200 border border-slate-200/50 dark:border-slate-700/50 hover:shadow-md'
+                  }`}
+                >
+                  {activeView === 'import' && (
+                    <div className="absolute -inset-0.5 rounded-xl bg-gradient-to-r from-orange-500 to-amber-500 opacity-20 blur" />
+                  )}
+                  <span className="relative">استيراد المنتجات</span>
+                </button>
+                <button
+                  onClick={() => setActiveView('categories')}
+                  className={`group relative px-6 py-3 rounded-xl text-sm font-medium transition-all duration-300 whitespace-nowrap ${
+                    activeView === 'categories'
+                      ? 'bg-gradient-to-r from-orange-500 to-amber-500 text-white shadow-lg shadow-orange-500/50'
+                      : 'bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl text-slate-700 dark:text-slate-200 border border-slate-200/50 dark:border-slate-700/50 hover:shadow-md'
+                  }`}
+                >
+                  {activeView === 'categories' && (
+                    <div className="absolute -inset-0.5 rounded-xl bg-gradient-to-r from-orange-500 to-amber-500 opacity-20 blur" />
+                  )}
+                  <span className="relative">إدارة الفئات</span>
+                </button>
+                <button
+                  onClick={() => setActiveView('brands')}
+                  className={`group relative px-6 py-3 rounded-xl text-sm font-medium transition-all duration-300 whitespace-nowrap ${
+                    activeView === 'brands'
+                      ? 'bg-gradient-to-r from-orange-500 to-amber-500 text-white shadow-lg shadow-orange-500/50'
+                      : 'bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl text-slate-700 dark:text-slate-200 border border-slate-200/50 dark:border-slate-700/50 hover:shadow-md'
+                  }`}
+                >
+                  {activeView === 'brands' && (
+                    <div className="absolute -inset-0.5 rounded-xl bg-gradient-to-r from-orange-500 to-amber-500 opacity-20 blur" />
+                  )}
+                  <span className="relative">إدارة العلامات التجارية</span>
+                </button>
+                <button
+                  onClick={() => setActiveView('warehouses')}
+                  className={`group relative px-6 py-3 rounded-xl text-sm font-medium transition-all duration-300 whitespace-nowrap ${
+                    activeView === 'warehouses'
+                      ? 'bg-gradient-to-r from-orange-500 to-amber-500 text-white shadow-lg shadow-orange-500/50'
+                      : 'bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl text-slate-700 dark:text-slate-200 border border-slate-200/50 dark:border-slate-700/50 hover:shadow-md'
+                  }`}
+                >
+                  {activeView === 'warehouses' && (
+                    <div className="absolute -inset-0.5 rounded-xl bg-gradient-to-r from-orange-500 to-amber-500 opacity-20 blur" />
+                  )}
+                  <span className="relative">إدارة المستودعات</span>
+                </button>
+                <button
+                  onClick={() => setActiveView('units')}
+                  className={`group relative px-6 py-3 rounded-xl text-sm font-medium transition-all duration-300 whitespace-nowrap ${
+                    activeView === 'units'
+                      ? 'bg-gradient-to-r from-orange-500 to-amber-500 text-white shadow-lg shadow-orange-500/50'
+                      : 'bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl text-slate-700 dark:text-slate-200 border border-slate-200/50 dark:border-slate-700/50 hover:shadow-md'
+                  }`}
+                >
+                  {activeView === 'units' && (
+                    <div className="absolute -inset-0.5 rounded-xl bg-gradient-to-r from-orange-500 to-amber-500 opacity-20 blur" />
+                  )}
+                  <span className="relative">إدارة الوحدات</span>
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -258,7 +261,7 @@ const ProductDashboard: React.FC<ProductDashboardProps> = ({ setActivePath }) =>
             ) : productMetrics ? (
               <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
                 <div className="group relative">
-                  <div className="absolute -inset-0.5 rounded-2xl bg-gradient-to-r from-emerald-500/20 to-teal-500/20 opacity-0 blur transition-all duration-500 group-hover:opacity-100" />
+                  <div className="absolute -inset-0.5 rounded-2xl bg-gradient-to-r from-slate-200 to-slate-300 opacity-0 blur transition-all duration-500 group-hover:opacity-100 dark:from-slate-700 dark:to-slate-600" />
                   <div className="relative overflow-hidden rounded-2xl bg-white/95 p-6 shadow-lg backdrop-blur-xl transition-all duration-500 hover:shadow-xl dark:bg-slate-900/95 border border-slate-200/50 dark:border-slate-700/50">
                     <div className="flex items-start justify-between">
                       <div className="flex-1 space-y-3">
@@ -266,82 +269,142 @@ const ProductDashboard: React.FC<ProductDashboardProps> = ({ setActivePath }) =>
                           إجمالي قيمة المنتجات
                         </p>
                         <p className="text-2xl font-bold text-emerald-600 dark:text-emerald-400 transition-all duration-300 group-hover:scale-105">
-                          {formatCurrency(productMetrics.totalValue)}
+                          <AnimatedNumber
+                            value={productMetrics.totalValue}
+                            formatFn={formatCurrency}
+                            valueType="currency"
+                            duration={1500}
+                          />
                         </p>
-                        <p className="text-xs text-slate-500 dark:text-slate-400">
-                          {productMetrics.productsWithStock} منتج بمخزون
-                        </p>
+                        <div className="min-h-[20px]">
+                          <p className="text-xs text-slate-500 dark:text-slate-400">
+                            {productMetrics.productsWithStock} منتج بمخزون
+                          </p>
+                        </div>
                       </div>
-                      <div className="relative rounded-xl p-3 bg-emerald-100 dark:bg-emerald-900/30 transition-all duration-500 group-hover:scale-110 group-hover:rotate-3">
-                        <DollarIcon />
+                      <div className="relative rounded-xl p-3 bg-emerald-100 dark:bg-emerald-900/30 transition-all duration-500 group-hover:scale-110 group-hover:rotate-3 flex-shrink-0">
+                        <div className="absolute inset-0 rounded-xl bg-white/20 opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
+                        <div className="w-6 h-6">
+                          <DollarIcon />
+                        </div>
                       </div>
                     </div>
+                    
+                    {/* Subtle animated border */}
+                    <div className="absolute inset-0 rounded-2xl border border-transparent bg-gradient-to-r from-transparent via-white/10 to-transparent opacity-0 transition-opacity duration-500 group-hover:opacity-100" />
                   </div>
                 </div>
 
                 <div className="group relative">
-                  <div className="absolute -inset-0.5 rounded-2xl bg-gradient-to-r from-blue-500/20 to-indigo-500/20 opacity-0 blur transition-all duration-500 group-hover:opacity-100" />
-                  <div className="relative overflow-hidden rounded-2xl bg-white/95 p-6 shadow-lg backdrop-blur-xl transition-all duration-500 hover:shadow-xl dark:bg-slate-900/95 border border-slate-200/50 dark:border-slate-700/50">
-                    <div className="flex items-start justify-between">
-                      <div className="flex-1 space-y-3">
+                  <div className="absolute -inset-0.5 rounded-2xl bg-gradient-to-r from-slate-200 to-slate-300 opacity-0 blur transition-all duration-500 group-hover:opacity-100 dark:from-slate-700 dark:to-slate-600" />
+                  <div className="relative overflow-hidden rounded-2xl bg-white/95 p-6 shadow-lg backdrop-blur-xl transition-all duration-500 hover:shadow-xl dark:bg-slate-900/95 border border-slate-200/50 dark:border-slate-700/50 min-h-[160px] flex flex-col">
+                    <div className="flex items-start justify-between flex-1">
+                      <div className="flex-1 space-y-3 min-w-0">
                         <p className="text-sm font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
                           هامش الربح الحقيقي
                         </p>
                         <p className="text-2xl font-bold text-blue-600 dark:text-blue-400 transition-all duration-300 group-hover:scale-105">
-                          {productMetrics.overallProfitMargin.toFixed(2)}%
+                          <AnimatedNumber
+                            value={productMetrics.overallProfitMargin}
+                            valueType="percentage"
+                            decimals={2}
+                            duration={1500}
+                          />
                         </p>
-                        <p className="text-xs text-slate-500 dark:text-slate-400">
-                          متوسط: {productMetrics.averageProfitMargin.toFixed(2)}%
-                        </p>
+                        <div className="flex items-center space-x-2 space-x-reverse">
+                          <div className="h-1 w-6 rounded-full bg-gradient-to-r from-blue-400 to-blue-500" />
+                          <span className="text-xs font-medium text-blue-600 dark:text-blue-400">
+                            متوسط: {productMetrics.averageProfitMargin.toFixed(2)}%
+                          </span>
+                        </div>
                       </div>
-                      <div className="relative rounded-xl p-3 bg-blue-100 dark:bg-blue-900/30 transition-all duration-500 group-hover:scale-110 group-hover:rotate-3">
-                        <ChartLineIcon />
+                      <div className="relative rounded-xl p-3 bg-blue-100 dark:bg-blue-900/30 transition-all duration-500 group-hover:scale-110 group-hover:rotate-3 flex-shrink-0">
+                        <div className="absolute inset-0 rounded-xl bg-white/20 opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
+                        <div className="w-6 h-6">
+                          <ChartLineIcon />
+                        </div>
                       </div>
                     </div>
+                    
+                    {/* Subtle animated border */}
+                    <div className="absolute inset-0 rounded-2xl border border-transparent bg-gradient-to-r from-transparent via-white/10 to-transparent opacity-0 transition-opacity duration-500 group-hover:opacity-100" />
                   </div>
                 </div>
 
                 <div className="group relative">
-                  <div className="absolute -inset-0.5 rounded-2xl bg-gradient-to-r from-red-500/20 to-orange-500/20 opacity-0 blur transition-all duration-500 group-hover:opacity-100" />
-                  <div className="relative overflow-hidden rounded-2xl bg-white/95 p-6 shadow-lg backdrop-blur-xl transition-all duration-500 hover:shadow-xl dark:bg-slate-900/95 border border-slate-200/50 dark:border-slate-700/50">
-                    <div className="flex items-start justify-between">
-                      <div className="flex-1 space-y-3">
+                  <div className="absolute -inset-0.5 rounded-2xl bg-gradient-to-r from-slate-200 to-slate-300 opacity-0 blur transition-all duration-500 group-hover:opacity-100 dark:from-slate-700 dark:to-slate-600" />
+                  <div className="relative overflow-hidden rounded-2xl bg-white/95 p-6 shadow-lg backdrop-blur-xl transition-all duration-500 hover:shadow-xl dark:bg-slate-900/95 border border-slate-200/50 dark:border-slate-700/50 min-h-[160px] flex flex-col">
+                    <div className="flex items-start justify-between flex-1">
+                      <div className="flex-1 space-y-3 min-w-0">
                         <p className="text-sm font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
                           منتجات مخزون منخفض
                         </p>
                         <p className="text-2xl font-bold text-red-600 dark:text-red-400 transition-all duration-300 group-hover:scale-105">
-                          {productMetrics.lowStockCount}
+                          <AnimatedNumber
+                            value={productMetrics.lowStockCount}
+                            valueType="number"
+                            duration={1500}
+                          />
                         </p>
-                        <p className="text-xs text-slate-500 dark:text-slate-400">
-                          من {productMetrics.totalProducts} منتج
-                        </p>
+                        <div className="min-h-[20px]">
+                          {productMetrics.lowStockCount > 0 ? (
+                            <div className="flex items-center space-x-2 space-x-reverse">
+                              <div className="h-1 w-6 rounded-full bg-gradient-to-r from-red-400 to-red-500" />
+                              <span className="text-xs font-medium text-red-600 dark:text-red-400">
+                                يحتاج إعادة تموين
+                              </span>
+                            </div>
+                          ) : (
+                            <p className="text-xs text-slate-500 dark:text-slate-400">
+                              من {productMetrics.totalProducts} منتج
+                            </p>
+                          )}
+                        </div>
                       </div>
-                      <div className="relative rounded-xl p-3 bg-red-100 dark:bg-red-900/30 transition-all duration-500 group-hover:scale-110 group-hover:rotate-3">
-                        <PackageIcon />
+                      <div className="relative rounded-xl p-3 bg-red-100 dark:bg-red-900/30 transition-all duration-500 group-hover:scale-110 group-hover:rotate-3 flex-shrink-0">
+                        <div className="absolute inset-0 rounded-xl bg-white/20 opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
+                        <div className="w-6 h-6">
+                          <PackageIcon />
+                        </div>
                       </div>
                     </div>
+                    
+                    {/* Subtle animated border */}
+                    <div className="absolute inset-0 rounded-2xl border border-transparent bg-gradient-to-r from-transparent via-white/10 to-transparent opacity-0 transition-opacity duration-500 group-hover:opacity-100" />
                   </div>
                 </div>
 
                 <div className="group relative">
-                  <div className="absolute -inset-0.5 rounded-2xl bg-gradient-to-r from-purple-500/20 to-pink-500/20 opacity-0 blur transition-all duration-500 group-hover:opacity-100" />
-                  <div className="relative overflow-hidden rounded-2xl bg-white/95 p-6 shadow-lg backdrop-blur-xl transition-all duration-500 hover:shadow-xl dark:bg-slate-900/95 border border-slate-200/50 dark:border-slate-700/50">
-                    <div className="flex items-start justify-between">
-                      <div className="flex-1 space-y-3">
+                  <div className="absolute -inset-0.5 rounded-2xl bg-gradient-to-r from-slate-200 to-slate-300 opacity-0 blur transition-all duration-500 group-hover:opacity-100 dark:from-slate-700 dark:to-slate-600" />
+                  <div className="relative overflow-hidden rounded-2xl bg-white/95 p-6 shadow-lg backdrop-blur-xl transition-all duration-500 hover:shadow-xl dark:bg-slate-900/95 border border-slate-200/50 dark:border-slate-700/50 min-h-[160px] flex flex-col">
+                    <div className="flex items-start justify-between flex-1">
+                      <div className="flex-1 space-y-3 min-w-0">
                         <p className="text-sm font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
                           إجمالي المنتجات
                         </p>
                         <p className="text-2xl font-bold text-purple-600 dark:text-purple-400 transition-all duration-300 group-hover:scale-105">
-                          {productMetrics.totalProducts}
+                          <AnimatedNumber
+                            value={productMetrics.totalProducts}
+                            valueType="number"
+                            duration={1500}
+                          />
                         </p>
-                        <p className="text-xs text-slate-500 dark:text-slate-400">
-                          {productMetrics.productsWithStock} بمخزون
-                        </p>
+                        <div className="min-h-[20px]">
+                          <p className="text-xs text-slate-500 dark:text-slate-400">
+                            {productMetrics.productsWithStock} بمخزون
+                          </p>
+                        </div>
                       </div>
-                      <div className="relative rounded-xl p-3 bg-purple-100 dark:bg-purple-900/30 transition-all duration-500 group-hover:scale-110 group-hover:rotate-3">
-                        <ShoppingCartIcon />
+                      <div className="relative rounded-xl p-3 bg-purple-100 dark:bg-purple-900/30 transition-all duration-500 group-hover:scale-110 group-hover:rotate-3 flex-shrink-0">
+                        <div className="absolute inset-0 rounded-xl bg-white/20 opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
+                        <div className="w-6 h-6">
+                          <ShoppingCartIcon />
+                        </div>
                       </div>
                     </div>
+                    
+                    {/* Subtle animated border */}
+                    <div className="absolute inset-0 rounded-2xl border border-transparent bg-gradient-to-r from-transparent via-white/10 to-transparent opacity-0 transition-opacity duration-500 group-hover:opacity-100" />
                   </div>
                 </div>
               </div>

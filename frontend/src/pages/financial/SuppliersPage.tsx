@@ -3,6 +3,7 @@ import { Supplier, PurchaseOrder, SupplierPayment } from '@/features/financial/t
 import { AR_LABELS, UUID, SearchIcon, EditIcon, DeleteIcon, ViewIcon, PlusIcon } from '@/shared/constants';
 import { GridViewIcon, TableViewIcon } from '@/shared/constants';
 import { formatDate } from '@/shared/utils';
+import { useResponsiveViewMode } from '@/shared/hooks';
 
 type LayoutType = 'table' | 'grid';
 
@@ -47,7 +48,7 @@ const SuppliersPage: React.FC<SuppliersPageProps> = ({
   }, [initialSuppliers]);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'credit' | 'debit' | 'zero'>('all');
-  const [layout, setLayout] = useState<LayoutType>('table');
+  const { viewMode: layout, setViewMode: setLayout } = useResponsiveViewMode('suppliers', 'table', 'grid');
   const [modal, setModal] = useState<{ isOpen: boolean; type: 'add' | 'edit'; data: Supplier | null }>({ isOpen: false, type: 'add', data: null });
   const [detailsModal, setDetailsModal] = useState<{ isOpen: boolean; supplier: Supplier | null }>({ isOpen: false, supplier: null });
 

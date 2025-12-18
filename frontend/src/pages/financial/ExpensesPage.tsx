@@ -1,12 +1,13 @@
 import React, { useState, useMemo } from 'react';
 import { Expense, ExpenseCategory, ExpenseStatus, ExpensePaymentMethod } from '@/features/financial/types';
 import { 
-  AR_LABELS, UUID, SearchIcon, PlusIcon, EditIcon, DeleteIcon
+  AR_LABELS, UUID, SearchIcon, PlusIcon, EditIcon, DeleteIcon, GridViewIcon, TableViewIcon
 } from '@/shared/constants';
 import { MetricCard } from '@/shared/components/ui/MetricCard';
 import CustomDropdown from '@/shared/components/ui/CustomDropdown/CustomDropdown';
 import { useConfirmDialog } from '@/shared/contexts';
 import { formatDate } from '@/shared/utils';
+import { useResponsiveViewMode } from '@/shared/hooks';
 
 // --- MOCK DATA ---
 const MOCK_EXPENSES: Expense[] = [
@@ -224,6 +225,7 @@ const ExpensesPage: React.FC = () => {
     const [searchTerm, setSearchTerm] = useState('');
     const [filters, setFilters] = useState({ status: 'all', category: 'all' });
     const [modal, setModal] = useState<{ isOpen: boolean; data: Expense | null }>({ isOpen: false, data: null });
+    const { viewMode, setViewMode } = useResponsiveViewMode('expenses', 'table', 'grid');
 
     const handleSave = (expenseData: Expense) => {
         setExpenses(prev => {
@@ -372,68 +374,127 @@ const ExpensesPage: React.FC = () => {
                             placeholder="كل الفئات"
                             className="w-full lg:w-auto"
                         />
+                        {/* View Mode Toggle */}
+                        <div className="flex border border-gray-300 dark:border-gray-600 rounded-lg overflow-hidden w-full lg:w-auto flex-shrink-0">
+                            <button 
+                                onClick={() => setViewMode('table')} 
+                                className={`flex-1 lg:flex-none px-3 py-2 ${viewMode === 'table' ? 'bg-red-500 text-white' : 'bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300'}`}
+                                title="عرض الجدول"
+                            >
+                                <TableViewIcon />
+                            </button>
+                            <button 
+                                onClick={() => setViewMode('grid')} 
+                                className={`flex-1 lg:flex-none px-3 py-2 ${viewMode === 'grid' ? 'bg-red-500 text-white' : 'bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300'}`}
+                                title="عرض الشبكة"
+                            >
+                                <GridViewIcon/>
+                            </button>
+                        </div>
                     </div>
                 </div>
 
-                {/* Table */}
-                <div className="bg-white/95 dark:bg-gray-800/95 rounded-2xl shadow-sm overflow-hidden backdrop-blur-xl border border-slate-200/50 dark:border-slate-700/50">
-                    <div className="overflow-x-auto">
-                        <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700 text-right">
-                            <thead className="bg-gray-50 dark:bg-gray-700">
-                                <tr>
-                                    <th className="px-6 py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">{AR_LABELS.expenseNumber}</th>
-                                    <th className="px-6 py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">{AR_LABELS.expenseCategory}</th>
-                                    <th className="px-6 py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">{AR_LABELS.description}</th>
-                                    <th className="px-6 py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">{AR_LABELS.responsiblePerson}</th>
-                                    <th className="px-6 py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">{AR_LABELS.amount}</th>
-                                    <th className="px-6 py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">{AR_LABELS.date}</th>
-                                    <th className="px-6 py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">{AR_LABELS.status}</th>
-                                    <th className="px-6 py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider text-center">{AR_LABELS.actions}</th>
-                                </tr>
-                            </thead>
-                            <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
-                                {filteredExpenses.map(e => (
-                                    <tr key={e.id} className="hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors duration-150">
-                                        <td className="px-6 py-4 whitespace-nowrap text-sm font-mono text-gray-800 dark:text-gray-200">{e.expenseNumber}</td>
-                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700 dark:text-gray-300">{e.category}</td>
-                                        <td className="px-6 py-4 text-sm text-gray-700 dark:text-gray-300 max-w-xs truncate">{e.description}</td>
-                                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">{e.responsiblePerson}</td>
-                                        <td className="px-6 py-4 whitespace-nowrap text-sm font-semibold text-red-600">{e.amount.toLocaleString('ar-SA', {style: 'currency', currency: 'SAR'})}</td>
-                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700 dark:text-gray-300">{formatDate(e.date)}</td>
-                                        <td className="px-6 py-4 whitespace-nowrap text-sm">
-                                            <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${e.status === 'Paid' ? 'bg-green-100 text-green-800 dark:bg-green-900/50 dark:text-green-300' : 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/50 dark:text-yellow-300'}`}>
-                                                {e.status === 'Paid' ? AR_LABELS.paid : AR_LABELS.unpaid}
-                                            </span>
-                                        </td>
-                                        <td className="px-6 py-4 whitespace-nowrap text-center text-sm">
-                                            <div className="flex items-center justify-center gap-2">
-                                                <button 
-                                                    onClick={() => setModal({ isOpen: true, data: e })} 
-                                                    className="text-indigo-600 hover:text-indigo-900 dark:text-indigo-400 dark:hover:text-indigo-300 p-2 rounded-lg hover:bg-indigo-50 dark:hover:bg-gray-700 transition-colors"
-                                                    title={AR_LABELS.edit}
-                                                >
-                                                    <EditIcon/>
-                                                </button>
-                                                <button 
-                                                    onClick={() => handleDelete(e.id)} 
-                                                    className="text-red-600 hover:text-red-900 dark:text-red-400 dark:hover:text-red-300 p-2 rounded-lg hover:bg-red-50 dark:hover:bg-gray-700 transition-colors"
-                                                    title={AR_LABELS.delete}
-                                                >
-                                                    <DeleteIcon/>
-                                                </button>
-                                            </div>
-                                        </td>
-                                    </tr>
-                                ))}
-                                {filteredExpenses.length === 0 && (
+                {/* Table/Grid View */}
+                {viewMode === 'table' ? (
+                    <div className="bg-white/95 dark:bg-gray-800/95 rounded-2xl shadow-sm overflow-hidden backdrop-blur-xl border border-slate-200/50 dark:border-slate-700/50">
+                        <div className="overflow-x-auto">
+                            <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700 text-right">
+                                <thead className="bg-gray-50 dark:bg-gray-700">
                                     <tr>
-                                        <td colSpan={8} className="px-6 py-10 text-center text-gray-500 dark:text-gray-400">{AR_LABELS.noSalesFound || 'لم يتم العثور على مصروفات'}</td>
+                                        <th className="px-6 py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">{AR_LABELS.expenseNumber}</th>
+                                        <th className="px-6 py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">{AR_LABELS.expenseCategory}</th>
+                                        <th className="px-6 py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">{AR_LABELS.description}</th>
+                                        <th className="px-6 py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">{AR_LABELS.responsiblePerson}</th>
+                                        <th className="px-6 py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">{AR_LABELS.amount}</th>
+                                        <th className="px-6 py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">{AR_LABELS.date}</th>
+                                        <th className="px-6 py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">{AR_LABELS.status}</th>
+                                        <th className="px-6 py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider text-center">{AR_LABELS.actions}</th>
                                     </tr>
-                                )}
-                            </tbody>
-                        </table>
+                                </thead>
+                                <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
+                                    {filteredExpenses.map(e => (
+                                        <tr key={e.id} className="hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors duration-150">
+                                            <td className="px-6 py-4 whitespace-nowrap text-sm font-mono text-gray-800 dark:text-gray-200">{e.expenseNumber}</td>
+                                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700 dark:text-gray-300">{e.category}</td>
+                                            <td className="px-6 py-4 text-sm text-gray-700 dark:text-gray-300 max-w-xs truncate">{e.description}</td>
+                                            <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">{e.responsiblePerson}</td>
+                                            <td className="px-6 py-4 whitespace-nowrap text-sm font-semibold text-red-600">{e.amount.toLocaleString('ar-SA', {style: 'currency', currency: 'SAR'})}</td>
+                                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700 dark:text-gray-300">{formatDate(e.date)}</td>
+                                            <td className="px-6 py-4 whitespace-nowrap text-sm">
+                                                <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${e.status === 'Paid' ? 'bg-green-100 text-green-800 dark:bg-green-900/50 dark:text-green-300' : 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/50 dark:text-yellow-300'}`}>
+                                                    {e.status === 'Paid' ? AR_LABELS.paid : AR_LABELS.unpaid}
+                                                </span>
+                                            </td>
+                                            <td className="px-6 py-4 whitespace-nowrap text-center text-sm">
+                                                <div className="flex items-center justify-center gap-2">
+                                                    <button 
+                                                        onClick={() => setModal({ isOpen: true, data: e })} 
+                                                        className="text-indigo-600 hover:text-indigo-900 dark:text-indigo-400 dark:hover:text-indigo-300 p-2 rounded-lg hover:bg-indigo-50 dark:hover:bg-gray-700 transition-colors"
+                                                        title={AR_LABELS.edit}
+                                                    >
+                                                        <EditIcon/>
+                                                    </button>
+                                                    <button 
+                                                        onClick={() => handleDelete(e.id)} 
+                                                        className="text-red-600 hover:text-red-900 dark:text-red-400 dark:hover:text-red-300 p-2 rounded-lg hover:bg-red-50 dark:hover:bg-gray-700 transition-colors"
+                                                        title={AR_LABELS.delete}
+                                                    >
+                                                        <DeleteIcon/>
+                                                    </button>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                    {filteredExpenses.length === 0 && (
+                                        <tr>
+                                            <td colSpan={8} className="px-6 py-10 text-center text-gray-500 dark:text-gray-400">{AR_LABELS.noSalesFound || 'لم يتم العثور على مصروفات'}</td>
+                                        </tr>
+                                    )}
+                                </tbody>
+                            </table>
+                        </div>
                     </div>
-                </div>
+                ) : (
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+                        {filteredExpenses.length > 0 ? filteredExpenses.map((expense) => (
+                            <div key={expense.id} className="bg-white/95 dark:bg-gray-800/95 rounded-2xl shadow-sm p-6 space-y-3 flex flex-col justify-between backdrop-blur-xl border border-slate-200/50 dark:border-slate-700/50 hover:shadow-md transition-shadow">
+                                <div>
+                                    <div className="flex justify-between items-start mb-3">
+                                        <h3 className="text-lg font-bold font-mono text-red-600 dark:text-red-400">{expense.expenseNumber}</h3>
+                                        <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${expense.status === 'Paid' ? 'bg-green-100 text-green-800 dark:bg-green-900/50 dark:text-green-300' : 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/50 dark:text-yellow-300'}`}>
+                                            {expense.status === 'Paid' ? AR_LABELS.paid : AR_LABELS.unpaid}
+                                        </span>
+                                    </div>
+                                    <div className="space-y-2 text-sm text-gray-600 dark:text-gray-400">
+                                        <p><span className="font-medium">{AR_LABELS.expenseCategory}:</span> {expense.category}</p>
+                                        <p><span className="font-medium">{AR_LABELS.description}:</span> {expense.description}</p>
+                                        <p><span className="font-medium">{AR_LABELS.responsiblePerson}:</span> {expense.responsiblePerson}</p>
+                                        <p><span className="font-medium">{AR_LABELS.amount}:</span> <span className="font-bold text-red-600">{expense.amount.toLocaleString('ar-SA', {style: 'currency', currency: 'SAR'})}</span></p>
+                                        <p><span className="font-medium">{AR_LABELS.date}:</span> {formatDate(expense.date)}</p>
+                                    </div>
+                                </div>
+                                <div className="border-t dark:border-gray-700 pt-3 flex justify-end gap-2">
+                                    <button 
+                                        onClick={() => setModal({ isOpen: true, data: expense })} 
+                                        className="text-indigo-600 hover:text-indigo-900 dark:text-indigo-400 dark:hover:text-indigo-300 p-2 rounded-lg hover:bg-indigo-50 dark:hover:bg-gray-700 transition-colors"
+                                        title={AR_LABELS.edit}
+                                    >
+                                        <EditIcon/>
+                                    </button>
+                                    <button 
+                                        onClick={() => handleDelete(expense.id)} 
+                                        className="text-red-600 hover:text-red-900 dark:text-red-400 dark:hover:text-red-300 p-2 rounded-lg hover:bg-red-50 dark:hover:bg-gray-700 transition-colors"
+                                        title={AR_LABELS.delete}
+                                    >
+                                        <DeleteIcon/>
+                                    </button>
+                                </div>
+                            </div>
+                        )) : (
+                            <div className="col-span-full text-center text-gray-500 dark:text-gray-400 py-10">{AR_LABELS.noSalesFound || 'لم يتم العثور على مصروفات'}</div>
+                        )}
+                    </div>
+                )}
                 
                 <ExpenseFormModal 
                     isOpen={modal.isOpen}

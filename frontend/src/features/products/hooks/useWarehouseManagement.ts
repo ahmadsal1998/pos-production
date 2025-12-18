@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } f
 import { AR_LABELS } from '@/shared/constants';
 import { Warehouse } from '@/shared/types';
 import { ApiError, warehousesApi } from '@/lib/api/client';
+import { useResponsiveViewMode } from '@/shared/hooks';
 
 export type WarehouseStatus = 'Active' | 'Inactive';
 export type ModalType = 'add' | 'edit';
@@ -60,7 +61,7 @@ const mapBackendWarehouse = (warehouse: BackendWarehouse): Warehouse => ({
 const useWarehouseManagement = () => {
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
-  const [layout, setLayout] = useState<LayoutType>('table');
+  const { viewMode: layout, setViewMode: setLayout } = useResponsiveViewMode('warehouses', 'table', 'grid');
   const [modal, setModal] = useState<ModalState>(DEFAULT_MODAL_STATE);
 
   const searchInputRef = useRef<HTMLInputElement | null>(null);

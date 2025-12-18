@@ -4,6 +4,7 @@ import { AR_LABELS, UUID, SearchIcon, GridViewIcon, TableViewIcon, ClockIcon, Ch
 import { MetricCard } from '@/shared/components/ui/MetricCard';
 import CustomDropdown, { DropdownOption } from '@/shared/components/ui/CustomDropdown/CustomDropdown';
 import { formatDate } from '@/shared/utils';
+import { useResponsiveViewMode } from '@/shared/hooks';
 
 // Replicating mock data locally as we can't import from other components
 const MOCK_SUPPLIERS_DATA = [
@@ -70,7 +71,15 @@ const ChequeDetailsModal: React.FC<{
 
 const ChequesPage: React.FC = () => {
     const [cheques, setCheques] = useState<Cheque[]>([]);
-    const [view, setView] = useState<'list' | 'calendar'>('list');
+    // Use responsive hook: 'list' (table) on large screens, 'calendar' (grid) on small screens
+    // Map: 'list' = 'table', 'calendar' = 'grid'
+    // Hook defaults: large='table', small='grid'
+    // So: large='list', small='calendar' ✓
+    const { viewMode, setViewMode } = useResponsiveViewMode('cheques', 'table', 'grid');
+    const view = viewMode === 'table' ? 'list' : 'calendar';
+    const setView = (newView: 'list' | 'calendar') => {
+        setViewMode(newView === 'list' ? 'table' : 'grid');
+    };
     const [searchTerm, setSearchTerm] = useState('');
     const [filters, setFilters] = useState({ status: 'all', date: 'all' });
     const [modalCheque, setModalCheque] = useState<Cheque | null>(null);

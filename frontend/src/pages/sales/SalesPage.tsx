@@ -3,10 +3,10 @@ import { useNavigate } from 'react-router-dom';
 import { SaleTransaction, Customer, CustomerPayment, CustomerAccountSummary, SalePaymentMethod, SaleStatus } from '@/shared/types';
 import { AR_LABELS, UUID, SearchIcon, PlusIcon, EditIcon, DeleteIcon, PrintIcon, ViewIcon, ExportIcon, AddPaymentIcon } from '@/shared/constants';
 import { GridViewIcon, TableViewIcon } from '@/shared/constants/routes';
-import { MetricCard } from '@/shared/components/ui/MetricCard';
+import { AnimatedNumber } from '@/shared/components/ui/AnimatedNumber';
 import CustomDropdown from '@/shared/components/ui/CustomDropdown/CustomDropdown';
 import { formatDate } from '@/shared/utils';
-import { customersApi, salesApi, ApiError, storeSettingsApi } from '@/lib/api/client';
+import { customersApi, salesApi, ApiError, storeSettingsApi, productsApi } from '@/lib/api/client';
 import { useCurrency } from '@/shared/contexts/CurrencyContext';
 import { useAuthStore } from '@/app/store';
 import { printReceipt } from '@/shared/utils/printUtils';
@@ -14,6 +14,7 @@ import { customerSync } from '@/lib/sync/customerSync';
 import { customersDB } from '@/lib/db/customersDB';
 import { loadSettings, saveSettings } from '@/shared/utils/settingsStorage';
 import { getBusinessDateFilterRange, getBusinessDayStartTime } from '@/shared/utils/businessDate';
+import { useResponsiveViewMode } from '@/shared/hooks';
 
 // Filter icon component
 const FilterIcon = () => (
@@ -1122,6 +1123,7 @@ const SalesPage: React.FC<SalesPageProps> = ({ setActivePath }) => {
             totalPayments: `إجمالي المدفوعات ${suffix}`,
             creditSales: `مبيعات آجلة ${suffix}`,
             invoiceCount: `عدد الفواتير ${suffix}`,
+            netProfit: `صافي الربح ${suffix}`,
         };
     }, [getFilterLabelSuffix]);
 
@@ -1131,6 +1133,7 @@ const SalesPage: React.FC<SalesPageProps> = ({ setActivePath }) => {
         totalPayments: 0,
         creditSales: 0,
         invoiceCount: 0,
+        netProfit: 0,
     });
     const [isLoadingStats, setIsLoadingStats] = useState(false);
 
@@ -1182,7 +1185,50 @@ const SalesPage: React.FC<SalesPageProps> = ({ setActivePath }) => {
                     .reduce((sum: number, s: any) => sum + (s.total || 0), 0);
                 const invoiceCount = filteredStats.length;
 
-                setStatistics({ totalSales, totalPayments, creditSales, invoiceCount });
+                // Calculate net profit: totalSales - totalCost
+                // Fetch products to get cost prices
+                let netProfit = 0;
+                try {
+                    const productsResponse = await productsApi.getProducts({ all: true });
+                    
+                    if (productsResponse.success) {
+                        const responseData = productsResponse.data as any;
+                        const products = responseData?.products || [];
+                        
+                        // Create a map of productId -> costPrice for quick lookup
+                        const productCostMap = new Map<string, number>();
+                        products.forEach((p: any) => {
+                            // Handle both _id (MongoDB) and id formats
+                            const productId = String(p._id || p.id || '');
+                            const costPrice = p.costPrice || 0;
+                            if (productId) {
+                                productCostMap.set(productId, costPrice);
+                            }
+                        });
+
+                        // Calculate total cost of goods sold
+                        let totalCost = 0;
+                        filteredStats.forEach((sale: any) => {
+                            if (sale.items && Array.isArray(sale.items)) {
+                                sale.items.forEach((item: any) => {
+                                    const productId = String(item.productId || '');
+                                    const quantity = Math.abs(item.quantity || 0); // Use absolute value to handle returns
+                                    const costPrice = productCostMap.get(productId) || 0;
+                                    totalCost += costPrice * quantity;
+                                });
+                            }
+                        });
+
+                        // Net profit = total sales - total cost
+                        netProfit = totalSales - totalCost;
+                    }
+                } catch (error) {
+                    console.error('Error fetching products for net profit calculation:', error);
+                    // If products fetch fails, set net profit to 0 or leave it as 0
+                    netProfit = 0;
+                }
+
+                setStatistics({ totalSales, totalPayments, creditSales, invoiceCount, netProfit });
             }
         } catch (error) {
             console.error('Error fetching statistics:', error);
@@ -1210,20 +1256,194 @@ const SalesPage: React.FC<SalesPageProps> = ({ setActivePath }) => {
                     <div />
                     
                     {/* Modern Navigation Tabs */}
-                    <div className="flex gap-3 flex-wrap">
-                        <TabButton label={AR_LABELS.viewAllSales} isActive={activeTab === 'sales'} onClick={() => setActiveTab('sales')} />
-                        <TabButton label={AR_LABELS.salesReports} isActive={activeTab === 'reports'} onClick={() => setActiveTab('reports')} />
-                        <TabButton label={AR_LABELS.customerAccounts} isActive={activeTab === 'customers'} onClick={() => setActiveTab('customers')} />
+                    <div className="w-full overflow-x-auto scroll-smooth horizontal-nav-scroll">
+                        <div className="flex gap-3 min-w-max pb-2">
+                            <TabButton label={AR_LABELS.viewAllSales} isActive={activeTab === 'sales'} onClick={() => setActiveTab('sales')} />
+                            <TabButton label={AR_LABELS.salesReports} isActive={activeTab === 'reports'} onClick={() => setActiveTab('reports')} />
+                            <TabButton label={AR_LABELS.customerAccounts} isActive={activeTab === 'customers'} onClick={() => setActiveTab('customers')} />
+                        </div>
                     </div>
                 </div>
 
                 {/* Summary Metrics - Sales Cards (only shown on Sales tab) */}
                 {activeTab === 'sales' && (
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-                        <MetricCard id={1} title={cardTitles.totalSales} value={isLoadingStats ? '...' : formatCurrency(statistics.totalSales)} icon={<div className="w-6 h-6 bg-green-500 rounded"></div>} bgColor="bg-green-100" valueColor="text-green-600" />
-                        <MetricCard id={2} title={cardTitles.totalPayments} value={isLoadingStats ? '...' : formatCurrency(statistics.totalPayments)} icon={<div className="w-6 h-6 bg-blue-500 rounded"></div>} bgColor="bg-blue-100" valueColor="text-blue-600" />
-                        <MetricCard id={3} title={cardTitles.creditSales} value={isLoadingStats ? '...' : formatCurrency(statistics.creditSales)} icon={<div className="w-6 h-6 bg-yellow-500 rounded"></div>} bgColor="bg-yellow-100" valueColor="text-yellow-600" />
-                        <MetricCard id={4} title={cardTitles.invoiceCount} value={isLoadingStats ? '...' : statistics.invoiceCount.toString()} icon={<div className="w-6 h-6 bg-purple-500 rounded"></div>} bgColor="bg-purple-100" valueColor="text-purple-600" />
+                    <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-5">
+                        {isLoadingStats ? (
+                            <>
+                                {[1, 2, 3, 4, 5].map((i) => (
+                                    <div
+                                        key={i}
+                                        className="rounded-2xl bg-white/95 p-6 shadow-lg dark:bg-slate-900/95 border border-slate-200/50 dark:border-slate-700/50 animate-pulse"
+                                    >
+                                        <div className="h-4 bg-slate-200 dark:bg-slate-700 rounded w-3/4 mb-4"></div>
+                                        <div className="h-8 bg-slate-200 dark:bg-slate-700 rounded w-1/2"></div>
+                                    </div>
+                                ))}
+                            </>
+                        ) : (
+                            <>
+                                <div className="group relative">
+                                    <div className="absolute -inset-0.5 rounded-2xl bg-gradient-to-r from-slate-200 to-slate-300 opacity-0 blur transition-all duration-500 group-hover:opacity-100 dark:from-slate-700 dark:to-slate-600" />
+                                    <div className="relative overflow-hidden rounded-2xl bg-white/95 p-6 shadow-lg backdrop-blur-xl transition-all duration-500 hover:shadow-xl dark:bg-slate-900/95 border border-slate-200/50 dark:border-slate-700/50">
+                                        <div className="flex items-start justify-between">
+                                            <div className="flex-1 space-y-3">
+                                                <p className="text-sm font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                                                    {cardTitles.totalSales}
+                                                </p>
+                                                <p className="text-2xl font-bold text-green-600 dark:text-green-400 transition-all duration-300 group-hover:scale-105">
+                                                    <AnimatedNumber
+                                                        value={statistics.totalSales}
+                                                        formatFn={formatCurrency}
+                                                        valueType="currency"
+                                                        duration={1500}
+                                                    />
+                                                </p>
+                                                <div className="flex items-center space-x-2 space-x-reverse">
+                                                    <div className="h-1 w-6 rounded-full bg-gradient-to-r from-emerald-400 to-emerald-500" />
+                                                    <span className="text-xs font-medium text-emerald-600 dark:text-emerald-400">+12.5%</span>
+                                                </div>
+                                            </div>
+                                            <div className="relative rounded-xl p-3 bg-green-100 dark:bg-green-900/30 transition-all duration-500 group-hover:scale-110 group-hover:rotate-3 flex-shrink-0">
+                                                <div className="absolute inset-0 rounded-xl bg-white/20 opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
+                                                <div className="w-6 h-6 bg-green-500 rounded"></div>
+                                            </div>
+                                        </div>
+                                        
+                                        {/* Subtle animated border */}
+                                        <div className="absolute inset-0 rounded-2xl border border-transparent bg-gradient-to-r from-transparent via-white/10 to-transparent opacity-0 transition-opacity duration-500 group-hover:opacity-100" />
+                                    </div>
+                                </div>
+
+                                <div className="group relative">
+                                    <div className="absolute -inset-0.5 rounded-2xl bg-gradient-to-r from-slate-200 to-slate-300 opacity-0 blur transition-all duration-500 group-hover:opacity-100 dark:from-slate-700 dark:to-slate-600" />
+                                    <div className="relative overflow-hidden rounded-2xl bg-white/95 p-6 shadow-lg backdrop-blur-xl transition-all duration-500 hover:shadow-xl dark:bg-slate-900/95 border border-slate-200/50 dark:border-slate-700/50 min-h-[160px] flex flex-col">
+                                        <div className="flex items-start justify-between flex-1">
+                                            <div className="flex-1 space-y-3 min-w-0">
+                                                <p className="text-sm font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                                                    {cardTitles.totalPayments}
+                                                </p>
+                                                <p className="text-2xl font-bold text-blue-600 dark:text-blue-400 transition-all duration-300 group-hover:scale-105">
+                                                    <AnimatedNumber
+                                                        value={statistics.totalPayments}
+                                                        formatFn={formatCurrency}
+                                                        valueType="currency"
+                                                        duration={1500}
+                                                    />
+                                                </p>
+                                                <div className="flex items-center space-x-2 space-x-reverse">
+                                                    <div className="h-1 w-6 rounded-full bg-gradient-to-r from-emerald-400 to-emerald-500" />
+                                                    <span className="text-xs font-medium text-emerald-600 dark:text-emerald-400">+12.5%</span>
+                                                </div>
+                                            </div>
+                                            <div className="relative rounded-xl p-3 bg-blue-100 dark:bg-blue-900/30 transition-all duration-500 group-hover:scale-110 group-hover:rotate-3 flex-shrink-0">
+                                                <div className="absolute inset-0 rounded-xl bg-white/20 opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
+                                                <div className="w-6 h-6 bg-blue-500 rounded"></div>
+                                            </div>
+                                        </div>
+                                        
+                                        {/* Subtle animated border */}
+                                        <div className="absolute inset-0 rounded-2xl border border-transparent bg-gradient-to-r from-transparent via-white/10 to-transparent opacity-0 transition-opacity duration-500 group-hover:opacity-100" />
+                                    </div>
+                                </div>
+
+                                <div className="group relative">
+                                    <div className="absolute -inset-0.5 rounded-2xl bg-gradient-to-r from-slate-200 to-slate-300 opacity-0 blur transition-all duration-500 group-hover:opacity-100 dark:from-slate-700 dark:to-slate-600" />
+                                    <div className="relative overflow-hidden rounded-2xl bg-white/95 p-6 shadow-lg backdrop-blur-xl transition-all duration-500 hover:shadow-xl dark:bg-slate-900/95 border border-slate-200/50 dark:border-slate-700/50 min-h-[160px] flex flex-col">
+                                        <div className="flex items-start justify-between flex-1">
+                                            <div className="flex-1 space-y-3 min-w-0">
+                                                <p className="text-sm font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                                                    {cardTitles.creditSales}
+                                                </p>
+                                                <p className="text-2xl font-bold text-yellow-600 dark:text-yellow-400 transition-all duration-300 group-hover:scale-105">
+                                                    <AnimatedNumber
+                                                        value={statistics.creditSales}
+                                                        formatFn={formatCurrency}
+                                                        valueType="currency"
+                                                        duration={1500}
+                                                    />
+                                                </p>
+                                                <div className="flex items-center space-x-2 space-x-reverse">
+                                                    <div className="h-1 w-6 rounded-full bg-gradient-to-r from-emerald-400 to-emerald-500" />
+                                                    <span className="text-xs font-medium text-emerald-600 dark:text-emerald-400">+12.5%</span>
+                                                </div>
+                                            </div>
+                                            <div className="relative rounded-xl p-3 bg-yellow-100 dark:bg-yellow-900/30 transition-all duration-500 group-hover:scale-110 group-hover:rotate-3 flex-shrink-0">
+                                                <div className="absolute inset-0 rounded-xl bg-white/20 opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
+                                                <div className="w-6 h-6 bg-yellow-500 rounded"></div>
+                                            </div>
+                                        </div>
+                                        
+                                        {/* Subtle animated border */}
+                                        <div className="absolute inset-0 rounded-2xl border border-transparent bg-gradient-to-r from-transparent via-white/10 to-transparent opacity-0 transition-opacity duration-500 group-hover:opacity-100" />
+                                    </div>
+                                </div>
+
+                                <div className="group relative">
+                                    <div className="absolute -inset-0.5 rounded-2xl bg-gradient-to-r from-slate-200 to-slate-300 opacity-0 blur transition-all duration-500 group-hover:opacity-100 dark:from-slate-700 dark:to-slate-600" />
+                                    <div className="relative overflow-hidden rounded-2xl bg-white/95 p-6 shadow-lg backdrop-blur-xl transition-all duration-500 hover:shadow-xl dark:bg-slate-900/95 border border-slate-200/50 dark:border-slate-700/50 min-h-[160px] flex flex-col">
+                                        <div className="flex items-start justify-between flex-1">
+                                            <div className="flex-1 space-y-3 min-w-0">
+                                                <p className="text-sm font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                                                    {cardTitles.invoiceCount}
+                                                </p>
+                                                <p className="text-2xl font-bold text-purple-600 dark:text-purple-400 transition-all duration-300 group-hover:scale-105">
+                                                    <AnimatedNumber
+                                                        value={statistics.invoiceCount}
+                                                        valueType="number"
+                                                        duration={1500}
+                                                    />
+                                                </p>
+                                                <div className="flex items-center space-x-2 space-x-reverse">
+                                                    <div className="h-1 w-6 rounded-full bg-gradient-to-r from-emerald-400 to-emerald-500" />
+                                                    <span className="text-xs font-medium text-emerald-600 dark:text-emerald-400">+12.5%</span>
+                                                </div>
+                                            </div>
+                                            <div className="relative rounded-xl p-3 bg-purple-100 dark:bg-purple-900/30 transition-all duration-500 group-hover:scale-110 group-hover:rotate-3 flex-shrink-0">
+                                                <div className="absolute inset-0 rounded-xl bg-white/20 opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
+                                                <div className="w-6 h-6 bg-purple-500 rounded"></div>
+                                            </div>
+                                        </div>
+                                        
+                                        {/* Subtle animated border */}
+                                        <div className="absolute inset-0 rounded-2xl border border-transparent bg-gradient-to-r from-transparent via-white/10 to-transparent opacity-0 transition-opacity duration-500 group-hover:opacity-100" />
+                                    </div>
+                                </div>
+
+                                <div className="group relative">
+                                    <div className="absolute -inset-0.5 rounded-2xl bg-gradient-to-r from-slate-200 to-slate-300 opacity-0 blur transition-all duration-500 group-hover:opacity-100 dark:from-slate-700 dark:to-slate-600" />
+                                    <div className="relative overflow-hidden rounded-2xl bg-white/95 p-6 shadow-lg backdrop-blur-xl transition-all duration-500 hover:shadow-xl dark:bg-slate-900/95 border border-slate-200/50 dark:border-slate-700/50 min-h-[160px] flex flex-col">
+                                        <div className="flex items-start justify-between flex-1">
+                                            <div className="flex-1 space-y-3 min-w-0">
+                                                <p className="text-sm font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                                                    {cardTitles.netProfit}
+                                                </p>
+                                                <p className={`text-2xl font-bold transition-all duration-300 group-hover:scale-105 ${statistics.netProfit >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
+                                                    <AnimatedNumber
+                                                        value={statistics.netProfit}
+                                                        formatFn={formatCurrency}
+                                                        valueType="currency"
+                                                        duration={1500}
+                                                    />
+                                                </p>
+                                                <div className="flex items-center space-x-2 space-x-reverse">
+                                                    <div className={`h-1 w-6 rounded-full bg-gradient-to-r ${statistics.netProfit >= 0 ? 'from-emerald-400 to-emerald-500' : 'from-red-400 to-red-500'}`} />
+                                                    <span className={`text-xs font-medium ${statistics.netProfit >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
+                                                        {statistics.netProfit >= 0 ? 'ربح' : 'خسارة'}
+                                                    </span>
+                                                </div>
+                                            </div>
+                                            <div className={`relative rounded-xl p-3 transition-all duration-500 group-hover:scale-110 group-hover:rotate-3 flex-shrink-0 ${statistics.netProfit >= 0 ? 'bg-emerald-100 dark:bg-emerald-900/30' : 'bg-red-100 dark:bg-red-900/30'}`}>
+                                                <div className="absolute inset-0 rounded-xl bg-white/20 opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
+                                                <div className={`w-6 h-6 rounded ${statistics.netProfit >= 0 ? 'bg-emerald-500' : 'bg-red-500'}`}></div>
+                                            </div>
+                                        </div>
+                                        
+                                        {/* Subtle animated border */}
+                                        <div className="absolute inset-0 rounded-2xl border border-transparent bg-gradient-to-r from-transparent via-white/10 to-transparent opacity-0 transition-opacity duration-500 group-hover:opacity-100" />
+                                    </div>
+                                </div>
+                            </>
+                        )}
                     </div>
                 )}
 
@@ -1246,6 +1466,8 @@ const SalesPage: React.FC<SalesPageProps> = ({ setActivePath }) => {
                                 setPageSize(size);
                                 setCurrentPage(1);
                             }}
+                            filters={filters}
+                            customers={customers}
                         />
                     )}
                     {activeTab === 'reports' && <ReportsView sales={sales} customers={customers} payments={payments} />}
@@ -1330,7 +1552,7 @@ const SalesPage: React.FC<SalesPageProps> = ({ setActivePath }) => {
 const TabButton: React.FC<{ label: string, isActive: boolean, onClick: () => void }> = ({ label, isActive, onClick }) => (
     <button 
         onClick={onClick} 
-        className={`group relative px-6 py-3 rounded-xl text-sm font-medium transition-all duration-300 ${
+        className={`group relative px-6 py-3 rounded-xl text-sm font-medium transition-all duration-300 whitespace-nowrap ${
             isActive
                 ? 'bg-gradient-to-r from-orange-500 to-amber-500 text-white shadow-lg shadow-orange-500/50'
                 : 'bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl text-slate-700 dark:text-slate-200 border border-slate-200/50 dark:border-slate-700/50 hover:shadow-md'
@@ -1342,6 +1564,78 @@ const TabButton: React.FC<{ label: string, isActive: boolean, onClick: () => voi
         <span className="relative">{label}</span>
     </button>
 );
+
+// Helper function to get active filter labels
+const getActiveFilterLabels = (
+    filters: {
+        dateRange: { start: string; end: string };
+        datePreset: 'today' | 'week' | 'month' | 'custom';
+        paymentMethod: string;
+        status: string;
+        customerId: string;
+        seller: string;
+    },
+    customers: Customer[]
+): { labels: string[]; hasNonDefaultFilters: boolean } => {
+    const labels: string[] = [];
+    let hasNonDefaultFilters = false;
+    
+    // Date filter (always show)
+    if (filters.datePreset === 'custom') {
+        const startDate = filters.dateRange.start ? new Date(filters.dateRange.start).toLocaleDateString('ar-SA') : '';
+        const endDate = filters.dateRange.end ? new Date(filters.dateRange.end).toLocaleDateString('ar-SA') : '';
+        if (startDate && endDate) {
+            labels.push(`من ${startDate} إلى ${endDate}`);
+            hasNonDefaultFilters = true; // Custom date is non-default
+        }
+    } else if (filters.datePreset === 'week') {
+        labels.push('هذا الأسبوع');
+        hasNonDefaultFilters = true; // Week is non-default
+    } else if (filters.datePreset === 'month') {
+        labels.push('هذا الشهر');
+        hasNonDefaultFilters = true; // Month is non-default
+    } else {
+        labels.push('اليوم');
+        // Today is default, so doesn't count as non-default
+    }
+    
+    // Payment method filter
+    if (filters.paymentMethod !== 'all') {
+        const paymentLabels: Record<string, string> = {
+            'cash': AR_LABELS.cash,
+            'card': AR_LABELS.card,
+            'credit': AR_LABELS.credit,
+        };
+        labels.push(`دفع: ${paymentLabels[filters.paymentMethod] || filters.paymentMethod}`);
+        hasNonDefaultFilters = true;
+    }
+    
+    // Status filter
+    if (filters.status !== 'all') {
+        const statusLabels: Record<string, string> = {
+            'completed': AR_LABELS.paid,
+            'partial_payment': AR_LABELS.partial,
+            'pending': AR_LABELS.due,
+        };
+        labels.push(`حالة: ${statusLabels[filters.status] || filters.status}`);
+        hasNonDefaultFilters = true;
+    }
+    
+    // Customer filter
+    if (filters.customerId !== 'all') {
+        const customer = customers.find(c => c.id === filters.customerId);
+        labels.push(`عميل: ${customer?.name || customer?.phone || 'غير معروف'}`);
+        hasNonDefaultFilters = true;
+    }
+    
+    // Seller filter
+    if (filters.seller !== 'all') {
+        labels.push(`بائع: ${filters.seller}`);
+        hasNonDefaultFilters = true;
+    }
+    
+    return { labels, hasNonDefaultFilters };
+};
 
 const SalesTableView: React.FC<{ 
     sales: SaleTransaction[], 
@@ -1356,8 +1650,17 @@ const SalesTableView: React.FC<{
     onPageChange: (page: number) => void,
     pageSize: number,
     onPageSizeChange: (size: number) => void,
-}> = ({ sales, isLoading = false, error = null, setActivePath, onViewSale, onOpenFilters, currentPage, totalPages, totalSales, onPageChange, pageSize, onPageSizeChange }) => {
-    const [viewMode, setViewMode] = useState<'table' | 'grid'>('table');
+    filters?: {
+        dateRange: { start: string; end: string };
+        datePreset: 'today' | 'week' | 'month' | 'custom';
+        paymentMethod: string;
+        status: string;
+        customerId: string;
+        seller: string;
+    },
+    customers?: Customer[],
+}> = ({ sales, isLoading = false, error = null, setActivePath, onViewSale, onOpenFilters, currentPage, totalPages, totalSales, onPageChange, pageSize, onPageSizeChange, filters, customers = [] }) => {
+    const { viewMode, setViewMode } = useResponsiveViewMode('sales', 'table', 'grid');
     const { formatCurrency } = useCurrency();
     
     return (
@@ -1413,13 +1716,55 @@ const SalesTableView: React.FC<{
                     placeholder="حجم الصفحة"
                     className="w-full sm:w-auto"
                 />
-                <button 
-                    onClick={onOpenFilters} 
-                    className="group relative inline-flex items-center justify-center px-6 py-3 rounded-xl text-sm font-medium text-white bg-gradient-to-r from-blue-500 to-indigo-500 hover:from-blue-600 hover:to-indigo-600 shadow-lg shadow-blue-500/50 transition-all duration-300 hover:shadow-xl hover:scale-105"
-                >
-                    <FilterIcon />
-                    <span className="mr-2">تصفية</span>
-                </button>
+                <div className="flex items-center gap-2 flex-wrap">
+                    {filters && (() => {
+                        const { labels, hasNonDefaultFilters } = getActiveFilterLabels(filters, customers);
+                        const nonDefaultCount = labels.length - (filters.datePreset === 'today' ? 1 : 0);
+                        
+                        return (
+                            <>
+                                {labels.length > 0 && (
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                        {labels.map((label, index) => {
+                                            const isDefault = index === 0 && filters.datePreset === 'today';
+                                            return (
+                                                <span
+                                                    key={index}
+                                                    className={`inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium border ${
+                                                        isDefault
+                                                            ? 'bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 border-gray-200 dark:border-gray-700'
+                                                            : 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-800'
+                                                    }`}
+                                                >
+                                                    <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                                                        <path fillRule="evenodd" d="M3 3a1 1 0 011-1h12a1 1 0 011 1v3a1 1 0 01-.293.707L12 11.414V15a1 1 0 01-.293.707l-4 4A1 1 0 017 19v-5.586L3.293 6.707A1 1 0 013 6V3z" clipRule="evenodd" />
+                                                    </svg>
+                                                    {label}
+                                                </span>
+                                            );
+                                        })}
+                                    </div>
+                                )}
+                                <button 
+                                    onClick={onOpenFilters} 
+                                    className={`group relative inline-flex items-center justify-center px-6 py-3 rounded-xl text-sm font-medium text-white shadow-lg transition-all duration-300 hover:shadow-xl hover:scale-105 ${
+                                        hasNonDefaultFilters
+                                            ? 'bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 shadow-blue-600/50'
+                                            : 'bg-gradient-to-r from-blue-500 to-indigo-500 hover:from-blue-600 hover:to-indigo-600 shadow-blue-500/50'
+                                    }`}
+                                >
+                                    <FilterIcon />
+                                    <span className="mr-2">تصفية</span>
+                                    {hasNonDefaultFilters && nonDefaultCount > 0 && (
+                                        <span className="absolute -top-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full bg-red-500 text-xs font-bold text-white animate-pulse">
+                                            {nonDefaultCount}
+                                        </span>
+                                    )}
+                                </button>
+                            </>
+                        );
+                    })()}
+                </div>
             </div>
         </div>
         
@@ -2207,7 +2552,7 @@ const CustomerAccountsView: React.FC<{
     const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
     const [sortField, setSortField] = useState<'name' | 'phone' | 'balance' | 'totalSales'>('name');
     const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
-    const [viewMode, setViewMode] = useState<'table' | 'grid'>('table');
+    const { viewMode, setViewMode } = useResponsiveViewMode('customerAccounts', 'table', 'grid');
     
     // Pagination state
     const [currentPage, setCurrentPage] = useState(1);

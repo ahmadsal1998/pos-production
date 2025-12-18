@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AR_LABELS } from '@/shared/constants';
 import { Brand } from '@/shared/types';
 import { ApiError, brandsApi } from '@/lib/api/client';
+import { useResponsiveViewMode } from '@/shared/hooks';
 
 type ModalType = 'add' | 'edit';
 type LayoutType = 'table' | 'grid';
@@ -43,7 +44,7 @@ const useBrandManagement = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [sortBy, setSortBy] = useState<SortType>('date-desc');
-  const [layout, setLayout] = useState<LayoutType>('table');
+  const { viewMode: layout, setViewMode: setLayout } = useResponsiveViewMode('brands', 'table', 'grid');
   const [modal, setModal] = useState<{
     isOpen: boolean;
     type: ModalType;

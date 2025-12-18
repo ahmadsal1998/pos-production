@@ -70,6 +70,48 @@ code {
   background: rgba(249, 115, 22, 0.6);
 }
 
+/* Custom scrollbar for horizontal navigation tabs */
+.horizontal-nav-scroll::-webkit-scrollbar {
+  height: 4px;
+}
+
+.horizontal-nav-scroll::-webkit-scrollbar-track {
+  background: rgba(229, 231, 235, 0.3);
+  border-radius: 2px;
+}
+
+.dark .horizontal-nav-scroll::-webkit-scrollbar-track {
+  background: rgba(17, 24, 39, 0.3);
+}
+
+.horizontal-nav-scroll::-webkit-scrollbar-thumb {
+  background: rgba(156, 163, 175, 0.4);
+  border-radius: 2px;
+  transition: background 0.2s ease;
+}
+
+.horizontal-nav-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(249, 115, 22, 0.7);
+}
+
+.dark .horizontal-nav-scroll::-webkit-scrollbar-thumb {
+  background: rgba(75, 85, 99, 0.4);
+}
+
+.dark .horizontal-nav-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(249, 115, 22, 0.7);
+}
+
+/* Firefox scrollbar for horizontal navigation */
+.horizontal-nav-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(156, 163, 175, 0.4) rgba(229, 231, 235, 0.3);
+}
+
+.dark .horizontal-nav-scroll {
+  scrollbar-color: rgba(75, 85, 99, 0.4) rgba(17, 24, 39, 0.3);
+}
+
 /* Touch-friendly improvements */
 @layer utilities {
   .touch-manipulation {

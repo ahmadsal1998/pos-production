@@ -11,6 +11,7 @@ import { productSync } from '@/lib/sync/productSync';
 import { Pagination } from '@/shared/components';
 import { useCurrency } from '@/shared/contexts/CurrencyContext';
 import { useConfirmDialog } from '@/shared/contexts';
+import { useResponsiveViewMode } from '@/shared/hooks';
 
 // Advanced search filter types
 interface AdvancedFilters {
@@ -47,7 +48,7 @@ const ProductListPage: React.FC<ProductListPageProps> = () => {
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<Record<string, string>>({});
   const [searchTerm, setSearchTerm] = useState('');
-  const [layout, setLayout] = useState<LayoutType>('table');
+  const { viewMode: layout, setViewMode: setLayout } = useResponsiveViewMode('productList', 'table', 'grid');
   const [loadingInitial, setLoadingInitial] = useState(true);
   const [loadingProducts, setLoadingProducts] = useState(false);
   const [error, setError] = useState<string | null>(null);
