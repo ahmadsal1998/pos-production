@@ -3,6 +3,7 @@ import { RefundTransaction, RefundedItem, POSInvoice, POSCartItem } from '@/feat
 import { AR_LABELS, UUID, SearchIcon, PlusIcon, ViewIcon, EditIcon, DeleteIcon } from '@/shared/constants';
 import { formatDate } from '@/shared/utils';
 import { useAuthStore } from '@/app/store';
+import { getBusinessDateFilterRange, getBusinessDayStartTime } from '@/shared/utils/businessDate';
 
 // --- MOCK DATA ---
 // We need mock original invoices to search against. Let's create some.
@@ -238,21 +239,23 @@ const RefundsPage: React.FC = () => {
     };
 
     const filteredRefunds = useMemo(() => {
+        // Use business date filtering
+        const businessDayStartTime = getBusinessDayStartTime();
+        const timeStr = businessDayStartTime.hours.toString().padStart(2, '0') + ':' + businessDayStartTime.minutes.toString().padStart(2, '0');
+        const { start, end } = getBusinessDateFilterRange(
+            filters.startDate || null,
+            filters.endDate || null,
+            timeStr
+        );
+        
         return refunds.filter(refund => {
             const matchesSearch = searchTerm ?
                 refund.originalInvoiceId.toLowerCase().includes(searchTerm.toLowerCase()) ||
                 refund.customerName.toLowerCase().includes(searchTerm.toLowerCase()) : true;
 
             const refundDate = new Date(refund.refundDate);
-            const startDate = filters.startDate ? new Date(filters.startDate) : null;
-            const endDate = filters.endDate ? new Date(filters.endDate) : null;
-
-            if (startDate && refundDate < startDate) return false;
-            if (endDate) {
-                const endOfDay = new Date(endDate);
-                endOfDay.setHours(23, 59, 59, 999);
-                if (refundDate > endOfDay) return false;
-            }
+            if (start && refundDate < start) return false;
+            if (end && refundDate > end) return false;
             
             return matchesSearch;
         });

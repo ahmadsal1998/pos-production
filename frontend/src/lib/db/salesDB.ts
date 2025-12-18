@@ -4,6 +4,7 @@
  */
 
 import { openIndexedDB, isIndexedDBAvailable } from './indexedDBUtils';
+import { getBusinessDateFilterRange, getBusinessDayStartTime } from '@/shared/utils/businessDate';
 
 const DB_NAME = 'POS_Sales_DB';
 const DB_VERSION = 1;
@@ -345,16 +346,36 @@ class SalesDB {
         // Apply filters
         if (filters) {
           if (filters.startDate || filters.endDate) {
-            sales = sales.filter((sale) => {
-              const saleDate = new Date(sale.date);
-              if (filters.startDate && saleDate < filters.startDate) return false;
-              if (filters.endDate) {
-                const endDate = new Date(filters.endDate);
-                endDate.setHours(23, 59, 59, 999);
-                if (saleDate > endDate) return false;
-              }
-              return true;
-            });
+            // Use business date filtering
+            try {
+              const businessDayStartTime = getBusinessDayStartTime();
+              const timeStr = businessDayStartTime.hours.toString().padStart(2, '0') + ':' + businessDayStartTime.minutes.toString().padStart(2, '0');
+              const { start, end } = getBusinessDateFilterRange(
+                filters.startDate || null,
+                filters.endDate || null,
+                timeStr
+              );
+              
+              sales = sales.filter((sale) => {
+                const saleDate = new Date(sale.date);
+                if (start && saleDate < start) return false;
+                if (end && saleDate > end) return false;
+                return true;
+              });
+            } catch (error) {
+              // Fallback to calendar date filtering if business date calculation fails
+              console.warn('Business date filtering failed, using calendar dates:', error);
+              sales = sales.filter((sale) => {
+                const saleDate = new Date(sale.date);
+                if (filters.startDate && saleDate < filters.startDate) return false;
+                if (filters.endDate) {
+                  const endDate = new Date(filters.endDate);
+                  endDate.setHours(23, 59, 59, 999);
+                  if (saleDate > endDate) return false;
+                }
+                return true;
+              });
+            }
           }
 
           if (filters.customerId) {

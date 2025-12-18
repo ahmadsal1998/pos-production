@@ -6,6 +6,7 @@ import { formatDate } from '@/shared/utils';
 import { salesApi, ApiError } from '@/lib/api/client';
 import { useCurrency } from '@/shared/contexts/CurrencyContext';
 import { useAuthStore } from '@/app/store';
+import { getBusinessDateFilterRange, getBusinessDayStartTime } from '@/shared/utils/businessDate';
 
 const SalesHistoryPage: React.FC = () => {
   const navigate = useNavigate();
@@ -92,22 +93,19 @@ const SalesHistoryPage: React.FC = () => {
   };
 
   const filteredSales = useMemo(() => {
+    // Use business date filtering
+    const businessDayStartTime = getBusinessDayStartTime();
+    const timeStr = businessDayStartTime.hours.toString().padStart(2, '0') + ':' + businessDayStartTime.minutes.toString().padStart(2, '0');
+    const { start, end } = getBusinessDateFilterRange(
+      filters.startDate || null,
+      filters.endDate || null,
+      timeStr
+    );
+    
     return historicalSales.filter(sale => {
       const saleDate = new Date(sale.date);
-      const startDate = filters.startDate ? new Date(filters.startDate) : null;
-      const endDate = filters.endDate ? new Date(filters.endDate) : null;
-
-      if (startDate && saleDate < startDate) {
-        return false;
-      }
-      if (endDate) {
-        // Include the entire end day
-        const endOfDay = new Date(endDate);
-        endOfDay.setHours(23, 59, 59, 999);
-        if (saleDate > endOfDay) {
-          return false;
-        }
-      }
+      if (start && saleDate < start) return false;
+      if (end && saleDate > end) return false;
       return true;
     });
   }, [historicalSales, filters]);

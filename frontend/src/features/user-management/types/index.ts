@@ -67,6 +67,8 @@ export interface SystemPreferences {
   printTableFontSize: number; // in px
   printShowBorders: boolean;
   printCompactMode: boolean;
+  // Business Day Configuration
+  businessDayStartTime: string; // Format: "HH:mm" (e.g., "06:00")
 }
 
 export interface ProfileFormFields {

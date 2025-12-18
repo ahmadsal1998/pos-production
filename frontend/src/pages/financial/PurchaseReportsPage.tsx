@@ -22,13 +22,19 @@ const PurchaseReportsPage: React.FC<PurchaseReportsPageProps> = ({
   const [selectedSupplierId, setSelectedSupplierId] = useState<string>('all');
 
   const analytics = useMemo(() => {
-    const startDate = new Date(dateRange.startDate);
-    const endDate = new Date(dateRange.endDate);
-    endDate.setHours(23, 59, 59, 999);
+    // Use business date filtering
+    const { getBusinessDateFilterRange, getBusinessDayStartTime } = require('@/shared/utils/businessDate');
+    const businessDayStartTime = getBusinessDayStartTime();
+    const timeStr = businessDayStartTime.hours.toString().padStart(2, '0') + ':' + businessDayStartTime.minutes.toString().padStart(2, '0');
+    const { start, end } = getBusinessDateFilterRange(
+      dateRange.startDate || null,
+      dateRange.endDate || null,
+      timeStr
+    );
 
     let filteredPurchases = purchases.filter(p => {
       const purchaseDate = new Date(p.purchaseDate);
-      const matchesDate = purchaseDate >= startDate && purchaseDate <= endDate;
+      const matchesDate = (!start || purchaseDate >= start) && (!end || purchaseDate <= end);
       const matchesSupplier = selectedSupplierId === 'all' || p.supplierId === selectedSupplierId;
       return matchesDate && matchesSupplier;
     });

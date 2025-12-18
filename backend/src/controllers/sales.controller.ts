@@ -286,14 +286,33 @@ export const getSales = asyncHandler(async (req: AuthenticatedRequest, res: Resp
     query.paymentMethod = paymentMethodStr.toLowerCase();
   }
 
-  if (startDate || endDate) {
-    query.date = {};
-    if (startDate) {
-      query.date.$gte = new Date(startDate as string);
+  // Get business day start time setting for date filtering
+  let businessDayStartTime: string | undefined;
+  if (targetStoreId) {
+    const Settings = (await import('../models/Settings')).default;
+    const businessDaySetting = await Settings.findOne({
+      storeId: targetStoreId,
+      key: 'businessdaystarttime'
+    });
+    if (businessDaySetting && businessDaySetting.value) {
+      businessDayStartTime = businessDaySetting.value;
     }
-    if (endDate) {
-      const end = new Date(endDate as string);
-      end.setHours(23, 59, 59, 999);
+  }
+
+  if (startDate || endDate) {
+    // Use business date filtering instead of calendar date filtering
+    const { getBusinessDateFilterRange } = await import('../utils/businessDate');
+    const { start, end } = getBusinessDateFilterRange(
+      startDate as string | null,
+      endDate as string | null,
+      businessDayStartTime
+    );
+    
+    query.date = {};
+    if (start) {
+      query.date.$gte = start;
+    }
+    if (end) {
       query.date.$lte = end;
     }
   }

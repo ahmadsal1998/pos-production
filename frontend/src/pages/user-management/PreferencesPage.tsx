@@ -7,6 +7,7 @@ import { useCurrency } from '@/shared/contexts/CurrencyContext';
 import { CURRENCIES, CurrencyConfig } from '@/shared/utils/currency';
 import CustomDropdown from '@/shared/components/ui/CustomDropdown/CustomDropdown';
 import { loadSettings, saveSettings } from '@/shared/utils/settingsStorage';
+import { storeSettingsApi } from '@/lib/api/client';
 
 const initialPreferences: SystemPreferences = {
   // General
@@ -51,6 +52,8 @@ const initialPreferences: SystemPreferences = {
   printTableFontSize: 12,
   printShowBorders: true,
   printCompactMode: false,
+  // Business Day Configuration
+  businessDayStartTime: '06:00', // Default: 6:00 AM
 };
 
 // Helpers to parse settings
@@ -163,6 +166,17 @@ const PreferencesPage: React.FC = () => {
 
       // Save preferences to localStorage
       saveSettings(prefs);
+      
+      // Sync businessDayStartTime to backend
+      try {
+        await storeSettingsApi.updateSetting('businessdaystarttime', {
+          value: prefs.businessDayStartTime || '06:00',
+          description: 'Business day start time in HH:mm format (e.g., 06:00 for 6:00 AM)'
+        });
+      } catch (error) {
+        console.warn('Failed to sync businessDayStartTime to backend:', error);
+        // Don't fail the entire save if backend sync fails
+      }
       
       alert(AR_LABELS.changesSavedSuccessfully);
     } catch (error) {
@@ -340,6 +354,22 @@ const PreferencesPage: React.FC = () => {
                 {renderSelect(AR_LABELS.dateFormat, 'dateFormat', [{value: 'DD/MM/YYYY', label: 'DD/MM/YYYY'}, {value: 'MM/DD/YYYY', label: 'MM/DD/YYYY'}])}
                 {renderSelect(AR_LABELS.timeFormat, 'timeFormat', [{value: '12-hour', label: '12 ساعة'}, {value: '24-hour', label: '24 ساعة'}])}
                 {renderSelect(AR_LABELS.defaultLanguage, 'defaultLanguage', [{value: 'ar', label: 'العربية'}, {value: 'en', label: 'English'}])}
+                <div className="space-y-2">
+                  <label htmlFor="businessDayStartTime" className="block text-sm font-semibold text-slate-700 dark:text-slate-300">
+                    وقت بداية اليوم التجاري
+                  </label>
+                  <input 
+                    type="time" 
+                    id="businessDayStartTime" 
+                    name="businessDayStartTime" 
+                    value={prefs.businessDayStartTime || '06:00'} 
+                    onChange={handleChange} 
+                    className="w-full border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-200 rounded-xl shadow-sm text-right px-4 py-3 focus:outline-none focus:ring-2 focus:ring-orange-500/50 focus:border-orange-500 transition-all duration-200 hover:border-slate-400 dark:hover:border-slate-500"
+                  />
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                    يتم حساب اليوم التجاري من هذا الوقت حتى نفس الوقت من اليوم التالي. على سبيل المثال، إذا كان الوقت 06:00 صباحاً، فإن اليوم التجاري يبدأ من 06:00 صباحاً حتى 05:59:59 صباحاً من اليوم التالي.
+                  </p>
+                </div>
               </>,
               <PreferencesIcon />
             )}

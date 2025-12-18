@@ -13,6 +13,7 @@ import { printReceipt } from '@/shared/utils/printUtils';
 import { customerSync } from '@/lib/sync/customerSync';
 import { customersDB } from '@/lib/db/customersDB';
 import { loadSettings } from '@/shared/utils/settingsStorage';
+import { getBusinessDateFilterRange, getBusinessDayStartTime } from '@/shared/utils/businessDate';
 
 // Filter icon component
 const FilterIcon = () => (
@@ -1496,17 +1497,20 @@ const ReportsView: React.FC<{ sales: SaleTransaction[], customers: Customer[], p
     };
 
     const handleGenerateReport = () => {
+        // Use business date filtering
+        const businessDayStartTime = getBusinessDayStartTime();
+        const timeStr = businessDayStartTime.hours.toString().padStart(2, '0') + ':' + businessDayStartTime.minutes.toString().padStart(2, '0');
+        const { start, end } = getBusinessDateFilterRange(
+            dateRange.start || null,
+            dateRange.end || null,
+            timeStr
+        );
+        
         const filteredSales = sales.filter(sale => {
-            if (!dateRange.start && !dateRange.end) return true;
+            if (!start && !end) return true;
             const saleDate = new Date(sale.date);
-            const startDate = dateRange.start ? new Date(dateRange.start) : null;
-            const endDate = dateRange.end ? new Date(dateRange.end) : null;
-            if (startDate && saleDate < startDate) return false;
-            if (endDate) {
-                const endOfDay = new Date(endDate);
-                endOfDay.setHours(23, 59, 59, 999);
-                if (saleDate > endOfDay) return false;
-            }
+            if (start && saleDate < start) return false;
+            if (end && saleDate > end) return false;
             return true;
         });
 
@@ -2050,18 +2054,23 @@ const CustomerAccountsView: React.FC<{
         setDateRange({ start, end });
     }, [dateRange]);
 
-    // Get filtered payments based on date range
+    // Get filtered payments based on date range (using business dates)
     const filteredPayments = useMemo(() => {
         if (!dateRange.start || !dateRange.end) return payments;
         
-        const startDate = new Date(dateRange.start);
-        startDate.setHours(0, 0, 0, 0);
-        const endDate = new Date(dateRange.end);
-        endDate.setHours(23, 59, 59, 999);
+        const businessDayStartTime = getBusinessDayStartTime();
+        const timeStr = businessDayStartTime.hours.toString().padStart(2, '0') + ':' + businessDayStartTime.minutes.toString().padStart(2, '0');
+        const { start, end } = getBusinessDateFilterRange(
+            dateRange.start || null,
+            dateRange.end || null,
+            timeStr
+        );
+
+        if (!start || !end) return payments;
 
         return payments.filter(payment => {
             const paymentDate = new Date(payment.date);
-            return paymentDate >= startDate && paymentDate <= endDate;
+            return paymentDate >= start && paymentDate <= end;
         });
     }, [payments, dateRange]);
 
