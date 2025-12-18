@@ -5,6 +5,7 @@ import { AR_LABELS, UUID, SearchIcon, PlusIcon, EditIcon, DeleteIcon, PrintIcon,
 import { GridViewIcon, TableViewIcon } from '@/shared/constants/routes';
 import { AnimatedNumber } from '@/shared/components/ui/AnimatedNumber';
 import CustomDropdown from '@/shared/components/ui/CustomDropdown/CustomDropdown';
+import { MetricCard } from '@/shared/components';
 import { formatDate } from '@/shared/utils';
 import { customersApi, salesApi, ApiError, storeSettingsApi, productsApi } from '@/lib/api/client';
 import { useCurrency } from '@/shared/contexts/CurrencyContext';
