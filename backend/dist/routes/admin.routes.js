@@ -1,33 +1,52 @@
 "use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-const express_1 = require("express");
-const admin_controller_1 = require("../controllers/admin.controller");
-const auth_middleware_1 = require("../middleware/auth.middleware");
-const router = (0, express_1.Router)();
-// All admin routes require authentication
-// Note: Admin check is done via userId === 'admin' in the token
-router.use(auth_middleware_1.authenticate);
-// Admin-only routes (check if user is admin)
+var __defProp = Object.defineProperty;
+var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __hasOwnProp = Object.prototype.hasOwnProperty;
+var __export = (target, all) => {
+  for (var name in all)
+    __defProp(target, name, { get: all[name], enumerable: true });
+};
+var __copyProps = (to, from, except, desc) => {
+  if (from && typeof from === "object" || typeof from === "function") {
+    for (let key of __getOwnPropNames(from))
+      if (!__hasOwnProp.call(to, key) && key !== except)
+        __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
+  }
+  return to;
+};
+var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
+var admin_routes_exports = {};
+__export(admin_routes_exports, {
+  default: () => admin_routes_default
+});
+module.exports = __toCommonJS(admin_routes_exports);
+var import_express = require("express");
+var import_admin = require("../controllers/admin.controller");
+var import_auth = require("../middleware/auth.middleware");
+const router = (0, import_express.Router)();
+router.use(import_auth.authenticate);
 const isAdmin = (req, res, next) => {
-    if (req.user?.userId === 'admin' && req.user?.role === 'Admin') {
-        return next();
-    }
-    return res.status(403).json({
-        success: false,
-        message: 'Access denied. Admin privileges required.',
-    });
+  if (req.user?.userId === "admin" && req.user?.role === "Admin") {
+    return next();
+  }
+  return res.status(403).json({
+    success: false,
+    message: "Access denied. Admin privileges required."
+  });
 };
 router.use(isAdmin);
-// Store management routes
-router.get('/stores', admin_controller_1.getStores);
-router.get('/stores/:id', admin_controller_1.getStore);
-router.post('/stores', admin_controller_1.validateCreateStore, admin_controller_1.createStore);
-router.put('/stores/:id', admin_controller_1.validateUpdateStore, admin_controller_1.updateStore);
-router.delete('/stores/:id', admin_controller_1.deleteStore);
-router.post('/stores/:id/renew-subscription', admin_controller_1.validateRenewSubscription, admin_controller_1.renewSubscription);
-router.patch('/stores/:id/status', admin_controller_1.toggleStoreStatus);
-// Settings management routes
-router.get('/settings', admin_controller_1.getSettings);
-router.get('/settings/:key', admin_controller_1.getSetting);
-router.put('/settings/:key', admin_controller_1.validateUpdateSetting, admin_controller_1.updateSetting);
-exports.default = router;
+router.get("/stores", import_admin.getStores);
+router.get("/stores/:id", import_admin.getStore);
+router.post("/stores", import_admin.validateCreateStore, import_admin.createStore);
+router.put("/stores/:id", import_admin.validateUpdateStore, import_admin.updateStore);
+router.delete("/stores/:id", import_admin.deleteStore);
+router.post("/stores/:id/renew-subscription", import_admin.validateRenewSubscription, import_admin.renewSubscription);
+router.patch("/stores/:id/status", import_admin.toggleStoreStatus);
+router.get("/settings", import_admin.getSettings);
+router.get("/settings/:key", import_admin.getSetting);
+router.put("/settings/:key", import_admin.validateUpdateSetting, import_admin.updateSetting);
+router.get("/trial-accounts/purge-report", import_admin.getTrialAccountsPurgeReport);
+router.post("/trial-accounts/purge", import_admin.purgeAllTrialAccounts);
+router.post("/trial-accounts/:storeId/purge", import_admin.purgeSpecificTrialAccountEndpoint);
+var admin_routes_default = router;

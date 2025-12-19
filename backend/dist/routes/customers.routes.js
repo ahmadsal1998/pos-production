@@ -1,19 +1,38 @@
 "use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-const express_1 = require("express");
-const customers_controller_1 = require("../controllers/customers.controller");
-const auth_middleware_1 = require("../middleware/auth.middleware");
-const storeIsolation_middleware_1 = require("../middleware/storeIsolation.middleware");
-const router = (0, express_1.Router)();
-// All customer routes require authentication and store access
-router.use(auth_middleware_1.authenticate);
-router.use(storeIsolation_middleware_1.requireStoreAccess);
-router.get('/', customers_controller_1.getCustomers);
-router.get('/:id', customers_controller_1.getCustomerById);
-router.post('/', customers_controller_1.validateCreateCustomer, customers_controller_1.createCustomer);
-router.put('/:id', customers_controller_1.validateUpdateCustomer, customers_controller_1.updateCustomer);
-router.delete('/:id', customers_controller_1.deleteCustomer);
-// Customer payment routes
-router.get('/payments/list', customers_controller_1.getCustomerPayments);
-router.post('/payments', customers_controller_1.validateCreateCustomerPayment, customers_controller_1.createCustomerPayment);
-exports.default = router;
+var __defProp = Object.defineProperty;
+var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __hasOwnProp = Object.prototype.hasOwnProperty;
+var __export = (target, all) => {
+  for (var name in all)
+    __defProp(target, name, { get: all[name], enumerable: true });
+};
+var __copyProps = (to, from, except, desc) => {
+  if (from && typeof from === "object" || typeof from === "function") {
+    for (let key of __getOwnPropNames(from))
+      if (!__hasOwnProp.call(to, key) && key !== except)
+        __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
+  }
+  return to;
+};
+var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
+var customers_routes_exports = {};
+__export(customers_routes_exports, {
+  default: () => customers_routes_default
+});
+module.exports = __toCommonJS(customers_routes_exports);
+var import_express = require("express");
+var import_customers = require("../controllers/customers.controller");
+var import_auth = require("../middleware/auth.middleware");
+var import_storeIsolation = require("../middleware/storeIsolation.middleware");
+const router = (0, import_express.Router)();
+router.use(import_auth.authenticate);
+router.use(import_storeIsolation.requireStoreAccess);
+router.get("/", import_customers.getCustomers);
+router.get("/:id", import_customers.getCustomerById);
+router.post("/", import_customers.validateCreateCustomer, import_customers.createCustomer);
+router.put("/:id", import_customers.validateUpdateCustomer, import_customers.updateCustomer);
+router.delete("/:id", import_customers.deleteCustomer);
+router.get("/payments/list", import_customers.getCustomerPayments);
+router.post("/payments", import_customers.validateCreateCustomerPayment, import_customers.createCustomerPayment);
+var customers_routes_default = router;

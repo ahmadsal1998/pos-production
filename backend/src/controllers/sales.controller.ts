@@ -466,7 +466,11 @@ export const getSalesSummary = asyncHandler(async (req: AuthenticatedRequest, re
   }
 
   if (customerId) {
-    query.customerId = customerId;
+    // Validate customerId is not 'all' or empty string
+    const customerIdStr = String(customerId).trim();
+    if (customerIdStr && customerIdStr !== 'all' && customerIdStr !== '') {
+      query.customerId = customerIdStr;
+    }
   }
 
   if (status) {
@@ -528,9 +532,38 @@ export const getSalesSummary = asyncHandler(async (req: AuthenticatedRequest, re
     }
   }
 
+  // Sanitize query to prevent CastErrors - ensure all values are in correct format
+  const sanitizedQuery: any = {};
+  if (query.storeId) {
+    sanitizedQuery.storeId = String(query.storeId).toLowerCase().trim();
+  }
+  if (query.customerId) {
+    sanitizedQuery.customerId = String(query.customerId).trim();
+  }
+  if (query.status) {
+    sanitizedQuery.status = String(query.status).trim();
+  }
+  if (query.paymentMethod) {
+    sanitizedQuery.paymentMethod = String(query.paymentMethod).toLowerCase().trim();
+  }
+  if (query.date) {
+    // Ensure date range is valid
+    if (query.date.$gte && query.date.$gte instanceof Date) {
+      sanitizedQuery.date = { ...query.date };
+    } else if (query.date.$gte || query.date.$lte) {
+      sanitizedQuery.date = {};
+      if (query.date.$gte) {
+        sanitizedQuery.date.$gte = query.date.$gte instanceof Date ? query.date.$gte : new Date(query.date.$gte);
+      }
+      if (query.date.$lte) {
+        sanitizedQuery.date.$lte = query.date.$lte instanceof Date ? query.date.$lte : new Date(query.date.$lte);
+      }
+    }
+  }
+
   // Use MongoDB aggregation for fast summary calculation
   const summaryPipeline: any[] = [
-    { $match: query },
+    { $match: sanitizedQuery },
     {
       $group: {
         _id: null,
@@ -546,7 +579,20 @@ export const getSalesSummary = asyncHandler(async (req: AuthenticatedRequest, re
     }
   ];
 
-  const summaryResult = await Sale.aggregate(summaryPipeline);
+  let summaryResult: any[] = [];
+  try {
+    summaryResult = await Sale.aggregate(summaryPipeline);
+  } catch (aggregationError: any) {
+    console.error('[Sales Controller] Error in aggregation pipeline:', {
+      error: aggregationError.message,
+      errorName: aggregationError.name,
+      query: sanitizedQuery,
+      originalQuery: query,
+      stack: aggregationError.stack
+    });
+    // If aggregation fails, return empty summary instead of failing the request
+    summaryResult = [];
+  }
 
   const summary = summaryResult[0] || {
     totalSales: 0,
@@ -564,8 +610,9 @@ export const getSalesSummary = asyncHandler(async (req: AuthenticatedRequest, re
     const Product = await getProductModelForStore(modelStoreId);
 
     // First, get all unique product IDs from sales items (efficient)
+    // Use sanitizedQuery to ensure consistency and prevent CastErrors
     const productIdsPipeline: any[] = [
-      { $match: query },
+      { $match: sanitizedQuery },
       { $unwind: '$items' },
       { $group: { _id: '$items.productId' } }
     ];
@@ -620,14 +667,35 @@ export const getSalesSummary = asyncHandler(async (req: AuthenticatedRequest, re
       let products: any[] = [];
       if (queryConditions.length > 0) {
         try {
-          products = await Product.find({
-            storeId: (targetStoreId || modelStoreId).toLowerCase(),
-            $or: queryConditions
-          }).select('_id id costPrice').lean();
+          // Additional validation: ensure all ObjectIds are valid before querying
+          const validObjectIdConditions = objectIdProductIds.filter((oid: any) => {
+            try {
+              return oid && oid.toString && oid.toString().length === 24;
+            } catch {
+              return false;
+            }
+          });
+          
+          const finalQueryConditions: any[] = [];
+          if (validObjectIdConditions.length > 0) {
+            finalQueryConditions.push({ _id: { $in: validObjectIdConditions } });
+          }
+          if (stringProductIds.length > 0) {
+            finalQueryConditions.push({ id: { $in: stringProductIds } });
+          }
+          
+          if (finalQueryConditions.length > 0) {
+            products = await Product.find({
+              storeId: (targetStoreId || modelStoreId).toLowerCase(),
+              $or: finalQueryConditions
+            }).select('_id id costPrice').lean();
+          }
         } catch (queryError: any) {
           console.error('[Sales Controller] Error querying products for net profit:', {
             error: queryError.message,
-            queryConditions
+            errorName: queryError.name,
+            queryConditions,
+            stack: queryError.stack
           });
           // If query fails, products array stays empty, net profit will be 0
         }
@@ -658,7 +726,8 @@ export const getSalesSummary = asyncHandler(async (req: AuthenticatedRequest, re
       });
 
       // Calculate total cost in memory (simpler and efficient)
-      const salesWithItems = await Sale.find(query).select('items').lean();
+      // Use sanitizedQuery to ensure consistency and prevent CastErrors
+      const salesWithItems = await Sale.find(sanitizedQuery).select('items').lean();
       let totalCost = 0;
       
       salesWithItems.forEach((sale: any) => {

@@ -1,580 +1,480 @@
 "use strict";
-/**
- * Users Controller
- *
- * STORE-LEVEL ISOLATION RULES:
- *
- * 1. User Creation (createUser):
- *    - Admin users: Can create users for any store or system users (null storeId)
- *    - Manager users: MUST create users for their own store only
- *      * The storeId from request body is IGNORED for security
- *      * The new user's storeId is ALWAYS set to the requester's storeId
- *      * This ensures Managers cannot create users for other stores
- *
- * 2. User Updates (updateUser):
- *    - Admin users: Can change a user's storeId to any store
- *    - Manager users: CANNOT change storeId at all
- *      * Even if storeId matches their own store, it cannot be modified
- *      * This prevents any potential security issues
- *
- * 3. User Access (getUsers, getUserById):
- *    - Admin users: Can see all users across all stores
- *    - Manager users: Can only see users from their own store
- *
- * 4. User Deletion (deleteUser):
- *    - Admin users (role='Admin'): Can only be deleted by Super Admin (userId === 'admin')
- *      * Admin accounts can ONLY be deleted from the Super Admin Panel
- *      * Regular user management screens cannot delete Admin accounts
- *      * This prevents accidental deletion of critical admin accounts
- *    - Non-admin users: Can be deleted by Admin or Manager (with store restrictions)
- *    - Manager users: Can only delete users from their own store
- *
- * All store-level filtering is enforced at the controller level to ensure
- * complete data isolation between stores.
- */
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
+var __create = Object.create;
+var __defProp = Object.defineProperty;
+var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __getProtoOf = Object.getPrototypeOf;
+var __hasOwnProp = Object.prototype.hasOwnProperty;
+var __export = (target, all) => {
+  for (var name in all)
+    __defProp(target, name, { get: all[name], enumerable: true });
 };
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.validateUpdateUser = exports.validateCreateUser = exports.deleteUser = exports.updateUser = exports.createUser = exports.getUserById = exports.getUsers = void 0;
-const express_validator_1 = require("express-validator");
-const Store_1 = __importDefault(require("../models/Store"));
-const error_middleware_1 = require("../middleware/error.middleware");
-const User_1 = __importDefault(require("../models/User"));
-// Get all users
-exports.getUsers = (0, error_middleware_1.asyncHandler)(async (req, res, next) => {
-    // CRITICAL: storeId MUST come from JWT only (never from request)
+var __copyProps = (to, from, except, desc) => {
+  if (from && typeof from === "object" || typeof from === "function") {
+    for (let key of __getOwnPropNames(from))
+      if (!__hasOwnProp.call(to, key) && key !== except)
+        __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
+  }
+  return to;
+};
+var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__getProtoOf(mod)) : {}, __copyProps(
+  // If the importer is in node compatibility mode or this is not an ESM
+  // file that has been converted to a CommonJS file using a Babel-
+  // compatible transform (i.e. "__esModule" has not been set), then set
+  // "default" to the CommonJS "module.exports" for node compatibility.
+  isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
+  mod
+));
+var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
+var users_controller_exports = {};
+__export(users_controller_exports, {
+  createUser: () => createUser,
+  deleteUser: () => deleteUser,
+  getUserById: () => getUserById,
+  getUsers: () => getUsers,
+  updateUser: () => updateUser,
+  validateCreateUser: () => validateCreateUser,
+  validateUpdateUser: () => validateUpdateUser
+});
+module.exports = __toCommonJS(users_controller_exports);
+var import_express_validator = require("express-validator");
+var import_Store = __toESM(require("../models/Store"));
+var import_error = require("../middleware/error.middleware");
+var import_User = __toESM(require("../models/User"));
+const getUsers = (0, import_error.asyncHandler)(
+  async (req, res, next) => {
     const requesterRole = req.user?.role;
     const requesterStoreId = req.user?.storeId;
     let allUsers = [];
-    if (requesterRole === 'Admin') {
-        // Admin users can see all users across all stores
-        // Query unified collection - no storeId filter for Admin
-        const users = await User_1.default.find({}).sort({ createdAt: -1 }).lean();
-        allUsers = users;
-    }
-    else {
-        // Non-admin users can only see users from their own store
-        if (!requesterStoreId) {
-            return res.status(403).json({
-                success: false,
-                message: 'Access denied. Store ID is required for non-admin users.',
-            });
-        }
-        // Use unified model with storeId filter for isolation
-        const users = await User_1.default.find({
-            storeId: requesterStoreId.toLowerCase()
-        }).sort({ createdAt: -1 }).lean();
-        allUsers = users;
+    if (requesterRole === "Admin") {
+      const users = await import_User.default.find({}).sort({ createdAt: -1 }).lean();
+      allUsers = users;
+    } else {
+      if (!requesterStoreId) {
+        return res.status(403).json({
+          success: false,
+          message: "Access denied. Store ID is required for non-admin users."
+        });
+      }
+      const users = await import_User.default.find({
+        storeId: requesterStoreId.toLowerCase()
+      }).sort({ createdAt: -1 }).lean();
+      allUsers = users;
     }
     res.status(200).json({
-        success: true,
-        data: {
-            users: allUsers.map((user) => ({
-                id: user._id.toString(),
-                fullName: user.fullName,
-                username: user.username,
-                email: user.email,
-                role: user.role,
-                permissions: user.permissions,
-                status: user.status,
-                storeId: user.storeId, // Include storeId in response
-                lastLogin: user.lastLogin,
-                createdAt: user.createdAt,
-                updatedAt: user.updatedAt,
-            })),
-        },
+      success: true,
+      data: {
+        users: allUsers.map((user) => ({
+          id: user._id.toString(),
+          fullName: user.fullName,
+          username: user.username,
+          email: user.email,
+          role: user.role,
+          permissions: user.permissions,
+          status: user.status,
+          storeId: user.storeId,
+          // Include storeId in response
+          lastLogin: user.lastLogin,
+          createdAt: user.createdAt,
+          updatedAt: user.updatedAt
+        }))
+      }
     });
-});
-// Get single user by ID
-exports.getUserById = (0, error_middleware_1.asyncHandler)(async (req, res, next) => {
+  }
+);
+const getUserById = (0, import_error.asyncHandler)(
+  async (req, res, next) => {
     const { id } = req.params;
-    // CRITICAL: storeId MUST come from JWT only
     const requesterRole = req.user?.role;
     const requesterStoreId = req.user?.storeId;
-    // Build query with storeId filter for non-admin users
     const query = { _id: id };
-    if (requesterRole !== 'Admin') {
-        // Non-admin users can only access users from their own store
-        if (!requesterStoreId) {
-            return res.status(403).json({
-                success: false,
-                message: 'Access denied. Store ID is required for non-admin users.',
-            });
-        }
-        query.storeId = requesterStoreId.toLowerCase();
-    }
-    // Use unified model - query with storeId filter for isolation
-    const user = await User_1.default.findOne(query).lean();
-    if (!user) {
-        return res.status(404).json({
-            success: false,
-            message: 'User not found',
+    if (requesterRole !== "Admin") {
+      if (!requesterStoreId) {
+        return res.status(403).json({
+          success: false,
+          message: "Access denied. Store ID is required for non-admin users."
         });
+      }
+      query.storeId = requesterStoreId.toLowerCase();
+    }
+    const user = await import_User.default.findOne(query).lean();
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found"
+      });
     }
     res.status(200).json({
-        success: true,
-        data: {
-            user: {
-                id: user._id.toString(),
-                fullName: user.fullName,
-                username: user.username,
-                email: user.email,
-                role: user.role,
-                permissions: user.permissions,
-                status: user.status,
-                storeId: user.storeId, // Include storeId in response
-                lastLogin: user.lastLogin,
-                createdAt: user.createdAt,
-                updatedAt: user.updatedAt,
-            },
-        },
+      success: true,
+      data: {
+        user: {
+          id: user._id.toString(),
+          fullName: user.fullName,
+          username: user.username,
+          email: user.email,
+          role: user.role,
+          permissions: user.permissions,
+          status: user.status,
+          storeId: user.storeId,
+          // Include storeId in response
+          lastLogin: user.lastLogin,
+          createdAt: user.createdAt,
+          updatedAt: user.updatedAt
+        }
+      }
     });
-});
-// Create new user
-exports.createUser = (0, error_middleware_1.asyncHandler)(async (req, res, next) => {
-    // Check for validation errors
-    const errors = (0, express_validator_1.validationResult)(req);
+  }
+);
+const createUser = (0, import_error.asyncHandler)(
+  async (req, res, next) => {
+    const errors = (0, import_express_validator.validationResult)(req);
     if (!errors.isEmpty()) {
-        return res.status(400).json({
-            success: false,
-            message: 'Validation failed',
-            errors: errors.array(),
-        });
+      return res.status(400).json({
+        success: false,
+        message: "Validation failed",
+        errors: errors.array()
+      });
     }
-    // CRITICAL: Extract storeId from request body ONLY for Admin users
-    // For non-admin users, storeId MUST come from JWT only
     const { fullName, username, email, password, role, permissions, status, storeId: requestStoreId } = req.body;
     const requesterRole = req.user?.role;
     const requesterStoreId = req.user?.storeId;
-    // Determine the storeId for the new user
     let finalStoreId = null;
-    if (requesterRole === 'Admin') {
-        // Admin can create users for any store or system users (null storeId)
-        if (requestStoreId) {
-            finalStoreId = requestStoreId.toLowerCase();
-            // Validate that the store exists
-            const store = await Store_1.default.findOne({
-                $or: [
-                    { storeId: finalStoreId },
-                    { prefix: finalStoreId }
-                ]
-            });
-            if (!store) {
-                return res.status(400).json({
-                    success: false,
-                    message: `Store with ID "${requestStoreId}" does not exist.`,
-                });
-            }
-            finalStoreId = store.storeId; // Use the canonical storeId
+    if (requesterRole === "Admin") {
+      if (requestStoreId) {
+        finalStoreId = requestStoreId.toLowerCase();
+        const store = await import_Store.default.findOne({
+          $or: [
+            { storeId: finalStoreId },
+            { prefix: finalStoreId }
+          ]
+        });
+        if (!store) {
+          return res.status(400).json({
+            success: false,
+            message: `Store with ID "${requestStoreId}" does not exist.`
+          });
         }
-        else {
-            finalStoreId = null; // System/admin user
-        }
+        finalStoreId = store.storeId;
+      } else {
+        finalStoreId = null;
+      }
+    } else {
+      if (!requesterStoreId) {
+        return res.status(403).json({
+          success: false,
+          message: "Access denied. Store ID is required for non-admin users. Please ensure your account is associated with a store."
+        });
+      }
+      finalStoreId = requesterStoreId.toLowerCase();
+      if (requestStoreId && requestStoreId.toLowerCase() !== requesterStoreId.toLowerCase()) {
+        console.warn(`\u26A0\uFE0F Security: Manager ${req.user?.userId} attempted to create user for different store. Using requester's storeId instead.`);
+      }
     }
-    else {
-        // Non-admin users (Managers) MUST create users for their own store only
-        // The storeId from request body is IGNORED for security - always use requester's storeId
-        if (!requesterStoreId) {
-            return res.status(403).json({
-                success: false,
-                message: 'Access denied. Store ID is required for non-admin users. Please ensure your account is associated with a store.',
-            });
-        }
-        // Always use the requester's storeId - ignore any storeId from request body
-        finalStoreId = requesterStoreId.toLowerCase();
-        // If a storeId was provided in the request, log a warning but still use requester's storeId
-        if (requestStoreId && requestStoreId.toLowerCase() !== requesterStoreId.toLowerCase()) {
-            console.warn(`⚠️ Security: Manager ${req.user?.userId} attempted to create user for different store. Using requester's storeId instead.`);
-        }
-    }
-    // Check if username already exists in this store (using compound index)
-    const existingUsername = await User_1.default.findOne({
-        storeId: finalStoreId,
-        username: username.toLowerCase()
+    const existingUsername = await import_User.default.findOne({
+      storeId: finalStoreId,
+      username: username.toLowerCase()
     });
     if (existingUsername) {
-        return res.status(400).json({
-            success: false,
-            message: 'Username already exists',
-        });
+      return res.status(400).json({
+        success: false,
+        message: "Username already exists"
+      });
     }
-    // Check if email already exists globally (email is globally unique across all stores)
-    const existingEmail = await User_1.default.findOne({
-        email: email.toLowerCase()
+    const existingEmail = await import_User.default.findOne({
+      email: email.toLowerCase()
     });
     if (existingEmail) {
-        return res.status(400).json({
-            success: false,
-            message: 'Email already exists',
-        });
+      return res.status(400).json({
+        success: false,
+        message: "Email already exists"
+      });
     }
-    // Create user in unified collection
-    const user = await User_1.default.create({
-        fullName,
-        username: username.toLowerCase(),
-        email: email.toLowerCase(),
-        password,
-        role: role || 'Cashier',
-        permissions: permissions || [],
-        status: status || 'Active',
-        storeId: finalStoreId,
+    const user = await import_User.default.create({
+      fullName,
+      username: username.toLowerCase(),
+      email: email.toLowerCase(),
+      password,
+      role: role || "Cashier",
+      permissions: permissions || [],
+      status: status || "Active",
+      storeId: finalStoreId
     });
     res.status(201).json({
-        success: true,
-        message: 'User created successfully',
-        data: {
-            user: {
-                id: user._id.toString(),
-                fullName: user.fullName,
-                username: user.username,
-                email: user.email,
-                role: user.role,
-                permissions: user.permissions,
-                status: user.status,
-                storeId: user.storeId, // Include storeId in response
-                lastLogin: user.lastLogin,
-                createdAt: user.createdAt,
-                updatedAt: user.updatedAt,
-            },
-        },
+      success: true,
+      message: "User created successfully",
+      data: {
+        user: {
+          id: user._id.toString(),
+          fullName: user.fullName,
+          username: user.username,
+          email: user.email,
+          role: user.role,
+          permissions: user.permissions,
+          status: user.status,
+          storeId: user.storeId,
+          // Include storeId in response
+          lastLogin: user.lastLogin,
+          createdAt: user.createdAt,
+          updatedAt: user.updatedAt
+        }
+      }
     });
-});
-// Update user
-exports.updateUser = (0, error_middleware_1.asyncHandler)(async (req, res, next) => {
-    // Check for validation errors
-    const errors = (0, express_validator_1.validationResult)(req);
+  }
+);
+const updateUser = (0, import_error.asyncHandler)(
+  async (req, res, next) => {
+    const errors = (0, import_express_validator.validationResult)(req);
     if (!errors.isEmpty()) {
-        return res.status(400).json({
-            success: false,
-            message: 'Validation failed',
-            errors: errors.array(),
-        });
+      return res.status(400).json({
+        success: false,
+        message: "Validation failed",
+        errors: errors.array()
+      });
     }
     const { id } = req.params;
-    // CRITICAL: Extract storeId from request body ONLY for Admin users
     const { fullName, username, email, password, role, permissions, status, storeId: requestStoreId } = req.body;
     const requesterRole = req.user?.role;
     const requesterStoreId = req.user?.storeId;
-    // Build query with storeId filter for non-admin users
     const query = { _id: id };
-    if (requesterRole !== 'Admin') {
-        if (!requesterStoreId) {
-            return res.status(403).json({
-                success: false,
-                message: 'Access denied. Store ID is required for non-admin users.',
-            });
-        }
-        query.storeId = requesterStoreId.toLowerCase();
-    }
-    // Find user in unified collection
-    const user = await User_1.default.findOne(query);
-    if (!user) {
-        return res.status(404).json({
-            success: false,
-            message: 'User not found',
+    if (requesterRole !== "Admin") {
+      if (!requesterStoreId) {
+        return res.status(403).json({
+          success: false,
+          message: "Access denied. Store ID is required for non-admin users."
         });
+      }
+      query.storeId = requesterStoreId.toLowerCase();
+    }
+    const user = await import_User.default.findOne(query);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found"
+      });
     }
     const currentStoreId = user.storeId;
-    // Non-admin users can only update users from their own store
-    if (requesterRole !== 'Admin') {
-        if (!requesterStoreId) {
-            return res.status(403).json({
-                success: false,
-                message: 'Access denied. Store ID is required for non-admin users.',
-            });
+    if (requesterRole !== "Admin") {
+      if (!requesterStoreId) {
+        return res.status(403).json({
+          success: false,
+          message: "Access denied. Store ID is required for non-admin users."
+        });
+      }
+      if (user.storeId?.toLowerCase() !== requesterStoreId.toLowerCase()) {
+        return res.status(403).json({
+          success: false,
+          message: "Access denied. You can only update users from your own store."
+        });
+      }
+      if (requestStoreId !== void 0) {
+        if (requestStoreId !== null && requestStoreId.toLowerCase() !== user.storeId?.toLowerCase()) {
+          return res.status(403).json({
+            success: false,
+            message: "Access denied. You cannot change a user's store assignment."
+          });
         }
-        // Additional check: ensure user belongs to requester's store
-        if (user.storeId?.toLowerCase() !== requesterStoreId.toLowerCase()) {
-            return res.status(403).json({
-                success: false,
-                message: 'Access denied. You can only update users from your own store.',
-            });
-        }
-        // Non-admin users cannot change storeId at all (even to their own store)
-        // The storeId must remain as it was when the user was created
-        if (requestStoreId !== undefined) {
-            // If user tries to change storeId, reject it
-            if (requestStoreId !== null && requestStoreId.toLowerCase() !== user.storeId?.toLowerCase()) {
-                return res.status(403).json({
-                    success: false,
-                    message: 'Access denied. You cannot change a user\'s store assignment.',
-                });
-            }
-            // Even if storeId matches, non-admin users cannot modify it
-            // This prevents any potential security issues
-        }
+      }
     }
-    // Determine the target storeId (if being changed by Admin)
     let targetStoreId = currentStoreId;
-    if (requestStoreId !== undefined && requesterRole === 'Admin') {
-        if (requestStoreId === null) {
-            targetStoreId = null;
+    if (requestStoreId !== void 0 && requesterRole === "Admin") {
+      if (requestStoreId === null) {
+        targetStoreId = null;
+      } else {
+        const normalizedStoreId = requestStoreId.toLowerCase();
+        const store = await import_Store.default.findOne({
+          $or: [
+            { storeId: normalizedStoreId },
+            { prefix: normalizedStoreId }
+          ]
+        });
+        if (!store) {
+          return res.status(400).json({
+            success: false,
+            message: `Store with ID "${requestStoreId}" does not exist.`
+          });
         }
-        else {
-            const normalizedStoreId = requestStoreId.toLowerCase();
-            // Validate that the store exists
-            const store = await Store_1.default.findOne({
-                $or: [
-                    { storeId: normalizedStoreId },
-                    { prefix: normalizedStoreId }
-                ]
-            });
-            if (!store) {
-                return res.status(400).json({
-                    success: false,
-                    message: `Store with ID "${requestStoreId}" does not exist.`,
-                });
-            }
-            targetStoreId = store.storeId;
-        }
+        targetStoreId = store.storeId;
+      }
     }
-    // Track if storeId is being changed
-    const isStoreChange = targetStoreId !== currentStoreId && requesterRole === 'Admin';
-    // If storeId is being changed, validate uniqueness in target store
+    const isStoreChange = targetStoreId !== currentStoreId && requesterRole === "Admin";
     if (isStoreChange) {
-        // Check if username already exists in target store
-        if (username && username.toLowerCase() !== user.username) {
-            const existingUsername = await User_1.default.findOne({
-                storeId: targetStoreId,
-                username: username.toLowerCase()
-            });
-            if (existingUsername) {
-                return res.status(400).json({
-                    success: false,
-                    message: 'Username already exists in target store',
-                });
-            }
-        }
-        else if (username) {
-            // Check if username exists in target store (even if not changing)
-            const existingUsername = await User_1.default.findOne({
-                storeId: targetStoreId,
-                username: user.username,
-                _id: { $ne: user._id }
-            });
-            if (existingUsername) {
-                return res.status(400).json({
-                    success: false,
-                    message: 'Username already exists in target store',
-                });
-            }
-        }
-        // Check if email already exists globally (email is globally unique)
-        if (email && email.toLowerCase() !== user.email) {
-            const existingEmail = await User_1.default.findOne({
-                email: email.toLowerCase()
-            });
-            if (existingEmail) {
-                return res.status(400).json({
-                    success: false,
-                    message: 'Email already exists',
-                });
-            }
-        }
-        // Update user with new storeId
-        user.storeId = targetStoreId;
-    }
-    // Check if username is being changed and already exists in same store
-    if (username && username.toLowerCase() !== user.username) {
-        const existingUsername = await User_1.default.findOne({
-            storeId: user.storeId,
-            username: username.toLowerCase(),
-            _id: { $ne: user._id }
+      if (username && username.toLowerCase() !== user.username) {
+        const existingUsername = await import_User.default.findOne({
+          storeId: targetStoreId,
+          username: username.toLowerCase()
         });
         if (existingUsername) {
-            return res.status(400).json({
-                success: false,
-                message: 'Username already exists',
-            });
+          return res.status(400).json({
+            success: false,
+            message: "Username already exists in target store"
+          });
         }
-        user.username = username.toLowerCase();
-    }
-    // Check if email is being changed and already exists globally (email is globally unique)
-    if (email && email.toLowerCase() !== user.email) {
-        const existingEmail = await User_1.default.findOne({
-            email: email.toLowerCase(),
-            _id: { $ne: user._id }
+      } else if (username) {
+        const existingUsername = await import_User.default.findOne({
+          storeId: targetStoreId,
+          username: user.username,
+          _id: { $ne: user._id }
+        });
+        if (existingUsername) {
+          return res.status(400).json({
+            success: false,
+            message: "Username already exists in target store"
+          });
+        }
+      }
+      if (email && email.toLowerCase() !== user.email) {
+        const existingEmail = await import_User.default.findOne({
+          email: email.toLowerCase()
         });
         if (existingEmail) {
-            return res.status(400).json({
-                success: false,
-                message: 'Email already exists',
-            });
+          return res.status(400).json({
+            success: false,
+            message: "Email already exists"
+          });
         }
-        user.email = email.toLowerCase();
+      }
+      user.storeId = targetStoreId;
     }
-    // Update fields
-    if (fullName)
-        user.fullName = fullName;
-    if (role)
-        user.role = role;
-    if (permissions !== undefined)
-        user.permissions = permissions;
-    if (status)
-        user.status = status;
-    // Update password if provided
+    if (username && username.toLowerCase() !== user.username) {
+      const existingUsername = await import_User.default.findOne({
+        storeId: user.storeId,
+        username: username.toLowerCase(),
+        _id: { $ne: user._id }
+      });
+      if (existingUsername) {
+        return res.status(400).json({
+          success: false,
+          message: "Username already exists"
+        });
+      }
+      user.username = username.toLowerCase();
+    }
+    if (email && email.toLowerCase() !== user.email) {
+      const existingEmail = await import_User.default.findOne({
+        email: email.toLowerCase(),
+        _id: { $ne: user._id }
+      });
+      if (existingEmail) {
+        return res.status(400).json({
+          success: false,
+          message: "Email already exists"
+        });
+      }
+      user.email = email.toLowerCase();
+    }
+    if (fullName) user.fullName = fullName;
+    if (role) user.role = role;
+    if (permissions !== void 0) user.permissions = permissions;
+    if (status) user.status = status;
     if (password) {
-        user.password = password; // Will be hashed by pre-save hook
+      user.password = password;
     }
     await user.save();
     res.status(200).json({
-        success: true,
-        message: isStoreChange ? 'User updated and moved to new store successfully' : 'User updated successfully',
-        data: {
-            user: {
-                id: user._id.toString(),
-                fullName: user.fullName,
-                username: user.username,
-                email: user.email,
-                role: user.role,
-                permissions: user.permissions,
-                status: user.status,
-                storeId: user.storeId, // Include storeId in response
-                lastLogin: user.lastLogin,
-                createdAt: user.createdAt,
-                updatedAt: user.updatedAt,
-            },
-        },
+      success: true,
+      message: isStoreChange ? "User updated and moved to new store successfully" : "User updated successfully",
+      data: {
+        user: {
+          id: user._id.toString(),
+          fullName: user.fullName,
+          username: user.username,
+          email: user.email,
+          role: user.role,
+          permissions: user.permissions,
+          status: user.status,
+          storeId: user.storeId,
+          // Include storeId in response
+          lastLogin: user.lastLogin,
+          createdAt: user.createdAt,
+          updatedAt: user.updatedAt
+        }
+      }
     });
-});
-// Delete user
-exports.deleteUser = (0, error_middleware_1.asyncHandler)(async (req, res, next) => {
+  }
+);
+const deleteUser = (0, import_error.asyncHandler)(
+  async (req, res, next) => {
     const { id } = req.params;
     const requesterRole = req.user?.role;
     const requesterStoreId = req.user?.storeId;
     const requesterUserId = req.user?.userId;
-    // Prevent deleting the current user
     if (requesterUserId === id) {
-        return res.status(400).json({
-            success: false,
-            message: 'Cannot delete your own account',
-        });
+      return res.status(400).json({
+        success: false,
+        message: "Cannot delete your own account"
+      });
     }
-    // Build query with storeId filter for non-admin users
     const query = { _id: id };
-    if (requesterRole !== 'Admin') {
-        if (!requesterStoreId) {
-            return res.status(403).json({
-                success: false,
-                message: 'Access denied. Store ID is required for non-admin users.',
-            });
-        }
-        query.storeId = requesterStoreId.toLowerCase();
-    }
-    // Find user in unified collection
-    const user = await User_1.default.findOne(query);
-    if (!user) {
-        return res.status(404).json({
-            success: false,
-            message: 'User not found',
+    if (requesterRole !== "Admin") {
+      if (!requesterStoreId) {
+        return res.status(403).json({
+          success: false,
+          message: "Access denied. Store ID is required for non-admin users."
         });
+      }
+      query.storeId = requesterStoreId.toLowerCase();
     }
-    // PROTECTION: Admin users can only be deleted from Super Admin Panel
-    // Admin accounts are critical and should only be deleted by the Super Admin
-    // This prevents accidental deletion from regular store management screens
-    if (user.role === 'Admin') {
-        // Only the super admin (userId === 'admin') can delete Admin users
-        // The Super Admin Panel is the only place where Admin deletion should occur
-        if (requesterUserId !== 'admin' || requesterRole !== 'Admin') {
-            return res.status(403).json({
-                success: false,
-                message: 'Access denied. Admin accounts can only be deleted from the Super Admin Panel. Regular store management screens cannot delete Admin users.',
-            });
-        }
-        // Super admin can delete Admin users - proceed with deletion
+    const user = await import_User.default.findOne(query);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found"
+      });
     }
-    // Non-admin users can only delete users from their own store
-    if (requesterRole !== 'Admin') {
-        if (!requesterStoreId) {
-            return res.status(403).json({
-                success: false,
-                message: 'Access denied. Store ID is required for non-admin users.',
-            });
-        }
-        if (user.storeId?.toLowerCase() !== requesterStoreId.toLowerCase()) {
-            return res.status(403).json({
-                success: false,
-                message: 'Access denied. You can only delete users from your own store.',
-            });
-        }
+    if (user.role === "Admin") {
+      if (requesterUserId !== "admin" || requesterRole !== "Admin") {
+        return res.status(403).json({
+          success: false,
+          message: "Access denied. Admin accounts can only be deleted from the Super Admin Panel. Regular store management screens cannot delete Admin users."
+        });
+      }
     }
-    // Delete user from unified collection
-    await User_1.default.deleteOne({ _id: id });
+    if (requesterRole !== "Admin") {
+      if (!requesterStoreId) {
+        return res.status(403).json({
+          success: false,
+          message: "Access denied. Store ID is required for non-admin users."
+        });
+      }
+      if (user.storeId?.toLowerCase() !== requesterStoreId.toLowerCase()) {
+        return res.status(403).json({
+          success: false,
+          message: "Access denied. You can only delete users from your own store."
+        });
+      }
+    }
+    await import_User.default.deleteOne({ _id: id });
     res.status(200).json({
-        success: true,
-        message: 'User deleted successfully',
+      success: true,
+      message: "User deleted successfully. All store data (products, customers, sales, inventory) remains intact."
     });
+  }
+);
+const validateCreateUser = [
+  (0, import_express_validator.body)("fullName").notEmpty().withMessage("Full name is required").trim(),
+  (0, import_express_validator.body)("username").notEmpty().withMessage("Username is required").trim().isLength({ min: 3 }).withMessage("Username must be at least 3 characters"),
+  (0, import_express_validator.body)("email").notEmpty().withMessage("Email is required").isEmail().withMessage("Please provide a valid email").normalizeEmail().trim(),
+  (0, import_express_validator.body)("password").notEmpty().withMessage("Password is required").isLength({ min: 6 }).withMessage("Password must be at least 6 characters"),
+  (0, import_express_validator.body)("role").optional().isIn(["Admin", "Manager", "Cashier"]).withMessage("Role must be Admin, Manager, or Cashier"),
+  (0, import_express_validator.body)("permissions").optional().isArray().withMessage("Permissions must be an array"),
+  (0, import_express_validator.body)("status").optional().isIn(["Active", "Inactive"]).withMessage("Status must be Active or Inactive")
+];
+const validateUpdateUser = [
+  (0, import_express_validator.body)("fullName").optional().notEmpty().withMessage("Full name cannot be empty").trim(),
+  (0, import_express_validator.body)("username").optional().trim().isLength({ min: 3 }).withMessage("Username must be at least 3 characters"),
+  (0, import_express_validator.body)("email").optional().isEmail().withMessage("Please provide a valid email").normalizeEmail().trim(),
+  (0, import_express_validator.body)("password").optional().isLength({ min: 6 }).withMessage("Password must be at least 6 characters"),
+  (0, import_express_validator.body)("role").optional().isIn(["Admin", "Manager", "Cashier"]).withMessage("Role must be Admin, Manager, or Cashier"),
+  (0, import_express_validator.body)("permissions").optional().isArray().withMessage("Permissions must be an array"),
+  (0, import_express_validator.body)("status").optional().isIn(["Active", "Inactive"]).withMessage("Status must be Active or Inactive")
+];
+// Annotate the CommonJS export names for ESM import in node:
+0 && (module.exports = {
+  createUser,
+  deleteUser,
+  getUserById,
+  getUsers,
+  updateUser,
+  validateCreateUser,
+  validateUpdateUser
 });
-// Validation middleware for create user
-exports.validateCreateUser = [
-    (0, express_validator_1.body)('fullName')
-        .notEmpty()
-        .withMessage('Full name is required')
-        .trim(),
-    (0, express_validator_1.body)('username')
-        .notEmpty()
-        .withMessage('Username is required')
-        .trim()
-        .isLength({ min: 3 })
-        .withMessage('Username must be at least 3 characters'),
-    (0, express_validator_1.body)('email')
-        .notEmpty()
-        .withMessage('Email is required')
-        .isEmail()
-        .withMessage('Please provide a valid email')
-        .normalizeEmail()
-        .trim(),
-    (0, express_validator_1.body)('password')
-        .notEmpty()
-        .withMessage('Password is required')
-        .isLength({ min: 6 })
-        .withMessage('Password must be at least 6 characters'),
-    (0, express_validator_1.body)('role')
-        .optional()
-        .isIn(['Admin', 'Manager', 'Cashier'])
-        .withMessage('Role must be Admin, Manager, or Cashier'),
-    (0, express_validator_1.body)('permissions')
-        .optional()
-        .isArray()
-        .withMessage('Permissions must be an array'),
-    (0, express_validator_1.body)('status')
-        .optional()
-        .isIn(['Active', 'Inactive'])
-        .withMessage('Status must be Active or Inactive'),
-];
-// Validation middleware for update user
-exports.validateUpdateUser = [
-    (0, express_validator_1.body)('fullName')
-        .optional()
-        .notEmpty()
-        .withMessage('Full name cannot be empty')
-        .trim(),
-    (0, express_validator_1.body)('username')
-        .optional()
-        .trim()
-        .isLength({ min: 3 })
-        .withMessage('Username must be at least 3 characters'),
-    (0, express_validator_1.body)('email')
-        .optional()
-        .isEmail()
-        .withMessage('Please provide a valid email')
-        .normalizeEmail()
-        .trim(),
-    (0, express_validator_1.body)('password')
-        .optional()
-        .isLength({ min: 6 })
-        .withMessage('Password must be at least 6 characters'),
-    (0, express_validator_1.body)('role')
-        .optional()
-        .isIn(['Admin', 'Manager', 'Cashier'])
-        .withMessage('Role must be Admin, Manager, or Cashier'),
-    (0, express_validator_1.body)('permissions')
-        .optional()
-        .isArray()
-        .withMessage('Permissions must be an array'),
-    (0, express_validator_1.body)('status')
-        .optional()
-        .isIn(['Active', 'Inactive'])
-        .withMessage('Status must be Active or Inactive'),
-];
