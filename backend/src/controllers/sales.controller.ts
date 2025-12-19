@@ -557,6 +557,7 @@ export const getSalesSummary = asyncHandler(async (req: AuthenticatedRequest, re
 
   // Calculate net profit: totalSales - totalCost
   // Use efficient aggregation with product lookup
+  // If calculation fails, return 0 without failing the entire request
   let netProfit = 0;
   try {
     const { getProductModelForStore } = await import('../utils/productModel');
@@ -583,28 +584,76 @@ export const getSalesSummary = asyncHandler(async (req: AuthenticatedRequest, re
       // Import mongoose for ObjectId conversion
       const mongoose = (await import('mongoose')).default;
       
-      // Convert string IDs to ObjectIds for query
-      const objectIdProductIds = productIds
-        .filter((id: string) => mongoose.Types.ObjectId.isValid(id))
-        .map((id: string) => new mongoose.Types.ObjectId(id));
+      // Safely convert string IDs to ObjectIds for query (only valid ObjectIds)
+      const objectIdProductIds: any[] = [];
+      const stringProductIds: string[] = [];
+      
+      productIds.forEach((id: string) => {
+        if (mongoose.Types.ObjectId.isValid(id) && id.length === 24) {
+          try {
+            objectIdProductIds.push(new mongoose.Types.ObjectId(id));
+          } catch (e) {
+            // If ObjectId creation fails, treat as string
+            stringProductIds.push(id);
+          }
+        } else {
+          // Not a valid ObjectId format, treat as string
+          stringProductIds.push(id);
+        }
+      });
 
-      // Fetch products in batch (fast) - try both ObjectId and string lookups
-      const products = await Product.find({
-        storeId: (targetStoreId || modelStoreId).toLowerCase(),
-        $or: [
-          ...(objectIdProductIds.length > 0 ? [{ _id: { $in: objectIdProductIds } }] : []),
-          { _id: { $in: productIds } },
-          { id: { $in: productIds } }
-        ]
-      }).select('_id id costPrice').lean();
+      // Build query conditions - handle both ObjectId and string/number IDs
+      const queryConditions: any[] = [];
+      
+      if (objectIdProductIds.length > 0) {
+        queryConditions.push({ _id: { $in: objectIdProductIds } });
+      }
+      
+      if (stringProductIds.length > 0) {
+        // For non-ObjectId IDs, try to find by custom 'id' field if it exists
+        // Don't query _id with strings as it will cause CastError
+        queryConditions.push({ id: { $in: stringProductIds } });
+      }
+
+      // Fetch products in batch (fast)
+      // If no valid conditions, skip product lookup (net profit will be 0)
+      let products: any[] = [];
+      if (queryConditions.length > 0) {
+        try {
+          products = await Product.find({
+            storeId: (targetStoreId || modelStoreId).toLowerCase(),
+            $or: queryConditions
+          }).select('_id id costPrice').lean();
+        } catch (queryError: any) {
+          console.error('[Sales Controller] Error querying products for net profit:', {
+            error: queryError.message,
+            queryConditions
+          });
+          // If query fails, products array stays empty, net profit will be 0
+        }
+      }
 
       // Create cost price map for fast lookup (support both ObjectId and string keys)
+      // Store multiple ID variants for each product to ensure matching
       const costPriceMap = new Map<string, number>();
       products.forEach((p: any) => {
+        const costPrice = p.costPrice || 0;
         const idObj = p._id || p.id;
+        
         if (idObj) {
+          // Store multiple ID format variants for flexible matching
           const idStr = idObj.toString ? idObj.toString() : String(idObj);
-          costPriceMap.set(idStr, p.costPrice || 0);
+          costPriceMap.set(idStr, costPrice);
+          
+          // Also store as ObjectId string if it's an ObjectId
+          if (idObj.toString && idObj.toString().length === 24) {
+            costPriceMap.set(idObj.toString(), costPrice);
+          }
+          
+          // Store numeric version if applicable
+          if (typeof idObj === 'number' || !isNaN(Number(idStr))) {
+            costPriceMap.set(String(Number(idStr)), costPrice);
+          }
         }
       });
 
@@ -615,8 +664,25 @@ export const getSalesSummary = asyncHandler(async (req: AuthenticatedRequest, re
       salesWithItems.forEach((sale: any) => {
         if (sale.items && Array.isArray(sale.items)) {
           sale.items.forEach((item: any) => {
-            const productId = String(item.productId || '');
-            const costPrice = costPriceMap.get(productId) || 0;
+            const itemProductId = item.productId;
+            if (!itemProductId) return;
+            
+            // Try multiple ID formats for matching
+            const productIdVariants = [
+              String(itemProductId),
+              itemProductId.toString ? itemProductId.toString() : String(itemProductId),
+              typeof itemProductId === 'number' ? String(itemProductId) : null
+            ].filter(Boolean) as string[];
+            
+            // Find matching cost price from map
+            let costPrice = 0;
+            for (const variant of productIdVariants) {
+              if (costPriceMap.has(variant)) {
+                costPrice = costPriceMap.get(variant)!;
+                break;
+              }
+            }
+            
             const quantity = Math.abs(item.quantity || 0);
             totalCost += costPrice * quantity;
           });
@@ -625,9 +691,14 @@ export const getSalesSummary = asyncHandler(async (req: AuthenticatedRequest, re
 
       netProfit = (summary.totalSales || 0) - totalCost;
     }
-  } catch (error) {
-    console.error('[Sales Controller] Error calculating net profit:', error);
+  } catch (error: any) {
+    console.error('[Sales Controller] Error calculating net profit:', {
+      error: error.message,
+      stack: error.stack,
+      name: error.name
+    });
     // If net profit calculation fails, set to 0 (don't fail the whole request)
+    // This ensures summary still returns successfully even if net profit can't be calculated
     netProfit = 0;
   }
 
