@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useCallback, useEffect } from 'react';
+import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { SaleTransaction, Customer, CustomerPayment, CustomerAccountSummary, SalePaymentMethod, SaleStatus } from '@/shared/types';
 import { AR_LABELS, UUID, SearchIcon, PlusIcon, EditIcon, DeleteIcon, PrintIcon, ViewIcon, ExportIcon, AddPaymentIcon } from '@/shared/constants';
@@ -760,8 +760,25 @@ const SalesPage: React.FC<SalesPageProps> = ({ setActivePath }) => {
     const [totalSales, setTotalSales] = useState(0);
     const [totalPages, setTotalPages] = useState(0);
 
+    // Use refs to prevent duplicate requests
+    const fetchingRef = useRef(false);
+    const lastRequestKeyRef = useRef<string>('');
+
     // Fetch sales from database with filters and pagination
     const fetchSales = useCallback(async (page: number = 1) => {
+        // Create a unique request key to prevent duplicate requests
+        const requestKey = `${page}-${pageSize}-${JSON.stringify(filters)}`;
+        
+        // If we're already fetching the exact same request, skip it
+        if (fetchingRef.current && lastRequestKeyRef.current === requestKey) {
+            console.log('[SalesPage] ⏭️ Skipping duplicate request:', requestKey);
+            return;
+        }
+
+        // Mark as fetching and store request key
+        fetchingRef.current = true;
+        lastRequestKeyRef.current = requestKey;
+        
         setIsLoadingSales(true);
         setSalesError(null);
         
@@ -800,6 +817,7 @@ const SalesPage: React.FC<SalesPageProps> = ({ setActivePath }) => {
             //     params.seller = filters.seller;
             // }
 
+            console.log('[SalesPage] Fetching sales with params:', params);
             const response = await salesApi.getSales(params);
             const backendResponse = response.data as any;
             
@@ -855,35 +873,37 @@ const SalesPage: React.FC<SalesPageProps> = ({ setActivePath }) => {
                     setTotalPages(1);
                 }
                 
-                console.log(`Loaded ${apiSales.length} sales from database (page ${page})`);
+                console.log(`[SalesPage] Loaded ${apiSales.length} sales from database (page ${page})`);
             } else {
                 setSales([]);
                 setTotalSales(0);
                 setTotalPages(0);
-                console.log('No sales found in database');
+                console.log('[SalesPage] No sales found in database');
             }
         } catch (error: any) {
             const apiError = error as ApiError;
-            console.error('Error fetching sales:', apiError);
+            console.error('[SalesPage] Error fetching sales:', apiError);
             setSalesError(apiError.message || 'فشل تحميل المبيعات');
             setSales([]);
             setTotalSales(0);
             setTotalPages(0);
         } finally {
             setIsLoadingSales(false);
+            fetchingRef.current = false;
         }
-    }, [filters, pageSize]);
+    }, [filters, pageSize, currentUserName]);
 
     // Reset to page 1 when filters or page size change, then fetch
+    // Combine both operations in a single effect to avoid duplicate calls
     useEffect(() => {
         setCurrentPage(1);
-        // Fetch will be triggered by the effect below when currentPage changes
     }, [filters, pageSize]);
 
-    // Fetch sales when filters, page, or pageSize change
+    // Fetch sales when page, filters, or pageSize change
+    // The ref-based deduplication prevents duplicate requests even if this effect runs multiple times
     useEffect(() => {
         fetchSales(currentPage);
-    }, [fetchSales, currentPage]);
+    }, [currentPage, fetchSales]);
 
     // Load customers from IndexedDB on mount
     const loadCustomersFromDB = useCallback(async () => {
@@ -1129,7 +1149,8 @@ const SalesPage: React.FC<SalesPageProps> = ({ setActivePath }) => {
         };
     }, [getFilterLabelSuffix]);
 
-    // Fetch statistics based on current filters (need separate API call for totals)
+    // Summary statistics state - loaded first for fast display
+    // Initialize with 0 values so cards show immediately
     const [statistics, setStatistics] = useState({
         totalSales: 0,
         totalPayments: 0,
@@ -1137,8 +1158,9 @@ const SalesPage: React.FC<SalesPageProps> = ({ setActivePath }) => {
         invoiceCount: 0,
         netProfit: 0,
     });
-    const [isLoadingStats, setIsLoadingStats] = useState(false);
+    const [isLoadingStats, setIsLoadingStats] = useState(false); // Start as false so cards show immediately
 
+    // Fast summary fetch using dedicated endpoint (loads first, before detailed sales)
     const fetchStatistics = useCallback(async () => {
         setIsLoadingStats(true);
         try {
@@ -1164,82 +1186,35 @@ const SalesPage: React.FC<SalesPageProps> = ({ setActivePath }) => {
                 params.customerId = filters.customerId;
             }
 
-            // Fetch all sales for statistics (with high limit to get all)
-            const response = await salesApi.getSales({ ...params, limit: 10000 });
-            const backendResponse = response.data as any;
+            // Use fast summary endpoint (MongoDB aggregation - much faster than loading all sales)
+            console.log('[SalesPage] Fetching summary statistics...');
+            const response = await salesApi.getSalesSummary(params);
+            const summaryData = response.data as any;
             
-            if (backendResponse?.success && Array.isArray(backendResponse.data?.sales)) {
-                const allSales = backendResponse.data.sales;
-                
-                // Apply seller filter if needed
-                let filteredStats = allSales;
-                if (filters.seller !== 'all') {
-                    filteredStats = allSales.filter((s: any) => {
-                        const seller = s.seller || s.cashier || currentUserName;
-                        return seller === filters.seller;
-                    });
-                }
-                
-                const totalSales = filteredStats.reduce((sum: number, s: any) => sum + (s.total || 0), 0);
-                const totalPayments = filteredStats.reduce((sum: number, s: any) => sum + (s.paidAmount || 0), 0);
-                const creditSales = filteredStats
-                    .filter((s: any) => s.paymentMethod?.toLowerCase() === 'credit')
-                    .reduce((sum: number, s: any) => sum + (s.total || 0), 0);
-                const invoiceCount = filteredStats.length;
+            if (summaryData?.success && summaryData.data) {
+                const { totalSales, totalPayments, creditSales, invoiceCount, remainingAmount, netProfit } = summaryData.data;
 
-                // Calculate net profit: totalSales - totalCost
-                // Fetch products to get cost prices
-                let netProfit = 0;
-                try {
-                    const productsResponse = await productsApi.getProducts({ all: true });
-                    
-                    if (productsResponse.success) {
-                        const responseData = productsResponse.data as any;
-                        const products = responseData?.products || [];
-                        
-                        // Create a map of productId -> costPrice for quick lookup
-                        const productCostMap = new Map<string, number>();
-                        products.forEach((p: any) => {
-                            // Handle both _id (MongoDB) and id formats
-                            const productId = String(p._id || p.id || '');
-                            const costPrice = p.costPrice || 0;
-                            if (productId) {
-                                productCostMap.set(productId, costPrice);
-                            }
-                        });
-
-                        // Calculate total cost of goods sold
-                        let totalCost = 0;
-                        filteredStats.forEach((sale: any) => {
-                            if (sale.items && Array.isArray(sale.items)) {
-                                sale.items.forEach((item: any) => {
-                                    const productId = String(item.productId || '');
-                                    const quantity = Math.abs(item.quantity || 0); // Use absolute value to handle returns
-                                    const costPrice = productCostMap.get(productId) || 0;
-                                    totalCost += costPrice * quantity;
-                                });
-                            }
-                        });
-
-                        // Net profit = total sales - total cost
-                        netProfit = totalSales - totalCost;
-                    }
-                } catch (error) {
-                    console.error('Error fetching products for net profit calculation:', error);
-                    // If products fetch fails, set net profit to 0 or leave it as 0
-                    netProfit = 0;
-                }
-
-                setStatistics({ totalSales, totalPayments, creditSales, invoiceCount, netProfit });
+                setStatistics({ 
+                    totalSales: totalSales || 0, 
+                    totalPayments: totalPayments || 0, 
+                    creditSales: creditSales || 0, 
+                    invoiceCount: invoiceCount || 0, 
+                    netProfit: netProfit || 0
+                });
+                console.log('[SalesPage] Summary statistics loaded:', { totalSales, invoiceCount, netProfit });
+            } else {
+                setStatistics({ totalSales: 0, totalPayments: 0, creditSales: 0, invoiceCount: 0, netProfit: 0 });
             }
         } catch (error) {
-            console.error('Error fetching statistics:', error);
+            console.error('[SalesPage] Error fetching summary statistics:', error);
+            // Don't set error state - just use defaults so summary cards still show
+            setStatistics({ totalSales: 0, totalPayments: 0, creditSales: 0, invoiceCount: 0, netProfit: 0 });
         } finally {
             setIsLoadingStats(false);
         }
     }, [filters]);
 
-    // Fetch statistics when filters change
+    // Fetch summary FIRST when filters change (before detailed sales)
     useEffect(() => {
         fetchStatistics();
     }, [fetchStatistics]);

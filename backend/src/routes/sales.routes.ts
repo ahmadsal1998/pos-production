@@ -2,6 +2,7 @@ import { Router } from 'express';
 import {
   createSale,
   getSales,
+  getSalesSummary,
   getSale,
   updateSale,
   deleteSale,
@@ -20,6 +21,7 @@ router.use(requireStoreAccess);
 router.get('/next-invoice-number', getNextInvoiceNumber);
 router.post('/', createSale);
 router.post('/return', processReturn);
+router.get('/summary', getSalesSummary);
 router.get('/', getSales);
 router.get('/:id', getSale);
 router.put('/:id', updateSale);

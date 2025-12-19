@@ -418,6 +418,234 @@ export const getSales = asyncHandler(async (req: AuthenticatedRequest, res: Resp
 });
 
 /**
+ * Get sales summary/statistics (fast aggregation query)
+ * Returns summary metrics without loading all sales data
+ */
+export const getSalesSummary = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+  const userStoreId = req.user?.storeId || null;
+  const userRole = req.user?.role || null;
+  const { startDate, endDate, customerId, status, paymentMethod, storeId: queryStoreId } = req.query;
+
+  // Determine which storeId to use
+  let targetStoreId: string | null = null;
+  
+  if (userRole === 'Admin') {
+    if (queryStoreId) {
+      targetStoreId = (queryStoreId as string).toLowerCase().trim();
+    }
+  } else {
+    if (!userStoreId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Store ID is required to access sales',
+      });
+    }
+    targetStoreId = userStoreId.toLowerCase().trim();
+  }
+
+  // Get unified Sale model
+  let modelStoreId = userStoreId || targetStoreId;
+  if (!modelStoreId) {
+    const Store = (await import('../models/Store')).default;
+    const firstStore = await Store.findOne().lean();
+    if (!firstStore) {
+      return res.status(400).json({
+        success: false,
+        message: 'No stores available',
+      });
+    }
+    modelStoreId = firstStore.storeId || firstStore.prefix;
+  }
+  
+  const Sale = await getSaleModelForStore(modelStoreId);
+
+  // Build query (same as getSales but without pagination)
+  const query: any = {};
+  if (targetStoreId) {
+    query.storeId = targetStoreId;
+  }
+
+  if (customerId) {
+    query.customerId = customerId;
+  }
+
+  if (status) {
+    query.status = status;
+  }
+
+  if (paymentMethod) {
+    let paymentMethodStr: string;
+    if (typeof paymentMethod === 'string') {
+      paymentMethodStr = paymentMethod;
+    } else if (Array.isArray(paymentMethod) && paymentMethod.length > 0) {
+      paymentMethodStr = String(paymentMethod[0]);
+    } else {
+      paymentMethodStr = String(paymentMethod);
+    }
+    query.paymentMethod = paymentMethodStr.toLowerCase();
+  }
+
+  // Get business day start time and timezone settings for date filtering
+  let businessDayStartTime: string | undefined;
+  let businessDayTimezone: string | undefined;
+  const settingsStoreId = targetStoreId || modelStoreId;
+  
+  if (settingsStoreId) {
+    const Settings = (await import('../models/Settings')).default;
+    const [businessDaySetting, timezoneSetting] = await Promise.all([
+      Settings.findOne({
+        storeId: settingsStoreId,
+        key: 'businessdaystarttime'
+      }),
+      Settings.findOne({
+        storeId: settingsStoreId,
+        key: 'businessdaytimezone'
+      })
+    ]);
+    if (businessDaySetting && businessDaySetting.value) {
+      businessDayStartTime = businessDaySetting.value;
+    }
+    if (timezoneSetting && timezoneSetting.value) {
+      businessDayTimezone = timezoneSetting.value;
+    }
+  }
+
+  if (startDate || endDate) {
+    const { getBusinessDateFilterRange } = await import('../utils/businessDate');
+    const { start, end } = getBusinessDateFilterRange(
+      startDate as string | null,
+      endDate as string | null,
+      businessDayStartTime,
+      businessDayTimezone
+    );
+    
+    query.date = {};
+    if (start) {
+      query.date.$gte = start;
+    }
+    if (end) {
+      query.date.$lte = end;
+    }
+  }
+
+  // Use MongoDB aggregation for fast summary calculation
+  const summaryPipeline: any[] = [
+    { $match: query },
+    {
+      $group: {
+        _id: null,
+        totalSales: { $sum: '$total' },
+        totalPayments: { $sum: '$paidAmount' },
+        invoiceCount: { $sum: 1 },
+        creditSales: {
+          $sum: {
+            $cond: [{ $eq: ['$paymentMethod', 'credit'] }, '$total', 0]
+          }
+        },
+      }
+    }
+  ];
+
+  const summaryResult = await Sale.aggregate(summaryPipeline);
+
+  const summary = summaryResult[0] || {
+    totalSales: 0,
+    totalPayments: 0,
+    invoiceCount: 0,
+    creditSales: 0,
+  };
+
+  // Calculate net profit: totalSales - totalCost
+  // Use efficient aggregation with product lookup
+  let netProfit = 0;
+  try {
+    const { getProductModelForStore } = await import('../utils/productModel');
+    const Product = await getProductModelForStore(modelStoreId);
+
+    // First, get all unique product IDs from sales items (efficient)
+    const productIdsPipeline: any[] = [
+      { $match: query },
+      { $unwind: '$items' },
+      { $group: { _id: '$items.productId' } }
+    ];
+
+    const productIdsResult = await Sale.aggregate(productIdsPipeline);
+    // Handle both ObjectId and string productIds
+    const productIds = productIdsResult
+      .map((p: any) => p._id)
+      .filter(Boolean)
+      .map((id: any) => {
+        // Convert ObjectId to string if needed
+        return id.toString ? id.toString() : String(id);
+      });
+
+    if (productIds.length > 0) {
+      // Import mongoose for ObjectId conversion
+      const mongoose = (await import('mongoose')).default;
+      
+      // Convert string IDs to ObjectIds for query
+      const objectIdProductIds = productIds
+        .filter((id: string) => mongoose.Types.ObjectId.isValid(id))
+        .map((id: string) => new mongoose.Types.ObjectId(id));
+
+      // Fetch products in batch (fast) - try both ObjectId and string lookups
+      const products = await Product.find({
+        storeId: (targetStoreId || modelStoreId).toLowerCase(),
+        $or: [
+          ...(objectIdProductIds.length > 0 ? [{ _id: { $in: objectIdProductIds } }] : []),
+          { _id: { $in: productIds } },
+          { id: { $in: productIds } }
+        ]
+      }).select('_id id costPrice').lean();
+
+      // Create cost price map for fast lookup (support both ObjectId and string keys)
+      const costPriceMap = new Map<string, number>();
+      products.forEach((p: any) => {
+        const idObj = p._id || p.id;
+        if (idObj) {
+          const idStr = idObj.toString ? idObj.toString() : String(idObj);
+          costPriceMap.set(idStr, p.costPrice || 0);
+        }
+      });
+
+      // Calculate total cost in memory (simpler and efficient)
+      const salesWithItems = await Sale.find(query).select('items').lean();
+      let totalCost = 0;
+      
+      salesWithItems.forEach((sale: any) => {
+        if (sale.items && Array.isArray(sale.items)) {
+          sale.items.forEach((item: any) => {
+            const productId = String(item.productId || '');
+            const costPrice = costPriceMap.get(productId) || 0;
+            const quantity = Math.abs(item.quantity || 0);
+            totalCost += costPrice * quantity;
+          });
+        }
+      });
+
+      netProfit = (summary.totalSales || 0) - totalCost;
+    }
+  } catch (error) {
+    console.error('[Sales Controller] Error calculating net profit:', error);
+    // If net profit calculation fails, set to 0 (don't fail the whole request)
+    netProfit = 0;
+  }
+
+  res.status(200).json({
+    success: true,
+    message: 'Sales summary retrieved successfully',
+    data: {
+      totalSales: summary.totalSales || 0,
+      totalPayments: summary.totalPayments || 0,
+      invoiceCount: summary.invoiceCount || 0,
+      creditSales: summary.creditSales || 0,
+      remainingAmount: (summary.totalSales || 0) - (summary.totalPayments || 0),
+      netProfit: netProfit,
+    },
+  });
+});
+
+/**
  * Get a single sale by ID
  */
 export const getSale = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
