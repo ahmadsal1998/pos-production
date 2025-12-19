@@ -5,6 +5,7 @@ import { asyncHandler } from '../middleware/error.middleware';
 import { getSaleModelForStore } from '../utils/saleModel';
 import { getProductModelForStore } from '../utils/productModel';
 import { invalidateAllProductBarcodeCaches } from '../utils/productCache';
+import Settings from '../models/Settings';
 
 /**
  * Get the next sequential invoice number
@@ -296,7 +297,6 @@ export const getSales = asyncHandler(async (req: AuthenticatedRequest, res: Resp
   const settingsStoreId = targetStoreId || modelStoreId;
   
   if (settingsStoreId) {
-    const Settings = (await import('../models/Settings')).default;
     const [businessDaySetting, timezoneSetting] = await Promise.all([
       Settings.findOne({
         storeId: settingsStoreId,
@@ -495,7 +495,6 @@ export const getSalesSummary = asyncHandler(async (req: AuthenticatedRequest, re
   const settingsStoreId = targetStoreId || modelStoreId;
   
   if (settingsStoreId) {
-    const Settings = (await import('../models/Settings')).default;
     const [businessDaySetting, timezoneSetting] = await Promise.all([
       Settings.findOne({
         storeId: settingsStoreId,
