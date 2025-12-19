@@ -14,7 +14,7 @@ import { printReceipt } from '@/shared/utils/printUtils';
 import { customerSync } from '@/lib/sync/customerSync';
 import { customersDB } from '@/lib/db/customersDB';
 import { loadSettings, saveSettings } from '@/shared/utils/settingsStorage';
-import { getBusinessDateFilterRange, getBusinessDayStartTime } from '@/shared/utils/businessDate';
+import { getBusinessDateFilterRange, getBusinessDayStartTime, getBusinessDayTimezone } from '@/shared/utils/businessDate';
 import { useResponsiveViewMode } from '@/shared/hooks';
 
 // Filter icon component
@@ -874,15 +874,16 @@ const SalesPage: React.FC<SalesPageProps> = ({ setActivePath }) => {
         }
     }, [filters, pageSize]);
 
-    // Fetch sales when filters or page change
+    // Reset to page 1 when filters or page size change, then fetch
+    useEffect(() => {
+        setCurrentPage(1);
+        // Fetch will be triggered by the effect below when currentPage changes
+    }, [filters, pageSize]);
+
+    // Fetch sales when filters, page, or pageSize change
     useEffect(() => {
         fetchSales(currentPage);
     }, [fetchSales, currentPage]);
-
-    // Reset to page 1 when filters or page size change
-    useEffect(() => {
-        setCurrentPage(1);
-    }, [filters, pageSize]);
 
     // Load customers from IndexedDB on mount
     const loadCustomersFromDB = useCallback(async () => {
@@ -1721,6 +1722,14 @@ const SalesTableView: React.FC<{
                     {filters && (() => {
                         const { labels, hasNonDefaultFilters } = getActiveFilterLabels(filters, customers);
                         const nonDefaultCount = labels.length - (filters.datePreset === 'today' ? 1 : 0);
+                        // Check if any non-default filter is active (date filter is always active, so we check others)
+                        const hasAnyActiveFilter = filters.paymentMethod !== 'all' || 
+                            filters.status !== 'all' || 
+                            filters.customerId !== 'all' || 
+                            filters.seller !== 'all' ||
+                            filters.datePreset !== 'today';
+                        // Always show indicator since date filter is always active, but make it more prominent for non-default filters
+                        const shouldShowIndicator = true; // Filters are always active (at least date filter)
                         
                         return (
                             <>
@@ -1756,9 +1765,14 @@ const SalesTableView: React.FC<{
                                 >
                                     <FilterIcon />
                                     <span className="mr-2">تصفية</span>
-                                    {hasNonDefaultFilters && nonDefaultCount > 0 && (
-                                        <span className="absolute -top-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full bg-red-500 text-xs font-bold text-white animate-pulse">
-                                            {nonDefaultCount}
+                                    {/* Show indicator - always visible since filters are always active (at least date filter) */}
+                                    {shouldShowIndicator && (
+                                        <span className={`absolute -top-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full text-xs font-bold text-white shadow-lg ${
+                                            hasNonDefaultFilters 
+                                                ? 'bg-orange-500 animate-pulse' 
+                                                : 'bg-blue-400'
+                                        }`} title={hasNonDefaultFilters ? `${nonDefaultCount} فلتر نشط` : "فلتر نشط"}>
+                                            {hasNonDefaultFilters && nonDefaultCount > 0 ? nonDefaultCount : '•'}
                                         </span>
                                     )}
                                 </button>
@@ -2035,13 +2049,15 @@ const ReportsView: React.FC<{ sales: SaleTransaction[], customers: Customer[], p
     };
 
     const handleGenerateReport = () => {
-        // Use business date filtering
+        // Use business date filtering with timezone
         const businessDayStartTime = getBusinessDayStartTime();
+        const timezone = getBusinessDayTimezone();
         const timeStr = businessDayStartTime.hours.toString().padStart(2, '0') + ':' + businessDayStartTime.minutes.toString().padStart(2, '0');
         const { start, end } = getBusinessDateFilterRange(
             dateRange.start || null,
             dateRange.end || null,
-            timeStr
+            timeStr,
+            timezone
         );
         
         const filteredSales = sales.filter(sale => {
@@ -2657,11 +2673,13 @@ const CustomerAccountsView: React.FC<{
         if (!dateRange.start || !dateRange.end) return payments;
         
         const businessDayStartTime = getBusinessDayStartTime();
+        const timezone = getBusinessDayTimezone();
         const timeStr = businessDayStartTime.hours.toString().padStart(2, '0') + ':' + businessDayStartTime.minutes.toString().padStart(2, '0');
         const { start, end } = getBusinessDateFilterRange(
             dateRange.start || null,
             dateRange.end || null,
-            timeStr
+            timeStr,
+            timezone
         );
 
         if (!start || !end) return payments;

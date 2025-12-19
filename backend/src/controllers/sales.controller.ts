@@ -286,26 +286,38 @@ export const getSales = asyncHandler(async (req: AuthenticatedRequest, res: Resp
     query.paymentMethod = paymentMethodStr.toLowerCase();
   }
 
-  // Get business day start time setting for date filtering
+  // Get business day start time and timezone settings for date filtering
   let businessDayStartTime: string | undefined;
+  let businessDayTimezone: string | undefined;
   if (targetStoreId) {
     const Settings = (await import('../models/Settings')).default;
-    const businessDaySetting = await Settings.findOne({
-      storeId: targetStoreId,
-      key: 'businessdaystarttime'
-    });
+    const [businessDaySetting, timezoneSetting] = await Promise.all([
+      Settings.findOne({
+        storeId: targetStoreId,
+        key: 'businessdaystarttime'
+      }),
+      Settings.findOne({
+        storeId: targetStoreId,
+        key: 'businessdaytimezone'
+      })
+    ]);
     if (businessDaySetting && businessDaySetting.value) {
       businessDayStartTime = businessDaySetting.value;
+    }
+    if (timezoneSetting && timezoneSetting.value) {
+      businessDayTimezone = timezoneSetting.value;
     }
   }
 
   if (startDate || endDate) {
     // Use business date filtering instead of calendar date filtering
+    // This now uses timezone-aware calculations to properly handle business days
     const { getBusinessDateFilterRange } = await import('../utils/businessDate');
     const { start, end } = getBusinessDateFilterRange(
       startDate as string | null,
       endDate as string | null,
-      businessDayStartTime
+      businessDayStartTime,
+      businessDayTimezone
     );
     
     query.date = {};

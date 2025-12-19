@@ -1,3 +1,5 @@
+import { DateTime } from 'luxon';
+
 /**
  * Parse business day start time from settings
  * @param businessDayStartTime - Time string in format "HH:mm" (e.g., "06:00")
@@ -88,49 +90,59 @@ export function getBusinessDateRange(businessDate: Date, businessDayStartTime?: 
  * This is useful when filtering sales by calendar dates but needing to include
  * sales from the business day that spans across calendar days
  * 
+ * Uses timezone-aware calculations to properly handle business days across timezones.
+ * The business day start time is interpreted in the store's timezone, then converted to UTC for database queries.
+ * 
  * @param startDate - Start calendar date
  * @param endDate - End calendar date
- * @param businessDayStartTime - Optional business day start time (defaults to 06:00)
- * @returns Object with actual start and end Date objects for querying
+ * @param businessDayStartTime - Optional business day start time (defaults to 06:00) in format "HH:mm"
+ * @param timezone - Optional timezone (e.g., "Asia/Gaza"). Defaults to UTC if not provided
+ * @returns Object with actual start and end Date objects in UTC for querying
  */
 export function getBusinessDateFilterRange(
   startDate: Date | string | null,
   endDate: Date | string | null,
-  businessDayStartTime?: string
+  businessDayStartTime?: string,
+  timezone?: string
 ): { start: Date | null; end: Date | null } {
   if (!startDate && !endDate) {
     return { start: null, end: null };
   }
 
   const { hours, minutes } = parseBusinessDayStartTime(businessDayStartTime);
+  const tz = timezone || 'UTC'; // Default to UTC if no timezone provided
 
   let start: Date | null = null;
   let end: Date | null = null;
 
   if (startDate) {
-    const startCal = typeof startDate === 'string' ? new Date(startDate) : new Date(startDate);
-    startCal.setHours(0, 0, 0, 0);
+    // Parse the start date in the store's timezone
+    const startDateStr = typeof startDate === 'string' ? startDate : startDate.toISOString().split('T')[0];
     
-    // The business day for this calendar date starts at businessDayStartTime on the calendar date
-    // For example, if businessDayStartTime is 02:00 and startDate is March 19,
-    // the business day starts at March 19 02:00:00
-    const businessDayStart = new Date(startCal);
-    businessDayStart.setHours(hours, minutes, 0, 0);
-    start = businessDayStart;
+    // Create a DateTime in the store's timezone at the business day start time
+    // Example: If startDate is "2024-03-19" and businessDayStartTime is "01:00" in "Asia/Gaza",
+    // this creates "2024-03-19 01:00:00" in Asia/Gaza timezone
+    const businessDayStart = DateTime.fromISO(startDateStr, { zone: tz })
+      .set({ hour: hours, minute: minutes, second: 0, millisecond: 0 });
+    
+    // Convert to UTC for database querying
+    start = businessDayStart.toUTC().toJSDate();
   }
 
   if (endDate) {
-    const endCal = typeof endDate === 'string' ? new Date(endDate) : new Date(endDate);
-    endCal.setHours(23, 59, 59, 999);
+    // Parse the end date in the store's timezone
+    const endDateStr = typeof endDate === 'string' ? endDate : endDate.toISOString().split('T')[0];
     
-    // The business day for this calendar date ends at (businessDayStartTime - 1ms) of the next calendar day
-    // For example, if businessDayStartTime is 02:00, the business day ends at 01:59:59.999 of the next day
-    // So we set the next day to businessDayStartTime and subtract 1ms
-    const nextDay = new Date(endCal);
-    nextDay.setDate(nextDay.getDate() + 1);
-    nextDay.setHours(hours, minutes, 0, 0);
-    nextDay.setMilliseconds(nextDay.getMilliseconds() - 1);
-    end = nextDay;
+    // The business day for the end date ends at (businessDayStartTime - 1 minute) of the next calendar day
+    // Example: If endDate is "2024-03-20" and businessDayStartTime is "01:00" in "Asia/Gaza",
+    // the business day ends at "2024-03-21 00:59:59" in Asia/Gaza timezone
+    const nextDay = DateTime.fromISO(endDateStr, { zone: tz })
+      .plus({ days: 1 })
+      .set({ hour: hours, minute: minutes, second: 0, millisecond: 0 })
+      .minus({ minutes: 1 }); // Subtract 1 minute to get the end of the business day
+    
+    // Convert to UTC for database querying
+    end = nextDay.toUTC().toJSDate();
   }
 
   return { start, end };

@@ -6,7 +6,7 @@ import { formatDate } from '@/shared/utils';
 import { salesApi, ApiError } from '@/lib/api/client';
 import { useCurrency } from '@/shared/contexts/CurrencyContext';
 import { useAuthStore } from '@/app/store';
-import { getBusinessDateFilterRange, getBusinessDayStartTime } from '@/shared/utils/businessDate';
+import { getBusinessDateFilterRange, getBusinessDayStartTime, getBusinessDayTimezone } from '@/shared/utils/businessDate';
 
 const SalesHistoryPage: React.FC = () => {
   const navigate = useNavigate();
@@ -93,13 +93,15 @@ const SalesHistoryPage: React.FC = () => {
   };
 
   const filteredSales = useMemo(() => {
-    // Use business date filtering
+    // Use business date filtering with timezone
     const businessDayStartTime = getBusinessDayStartTime();
+    const timezone = getBusinessDayTimezone();
     const timeStr = businessDayStartTime.hours.toString().padStart(2, '0') + ':' + businessDayStartTime.minutes.toString().padStart(2, '0');
     const { start, end } = getBusinessDateFilterRange(
       filters.startDate || null,
       filters.endDate || null,
-      timeStr
+      timeStr,
+      timezone
     );
     
     return historicalSales.filter(sale => {

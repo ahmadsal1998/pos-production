@@ -4,7 +4,7 @@
  */
 
 import { openIndexedDB, isIndexedDBAvailable } from './indexedDBUtils';
-import { getBusinessDateFilterRange, getBusinessDayStartTime } from '@/shared/utils/businessDate';
+import { getBusinessDateFilterRange, getBusinessDayStartTime, getBusinessDayTimezone } from '@/shared/utils/businessDate';
 
 const DB_NAME = 'POS_Sales_DB';
 const DB_VERSION = 1;
@@ -349,11 +349,13 @@ class SalesDB {
             // Use business date filtering
             try {
               const businessDayStartTime = getBusinessDayStartTime();
+              const timezone = getBusinessDayTimezone();
               const timeStr = businessDayStartTime.hours.toString().padStart(2, '0') + ':' + businessDayStartTime.minutes.toString().padStart(2, '0');
               const { start, end } = getBusinessDateFilterRange(
                 filters.startDate || null,
                 filters.endDate || null,
-                timeStr
+                timeStr,
+                timezone
               );
               
               sales = sales.filter((sale) => {

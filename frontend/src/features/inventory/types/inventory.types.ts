@@ -124,4 +124,9 @@ export interface SystemPreferences {
   enableAutoNotifications: boolean;
   // Other
   interfaceMode: 'light' | 'dark';
+  // Business Day Configuration
+  businessDayStartTime: string; // Format: "HH:mm" (e.g., "06:00")
+  businessDayTimezone: string; // IANA timezone (e.g., "Asia/Gaza", "America/New_York")
+  // Store Address
+  storeAddress: string; // Store location/address for invoices
 }
