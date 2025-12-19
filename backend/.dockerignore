@@ -17,6 +17,6 @@ DEPLOY_*.md
 ENV_SETUP.md
 FORGOT_PASSWORD_SETUP.md
 TROUBLESHOOTING.md
-src
+# src is NOT ignored - we need it for building TypeScript source
 tsconfig.json
 nodemon.json
