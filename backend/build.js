@@ -43,7 +43,33 @@ async function build() {
   });
 
   await Promise.all(buildPromises);
+  
+  // Verify critical files were built
+  const criticalFiles = [
+    'dist/utils/trialAccountModels.js',
+    'dist/utils/productModel.js',
+    'dist/utils/saleModel.js',
+    'dist/utils/customerModel.js',
+    'dist/index.js',
+    'dist/server.js'
+  ];
+  
+  let allFilesExist = true;
+  for (const file of criticalFiles) {
+    const filePath = path.join(process.cwd(), file);
+    if (!fs.existsSync(filePath)) {
+      console.error(`❌ Critical file missing: ${file}`);
+      allFilesExist = false;
+    }
+  }
+  
+  if (!allFilesExist) {
+    console.error('\n❌ Build verification failed - some critical files are missing!');
+    process.exit(1);
+  }
+  
   console.log('\n✅ Build completed successfully!');
+  console.log('✅ All critical files verified');
 }
 
 build().catch((error) => {
