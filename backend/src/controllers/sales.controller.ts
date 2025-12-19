@@ -319,7 +319,6 @@ export const getSales = asyncHandler(async (req: AuthenticatedRequest, res: Resp
   if (startDate || endDate) {
     // Use business date filtering instead of calendar date filtering
     // This now uses timezone-aware calculations to properly handle business days
-    const { getBusinessDateFilterRange } = await import('../utils/businessDate');
     
     // Log date filtering parameters for debugging
     console.log('[Sales Controller] Date filtering parameters:', {
