@@ -6,6 +6,7 @@ import { getSaleModelForStore } from '../utils/saleModel';
 import { getProductModelForStore } from '../utils/productModel';
 import { invalidateAllProductBarcodeCaches } from '../utils/productCache';
 import Settings from '../models/Settings';
+import { getBusinessDateFilterRange } from '../utils/businessDate';
 
 /**
  * Get the next sequential invoice number
@@ -514,7 +515,6 @@ export const getSalesSummary = asyncHandler(async (req: AuthenticatedRequest, re
   }
 
   if (startDate || endDate) {
-    const { getBusinessDateFilterRange } = await import('../utils/businessDate');
     const { start, end } = getBusinessDateFilterRange(
       startDate as string | null,
       endDate as string | null,
