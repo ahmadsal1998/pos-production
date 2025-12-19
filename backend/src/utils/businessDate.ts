@@ -111,24 +111,25 @@ export function getBusinessDateFilterRange(
     const startCal = typeof startDate === 'string' ? new Date(startDate) : new Date(startDate);
     startCal.setHours(0, 0, 0, 0);
     
-    // The business day for this calendar date starts at businessDayStartTime
-    // But we need to include sales from the previous calendar day that belong to this business day
-    // So we go back one day and start from businessDayStartTime
-    const prevDay = new Date(startCal);
-    prevDay.setDate(prevDay.getDate() - 1);
-    prevDay.setHours(hours, minutes, 0, 0);
-    start = prevDay;
+    // The business day for this calendar date starts at businessDayStartTime on the calendar date
+    // For example, if businessDayStartTime is 02:00 and startDate is March 19,
+    // the business day starts at March 19 02:00:00
+    const businessDayStart = new Date(startCal);
+    businessDayStart.setHours(hours, minutes, 0, 0);
+    start = businessDayStart;
   }
 
   if (endDate) {
     const endCal = typeof endDate === 'string' ? new Date(endDate) : new Date(endDate);
     endCal.setHours(23, 59, 59, 999);
     
-    // The business day for this calendar date ends at 05:59:59.999 AM of the next calendar day
-    // So we extend to the next day's business day start time minus 1ms
+    // The business day for this calendar date ends at (businessDayStartTime - 1ms) of the next calendar day
+    // For example, if businessDayStartTime is 02:00, the business day ends at 01:59:59.999 of the next day
+    // So we set the next day to businessDayStartTime and subtract 1ms
     const nextDay = new Date(endCal);
     nextDay.setDate(nextDay.getDate() + 1);
-    nextDay.setHours(hours, minutes, 59, 999);
+    nextDay.setHours(hours, minutes, 0, 0);
+    nextDay.setMilliseconds(nextDay.getMilliseconds() - 1);
     end = nextDay;
   }
 
