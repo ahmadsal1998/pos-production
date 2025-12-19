@@ -286,27 +286,65 @@ export const getSales = asyncHandler(async (req: AuthenticatedRequest, res: Resp
     query.paymentMethod = paymentMethodStr.toLowerCase();
   }
 
-  // Get business day start time setting for date filtering
+  // Get business day start time and timezone settings for date filtering
+  // Use modelStoreId (which is always available) to retrieve settings
+  // This ensures settings are retrieved even for admin queries without a specific storeId
   let businessDayStartTime: string | undefined;
-  if (targetStoreId) {
+  let businessDayTimezone: string | undefined;
+  
+  // Determine which storeId to use for settings retrieval
+  const settingsStoreId = targetStoreId || modelStoreId;
+  
+  if (settingsStoreId) {
     const Settings = (await import('../models/Settings')).default;
-    const businessDaySetting = await Settings.findOne({
-      storeId: targetStoreId,
-      key: 'businessdaystarttime'
-    });
+    const [businessDaySetting, timezoneSetting] = await Promise.all([
+      Settings.findOne({
+        storeId: settingsStoreId,
+        key: 'businessdaystarttime'
+      }),
+      Settings.findOne({
+        storeId: settingsStoreId,
+        key: 'businessdaytimezone'
+      })
+    ]);
     if (businessDaySetting && businessDaySetting.value) {
       businessDayStartTime = businessDaySetting.value;
+    }
+    if (timezoneSetting && timezoneSetting.value) {
+      businessDayTimezone = timezoneSetting.value;
     }
   }
 
   if (startDate || endDate) {
     // Use business date filtering instead of calendar date filtering
+    // This now uses timezone-aware calculations to properly handle business days
     const { getBusinessDateFilterRange } = await import('../utils/businessDate');
+    
+    // Log date filtering parameters for debugging
+    console.log('[Sales Controller] Date filtering parameters:', {
+      startDate,
+      endDate,
+      businessDayStartTime,
+      businessDayTimezone,
+      settingsStoreId,
+      targetStoreId,
+      modelStoreId,
+    });
+    
     const { start, end } = getBusinessDateFilterRange(
       startDate as string | null,
       endDate as string | null,
-      businessDayStartTime
+      businessDayStartTime,
+      businessDayTimezone
     );
+    
+    // Log calculated date range for debugging
+    console.log('[Sales Controller] Calculated date range:', {
+      start: start ? start.toISOString() : null,
+      end: end ? end.toISOString() : null,
+      startUTC: start ? start.toUTCString() : null,
+      endUTC: end ? end.toUTCString() : null,
+    });
     
     query.date = {};
     if (start) {
@@ -321,7 +359,25 @@ export const getSales = asyncHandler(async (req: AuthenticatedRequest, res: Resp
   const pageNum = parseInt(page as string, 10) || 1;
   const limitNum = parseInt(limit as string, 10) || 100;
   const skip = (pageNum - 1) * limitNum;
+  
+  // Log pagination parameters for debugging
+  console.log('[Sales Controller] Pagination parameters:', {
+    page: page as string,
+    limit: limit as string,
+    pageNum,
+    limitNum,
+    skip,
+    queryParams: { page, limit, startDate, endDate, customerId, status, paymentMethod, storeId: queryStoreId },
+  });
 
+  // Log final query for debugging
+  console.log('[Sales Controller] Final query:', {
+    query: JSON.stringify(query, null, 2),
+    sort: { date: -1 },
+    skip,
+    limit: limitNum,
+  });
+  
   // Execute query
   const [sales, total] = await Promise.all([
     Sale.find(query)
@@ -331,6 +387,18 @@ export const getSales = asyncHandler(async (req: AuthenticatedRequest, res: Resp
       .lean(),
     Sale.countDocuments(query),
   ]);
+  
+  // Log query results for debugging
+  console.log('[Sales Controller] Query results:', {
+    salesCount: sales.length,
+    total,
+    pagination: {
+      currentPage: pageNum,
+      totalPages: Math.ceil(total / limitNum),
+      totalSales: total,
+      limit: limitNum,
+    },
+  });
 
   res.status(200).json({
     success: true,
@@ -350,11 +418,319 @@ export const getSales = asyncHandler(async (req: AuthenticatedRequest, res: Resp
 });
 
 /**
+ * Get sales summary/statistics (fast aggregation query)
+ * Returns summary metrics without loading all sales data
+ */
+export const getSalesSummary = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+  const userStoreId = req.user?.storeId || null;
+  const userRole = req.user?.role || null;
+  const { startDate, endDate, customerId, status, paymentMethod, storeId: queryStoreId } = req.query;
+
+  // Determine which storeId to use
+  let targetStoreId: string | null = null;
+  
+  if (userRole === 'Admin') {
+    if (queryStoreId) {
+      targetStoreId = (queryStoreId as string).toLowerCase().trim();
+    }
+  } else {
+    if (!userStoreId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Store ID is required to access sales',
+      });
+    }
+    targetStoreId = userStoreId.toLowerCase().trim();
+  }
+
+  // Get unified Sale model
+  let modelStoreId = userStoreId || targetStoreId;
+  if (!modelStoreId) {
+    const Store = (await import('../models/Store')).default;
+    const firstStore = await Store.findOne().lean();
+    if (!firstStore) {
+      return res.status(400).json({
+        success: false,
+        message: 'No stores available',
+      });
+    }
+    modelStoreId = firstStore.storeId || firstStore.prefix;
+  }
+  
+  const Sale = await getSaleModelForStore(modelStoreId);
+
+  // Build query (same as getSales but without pagination)
+  const query: any = {};
+  if (targetStoreId) {
+    query.storeId = targetStoreId;
+  }
+
+  if (customerId) {
+    query.customerId = customerId;
+  }
+
+  if (status) {
+    query.status = status;
+  }
+
+  if (paymentMethod) {
+    let paymentMethodStr: string;
+    if (typeof paymentMethod === 'string') {
+      paymentMethodStr = paymentMethod;
+    } else if (Array.isArray(paymentMethod) && paymentMethod.length > 0) {
+      paymentMethodStr = String(paymentMethod[0]);
+    } else {
+      paymentMethodStr = String(paymentMethod);
+    }
+    query.paymentMethod = paymentMethodStr.toLowerCase();
+  }
+
+  // Get business day start time and timezone settings for date filtering
+  let businessDayStartTime: string | undefined;
+  let businessDayTimezone: string | undefined;
+  const settingsStoreId = targetStoreId || modelStoreId;
+  
+  if (settingsStoreId) {
+    const Settings = (await import('../models/Settings')).default;
+    const [businessDaySetting, timezoneSetting] = await Promise.all([
+      Settings.findOne({
+        storeId: settingsStoreId,
+        key: 'businessdaystarttime'
+      }),
+      Settings.findOne({
+        storeId: settingsStoreId,
+        key: 'businessdaytimezone'
+      })
+    ]);
+    if (businessDaySetting && businessDaySetting.value) {
+      businessDayStartTime = businessDaySetting.value;
+    }
+    if (timezoneSetting && timezoneSetting.value) {
+      businessDayTimezone = timezoneSetting.value;
+    }
+  }
+
+  if (startDate || endDate) {
+    const { getBusinessDateFilterRange } = await import('../utils/businessDate');
+    const { start, end } = getBusinessDateFilterRange(
+      startDate as string | null,
+      endDate as string | null,
+      businessDayStartTime,
+      businessDayTimezone
+    );
+    
+    query.date = {};
+    if (start) {
+      query.date.$gte = start;
+    }
+    if (end) {
+      query.date.$lte = end;
+    }
+  }
+
+  // Use MongoDB aggregation for fast summary calculation
+  const summaryPipeline: any[] = [
+    { $match: query },
+    {
+      $group: {
+        _id: null,
+        totalSales: { $sum: '$total' },
+        totalPayments: { $sum: '$paidAmount' },
+        invoiceCount: { $sum: 1 },
+        creditSales: {
+          $sum: {
+            $cond: [{ $eq: ['$paymentMethod', 'credit'] }, '$total', 0]
+          }
+        },
+      }
+    }
+  ];
+
+  const summaryResult = await Sale.aggregate(summaryPipeline);
+
+  const summary = summaryResult[0] || {
+    totalSales: 0,
+    totalPayments: 0,
+    invoiceCount: 0,
+    creditSales: 0,
+  };
+
+  // Calculate net profit: totalSales - totalCost
+  // Use efficient aggregation with product lookup
+  // If calculation fails, return 0 without failing the entire request
+  let netProfit = 0;
+  try {
+    const { getProductModelForStore } = await import('../utils/productModel');
+    const Product = await getProductModelForStore(modelStoreId);
+
+    // First, get all unique product IDs from sales items (efficient)
+    const productIdsPipeline: any[] = [
+      { $match: query },
+      { $unwind: '$items' },
+      { $group: { _id: '$items.productId' } }
+    ];
+
+    const productIdsResult = await Sale.aggregate(productIdsPipeline);
+    // Handle both ObjectId and string productIds
+    const productIds = productIdsResult
+      .map((p: any) => p._id)
+      .filter(Boolean)
+      .map((id: any) => {
+        // Convert ObjectId to string if needed
+        return id.toString ? id.toString() : String(id);
+      });
+
+    if (productIds.length > 0) {
+      // Import mongoose for ObjectId conversion
+      const mongoose = (await import('mongoose')).default;
+      
+      // Safely convert string IDs to ObjectIds for query (only valid ObjectIds)
+      const objectIdProductIds: any[] = [];
+      const stringProductIds: string[] = [];
+      
+      productIds.forEach((id: string) => {
+        if (mongoose.Types.ObjectId.isValid(id) && id.length === 24) {
+          try {
+            objectIdProductIds.push(new mongoose.Types.ObjectId(id));
+          } catch (e) {
+            // If ObjectId creation fails, treat as string
+            stringProductIds.push(id);
+          }
+        } else {
+          // Not a valid ObjectId format, treat as string
+          stringProductIds.push(id);
+        }
+      });
+
+      // Build query conditions - handle both ObjectId and string/number IDs
+      const queryConditions: any[] = [];
+      
+      if (objectIdProductIds.length > 0) {
+        queryConditions.push({ _id: { $in: objectIdProductIds } });
+      }
+      
+      if (stringProductIds.length > 0) {
+        // For non-ObjectId IDs, try to find by custom 'id' field if it exists
+        // Don't query _id with strings as it will cause CastError
+        queryConditions.push({ id: { $in: stringProductIds } });
+      }
+
+      // Fetch products in batch (fast)
+      // If no valid conditions, skip product lookup (net profit will be 0)
+      let products: any[] = [];
+      if (queryConditions.length > 0) {
+        try {
+          products = await Product.find({
+            storeId: (targetStoreId || modelStoreId).toLowerCase(),
+            $or: queryConditions
+          }).select('_id id costPrice').lean();
+        } catch (queryError: any) {
+          console.error('[Sales Controller] Error querying products for net profit:', {
+            error: queryError.message,
+            queryConditions
+          });
+          // If query fails, products array stays empty, net profit will be 0
+        }
+      }
+
+      // Create cost price map for fast lookup (support both ObjectId and string keys)
+      // Store multiple ID variants for each product to ensure matching
+      const costPriceMap = new Map<string, number>();
+      products.forEach((p: any) => {
+        const costPrice = p.costPrice || 0;
+        const idObj = p._id || p.id;
+        
+        if (idObj) {
+          // Store multiple ID format variants for flexible matching
+          const idStr = idObj.toString ? idObj.toString() : String(idObj);
+          costPriceMap.set(idStr, costPrice);
+          
+          // Also store as ObjectId string if it's an ObjectId
+          if (idObj.toString && idObj.toString().length === 24) {
+            costPriceMap.set(idObj.toString(), costPrice);
+          }
+          
+          // Store numeric version if applicable
+          if (typeof idObj === 'number' || !isNaN(Number(idStr))) {
+            costPriceMap.set(String(Number(idStr)), costPrice);
+          }
+        }
+      });
+
+      // Calculate total cost in memory (simpler and efficient)
+      const salesWithItems = await Sale.find(query).select('items').lean();
+      let totalCost = 0;
+      
+      salesWithItems.forEach((sale: any) => {
+        if (sale.items && Array.isArray(sale.items)) {
+          sale.items.forEach((item: any) => {
+            const itemProductId = item.productId;
+            if (!itemProductId) return;
+            
+            // Try multiple ID formats for matching
+            const productIdVariants = [
+              String(itemProductId),
+              itemProductId.toString ? itemProductId.toString() : String(itemProductId),
+              typeof itemProductId === 'number' ? String(itemProductId) : null
+            ].filter(Boolean) as string[];
+            
+            // Find matching cost price from map
+            let costPrice = 0;
+            for (const variant of productIdVariants) {
+              if (costPriceMap.has(variant)) {
+                costPrice = costPriceMap.get(variant)!;
+                break;
+              }
+            }
+            
+            const quantity = Math.abs(item.quantity || 0);
+            totalCost += costPrice * quantity;
+          });
+        }
+      });
+
+      netProfit = (summary.totalSales || 0) - totalCost;
+    }
+  } catch (error: any) {
+    console.error('[Sales Controller] Error calculating net profit:', {
+      error: error.message,
+      stack: error.stack,
+      name: error.name
+    });
+    // If net profit calculation fails, set to 0 (don't fail the whole request)
+    // This ensures summary still returns successfully even if net profit can't be calculated
+    netProfit = 0;
+  }
+
+  res.status(200).json({
+    success: true,
+    message: 'Sales summary retrieved successfully',
+    data: {
+      totalSales: summary.totalSales || 0,
+      totalPayments: summary.totalPayments || 0,
+      invoiceCount: summary.invoiceCount || 0,
+      creditSales: summary.creditSales || 0,
+      remainingAmount: (summary.totalSales || 0) - (summary.totalPayments || 0),
+      netProfit: netProfit,
+    },
+  });
+});
+
+/**
  * Get a single sale by ID
  */
 export const getSale = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
   const { id } = req.params;
   const storeId = req.user?.storeId || null;
+
+  // Validate ID format - prevent route conflicts (e.g., "summary" being treated as ID)
+  const mongoose = (await import('mongoose')).default;
+  if (!mongoose.Types.ObjectId.isValid(id)) {
+    return res.status(400).json({
+      success: false,
+      message: 'Invalid ID format',
+    });
+  }
 
   // Store users must have a storeId
   if (!storeId) {
@@ -392,6 +768,15 @@ export const getSale = asyncHandler(async (req: AuthenticatedRequest, res: Respo
 export const updateSale = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
   const { id } = req.params;
   const storeId = req.user?.storeId || null;
+
+  // Validate ID format - prevent route conflicts (e.g., "summary" being treated as ID)
+  const mongoose = (await import('mongoose')).default;
+  if (!mongoose.Types.ObjectId.isValid(id)) {
+    return res.status(400).json({
+      success: false,
+      message: 'Invalid ID format',
+    });
+  }
 
   // Store users must have a storeId
   if (!storeId) {
@@ -446,6 +831,15 @@ export const updateSale = asyncHandler(async (req: AuthenticatedRequest, res: Re
 export const deleteSale = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
   const { id } = req.params;
   const storeId = req.user?.storeId || null;
+
+  // Validate ID format - prevent route conflicts (e.g., "summary" being treated as ID)
+  const mongoose = (await import('mongoose')).default;
+  if (!mongoose.Types.ObjectId.isValid(id)) {
+    return res.status(400).json({
+      success: false,
+      message: 'Invalid ID format',
+    });
+  }
 
   // Store users must have a storeId
   if (!storeId) {

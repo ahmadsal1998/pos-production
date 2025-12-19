@@ -465,6 +465,9 @@ export const salesApi = {
   getSales: (params?: any) =>
     apiClient.get('/sales', params),
   
+  getSalesSummary: (params?: any) =>
+    apiClient.get<{ success: boolean; message: string; data: { totalSales: number; totalPayments: number; invoiceCount: number; creditSales: number; remainingAmount: number; netProfit: number } }>('/sales/summary', params),
+  
   getNextInvoiceNumber: () =>
     apiClient.get<{ success: boolean; message: string; data: { invoiceNumber: string; number: number } }>('/sales/next-invoice-number'),
   

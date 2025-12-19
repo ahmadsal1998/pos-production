@@ -54,6 +54,7 @@ const initialPreferences: SystemPreferences = {
   printCompactMode: false,
   // Business Day Configuration
   businessDayStartTime: '06:00', // Default: 6:00 AM
+  businessDayTimezone: 'UTC', // Default timezone
   // Store Address
   storeAddress: '', // Store location/address for invoices
 };
@@ -125,8 +126,10 @@ const PreferencesPage: React.FC = () => {
         setLoading(true);
         const storedSettings = loadSettings();
         
-        // Try to load storeAddress from backend if not in localStorage
+        // Try to load settings from backend if not in localStorage
         let backendStoreAddress = '';
+        let backendBusinessDayStartTime = '';
+        let backendBusinessDayTimezone = '';
         try {
           const backendSettings = await storeSettingsApi.getSettings();
           
@@ -144,11 +147,19 @@ const PreferencesPage: React.FC = () => {
             }
           }
           
-          if (settingsData?.storeaddress) {
-            backendStoreAddress = settingsData.storeaddress;
+          if (settingsData) {
+            if (settingsData.storeaddress) {
+              backendStoreAddress = settingsData.storeaddress;
+            }
+            if (settingsData.businessdaystarttime) {
+              backendBusinessDayStartTime = settingsData.businessdaystarttime;
+            }
+            if (settingsData.businessdaytimezone) {
+              backendBusinessDayTimezone = settingsData.businessdaytimezone;
+            }
           }
         } catch (error) {
-          console.warn('Failed to load storeAddress from backend:', error);
+          console.warn('Failed to load settings from backend:', error);
           // Continue with localStorage settings
         }
         
@@ -159,6 +170,8 @@ const PreferencesPage: React.FC = () => {
             ...storedSettings,
             // Use backend value if available and localStorage doesn't have it
             storeAddress: storedSettings.storeAddress || backendStoreAddress || '',
+            businessDayStartTime: storedSettings.businessDayStartTime || backendBusinessDayStartTime || '06:00',
+            businessDayTimezone: storedSettings.businessDayTimezone || backendBusinessDayTimezone || 'UTC',
           };
           setPrefs(updated);
 
@@ -170,10 +183,12 @@ const PreferencesPage: React.FC = () => {
             }
           }
         } else {
-          // No stored settings, use defaults but include backend storeAddress if available
+          // No stored settings, use defaults but include backend settings if available
           setPrefs({
             ...initialPreferences,
             storeAddress: backendStoreAddress || '',
+            businessDayStartTime: backendBusinessDayStartTime || '06:00',
+            businessDayTimezone: backendBusinessDayTimezone || 'UTC',
           });
         }
       } catch (err) {
@@ -209,6 +224,17 @@ const PreferencesPage: React.FC = () => {
         });
       } catch (error) {
         console.warn('Failed to sync businessDayStartTime to backend:', error);
+        // Don't fail the entire save if backend sync fails
+      }
+      
+      // Sync businessDayTimezone to backend
+      try {
+        await storeSettingsApi.updateSetting('businessdaytimezone', {
+          value: prefs.businessDayTimezone || 'UTC',
+          description: 'Business day timezone in IANA format (e.g., Asia/Gaza, America/New_York)'
+        });
+      } catch (error) {
+        console.warn('Failed to sync businessDayTimezone to backend:', error);
         // Don't fail the entire save if backend sync fails
       }
       
@@ -416,6 +442,37 @@ const PreferencesPage: React.FC = () => {
                   />
                   <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
                     يتم حساب اليوم التجاري من هذا الوقت حتى نفس الوقت من اليوم التالي. على سبيل المثال، إذا كان الوقت 06:00 صباحاً، فإن اليوم التجاري يبدأ من 06:00 صباحاً حتى 05:59:59 صباحاً من اليوم التالي.
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  <label htmlFor="businessDayTimezone" className="block text-sm font-semibold text-slate-700 dark:text-slate-300">
+                    المنطقة الزمنية
+                  </label>
+                  <select
+                    id="businessDayTimezone"
+                    name="businessDayTimezone"
+                    value={prefs.businessDayTimezone || 'UTC'}
+                    onChange={handleChange}
+                    className="w-full border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-200 rounded-xl shadow-sm text-right px-4 py-3 focus:outline-none focus:ring-2 focus:ring-orange-500/50 focus:border-orange-500 transition-all duration-200 hover:border-slate-400 dark:hover:border-slate-500"
+                  >
+                    <option value="UTC">UTC (Coordinated Universal Time)</option>
+                    <option value="Asia/Gaza">Asia/Gaza (فلسطين)</option>
+                    <option value="Asia/Jerusalem">Asia/Jerusalem (إسرائيل)</option>
+                    <option value="Asia/Dubai">Asia/Dubai (الإمارات العربية المتحدة)</option>
+                    <option value="Asia/Riyadh">Asia/Riyadh (السعودية)</option>
+                    <option value="Asia/Kuwait">Asia/Kuwait (الكويت)</option>
+                    <option value="Asia/Baghdad">Asia/Baghdad (العراق)</option>
+                    <option value="Asia/Amman">Asia/Amman (الأردن)</option>
+                    <option value="Africa/Cairo">Africa/Cairo (مصر)</option>
+                    <option value="Europe/London">Europe/London (المملكة المتحدة)</option>
+                    <option value="Europe/Paris">Europe/Paris (فرنسا)</option>
+                    <option value="America/New_York">America/New_York (الولايات المتحدة - الشرق)</option>
+                    <option value="America/Chicago">America/Chicago (الولايات المتحدة - الوسط)</option>
+                    <option value="America/Denver">America/Denver (الولايات المتحدة - الجبل)</option>
+                    <option value="America/Los_Angeles">America/Los_Angeles (الولايات المتحدة - الغرب)</option>
+                  </select>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                    المنطقة الزمنية المستخدمة لحساب بداية ونهاية اليوم التجاري. هذا مهم بشكل خاص عند النشر على خوادم في مناطق زمنية مختلفة.
                   </p>
                 </div>
                 {renderField('عنوان المتجر', 'storeAddress', 'text')}

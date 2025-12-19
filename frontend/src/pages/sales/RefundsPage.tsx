@@ -3,7 +3,7 @@ import { RefundTransaction, RefundedItem, POSInvoice, POSCartItem } from '@/feat
 import { AR_LABELS, UUID, SearchIcon, PlusIcon, ViewIcon, EditIcon, DeleteIcon } from '@/shared/constants';
 import { formatDate } from '@/shared/utils';
 import { useAuthStore } from '@/app/store';
-import { getBusinessDateFilterRange, getBusinessDayStartTime } from '@/shared/utils/businessDate';
+import { getBusinessDateFilterRange, getBusinessDayStartTime, getBusinessDayTimezone } from '@/shared/utils/businessDate';
 
 // --- MOCK DATA ---
 // We need mock original invoices to search against. Let's create some.
@@ -239,13 +239,15 @@ const RefundsPage: React.FC = () => {
     };
 
     const filteredRefunds = useMemo(() => {
-        // Use business date filtering
+        // Use business date filtering with timezone
         const businessDayStartTime = getBusinessDayStartTime();
+        const timezone = getBusinessDayTimezone();
         const timeStr = businessDayStartTime.hours.toString().padStart(2, '0') + ':' + businessDayStartTime.minutes.toString().padStart(2, '0');
         const { start, end } = getBusinessDateFilterRange(
             filters.startDate || null,
             filters.endDate || null,
-            timeStr
+            timeStr,
+            timezone
         );
         
         return refunds.filter(refund => {

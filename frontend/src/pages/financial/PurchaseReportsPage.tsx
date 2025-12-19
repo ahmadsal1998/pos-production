@@ -24,14 +24,16 @@ const PurchaseReportsPage: React.FC<PurchaseReportsPageProps> = ({
   const [selectedSupplierId, setSelectedSupplierId] = useState<string>('all');
 
   const analytics = useMemo(() => {
-    // Use business date filtering
-    const { getBusinessDateFilterRange, getBusinessDayStartTime } = require('@/shared/utils/businessDate');
+    // Use business date filtering with timezone
+    const { getBusinessDateFilterRange, getBusinessDayStartTime, getBusinessDayTimezone } = require('@/shared/utils/businessDate');
     const businessDayStartTime = getBusinessDayStartTime();
+    const timezone = getBusinessDayTimezone();
     const timeStr = businessDayStartTime.hours.toString().padStart(2, '0') + ':' + businessDayStartTime.minutes.toString().padStart(2, '0');
     const { start, end } = getBusinessDateFilterRange(
       dateRange.startDate || null,
       dateRange.endDate || null,
-      timeStr
+      timeStr,
+      timezone
     );
 
     let filteredPurchases = purchases.filter(p => {
