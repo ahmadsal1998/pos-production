@@ -604,7 +604,6 @@ export const getSalesSummary = asyncHandler(async (req: AuthenticatedRequest, re
   // If calculation fails, return 0 without failing the entire request
   let netProfit = 0;
   try {
-    const { getProductModelForStore } = await import('../utils/productModel');
     const Product = await getProductModelForStore(modelStoreId);
 
     // First, get all unique product IDs from sales items (efficient)

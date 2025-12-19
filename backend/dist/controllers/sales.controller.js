@@ -42,6 +42,8 @@ var import_error = require("../middleware/error.middleware");
 var import_saleModel = require("../utils/saleModel");
 var import_productModel = require("../utils/productModel");
 var import_productCache = require("../utils/productCache");
+var import_Settings = __toESM(require("../models/Settings"));
+var import_businessDate = require("../utils/businessDate");
 const getNextInvoiceNumber = (0, import_error.asyncHandler)(async (req, res) => {
   const storeId = req.user?.storeId || null;
   if (!storeId) {
@@ -260,13 +262,12 @@ const getSales = (0, import_error.asyncHandler)(async (req, res) => {
   let businessDayTimezone;
   const settingsStoreId = targetStoreId || modelStoreId;
   if (settingsStoreId) {
-    const Settings = (await import("../models/Settings")).default;
     const [businessDaySetting, timezoneSetting] = await Promise.all([
-      Settings.findOne({
+      import_Settings.default.findOne({
         storeId: settingsStoreId,
         key: "businessdaystarttime"
       }),
-      Settings.findOne({
+      import_Settings.default.findOne({
         storeId: settingsStoreId,
         key: "businessdaytimezone"
       })
@@ -279,7 +280,6 @@ const getSales = (0, import_error.asyncHandler)(async (req, res) => {
     }
   }
   if (startDate || endDate) {
-    const { getBusinessDateFilterRange } = await import("../utils/businessDate");
     console.log("[Sales Controller] Date filtering parameters:", {
       startDate,
       endDate,
@@ -289,7 +289,7 @@ const getSales = (0, import_error.asyncHandler)(async (req, res) => {
       targetStoreId,
       modelStoreId
     });
-    const { start, end } = getBusinessDateFilterRange(
+    const { start, end } = (0, import_businessDate.getBusinessDateFilterRange)(
       startDate,
       endDate,
       businessDayStartTime,
@@ -415,13 +415,12 @@ const getSalesSummary = (0, import_error.asyncHandler)(async (req, res) => {
   let businessDayTimezone;
   const settingsStoreId = targetStoreId || modelStoreId;
   if (settingsStoreId) {
-    const Settings = (await import("../models/Settings")).default;
     const [businessDaySetting, timezoneSetting] = await Promise.all([
-      Settings.findOne({
+      import_Settings.default.findOne({
         storeId: settingsStoreId,
         key: "businessdaystarttime"
       }),
-      Settings.findOne({
+      import_Settings.default.findOne({
         storeId: settingsStoreId,
         key: "businessdaytimezone"
       })
@@ -434,8 +433,7 @@ const getSalesSummary = (0, import_error.asyncHandler)(async (req, res) => {
     }
   }
   if (startDate || endDate) {
-    const { getBusinessDateFilterRange } = await import("../utils/businessDate");
-    const { start, end } = getBusinessDateFilterRange(
+    const { start, end } = (0, import_businessDate.getBusinessDateFilterRange)(
       startDate,
       endDate,
       businessDayStartTime,
@@ -512,8 +510,7 @@ const getSalesSummary = (0, import_error.asyncHandler)(async (req, res) => {
   };
   let netProfit = 0;
   try {
-    const { getProductModelForStore: getProductModelForStore2 } = await import("../utils/productModel");
-    const Product = await getProductModelForStore2(modelStoreId);
+    const Product = await (0, import_productModel.getProductModelForStore)(modelStoreId);
     const productIdsPipeline = [
       { $match: sanitizedQuery },
       { $unwind: "$items" },
