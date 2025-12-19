@@ -723,6 +723,15 @@ export const getSale = asyncHandler(async (req: AuthenticatedRequest, res: Respo
   const { id } = req.params;
   const storeId = req.user?.storeId || null;
 
+  // Validate ID format - prevent route conflicts (e.g., "summary" being treated as ID)
+  const mongoose = (await import('mongoose')).default;
+  if (!mongoose.Types.ObjectId.isValid(id)) {
+    return res.status(400).json({
+      success: false,
+      message: 'Invalid ID format',
+    });
+  }
+
   // Store users must have a storeId
   if (!storeId) {
     return res.status(400).json({
@@ -759,6 +768,15 @@ export const getSale = asyncHandler(async (req: AuthenticatedRequest, res: Respo
 export const updateSale = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
   const { id } = req.params;
   const storeId = req.user?.storeId || null;
+
+  // Validate ID format - prevent route conflicts (e.g., "summary" being treated as ID)
+  const mongoose = (await import('mongoose')).default;
+  if (!mongoose.Types.ObjectId.isValid(id)) {
+    return res.status(400).json({
+      success: false,
+      message: 'Invalid ID format',
+    });
+  }
 
   // Store users must have a storeId
   if (!storeId) {
@@ -813,6 +831,15 @@ export const updateSale = asyncHandler(async (req: AuthenticatedRequest, res: Re
 export const deleteSale = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
   const { id } = req.params;
   const storeId = req.user?.storeId || null;
+
+  // Validate ID format - prevent route conflicts (e.g., "summary" being treated as ID)
+  const mongoose = (await import('mongoose')).default;
+  if (!mongoose.Types.ObjectId.isValid(id)) {
+    return res.status(400).json({
+      success: false,
+      message: 'Invalid ID format',
+    });
+  }
 
   // Store users must have a storeId
   if (!storeId) {
