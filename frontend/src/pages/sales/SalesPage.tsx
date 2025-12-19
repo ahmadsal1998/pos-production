@@ -2545,6 +2545,8 @@ const CustomerAccountsView: React.FC<{
     onRefreshPayments?: () => void;
 }> = ({ sales, customers, payments, setPayments, onSaveCustomer, isLoadingCustomers = false, customersError = null, onRefreshCustomers, onRefreshPayments }) => {
     const { formatCurrency } = useCurrency();
+    const { user } = useAuthStore();
+    const currentUserName = user?.fullName || user?.username || 'Unknown';
     const [searchTerm, setSearchTerm] = useState('');
     const [balanceFilter, setBalanceFilter] = useState('all'); // 'all', 'has_balance', 'no_balance'
     const [paymentModalTarget, setPaymentModalTarget] = useState<CustomerAccountSummary | null>(null);
@@ -2555,6 +2557,10 @@ const CustomerAccountsView: React.FC<{
     const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
     const { viewMode, setViewMode } = useResponsiveViewMode('customerAccounts', 'table', 'grid');
     
+    // State for all sales (for accurate balance calculations)
+    const [allSales, setAllSales] = useState<SaleTransaction[]>([]);
+    const [isLoadingAllSales, setIsLoadingAllSales] = useState(false);
+    
     // Pagination state
     const [currentPage, setCurrentPage] = useState(1);
     const [pageSize, setPageSize] = useState(20);
@@ -2563,6 +2569,60 @@ const CustomerAccountsView: React.FC<{
     const today = new Date().toISOString().split('T')[0];
     const [datePreset, setDatePreset] = useState<'today' | 'week' | 'month' | 'custom'>('today');
     const [dateRange, setDateRange] = useState<{ start: string; end: string }>({ start: today, end: today });
+
+    // Fetch all sales for accurate balance calculations (not filtered by date)
+    const fetchAllSales = useCallback(async () => {
+        setIsLoadingAllSales(true);
+        try {
+            // Fetch all sales without date filters for accurate account balances
+            const response = await salesApi.getSales({ limit: 10000 });
+            const backendResponse = response.data as any;
+            
+            if (backendResponse?.success && Array.isArray(backendResponse.data?.sales)) {
+                const apiSales: SaleTransaction[] = backendResponse.data.sales.map((sale: any) => ({
+                    id: sale.id || sale._id || sale.invoiceNumber,
+                    invoiceNumber: sale.invoiceNumber || sale.id || sale._id,
+                    date: sale.date || sale.createdAt || new Date().toISOString(),
+                    customerName: sale.customerName || 'عميل نقدي',
+                    customerId: sale.customerId || 'walk-in-customer',
+                    totalAmount: sale.total || sale.totalAmount || 0,
+                    paidAmount: sale.paidAmount || 0,
+                    remainingAmount: sale.remainingAmount || (sale.total - (sale.paidAmount || 0)),
+                    paymentMethod: (sale.paymentMethod?.charAt(0).toUpperCase() + sale.paymentMethod?.slice(1).toLowerCase()) as SalePaymentMethod || 'Cash',
+                    status: sale.status === 'completed' ? 'Paid' : sale.status === 'partial_payment' ? 'Partial' : sale.status === 'pending' ? 'Due' : sale.status === 'refunded' || sale.status === 'partial_refund' ? 'Returned' : (sale.status as SaleStatus) || 'Paid',
+                    seller: sale.seller || sale.cashier || currentUserName,
+                    items: Array.isArray(sale.items) ? sale.items.map((item: any) => ({
+                        productId: typeof item.productId === 'string' ? parseInt(item.productId) || 0 : item.productId || 0,
+                        name: item.productName || item.name || '',
+                        unit: item.unit || 'قطعة',
+                        quantity: item.quantity || 0,
+                        unitPrice: item.unitPrice || 0,
+                        total: item.totalPrice || item.total || 0,
+                        discount: item.discount || 0,
+                        conversionFactor: item.conversionFactor,
+                    })) : [],
+                    subtotal: sale.subtotal || 0,
+                    totalItemDiscount: sale.totalItemDiscount || 0,
+                    invoiceDiscount: sale.invoiceDiscount || sale.discount || 0,
+                    tax: sale.tax || 0,
+                }));
+                
+                setAllSales(apiSales);
+            } else {
+                setAllSales([]);
+            }
+        } catch (error: any) {
+            console.error('Error fetching all sales for customer accounts:', error);
+            setAllSales([]);
+        } finally {
+            setIsLoadingAllSales(false);
+        }
+    }, [currentUserName]);
+
+    // Fetch all sales on mount
+    useEffect(() => {
+        fetchAllSales();
+    }, [fetchAllSales]);
 
     // Handle date preset changes
     const handleDatePresetChange = useCallback((preset: 'today' | 'week' | 'month' | 'custom') => {
@@ -2613,12 +2673,32 @@ const CustomerAccountsView: React.FC<{
     }, [payments, dateRange]);
 
     const customerSummaries = useMemo<CustomerAccountSummary[]>(() => {
+        // Use allSales for accurate balance calculations (not filtered by date)
+        const salesForCalculation = allSales.length > 0 ? allSales : sales;
+        
         return customers.map(customer => {
-            const customerSales = sales.filter(s => s.customerId === customer.id);
+            const customerSales = salesForCalculation.filter(s => s.customerId === customer.id);
             const customerPayments = payments.filter(p => p.customerId === customer.id);
 
+            // Calculate total sales (sum of all invoice totals)
             const totalSales = customerSales.reduce((sum, s) => sum + s.totalAmount, 0);
-            const totalPaid = customerPayments.reduce((sum, p) => sum + p.amount, 0);
+            
+            // Calculate total paid amount:
+            // 1. Sum of paidAmount from sales (paid at time of sale)
+            // 2. Plus all payments made via the payment system
+            const totalPaidAtSale = customerSales.reduce((sum, s) => sum + s.paidAmount, 0);
+            const totalPaidViaPayments = customerPayments.reduce((sum, p) => sum + p.amount, 0);
+            const totalPaid = totalPaidAtSale + totalPaidViaPayments;
+            
+            // Calculate balance:
+            // previousBalance + sum(remainingAmount from sales) - sum(payments via payment system)
+            // remainingAmount already accounts for paidAmount at sale time
+            const totalRemainingFromSales = customerSales.reduce((sum, s) => sum + s.remainingAmount, 0);
+            const previousBalance = customer.previousBalance || 0;
+            
+            // Balance = previous balance + outstanding amounts from sales - additional payments
+            // Note: remainingAmount already accounts for paidAmount at sale time, so we only subtract payments made via payment system
+            const balance = previousBalance + totalRemainingFromSales - totalPaidViaPayments;
             
             const lastPayment = customerPayments.sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0];
 
@@ -2628,11 +2708,11 @@ const CustomerAccountsView: React.FC<{
                 address: customer.address,
                 totalSales,
                 totalPaid,
-                balance: totalSales - totalPaid,
+                balance,
                 lastPaymentDate: lastPayment ? formatDate(lastPayment.date) : null,
             };
         });
-    }, [customers, sales, payments]);
+    }, [customers, allSales, sales, payments]);
 
     const filteredAndSortedCustomers = useMemo(() => {
         // Filter customers
@@ -2888,6 +2968,9 @@ const CustomerAccountsView: React.FC<{
                 if (onRefreshPayments) {
                     await onRefreshPayments();
                 }
+                
+                // Refresh all sales to update customer balances
+                await fetchAllSales();
             } else {
                 alert('فشل حفظ الدفعة. الرجاء المحاولة مرة أخرى.');
                 console.error('Failed to save payment:', backendResponse?.message);
@@ -3340,7 +3423,7 @@ const CustomerAccountsView: React.FC<{
             )}
             
             <AddPaymentModal customerSummary={paymentModalTarget} onClose={() => setPaymentModalTarget(null)} onSave={handleSavePayment} />
-            <CustomerDetailsModal summary={statementModalTarget} sales={sales} payments={payments} onClose={() => setStatementModalTarget(null)} />
+            <CustomerDetailsModal summary={statementModalTarget} sales={allSales.length > 0 ? allSales : sales} payments={payments} onClose={() => setStatementModalTarget(null)} />
             {showAddCustomerModal && (
                 <AddCustomerModal 
                     onClose={() => setShowAddCustomerModal(false)} 
