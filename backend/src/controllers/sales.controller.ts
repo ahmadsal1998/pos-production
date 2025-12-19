@@ -287,17 +287,23 @@ export const getSales = asyncHandler(async (req: AuthenticatedRequest, res: Resp
   }
 
   // Get business day start time and timezone settings for date filtering
+  // Use modelStoreId (which is always available) to retrieve settings
+  // This ensures settings are retrieved even for admin queries without a specific storeId
   let businessDayStartTime: string | undefined;
   let businessDayTimezone: string | undefined;
-  if (targetStoreId) {
+  
+  // Determine which storeId to use for settings retrieval
+  const settingsStoreId = targetStoreId || modelStoreId;
+  
+  if (settingsStoreId) {
     const Settings = (await import('../models/Settings')).default;
     const [businessDaySetting, timezoneSetting] = await Promise.all([
       Settings.findOne({
-        storeId: targetStoreId,
+        storeId: settingsStoreId,
         key: 'businessdaystarttime'
       }),
       Settings.findOne({
-        storeId: targetStoreId,
+        storeId: settingsStoreId,
         key: 'businessdaytimezone'
       })
     ]);
@@ -313,12 +319,32 @@ export const getSales = asyncHandler(async (req: AuthenticatedRequest, res: Resp
     // Use business date filtering instead of calendar date filtering
     // This now uses timezone-aware calculations to properly handle business days
     const { getBusinessDateFilterRange } = await import('../utils/businessDate');
+    
+    // Log date filtering parameters for debugging
+    console.log('[Sales Controller] Date filtering parameters:', {
+      startDate,
+      endDate,
+      businessDayStartTime,
+      businessDayTimezone,
+      settingsStoreId,
+      targetStoreId,
+      modelStoreId,
+    });
+    
     const { start, end } = getBusinessDateFilterRange(
       startDate as string | null,
       endDate as string | null,
       businessDayStartTime,
       businessDayTimezone
     );
+    
+    // Log calculated date range for debugging
+    console.log('[Sales Controller] Calculated date range:', {
+      start: start ? start.toISOString() : null,
+      end: end ? end.toISOString() : null,
+      startUTC: start ? start.toUTCString() : null,
+      endUTC: end ? end.toUTCString() : null,
+    });
     
     query.date = {};
     if (start) {
@@ -333,7 +359,25 @@ export const getSales = asyncHandler(async (req: AuthenticatedRequest, res: Resp
   const pageNum = parseInt(page as string, 10) || 1;
   const limitNum = parseInt(limit as string, 10) || 100;
   const skip = (pageNum - 1) * limitNum;
+  
+  // Log pagination parameters for debugging
+  console.log('[Sales Controller] Pagination parameters:', {
+    page: page as string,
+    limit: limit as string,
+    pageNum,
+    limitNum,
+    skip,
+    queryParams: { page, limit, startDate, endDate, customerId, status, paymentMethod, storeId: queryStoreId },
+  });
 
+  // Log final query for debugging
+  console.log('[Sales Controller] Final query:', {
+    query: JSON.stringify(query, null, 2),
+    sort: { date: -1 },
+    skip,
+    limit: limitNum,
+  });
+  
   // Execute query
   const [sales, total] = await Promise.all([
     Sale.find(query)
@@ -343,6 +387,18 @@ export const getSales = asyncHandler(async (req: AuthenticatedRequest, res: Resp
       .lean(),
     Sale.countDocuments(query),
   ]);
+  
+  // Log query results for debugging
+  console.log('[Sales Controller] Query results:', {
+    salesCount: sales.length,
+    total,
+    pagination: {
+      currentPage: pageNum,
+      totalPages: Math.ceil(total / limitNum),
+      totalSales: total,
+      limit: limitNum,
+    },
+  });
 
   res.status(200).json({
     success: true,
