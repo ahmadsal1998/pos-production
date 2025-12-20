@@ -3045,7 +3045,7 @@ const POSPage: React.FC = () => {
         console.log('Sale Finalized:', finalInvoice);
         setCurrentInvoice(finalInvoice);
         setSaleCompleted(true);
-        setIsProcessingPayment(false); // Clear loading state immediately
+        // NOTE: Keep isProcessingPayment true until sale sync completes to prevent duplicate submissions
         
         // PERFORMANCE FIX: Move all heavy operations to background (non-blocking)
         // Stock updates, sale sync, and product sync all run in background
@@ -3490,9 +3490,14 @@ const POSPage: React.FC = () => {
                 console.error('❌ Failed to save sale in background:', error);
                 // Don't show alert - sale is already completed and user is on print page
                 // The sale will be retried by the periodic sync service
+            } finally {
+                // Clear processing state after sale sync completes (success or failure)
+                setIsProcessingPayment(false);
             }
         }).catch(error => {
             console.error('Background sale sync task failed:', error);
+            // Ensure processing state is cleared even if promise chain fails
+            setIsProcessingPayment(false);
         });
     };
 

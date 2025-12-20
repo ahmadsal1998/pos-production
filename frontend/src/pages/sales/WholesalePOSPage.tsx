@@ -121,6 +121,7 @@ const WholesalePOSPage: React.FC = () => {
     const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<string | null>(null);
     const [dueDate, setDueDate] = useState('');
     const [saleCompleted, setSaleCompleted] = useState(false);
+    const [isProcessingPayment, setIsProcessingPayment] = useState(false); // Prevent multiple submissions
     const [selectedProduct, setSelectedProduct] = useState<WholesaleProduct | null>(null);
     const [modalQuantities, setModalQuantities] = useState<Record<string, string>>({});
     
@@ -326,10 +327,18 @@ const WholesalePOSPage: React.FC = () => {
     };
 
     const handleFinalizeSale = () => {
+        // Prevent multiple submissions
+        if (isProcessingPayment) {
+            return;
+        }
+        
         if (!invoice.customer || !selectedPaymentMethod) {
             alert('الرجاء اختيار عميل وطريقة دفع.');
             return;
         }
+        
+        setIsProcessingPayment(true);
+        
         let finalInvoice: WholesaleInvoice = { 
             ...invoice, 
             paymentMethod: selectedPaymentMethod 
@@ -338,6 +347,7 @@ const WholesalePOSPage: React.FC = () => {
         if (selectedPaymentMethod === 'Credit') {
             if (!dueDate) {
                 alert('الرجاء تحديد تاريخ الاستحقاق.');
+                setIsProcessingPayment(false);
                 return;
             }
             finalInvoice.dueDate = dueDate;
@@ -345,6 +355,7 @@ const WholesalePOSPage: React.FC = () => {
         console.log("SALE FINALIZED: ", finalInvoice);
         setSaleCompleted(true);
         setPaymentModalOpen(false);
+        setIsProcessingPayment(false);
     };
     
     const startNewSale = () => {
@@ -972,10 +983,11 @@ const WholesalePOSPage: React.FC = () => {
                                 {AR_LABELS.cancel}
                             </button>
                             <button 
-                                onClick={handleFinalizeSale} 
-                                className="w-full px-4 py-2.5 text-sm sm:text-base bg-gradient-to-r from-green-500 via-emerald-500 to-green-600 text-white rounded-xl hover:from-green-600 hover:via-emerald-600 hover:to-green-700 shadow-xl hover:shadow-2xl transition-all duration-200"
+                                onClick={handleFinalizeSale}
+                                disabled={isProcessingPayment}
+                                className="w-full px-4 py-2.5 text-sm sm:text-base bg-gradient-to-r from-green-500 via-emerald-500 to-green-600 text-white rounded-xl hover:from-green-600 hover:via-emerald-600 hover:to-green-700 disabled:from-gray-400 disabled:via-gray-400 disabled:to-gray-500 dark:disabled:from-gray-600 dark:disabled:via-gray-600 dark:disabled:to-gray-700 shadow-xl hover:shadow-2xl transition-all duration-200 disabled:cursor-not-allowed"
                             >
-                                {AR_LABELS.confirmPayment}
+                                {isProcessingPayment ? 'جاري المعالجة...' : AR_LABELS.confirmPayment}
                             </button>
                         </div>
                     </div>

@@ -334,7 +334,7 @@ export const getProducts = asyncHandler(async (req: AuthenticatedRequest, res: R
 
         if (categoryIds.length > 0) {
           // Fetch categories for this store using unified Category model
-          const Category = (await import('../models/Category')).default;
+          const Category = (await import('../models/Category.js')).default;
           
           // Import mongoose for ObjectId conversion
           const mongoose = await import('mongoose');
