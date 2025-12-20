@@ -654,4 +654,10 @@ export const AR_LABELS = {
   // Mobile Recharge
   rechargeMobileBalance: 'شحن رصيد الجوال',
   linkPay: 'شحن رصيد وطنية',
+
+  // Customer Balance Operations
+  addBalance: 'إضافة دفعة',
+  addDebt: 'خصم من الرصيد',
+  payDebt: ' إضافة رصيد',
+  deductBalance: ' إضافة دين ',
 };

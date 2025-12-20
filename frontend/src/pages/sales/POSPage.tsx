@@ -67,9 +67,141 @@ const isDummyCustomer = (customer: Customer): boolean => {
     
     // Check if name or phone contains dummy patterns
     const isDummyName = dummyPatterns.some(pattern => name.includes(pattern));
-    const isDummyPhone = phone.length < 5 || /^(000|111|123|999)/.test(phone.replace(/\D/g, ''));
     
-    return isDummyName || isDummyPhone;
+    // Only check phone length if phone exists and has content
+    // Don't filter out customers with no phone or very short phone if they have a valid name
+    const phoneDigits = phone.replace(/\D/g, '');
+    const isDummyPhone = phoneDigits.length > 0 && (
+        phoneDigits.length < 5 || 
+        /^(000|111|123|999)/.test(phoneDigits)
+    );
+    
+    const result = isDummyName || isDummyPhone;
+    
+    // Debug log when a customer is identified as dummy
+    if (result) {
+        console.log('[POS] isDummyCustomer: TRUE for:', {
+            name: customer.name,
+            phone: customer.phone,
+            isDummyName,
+            isDummyPhone,
+            phoneDigits,
+            phoneLength: phone.length
+        });
+    }
+    
+    return result;
+};
+
+// Helper function to transform customer data from backend/IndexedDB format to frontend Customer format
+const transformCustomer = (customer: any, index?: number): Customer | null => {
+    // Handle both id and _id fields - backend transforms _id to id in toJSON, but IndexedDB might have either
+    // Convert to string and handle null/undefined cases
+    let customerId = customer.id || customer._id;
+    
+    // Convert to string if it exists (handles numbers, ObjectIds, etc.)
+    if (customerId != null) {
+        customerId = String(customerId);
+    }
+    
+    // Return null if id is missing or empty (will be filtered out)
+    if (!customerId || customerId.trim() === '') {
+        console.warn(`[POS] Customer [${index ?? '?'}] missing or empty id field:`, {
+            customer,
+            id: customer.id,
+            _id: customer._id,
+            customerId,
+            idType: typeof customer.id,
+            _idType: typeof customer._id
+        });
+        return null;
+    }
+    
+    const transformed: Customer = {
+        id: customerId,
+        name: customer.name || customer.phone || '',
+        phone: customer.phone || '',
+        address: customer.address,
+        previousBalance: customer.previousBalance || 0,
+    };
+    
+    // Debug log for successful transformation
+    if (index !== undefined && index < 3) {
+        console.log(`[POS] Transformed customer [${index}]:`, {
+            originalId: customer.id,
+            original_id: customer._id,
+            transformedId: transformed.id,
+            name: transformed.name,
+            phone: transformed.phone
+        });
+    }
+    
+    return transformed;
+};
+
+// Helper function to transform and filter customers
+const transformAndFilterCustomers = (customers: any[]): Customer[] => {
+    console.log(`[POS] transformAndFilterCustomers: Starting with ${customers.length} customers`);
+    
+    if (!customers || customers.length === 0) {
+        console.log('[POS] transformAndFilterCustomers: Empty input array');
+        return [];
+    }
+    
+    // Log first few raw customers for debugging
+    console.log('[POS] transformAndFilterCustomers: Sample raw customers:', 
+        customers.slice(0, 3).map((c, i) => ({
+            index: i,
+            id: c.id,
+            _id: c._id,
+            name: c.name,
+            phone: c.phone,
+            hasId: !!c.id,
+            has_id: !!c._id
+        }))
+    );
+    
+    const transformed = customers
+        .map((customer, index) => transformCustomer(customer, index))
+        .filter((customer): customer is Customer => {
+            // Filter out null customers (missing id)
+            if (!customer) {
+                return false;
+            }
+            
+            // Filter out customers without valid id (shouldn't happen after transformCustomer, but double-check)
+            if (!customer.id || customer.id.trim() === '') {
+                console.warn('[POS] Filtering out customer without valid id:', customer);
+                return false;
+            }
+            
+            // Check if it's a dummy customer
+            const isDummy = isDummyCustomer(customer);
+            if (isDummy) {
+                console.log('[POS] Filtering out dummy customer:', customer.name, customer.phone);
+            }
+            
+            return !isDummy;
+        });
+    
+    console.log(`[POS] transformAndFilterCustomers: Transformed ${transformed.length} customers (filtered from ${customers.length})`);
+    
+    // Log transformed customers for debugging
+    if (transformed.length > 0) {
+        console.log('[POS] Transformed Customers:', transformed.slice(0, 5).map(c => ({
+            id: c.id,
+            name: c.name,
+            phone: c.phone
+        })));
+    } else {
+        console.warn('[POS] transformAndFilterCustomers: No customers after transformation!');
+        console.warn('[POS] This suggests all customers were filtered out. Check:');
+        console.warn('  - Are customer IDs valid?');
+        console.warn('  - Are customers being marked as dummy?');
+        console.warn('  - Sample raw customer:', customers[0]);
+    }
+    
+    return transformed;
 };
 
 // --- MAIN POS COMPONENT ---
@@ -479,23 +611,7 @@ const POSPage: React.FC = () => {
             
             if (syncResult.success && syncResult.customers) {
                 // Transform backend data to frontend Customer format and filter out dummy customers
-                // Handle both id and _id fields (backend may return either)
-                const transformedCustomers: Customer[] = syncResult.customers
-                    .map((customer: any) => {
-                        // Handle both id and _id - backend transforms _id to id in toJSON, but might have either
-                        const customerId = customer.id || customer._id;
-                        return {
-                            id: customerId,
-                            name: customer.name || customer.phone,
-                            phone: customer.phone,
-                            address: customer.address,
-                            previousBalance: customer.previousBalance || 0,
-                        };
-                    })
-                    .filter((customer: Customer) => {
-                        if (!customer.id) return false;
-                        return !isDummyCustomer(customer);
-                    });
+                const transformedCustomers: Customer[] = transformAndFilterCustomers(syncResult.customers);
                 
                 setAllCustomers(transformedCustomers);
                 setCustomers(transformedCustomers);
@@ -555,6 +671,21 @@ const POSPage: React.FC = () => {
         setIsLoadingCustomers(true);
         try {
             console.log('[POS] Loading customers from IndexedDB...');
+            
+            // Verify storeId before loading
+            try {
+                const token = localStorage.getItem('auth-token');
+                if (token) {
+                    const payload = JSON.parse(atob(token.split('.')[1]));
+                    const storeId = payload.storeId;
+                    console.log('[POS] Current storeId from token:', storeId, '(type:', typeof storeId, ')');
+                } else {
+                    console.warn('[POS] No auth token found in localStorage');
+                }
+            } catch (tokenError) {
+                console.warn('[POS] Error reading storeId from token:', tokenError);
+            }
+            
             // Initialize IndexedDB
             await customersDB.init();
             
@@ -562,6 +693,21 @@ const POSPage: React.FC = () => {
             const dbCustomers = await customersDB.getAllCustomers();
             
             console.log(`[POS] getAllCustomers returned ${dbCustomers?.length || 0} customers`);
+            
+            // Log detailed info about retrieved customers
+            if (dbCustomers && dbCustomers.length > 0) {
+                console.log('[POS] Retrieved customers structure:', {
+                    count: dbCustomers.length,
+                    firstCustomerKeys: Object.keys(dbCustomers[0]),
+                    firstCustomerSample: {
+                        id: dbCustomers[0].id,
+                        _id: dbCustomers[0]._id,
+                        name: dbCustomers[0].name,
+                        phone: dbCustomers[0].phone,
+                        storeId: dbCustomers[0].storeId
+                    }
+                });
+            }
             
             if (dbCustomers && dbCustomers.length > 0) {
                 // Log first customer structure for debugging
@@ -578,38 +724,19 @@ const POSPage: React.FC = () => {
                 }
                 
                 // Transform backend data to frontend Customer format and filter out dummy customers
-                // Handle both id and _id fields (backend may return either)
-                const transformedCustomers: Customer[] = dbCustomers
-                    .map((customer: any) => {
-                        // Handle both id and _id - backend transforms _id to id in toJSON, but IndexedDB might have either
-                        const customerId = customer.id || customer._id;
-                        if (!customerId) {
-                            console.warn('[POS] Customer missing id field:', customer);
-                        }
-                        return {
-                            id: customerId,
-                            name: customer.name || customer.phone,
-                            phone: customer.phone,
-                            address: customer.address,
-                            previousBalance: customer.previousBalance || 0,
-                        };
-                    })
-                    .filter((customer: Customer) => {
-                        // Filter out customers without id and dummy customers
-                        if (!customer.id) {
-                            console.warn('[POS] Filtering out customer without id:', customer);
-                            return false;
-                        }
-                        return !isDummyCustomer(customer);
-                    });
+                const transformedCustomers: Customer[] = transformAndFilterCustomers(dbCustomers);
                 
                 console.log(`[POS] Transformed ${transformedCustomers.length} customers (filtered from ${dbCustomers.length})`);
+                console.log('[POS] Transformed Customers Array:', transformedCustomers);
                 
                 if (isMountedRef.current) {
                     setAllCustomers(transformedCustomers);
                     setCustomers(transformedCustomers);
                     setCustomersLoaded(true);
                     console.log(`[POS] Loaded ${transformedCustomers.length} customers from IndexedDB`);
+                    console.log('[POS] State updated - allCustomers:', transformedCustomers.length, 'customers:', transformedCustomers.length);
+                } else {
+                    console.warn('[POS] Component unmounted, skipping state update');
                 }
             } else {
                 // No customers in IndexedDB - try to sync from server
@@ -623,22 +750,7 @@ const POSPage: React.FC = () => {
                         // Reload from IndexedDB to ensure we have the latest data
                         const verifyCustomers = await customersDB.getAllCustomers();
                         if (verifyCustomers && verifyCustomers.length > 0) {
-                            const transformedCustomers: Customer[] = verifyCustomers
-                                .map((customer: any) => {
-                                    // Handle both id and _id fields
-                                    const customerId = customer.id || customer._id;
-                                    return {
-                                        id: customerId,
-                                        name: customer.name || customer.phone,
-                                        phone: customer.phone,
-                                        address: customer.address,
-                                        previousBalance: customer.previousBalance || 0,
-                                    };
-                                })
-                                .filter((customer: Customer) => {
-                                    if (!customer.id) return false;
-                                    return !isDummyCustomer(customer);
-                                });
+                            const transformedCustomers: Customer[] = transformAndFilterCustomers(verifyCustomers);
                             setAllCustomers(transformedCustomers);
                             setCustomers(transformedCustomers);
                             setCustomersLoaded(true);
@@ -714,15 +826,7 @@ const POSPage: React.FC = () => {
                 
                 // Transform and filter out dummy customers
                 const transformedCustomers: Customer[] = Array.isArray(customersData)
-                    ? customersData
-                        .map((customer: any) => ({
-                            id: customer.id,
-                            name: customer.name || customer.phone,
-                            phone: customer.phone,
-                            address: customer.address,
-                            previousBalance: customer.previousBalance || 0,
-                        }))
-                        .filter((customer: Customer) => !isDummyCustomer(customer))
+                    ? transformAndFilterCustomers(customersData)
                     : [];
 
                 console.log(`[POS] Server-side customer search found ${transformedCustomers.length} matches`);
@@ -1000,15 +1104,7 @@ const POSPage: React.FC = () => {
                     }
                     
                     if (result.success && result.customers) {
-                        const transformedCustomers: Customer[] = result.customers
-                            .map((customer: any) => ({
-                                id: customer.id,
-                                name: customer.name || customer.phone,
-                                phone: customer.phone,
-                                address: customer.address,
-                                previousBalance: customer.previousBalance || 0,
-                            }))
-                            .filter((customer: Customer) => !isDummyCustomer(customer));
+                        const transformedCustomers: Customer[] = transformAndFilterCustomers(result.customers);
                         
                         if (transformedCustomers.length > 0) {
                             setAllCustomers(transformedCustomers);
@@ -1207,15 +1303,7 @@ const POSPage: React.FC = () => {
                     
                     if (isMountedRef.current) {
                         if (dbCustomers && dbCustomers.length > 0) {
-                            const transformedCustomers: Customer[] = dbCustomers
-                                .map((customer: any) => ({
-                                    id: customer.id,
-                                    name: customer.name || customer.phone,
-                                    phone: customer.phone,
-                                    address: customer.address,
-                                    previousBalance: customer.previousBalance || 0,
-                                }))
-                                .filter((customer: Customer) => !isDummyCustomer(customer));
+                            const transformedCustomers: Customer[] = transformAndFilterCustomers(dbCustomers);
                             try {
                                 setAllCustomers(transformedCustomers);
                                 setCustomers(transformedCustomers);
@@ -1236,15 +1324,7 @@ const POSPage: React.FC = () => {
                                     console.log(`[POS] After sync, IndexedDB now has ${verifyCustomers?.length || 0} customers`);
                                     if (verifyCustomers && verifyCustomers.length > 0) {
                                         // Reload the transformed customers
-                                        const transformedCustomers: Customer[] = verifyCustomers
-                                            .map((customer: any) => ({
-                                                id: customer.id,
-                                                name: customer.name || customer.phone,
-                                                phone: customer.phone,
-                                                address: customer.address,
-                                                previousBalance: customer.previousBalance || 0,
-                                            }))
-                                            .filter((customer: Customer) => !isDummyCustomer(customer));
+                                        const transformedCustomers: Customer[] = transformAndFilterCustomers(verifyCustomers);
                                         setAllCustomers(transformedCustomers);
                                         setCustomers(transformedCustomers);
                                         setCustomersLoaded(true);
@@ -1300,15 +1380,7 @@ const POSPage: React.FC = () => {
                 if (!isMountedRef.current) return;
 
                 // Transform and filter out dummy customers
-                const transformedCustomers: Customer[] = searchResults
-                    .map((customer: any) => ({
-                        id: customer.id,
-                        name: customer.name || customer.phone,
-                        phone: customer.phone,
-                        address: customer.address,
-                        previousBalance: customer.previousBalance || 0,
-                    }))
-                    .filter((customer: Customer) => !isDummyCustomer(customer));
+                const transformedCustomers: Customer[] = transformAndFilterCustomers(searchResults);
 
                 try {
                     setCustomers(transformedCustomers);
@@ -3558,16 +3630,16 @@ const POSPage: React.FC = () => {
     }
     
     return (
-        <div ref={posContainerRef} className="relative min-h-screen overflow-x-hidden">
+        <div ref={posContainerRef} className="relative h-screen overflow-hidden">
             {/* Modern Animated Background */}
             <div className="absolute inset-0 bg-gradient-to-br from-slate-50 via-orange-50/20 to-amber-100/30 dark:from-slate-950 dark:via-orange-950/20 dark:to-amber-950/30" />
             <div className="absolute -top-40 -right-40 h-80 w-80 rounded-full bg-gradient-to-br from-orange-400/15 to-amber-400/15 blur-3xl animate-pulse" />
             <div className="absolute -bottom-40 -left-40 h-80 w-80 rounded-full bg-gradient-to-br from-rose-400/15 to-orange-400/15 blur-3xl animate-pulse" style={{ animationDelay: '2s' }} />
             
-            <div className="relative w-full px-2 sm:px-4 py-4 sm:py-6">
+            <div className="relative w-full h-full flex flex-col px-2 sm:px-4 py-2 sm:py-4 overflow-hidden">
                 {/* Suspended Invoices Horizontal Tabs - Above main grid */}
                 {heldInvoices.length > 0 && (
-                    <div className="sticky top-0 z-50 mb-1.5 sm:mb-2 w-full">
+                    <div className="flex-shrink-0 mb-1.5 sm:mb-2 w-full">
                         <div className="bg-white/95 dark:bg-gray-800/95 rounded-md sm:rounded-lg shadow-lg p-1.5 sm:p-2 backdrop-blur-xl border border-slate-200/50 dark:border-slate-700/50">
                             <h3 className="font-bold text-[11px] sm:text-xs text-gray-700 dark:text-gray-200 text-right mb-1 sm:mb-1.5">
                                 {AR_LABELS.heldInvoices}
@@ -3605,11 +3677,11 @@ const POSPage: React.FC = () => {
                 )}
                 
                 {/* Three Column Layout - Proportional widths: ~19% - 50% - 31% */}
-                <div className="grid grid-cols-1 md:grid-cols-[0.75fr_2.3fr_1fr] gap-3 sm:gap-4 h-auto md:min-h-[calc(100vh-12rem)] w-full overflow-x-hidden items-start">
+                <div className="grid grid-cols-1 md:grid-cols-[0.75fr_2.3fr_1fr] gap-2 sm:gap-3 md:gap-4 h-full min-h-0 w-full overflow-hidden items-stretch">
                 {/* Column 1: Customer & Quick Products (25%) */}
-                    <div className="flex flex-col gap-3 sm:gap-4 min-h-0 min-w-0 md:h-[calc(100vh-12rem)]">
+                    <div className="flex flex-col gap-2 sm:gap-3 md:gap-4 min-h-0 min-w-0 h-full">
                         {/* Quick Products */}
-                        <div className="bg-white/95 dark:bg-gray-800/95 rounded-xl sm:rounded-2xl shadow-sm p-4 sm:p-6 backdrop-blur-xl border border-slate-200/50 dark:border-slate-700/50 flex-grow overflow-y-auto relative z-0">
+                        <div className="bg-white/95 dark:bg-gray-800/95 rounded-xl sm:rounded-2xl shadow-sm p-3 sm:p-4 md:p-6 backdrop-blur-xl border border-slate-200/50 dark:border-slate-700/50 flex-grow min-h-0 overflow-y-auto relative z-0">
                             <h3 className="font-bold text-sm sm:text-base text-gray-900 dark:text-gray-100 text-right mb-3 sm:mb-4">{AR_LABELS.quickProducts}</h3>
                             {isLoadingQuickProducts ? (
                                 <div className="text-center py-4 text-sm text-gray-500 dark:text-gray-400">
@@ -3645,7 +3717,7 @@ const POSPage: React.FC = () => {
                     </div>
 
                     {/* Column 2: Transaction/Cart (50% - Center, wider) */}
-                    <div className="flex flex-col bg-white/95 dark:bg-gray-800/95 rounded-xl sm:rounded-2xl shadow-sm backdrop-blur-xl border border-slate-200/50 dark:border-slate-700/50 min-h-0 min-w-0 overflow-hidden md:h-[calc(100vh-12rem)]">
+                    <div className="flex flex-col bg-white/95 dark:bg-gray-800/95 rounded-xl sm:rounded-2xl shadow-sm backdrop-blur-xl border border-slate-200/50 dark:border-slate-700/50 min-h-0 min-w-0 overflow-hidden h-full">
                         {/* Header */}
                         <div className="p-3 sm:p-4 md:p-6 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 text-xs sm:text-sm text-gray-700 dark:text-gray-300 flex flex-col sm:flex-row justify-between gap-2 sm:gap-0 rounded-t-xl sm:rounded-t-2xl flex-shrink-0">
                             <span className="font-semibold truncate">{AR_LABELS.invoiceNumber}: <span className="font-mono text-orange-600">{currentInvoice.id}</span></span>
@@ -3714,7 +3786,7 @@ const POSPage: React.FC = () => {
                             </div>
                         </form>
                         {/* Cart */}
-                        <div className="flex-grow overflow-y-auto overflow-x-auto min-w-0 relative pb-20">
+                        <div className="flex-grow overflow-y-auto overflow-x-auto min-w-0 relative">
                             <div className="overflow-x-auto min-w-0">
                                 <table className="w-full text-right min-w-full">
                                     <thead className="bg-gray-50 dark:bg-gray-700 sticky top-0">
@@ -3844,10 +3916,10 @@ const POSPage: React.FC = () => {
                     </div>
 
                     {/* Column 3: Totals, Payment & Actions (25%) */}
-                    <div className="flex flex-col gap-3 sm:gap-4 min-w-0">
-                        <div className="bg-gradient-to-br from-white via-orange-50/30 to-amber-50/30 dark:from-gray-800 dark:via-orange-950/20 dark:to-amber-950/20 rounded-xl sm:rounded-2xl shadow-lg border border-orange-200/50 dark:border-orange-800/50 backdrop-blur-xl p-4 sm:p-5">
+                    <div className="flex flex-col gap-2 sm:gap-3 md:gap-4 min-w-0 h-full min-h-0">
+                        <div className="bg-gradient-to-br from-white via-orange-50/30 to-amber-50/30 dark:from-gray-800 dark:via-orange-950/20 dark:to-amber-950/20 rounded-xl sm:rounded-2xl shadow-lg border border-orange-200/50 dark:border-orange-800/50 backdrop-blur-xl p-3 sm:p-4 md:p-5 flex flex-col min-h-0 overflow-y-auto">
                             {/* Hold / Cancel Buttons (above Customer Name) */}
-                            <div className="mb-4">
+                            <div className="mb-2 sm:mb-3 md:mb-4">
                                 <div className="flex flex-row gap-2 sm:gap-3">
                                     <button
                                         onClick={handleHoldSale}
@@ -3867,8 +3939,8 @@ const POSPage: React.FC = () => {
                                 </div>
                             </div>
                             {/* Customer Section */}
-                            <div className="flex-shrink-0 mb-4">
-                                <div className="flex items-center justify-between mb-2">
+                            <div className="flex-shrink-0 mb-2 sm:mb-3 md:mb-4">
+                                <div className="flex items-center justify-between mb-1.5 sm:mb-2">
                                     <h3 className="font-bold text-sm sm:text-base text-gray-700 dark:text-gray-200 text-right">{AR_LABELS.customerName}</h3>
                                 </div>
                                 
@@ -3895,15 +3967,7 @@ const POSPage: React.FC = () => {
                                                         const dbCustomers = await customersDB.getAllCustomers();
                                                         if (isMountedRef.current) {
                                                             if (dbCustomers && dbCustomers.length > 0) {
-                                                                const transformedCustomers: Customer[] = dbCustomers
-                                                                    .map((customer: any) => ({
-                                                                        id: customer.id,
-                                                                        name: customer.name || customer.phone,
-                                                                        phone: customer.phone,
-                                                                        address: customer.address,
-                                                                        previousBalance: customer.previousBalance || 0,
-                                                                    }))
-                                                                    .filter((customer: Customer) => !isDummyCustomer(customer));
+                                                                const transformedCustomers: Customer[] = transformAndFilterCustomers(dbCustomers);
                                                                 try {
                                                                     setAllCustomers(transformedCustomers);
                                                                     setCustomers(transformedCustomers);
@@ -3920,15 +3984,7 @@ const POSPage: React.FC = () => {
                                                                     if (!isMountedRef.current) return;
                                                                     
                                                                     if (syncResult.success && syncResult.customers) {
-                                                                        const transformedCustomers: Customer[] = syncResult.customers
-                                                                            .map((customer: any) => ({
-                                                                                id: customer.id,
-                                                                                name: customer.name || customer.phone,
-                                                                                phone: customer.phone,
-                                                                                address: customer.address,
-                                                                                previousBalance: customer.previousBalance || 0,
-                                                                            }))
-                                                                            .filter((customer: Customer) => !isDummyCustomer(customer));
+                                                                        const transformedCustomers: Customer[] = transformAndFilterCustomers(syncResult.customers);
                                                                         try {
                                                                             setAllCustomers(transformedCustomers);
                                                                             setCustomers(transformedCustomers);
@@ -3994,6 +4050,18 @@ const POSPage: React.FC = () => {
                                                         ) : (() => {
                                                             // Use allCustomers if customers is empty but allCustomers has data
                                                             const customersToShow = customers.length > 0 ? customers : (allCustomers.length > 0 ? allCustomers : []);
+                                                            
+                                                            // Debug logging for UI rendering
+                                                            console.log('[POS] UI Render - Customer Dropdown:', {
+                                                                isLoadingCustomers,
+                                                                customersLength: customers.length,
+                                                                allCustomersLength: allCustomers.length,
+                                                                customersToShowLength: customersToShow.length,
+                                                                customerSearchTerm,
+                                                                customersLoaded,
+                                                                sampleCustomers: customersToShow.slice(0, 3).map(c => ({ id: c.id, name: c.name, phone: c.phone }))
+                                                            });
+                                                            
                                                             return customersToShow.length === 0 ? (
                                                                 <div className="p-4 text-center text-sm text-gray-500 dark:text-gray-400">
                                                                     {customerSearchTerm ? 'لا توجد نتائج' : 'لا يوجد عملاء'}
@@ -4016,9 +4084,6 @@ const POSPage: React.FC = () => {
                                                                     <div className="flex flex-col items-end">
                                                                         <p className="font-semibold text-sm text-gray-900 dark:text-gray-100">{customer.name}</p>
                                                                         <p className="text-xs text-gray-600 dark:text-gray-400 mt-1">{customer.phone}</p>
-                                                                        {customer.address && (
-                                                                            <p className="text-xs text-gray-500 dark:text-gray-500 mt-1 truncate w-full">{customer.address}</p>
-                                                                        )}
                                                                     </div>
                                                                 </button>
                                                                 ))
@@ -4052,9 +4117,6 @@ const POSPage: React.FC = () => {
                                             <div className="flex-1 text-right">
                                                 <p className="font-semibold text-sm text-gray-900 dark:text-gray-100">{currentInvoice.customer.name}</p>
                                                 <p className="text-xs text-gray-600 dark:text-gray-400">{currentInvoice.customer.phone}</p>
-                                                {currentInvoice.customer.address && (
-                                                    <p className="text-xs text-gray-500 dark:text-gray-500 mt-1">{currentInvoice.customer.address}</p>
-                                                )}
                                             </div>
                                         </div>
                                     </div>
@@ -4062,59 +4124,59 @@ const POSPage: React.FC = () => {
                             </div>
 
                             {/* Totals Summary */}
-                            <div className="mb-4">
-                                <h3 className="text-xs sm:text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3 text-right">ملخص الفاتورة</h3>
-                                <div className="bg-white/85 dark:bg-gray-800/80 rounded-2xl p-4 sm:p-5 border border-gray-200/60 dark:border-gray-700/60 backdrop-blur-sm shadow-sm">
+                            <div className="mb-2 sm:mb-3 md:mb-4">
+                                <h3 className="text-[10px] sm:text-xs md:text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1.5 sm:mb-2 md:mb-3 text-right">ملخص الفاتورة</h3>
+                                <div className="bg-white/85 dark:bg-gray-800/80 rounded-lg sm:rounded-xl md:rounded-2xl p-2 sm:p-3 md:p-4 lg:p-5 border border-gray-200/60 dark:border-gray-700/60 backdrop-blur-sm shadow-sm">
                                     <div className="divide-y divide-gray-200/70 dark:divide-gray-700/70">
-                                        <div className="py-2 grid grid-cols-[minmax(8.5rem,auto)_1fr] items-center gap-x-6">
-                                            <span className="text-sm sm:text-base font-semibold text-gray-900 dark:text-gray-100 tabular-nums text-left justify-self-start">
+                                        <div className="py-1.5 sm:py-2 grid grid-cols-[minmax(0,auto)_1fr] items-center gap-x-2 sm:gap-x-3 md:gap-x-4 lg:gap-x-6">
+                                            <span className="text-[11px] sm:text-xs md:text-sm lg:text-base font-semibold text-gray-900 dark:text-gray-100 tabular-nums text-left justify-self-start break-words">
                                                 {formatCurrency(currentInvoice.subtotal)}
                                             </span>
-                                            <span className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 text-right justify-self-end">
+                                            <span className="text-[10px] sm:text-[11px] md:text-xs lg:text-sm text-gray-600 dark:text-gray-400 text-right justify-self-end">
                                                 {AR_LABELS.subtotal}:
                                             </span>
                                         </div>
 
-                                        <div className="py-2 grid grid-cols-[minmax(8.5rem,auto)_1fr] items-center gap-x-6">
+                                        <div className="py-1.5 sm:py-2 grid grid-cols-[minmax(0,auto)_1fr] items-center gap-x-2 sm:gap-x-3 md:gap-x-4 lg:gap-x-6">
                                             <div className="justify-self-start">
                                                 <input
                                                     type="number"
                                                     id="invoiceDiscount"
                                                     value={currentInvoice.invoiceDiscount}
                                                     onChange={e => setCurrentInvoice(inv => ({...inv, invoiceDiscount: parseFloat(e.target.value) || 0}))}
-                                                    className="w-24 sm:w-28 text-xs sm:text-sm text-left border border-orange-300 dark:border-orange-600 bg-white dark:bg-gray-700 rounded-lg font-semibold tabular-nums focus:ring-2 focus:ring-orange-500 focus:border-orange-500 py-1.5 px-2"
+                                                    className="w-16 sm:w-20 md:w-24 lg:w-28 text-[10px] sm:text-xs md:text-sm text-left border border-orange-300 dark:border-orange-600 bg-white dark:bg-gray-700 rounded-md sm:rounded-lg font-semibold tabular-nums focus:ring-2 focus:ring-orange-500 focus:border-orange-500 py-1 sm:py-1.5 px-1.5 sm:px-2"
                                                 />
                                             </div>
-                                            <label htmlFor="invoiceDiscount" className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 whitespace-nowrap text-right justify-self-end">
+                                            <label htmlFor="invoiceDiscount" className="text-[10px] sm:text-[11px] md:text-xs lg:text-sm text-gray-600 dark:text-gray-400 whitespace-nowrap text-right justify-self-end">
                                                 {AR_LABELS.invoiceDiscount}:
                                             </label>
                                         </div>
 
-                                        <div className="py-2 grid grid-cols-[minmax(8.5rem,auto)_1fr] items-center gap-x-6">
-                                            <span className="text-sm sm:text-base font-semibold text-red-600 tabular-nums text-left justify-self-start">
+                                        <div className="py-1.5 sm:py-2 grid grid-cols-[minmax(0,auto)_1fr] items-center gap-x-2 sm:gap-x-3 md:gap-x-4 lg:gap-x-6">
+                                            <span className="text-[11px] sm:text-xs md:text-sm lg:text-base font-semibold text-red-600 tabular-nums text-left justify-self-start break-words">
                                                 {formatCurrency(currentInvoice.totalItemDiscount + currentInvoice.invoiceDiscount)}
                                             </span>
-                                            <span className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 text-right justify-self-end">
+                                            <span className="text-[10px] sm:text-[11px] md:text-xs lg:text-sm text-gray-600 dark:text-gray-400 text-right justify-self-end">
                                                 {AR_LABELS.totalDiscount}:
                                             </span>
                                         </div>
 
-                                        <div className="py-2 grid grid-cols-[minmax(8.5rem,auto)_1fr] items-center gap-x-6">
-                                            <span className="text-sm sm:text-base font-semibold text-gray-900 dark:text-gray-100 tabular-nums text-left justify-self-start">
+                                        <div className="py-1.5 sm:py-2 grid grid-cols-[minmax(0,auto)_1fr] items-center gap-x-2 sm:gap-x-3 md:gap-x-4 lg:gap-x-6">
+                                            <span className="text-[11px] sm:text-xs md:text-sm lg:text-base font-semibold text-gray-900 dark:text-gray-100 tabular-nums text-left justify-self-start break-words">
                                                 {formatCurrency(currentInvoice.tax)}
                                             </span>
-                                            <span className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 text-right justify-self-end">
+                                            <span className="text-[10px] sm:text-[11px] md:text-xs lg:text-sm text-gray-600 dark:text-gray-400 text-right justify-self-end">
                                                 {AR_LABELS.tax} ({(taxRate * 100).toFixed(2)}%):
                                             </span>
                                         </div>
                                     </div>
 
-                                    <div className="mt-3 bg-gradient-to-l from-orange-50 to-amber-50 dark:from-orange-900/30 dark:to-amber-900/30 border-2 border-orange-400 dark:border-orange-600 rounded-xl p-3 sm:p-4 shadow-md ring-2 ring-orange-200 dark:ring-orange-800/50">
-                                        <div className="grid grid-cols-[minmax(8.5rem,auto)_1fr] items-center gap-x-6">
-                                            <span className="text-xl sm:text-2xl font-bold text-orange-600 dark:text-orange-400 tabular-nums text-left justify-self-start">
+                                    <div className="mt-2 sm:mt-2.5 md:mt-3 bg-gradient-to-l from-orange-50 to-amber-50 dark:from-orange-900/30 dark:to-amber-900/30 border-2 border-orange-400 dark:border-orange-600 rounded-lg sm:rounded-xl md:rounded-xl p-2 sm:p-2.5 md:p-3 lg:p-4 shadow-md ring-2 ring-orange-200 dark:ring-orange-800/50">
+                                        <div className="grid grid-cols-[minmax(0,auto)_1fr] items-center gap-x-2 sm:gap-x-3 md:gap-x-4 lg:gap-x-6">
+                                            <span className="text-base sm:text-lg md:text-xl lg:text-2xl font-bold text-orange-600 dark:text-orange-400 tabular-nums text-left justify-self-start break-words">
                                                 {formatCurrency(currentInvoice.grandTotal)}
                                             </span>
-                                            <span className="text-base sm:text-lg font-bold text-gray-800 dark:text-gray-200 text-right justify-self-end">
+                                            <span className="text-xs sm:text-sm md:text-base lg:text-lg font-bold text-gray-800 dark:text-gray-200 text-right justify-self-end">
                                                 {AR_LABELS.grandTotal}:
                                             </span>
                                         </div>
@@ -4124,7 +4186,7 @@ const POSPage: React.FC = () => {
 
                             {/* Payment Method & Confirm */}
                             <div>
-                                <h3 className="text-xs sm:text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3 text-right">طريقة الدفع</h3>
+                                <h3 className="text-xs sm:text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2 sm:mb-3 text-right">طريقة الدفع</h3>
                                 <div className="bg-white/80 dark:bg-gray-800/80 rounded-xl p-4 border border-gray-200/50 dark:border-gray-700/50 backdrop-blur-sm space-y-3">
                                     <div className="grid grid-cols-3 gap-2">
                                         <button 
@@ -4176,31 +4238,31 @@ const POSPage: React.FC = () => {
                                             )}
                                         </div>
                                     )}
-                                    <div className="flex justify-between items-center bg-gray-50 dark:bg-gray-700/50 p-2 sm:p-3 rounded-lg border border-gray-200 dark:border-gray-600">
-                                        <ToggleSwitch
-                                            enabled={autoPrintEnabled}
-                                            onChange={setAutoPrintEnabled}
-                                        />
-                                        <label className="text-xs sm:text-sm font-medium text-gray-700 dark:text-gray-300 cursor-pointer">
-                                            {AR_LABELS.autoPrintInvoice}
-                                        </label>
-                                    </div>
                                     <div className="flex flex-col sm:flex-row gap-2 sm:gap-3">
-                                        <button 
-                                            onClick={handleFinalizePayment} 
-                                            disabled={currentInvoice.items.length === 0 || isProcessingPayment} 
-                                            className="flex-1 px-4 py-3 text-sm sm:text-base font-bold text-white bg-gradient-to-r from-green-500 via-emerald-500 to-green-600 rounded-xl hover:from-green-600 hover:via-emerald-600 hover:to-green-700 disabled:from-gray-400 disabled:via-gray-400 disabled:to-gray-500 dark:disabled:from-gray-600 dark:disabled:via-gray-600 dark:disabled:to-gray-700 shadow-xl hover:shadow-2xl hover:scale-[1.02] transition-all duration-200 disabled:cursor-not-allowed disabled:scale-100"
-                                        >
-                                            {isProcessingPayment ? 'جاري المعالجة...' : AR_LABELS.confirmPayment}
-                                        </button>
+                                        <div className="flex justify-between items-center bg-gray-50 dark:bg-gray-700/50 p-1.5 sm:p-2 rounded-lg border border-gray-200 dark:border-gray-600 flex-1">
+                                            <ToggleSwitch
+                                                enabled={autoPrintEnabled}
+                                                onChange={setAutoPrintEnabled}
+                                            />
+                                            <label className="text-xs font-medium text-gray-700 dark:text-gray-300 cursor-pointer">
+                                                {AR_LABELS.autoPrintInvoice}
+                                            </label>
+                                        </div>
                                         <button 
                                             onClick={handleReturn} 
                                             disabled={currentInvoice.items.length === 0} 
-                                            className="flex-1 px-4 py-3 text-sm sm:text-base font-bold text-white bg-gradient-to-r from-red-500 via-rose-500 to-red-600 rounded-xl hover:from-red-600 hover:via-rose-600 hover:to-red-700 disabled:from-gray-400 disabled:via-gray-400 disabled:to-gray-500 dark:disabled:from-gray-600 dark:disabled:via-gray-600 dark:disabled:to-gray-700 shadow-xl hover:shadow-2xl hover:scale-[1.02] transition-all duration-200 disabled:cursor-not-allowed disabled:scale-100"
+                                            className="flex-1 px-3 py-2 text-xs sm:text-sm font-bold text-white bg-gradient-to-r from-red-500 via-rose-500 to-red-600 rounded-lg hover:from-red-600 hover:via-rose-600 hover:to-red-700 disabled:from-gray-400 disabled:via-gray-400 disabled:to-gray-500 dark:disabled:from-gray-600 dark:disabled:via-gray-600 dark:disabled:to-gray-700 shadow-lg hover:shadow-xl hover:scale-[1.02] transition-all duration-200 disabled:cursor-not-allowed disabled:scale-100"
                                         >
                                             {AR_LABELS.returnProduct}
                                         </button>
                                     </div>
+                                    <button 
+                                        onClick={handleFinalizePayment} 
+                                        disabled={currentInvoice.items.length === 0 || isProcessingPayment} 
+                                        className="w-full px-8 py-5 text-lg sm:text-xl font-bold text-white bg-gradient-to-r from-green-500 via-emerald-500 to-green-600 rounded-xl hover:from-green-600 hover:via-emerald-600 hover:to-green-700 disabled:from-gray-400 disabled:via-gray-400 disabled:to-gray-500 dark:disabled:from-gray-600 dark:disabled:via-gray-600 dark:disabled:to-gray-700 shadow-2xl hover:shadow-3xl hover:scale-[1.02] transition-all duration-200 disabled:cursor-not-allowed disabled:scale-100"
+                                    >
+                                        {isProcessingPayment ? 'جاري المعالجة...' : AR_LABELS.confirmPayment}
+                                    </button>
                                 </div>
                             </div>
                         </div>
@@ -4236,22 +4298,7 @@ const POSPage: React.FC = () => {
                             // Reload customers from IndexedDB to get updated list
                             if (isMountedRef.current) {
                                 const dbCustomers = await customersDB.getAllCustomers();
-                                const transformedCustomers: Customer[] = dbCustomers
-                                    .map((customer: any) => {
-                                        // Handle both id and _id fields
-                                        const customerId = customer.id || customer._id;
-                                        return {
-                                            id: customerId,
-                                            name: customer.name || customer.phone,
-                                            phone: customer.phone,
-                                            address: customer.address,
-                                            previousBalance: customer.previousBalance || 0,
-                                        };
-                                    })
-                                    .filter((customer: Customer) => {
-                                        if (!customer.id) return false;
-                                        return !isDummyCustomer(customer);
-                                    });
+                                const transformedCustomers: Customer[] = transformAndFilterCustomers(dbCustomers);
                                 
                                 try {
                                     setAllCustomers(transformedCustomers);
@@ -4314,16 +4361,44 @@ const AddCustomerModal: React.FC<{
     const [address, setAddress] = useState('');
     const [errors, setErrors] = useState<{ phone?: string }>({});
     const [isSubmitting, setIsSubmitting] = useState(false);
+    const [showInitialBalanceStep, setShowInitialBalanceStep] = useState(false);
+    const [initialBalanceType, setInitialBalanceType] = useState<'balance' | 'debt' | null>(null);
+    const [initialAmount, setInitialAmount] = useState(0);
 
-    const handleSave = async () => {
+    const handleBasicInfoSave = () => {
         // Validate phone number (required)
         if (!phone.trim()) {
             setErrors({ phone: 'رقم الهاتف مطلوب' });
             return;
         }
 
-        // Clear errors
+        // Clear errors and show balance step
         setErrors({});
+        setShowInitialBalanceStep(true);
+    };
+
+    const handleSkipBalance = async () => {
+        // Skip balance step and save customer with zero balance
+        await saveCustomer(0);
+    };
+
+    const handleBalanceStepSave = async () => {
+        if (initialBalanceType === null) {
+            alert('يرجى اختيار نوع الرصيد الأولي.');
+            return;
+        }
+
+        if (initialAmount <= 0) {
+            alert('المبلغ يجب أن يكون أكبر من صفر.');
+            return;
+        }
+
+        // Calculate previousBalance: positive for balance, negative for debt
+        const previousBalance = initialBalanceType === 'balance' ? initialAmount : -initialAmount;
+        await saveCustomer(previousBalance);
+    };
+
+    const saveCustomer = async (previousBalance: number) => {
         setIsSubmitting(true);
 
         try {
@@ -4331,7 +4406,7 @@ const AddCustomerModal: React.FC<{
             const customerData: Omit<Customer, 'id'> = {
                 name: name.trim() || phone, // Use phone as name if name not provided
                 phone: phone.trim(),
-                previousBalance: 0,
+                previousBalance: previousBalance,
                 ...(address.trim() && { address: address.trim() }),
             };
 
@@ -4347,6 +4422,9 @@ const AddCustomerModal: React.FC<{
             setName('');
             setPhone('');
             setAddress('');
+            setShowInitialBalanceStep(false);
+            setInitialBalanceType(null);
+            setInitialAmount(0);
         } catch (error) {
             // Error is handled by parent component
             console.error('Error saving customer:', error);
@@ -4357,6 +4435,84 @@ const AddCustomerModal: React.FC<{
 
     if (!isOpen) return null;
 
+    // Show initial balance/debt step
+    if (showInitialBalanceStep) {
+        return (
+            <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4" onClick={onClose}>
+                <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-md text-right" onClick={e => e.stopPropagation()}>
+                    <div className="p-6 space-y-4">
+                        <h2 className="text-xl font-bold text-gray-900 dark:text-gray-100">إضافة رصيد أولي</h2>
+                        <p className="text-sm text-gray-600 dark:text-gray-400">اختر نوع الرصيد الأولي للعميل (يمكنك تخطي هذه الخطوة)</p>
+                        
+                        <div className="space-y-2">
+                            <button
+                                onClick={() => setInitialBalanceType('balance')}
+                                className={`w-full px-4 py-3 rounded-md text-right font-medium transition-colors ${
+                                    initialBalanceType === 'balance'
+                                        ? 'bg-green-500 text-white'
+                                        : 'bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200 hover:bg-gray-300 dark:hover:bg-gray-600'
+                                }`}
+                            >
+                                {AR_LABELS.addBalance}
+                            </button>
+                            <button
+                                onClick={() => setInitialBalanceType('debt')}
+                                className={`w-full px-4 py-3 rounded-md text-right font-medium transition-colors ${
+                                    initialBalanceType === 'debt'
+                                        ? 'bg-red-500 text-white'
+                                        : 'bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200 hover:bg-gray-300 dark:hover:bg-gray-600'
+                                }`}
+                            >
+                                {AR_LABELS.addDebt}
+                            </button>
+                        </div>
+
+                        {initialBalanceType && (
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                                    {initialBalanceType === 'balance' ? AR_LABELS.addBalance : AR_LABELS.addDebt}
+                                </label>
+                                <input 
+                                    type="number" 
+                                    value={initialAmount} 
+                                    onChange={e => setInitialAmount(parseFloat(e.target.value) || 0)} 
+                                    placeholder="0.00"
+                                    className="w-full p-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200 rounded-md text-left"
+                                    min="0"
+                                    step="0.01"
+                                />
+                            </div>
+                        )}
+                    </div>
+                    <div className="flex justify-start space-x-4 space-x-reverse p-4 bg-gray-50 dark:bg-gray-800/50 border-t dark:border-gray-700 rounded-b-lg">
+                        <button 
+                            onClick={handleBalanceStepSave} 
+                            disabled={isSubmitting || !initialBalanceType || initialAmount <= 0}
+                            className="px-4 py-2 bg-orange-500 text-white rounded-md disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                            {isSubmitting ? 'جاري الحفظ...' : AR_LABELS.save}
+                        </button>
+                        <button 
+                            onClick={handleSkipBalance} 
+                            disabled={isSubmitting}
+                            className="px-4 py-2 bg-gray-300 dark:bg-gray-600 text-gray-800 dark:text-gray-200 rounded-md disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                            تخطي
+                        </button>
+                        <button 
+                            onClick={() => setShowInitialBalanceStep(false)} 
+                            disabled={isSubmitting}
+                            className="px-4 py-2 bg-gray-200 dark:bg-gray-600 text-gray-800 dark:text-gray-200 rounded-md disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                            {AR_LABELS.cancel}
+                        </button>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    // Show basic info form
     return (
         <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4" onClick={onClose}>
             <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-md text-right" onClick={e => e.stopPropagation()}>
@@ -4404,11 +4560,11 @@ const AddCustomerModal: React.FC<{
                 </div>
                 <div className="flex justify-start space-x-4 space-x-reverse p-4 bg-gray-50 dark:bg-gray-800/50 border-t dark:border-gray-700 rounded-b-lg">
                     <button 
-                        onClick={handleSave} 
+                        onClick={handleBasicInfoSave} 
                         disabled={isSubmitting}
                         className="px-4 py-2 bg-orange-500 text-white rounded-md disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                        {isSubmitting ? 'جاري الحفظ...' : AR_LABELS.save}
+                        {isSubmitting ? 'جاري الحفظ...' : 'التالي'}
                     </button>
                     <button 
                         onClick={onClose} 

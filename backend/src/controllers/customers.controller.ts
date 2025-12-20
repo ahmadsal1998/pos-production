@@ -476,8 +476,14 @@ export const validateCreateCustomerPayment = [
     .notEmpty()
     .withMessage('Customer ID is required'),
   body('amount')
-    .isFloat({ min: 0.01 })
-    .withMessage('Payment amount must be greater than 0'),
+    .isFloat()
+    .custom((value) => {
+      if (value === 0) {
+        throw new Error('Payment amount cannot be zero');
+      }
+      return true;
+    })
+    .withMessage('Payment amount cannot be zero'),
   body('method')
     .isIn(['Cash', 'Bank Transfer', 'Cheque'])
     .withMessage('Payment method must be Cash, Bank Transfer, or Cheque'),

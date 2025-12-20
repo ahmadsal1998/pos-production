@@ -37,7 +37,7 @@ const customerPaymentSchema = new Schema<CustomerPaymentDocument>(
     amount: {
       type: Number,
       required: [true, 'Payment amount is required'],
-      min: [0, 'Amount must be positive'],
+      // Allow negative amounts for debt operations (positive for balance, negative for debt)
     },
     method: {
       type: String,

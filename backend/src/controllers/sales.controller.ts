@@ -220,7 +220,7 @@ export const createSale = asyncHandler(async (req: AuthenticatedRequest, res: Re
 export const getSales = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
   const userStoreId = req.user?.storeId || null;
   const userRole = req.user?.role || null;
-  const { startDate, endDate, customerId, status, paymentMethod, storeId: queryStoreId, page = 1, limit = 100 } = req.query;
+  const { startDate, endDate, customerId, status, paymentMethod, seller, storeId: queryStoreId, page = 1, limit = 100 } = req.query;
 
   // Determine which storeId to use
   let targetStoreId: string | null = null;
@@ -286,6 +286,10 @@ export const getSales = asyncHandler(async (req: AuthenticatedRequest, res: Resp
       paymentMethodStr = String(paymentMethod);
     }
     query.paymentMethod = paymentMethodStr.toLowerCase();
+  }
+
+  if (seller && seller !== 'all') {
+    query.seller = seller;
   }
 
   // Get business day start time and timezone settings for date filtering

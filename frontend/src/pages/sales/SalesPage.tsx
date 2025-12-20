@@ -7,7 +7,7 @@ import { AnimatedNumber } from '@/shared/components/ui/AnimatedNumber';
 import CustomDropdown from '@/shared/components/ui/CustomDropdown/CustomDropdown';
 import { MetricCard } from '@/shared/components';
 import { formatDate } from '@/shared/utils';
-import { customersApi, salesApi, ApiError, storeSettingsApi, productsApi } from '@/lib/api/client';
+import { customersApi, salesApi, ApiError, storeSettingsApi, productsApi, usersApi } from '@/lib/api/client';
 import { useCurrency } from '@/shared/contexts/CurrencyContext';
 import { useAuthStore } from '@/app/store';
 import { printReceipt } from '@/shared/utils/printUtils';
@@ -250,11 +250,14 @@ const SaleDetailsModal: React.FC<{ sale: SaleTransaction | null, onClose: () => 
     );
 };
 
+type BalanceOperation = 'addBalance' | 'addDebt' | 'payDebt' | 'deductBalance';
+
 const AddPaymentModal: React.FC<{
     customerSummary: CustomerAccountSummary | null;
     onClose: () => void;
     onSave: (payment: CustomerPayment) => void;
 }> = ({ customerSummary, onClose, onSave }) => {
+    const [operation, setOperation] = useState<BalanceOperation | null>(null);
     const [amount, setAmount] = useState(0);
     const [method, setMethod] = useState<'Cash' | 'Bank Transfer' | 'Cheque'>('Cash');
     const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
@@ -262,38 +265,172 @@ const AddPaymentModal: React.FC<{
 
     useEffect(() => {
         if (customerSummary) {
-            setAmount(customerSummary.balance > 0 ? customerSummary.balance : 0);
+            setAmount(0);
             setDate(new Date().toISOString().split('T')[0]);
             setMethod('Cash');
             setNotes('');
+            setOperation(null); // Reset operation when customer changes
         }
     }, [customerSummary]);
     
     if (!customerSummary) return null;
 
+    // Determine available operations based on balance
+    const getAvailableOperations = (): BalanceOperation[] => {
+        const balance = customerSummary.balance;
+        
+        if (balance === 0 || balance === null || balance === undefined) {
+            // Zero or new customer: can add balance or add debt
+            return ['addBalance', 'addDebt'];
+        } else if (balance > 0) {
+            // Positive balance (customer owes): can add balance or deduct from balance
+            return ['addBalance', 'deductBalance'];
+        } else {
+            // Negative balance (debt): can pay debt or add more debt
+            return ['payDebt', 'addDebt'];
+        }
+    };
+
+    const availableOperations = getAvailableOperations();
+
+    const getOperationLabel = (op: BalanceOperation): string => {
+        const balance = customerSummary.balance;
+        
+        // For negative balance (debt), use debt-related terms
+        if (balance < 0) {
+            switch (op) {
+                case 'payDebt':
+                    return AR_LABELS.payDebt;
+                case 'addDebt':
+                    return AR_LABELS.addDebt;
+                default:
+                    return '';
+            }
+        }
+        // For positive balance, use balance-related terms
+        else if (balance > 0) {
+            switch (op) {
+                case 'addBalance':
+                    return AR_LABELS.addBalance;
+                case 'deductBalance':
+                    return AR_LABELS.deductBalance;
+                default:
+                    return '';
+            }
+        }
+        // For zero balance, show appropriate terms
+        else {
+            switch (op) {
+                case 'addBalance':
+                    return AR_LABELS.addBalance;
+                case 'addDebt':
+                    // For zero balance, "Add Debt" is shown as "Deduct from Balance"
+                    return AR_LABELS.deductBalance;
+                default:
+                    return '';
+            }
+        }
+    };
+
     const handleSave = () => {
+        if (!operation) {
+            alert('يرجى اختيار نوع العملية.');
+            return;
+        }
+
         if (amount <= 0) {
             alert('المبلغ يجب أن يكون أكبر من صفر.');
             return;
         }
+
+        // Determine the payment amount based on operation
+        // For addBalance and payDebt: positive amount (increases customer credit)
+        // For addDebt and deductBalance: negative amount (increases customer debt)
+        let paymentAmount: number;
+        if (operation === 'addBalance' || operation === 'payDebt') {
+            paymentAmount = amount; // Positive
+        } else {
+            paymentAmount = -amount; // Negative
+        }
+
         onSave({
             id: UUID(),
             customerId: customerSummary.customerId,
             date,
-            amount,
+            amount: paymentAmount,
             method,
             notes,
         });
     };
 
+    // If operation not selected, show operation selection
+    if (!operation) {
+        return (
+            <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4" onClick={onClose}>
+                <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-md text-right" onClick={e => e.stopPropagation()}>
+                    <div className="p-6 space-y-4">
+                        <h2 className="text-xl font-bold text-gray-900 dark:text-gray-100">
+                            {customerSummary.balance === 0 || customerSummary.balance === null || customerSummary.balance === undefined
+                                ? 'اختر العملية'
+                                : `العمليات المتاحة لـ ${customerSummary.customerName}`}
+                        </h2>
+                        <div className="space-y-2">
+                            {availableOperations.map((op) => {
+                                // Determine button color based on operation type and balance state
+                                const balance = customerSummary.balance;
+                                const isPositiveAction = op === 'addBalance' || op === 'payDebt';
+                                
+                                // For negative balance: payDebt is green, addDebt is red
+                                // For positive balance: addBalance is green, deductBalance is red
+                                // For zero balance: addBalance is green, addDebt (shown as deductBalance) is red
+                                const buttonClasses = isPositiveAction
+                                    ? "w-full px-4 py-3 bg-green-500 hover:bg-green-600 dark:bg-green-600 dark:hover:bg-green-700 text-white rounded-md text-right font-medium transition-all duration-300 shadow-md hover:shadow-lg"
+                                    : "w-full px-4 py-3 bg-red-500 hover:bg-red-600 dark:bg-red-600 dark:hover:bg-red-700 text-white rounded-md text-right font-medium transition-all duration-300 shadow-md hover:shadow-lg";
+                                
+                                return (
+                                    <button
+                                        key={op}
+                                        onClick={() => setOperation(op)}
+                                        className={buttonClasses}
+                                    >
+                                        {getOperationLabel(op)}
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    </div>
+                    <div className="flex justify-start space-x-4 space-x-reverse p-4 bg-gray-50 dark:bg-gray-800/50 border-t dark:border-gray-700 rounded-b-lg">
+                        <button onClick={onClose} className="px-4 py-2 bg-gray-200 dark:bg-gray-600 text-gray-800 dark:text-gray-200 rounded-md">{AR_LABELS.cancel}</button>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    // Show form for selected operation
     return (
         <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4" onClick={onClose}>
             <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-md text-right" onClick={e => e.stopPropagation()}>
                 <div className="p-6 space-y-4">
-                    <h2 className="text-xl font-bold text-gray-900 dark:text-gray-100">{AR_LABELS.addPayment} لـ {customerSummary.customerName}</h2>
+                    <div className="flex items-center justify-between mb-2">
+                        <h2 className="text-xl font-bold text-gray-900 dark:text-gray-100">{getOperationLabel(operation)} لـ {customerSummary.customerName}</h2>
+                        <button 
+                            onClick={() => setOperation(null)}
+                            className="text-sm text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+                        >
+                            ← رجوع
+                        </button>
+                    </div>
                     <div>
                         <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{AR_LABELS.paymentAmount}</label>
-                        <input type="number" value={amount} onChange={e => setAmount(parseFloat(e.target.value) || 0)} className="w-full p-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200 rounded-md text-left"/>
+                        <input 
+                            type="number" 
+                            value={amount} 
+                            onChange={e => setAmount(parseFloat(e.target.value) || 0)} 
+                            className="w-full p-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200 rounded-md text-left"
+                            min="0"
+                            step="0.01"
+                        />
                     </div>
                     <div>
                         <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">{AR_LABELS.paymentMethod}</label>
@@ -310,7 +447,7 @@ const AddPaymentModal: React.FC<{
                             className="w-full"
                         />
                     </div>
-                     <div>
+                    <div>
                         <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{AR_LABELS.date}</label>
                         <input type="date" value={date} onChange={e => setDate(e.target.value)} className="w-full p-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200 rounded-md"/>
                     </div>
@@ -725,6 +862,7 @@ const SalesPage: React.FC<SalesPageProps> = ({ setActivePath }) => {
     const [customersError, setCustomersError] = useState<string | null>(null);
     const [isLoadingSales, setIsLoadingSales] = useState(true);
     const [salesError, setSalesError] = useState<string | null>(null);
+    const [sellers, setSellers] = useState<string[]>([]);
     
     // Filter state with default "Today"
     const today = new Date().toISOString().split('T')[0];
@@ -763,6 +901,7 @@ const SalesPage: React.FC<SalesPageProps> = ({ setActivePath }) => {
     // Use refs to prevent duplicate requests
     const fetchingRef = useRef(false);
     const lastRequestKeyRef = useRef<string>('');
+    const salesRef = useRef<SaleTransaction[]>([]);
 
     // Fetch sales from database with filters and pagination
     const fetchSales = useCallback(async (page: number = 1) => {
@@ -812,10 +951,10 @@ const SalesPage: React.FC<SalesPageProps> = ({ setActivePath }) => {
                 params.customerId = filters.customerId;
             }
 
-            // Note: Seller filter would need backend support - for now we filter client-side
-            // if (filters.seller !== 'all') {
-            //     params.seller = filters.seller;
-            // }
+            // Add seller filter
+            if (filters.seller !== 'all') {
+                params.seller = filters.seller;
+            }
 
             console.log('[SalesPage] Fetching sales with params:', params);
             const response = await salesApi.getSales(params);
@@ -854,13 +993,9 @@ const SalesPage: React.FC<SalesPageProps> = ({ setActivePath }) => {
                 // Sort by date (most recent first)
                 apiSales.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
                 
-                // Apply seller filter client-side (until backend supports it)
-                let filteredSales = apiSales;
-                if (filters.seller !== 'all') {
-                    filteredSales = apiSales.filter(s => s.seller === filters.seller);
-                }
-                
-                setSales(filteredSales);
+                // Seller filter is now handled by backend
+                setSales(apiSales);
+                salesRef.current = apiSales;
                 
                 // Update pagination info
                 const pagination = backendResponse.data?.pagination;
@@ -876,6 +1011,7 @@ const SalesPage: React.FC<SalesPageProps> = ({ setActivePath }) => {
                 console.log(`[SalesPage] Loaded ${apiSales.length} sales from database (page ${page})`);
             } else {
                 setSales([]);
+                salesRef.current = [];
                 setTotalSales(0);
                 setTotalPages(0);
                 console.log('[SalesPage] No sales found in database');
@@ -885,6 +1021,7 @@ const SalesPage: React.FC<SalesPageProps> = ({ setActivePath }) => {
             console.error('[SalesPage] Error fetching sales:', apiError);
             setSalesError(apiError.message || 'فشل تحميل المبيعات');
             setSales([]);
+            salesRef.current = [];
             setTotalSales(0);
             setTotalPages(0);
         } finally {
@@ -1101,14 +1238,42 @@ const SalesPage: React.FC<SalesPageProps> = ({ setActivePath }) => {
         };
     }, [loadCustomersFromDB]);
 
-    // Get unique sellers from all sales (for filter dropdown)
-    const sellers = useMemo(() => {
-        const sellerSet = new Set<string>();
-        sales.forEach(s => {
-            if (s.seller) sellerSet.add(s.seller);
-        });
-        return Array.from(sellerSet).sort();
-    }, [sales]);
+    // Fetch all users from the store to populate seller filter
+    const fetchSellers = useCallback(async () => {
+        try {
+            console.log('[SalesPage] Fetching users for seller filter...');
+            const response = await usersApi.getUsers();
+            const usersData = (response.data as any)?.data?.users || [];
+            
+            if (Array.isArray(usersData) && usersData.length > 0) {
+                // Extract seller names from users (use fullName or username)
+                const sellerNames = usersData
+                    .map((user: any) => user.fullName || user.username)
+                    .filter((name: string) => name && name.trim() !== '')
+                    .sort();
+                
+                console.log(`[SalesPage] Loaded ${sellerNames.length} sellers from users API`);
+                setSellers(sellerNames);
+            } else {
+                console.log('[SalesPage] No users found for seller filter');
+                setSellers([]);
+            }
+        } catch (error: any) {
+            const apiError = error as ApiError;
+            console.error('[SalesPage] Error fetching users for seller filter:', apiError);
+            // Fallback: extract sellers from current sales if API fails
+            const sellerSet = new Set<string>();
+            salesRef.current.forEach(s => {
+                if (s.seller) sellerSet.add(s.seller);
+            });
+            setSellers(Array.from(sellerSet).sort());
+        }
+    }, []);
+
+    // Fetch sellers on mount
+    useEffect(() => {
+        fetchSellers();
+    }, [fetchSellers]);
 
     // Generate dynamic label suffix based on active filter
     const getFilterLabelSuffix = useCallback(() => {
@@ -2201,16 +2366,44 @@ const AddCustomerModal: React.FC<{
     const [address, setAddress] = useState('');
     const [errors, setErrors] = useState<{ phone?: string }>({});
     const [isSubmitting, setIsSubmitting] = useState(false);
+    const [showInitialBalanceStep, setShowInitialBalanceStep] = useState(false);
+    const [initialBalanceType, setInitialBalanceType] = useState<'balance' | 'debt' | null>(null);
+    const [initialAmount, setInitialAmount] = useState(0);
 
-    const handleSave = async () => {
+    const handleBasicInfoSave = () => {
         // Validate phone number (required)
         if (!phone.trim()) {
             setErrors({ phone: 'رقم الهاتف مطلوب' });
             return;
         }
 
-        // Clear errors
+        // Clear errors and show balance step
         setErrors({});
+        setShowInitialBalanceStep(true);
+    };
+
+    const handleSkipBalance = async () => {
+        // Skip balance step and save customer with zero balance
+        await saveCustomer(0);
+    };
+
+    const handleBalanceStepSave = async () => {
+        if (initialBalanceType === null) {
+            alert('يرجى اختيار نوع الرصيد الأولي.');
+            return;
+        }
+
+        if (initialAmount <= 0) {
+            alert('المبلغ يجب أن يكون أكبر من صفر.');
+            return;
+        }
+
+        // Calculate previousBalance: positive for balance, negative for debt
+        const previousBalance = initialBalanceType === 'balance' ? initialAmount : -initialAmount;
+        await saveCustomer(previousBalance);
+    };
+
+    const saveCustomer = async (previousBalance: number) => {
         setIsSubmitting(true);
 
         try {
@@ -2218,7 +2411,7 @@ const AddCustomerModal: React.FC<{
             const customerData: Omit<Customer, 'id'> = {
                 name: name.trim() || phone, // Use phone as name if name not provided
                 phone: phone.trim(),
-                previousBalance: 0,
+                previousBalance: previousBalance,
                 ...(address.trim() && { address: address.trim() }),
             };
 
@@ -2234,6 +2427,9 @@ const AddCustomerModal: React.FC<{
             setName('');
             setPhone('');
             setAddress('');
+            setShowInitialBalanceStep(false);
+            setInitialBalanceType(null);
+            setInitialAmount(0);
         } catch (error) {
             // Error is handled by parent component
             console.error('Error saving customer:', error);
@@ -2242,6 +2438,84 @@ const AddCustomerModal: React.FC<{
         }
     };
 
+    // Show initial balance/debt step
+    if (showInitialBalanceStep) {
+        return (
+            <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4" onClick={onClose}>
+                <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-md text-right" onClick={e => e.stopPropagation()}>
+                    <div className="p-6 space-y-4">
+                        <h2 className="text-xl font-bold text-gray-900 dark:text-gray-100">إضافة رصيد أولي</h2>
+                        <p className="text-sm text-gray-600 dark:text-gray-400">اختر نوع الرصيد الأولي للعميل (يمكنك تخطي هذه الخطوة)</p>
+                        
+                        <div className="space-y-2">
+                            <button
+                                onClick={() => setInitialBalanceType('balance')}
+                                className={`w-full px-4 py-3 rounded-md text-right font-medium transition-colors ${
+                                    initialBalanceType === 'balance'
+                                        ? 'bg-green-500 text-white'
+                                        : 'bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200 hover:bg-gray-300 dark:hover:bg-gray-600'
+                                }`}
+                            >
+                                {AR_LABELS.addBalance}
+                            </button>
+                            <button
+                                onClick={() => setInitialBalanceType('debt')}
+                                className={`w-full px-4 py-3 rounded-md text-right font-medium transition-colors ${
+                                    initialBalanceType === 'debt'
+                                        ? 'bg-red-500 text-white'
+                                        : 'bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200 hover:bg-gray-300 dark:hover:bg-gray-600'
+                                }`}
+                            >
+                                {AR_LABELS.addDebt}
+                            </button>
+                        </div>
+
+                        {initialBalanceType && (
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                                    {initialBalanceType === 'balance' ? AR_LABELS.addBalance : AR_LABELS.addDebt}
+                                </label>
+                                <input 
+                                    type="number" 
+                                    value={initialAmount} 
+                                    onChange={e => setInitialAmount(parseFloat(e.target.value) || 0)} 
+                                    placeholder="0.00"
+                                    className="w-full p-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200 rounded-md text-left"
+                                    min="0"
+                                    step="0.01"
+                                />
+                            </div>
+                        )}
+                    </div>
+                    <div className="flex justify-start space-x-4 space-x-reverse p-4 bg-gray-50 dark:bg-gray-800/50 border-t dark:border-gray-700 rounded-b-lg">
+                        <button 
+                            onClick={handleBalanceStepSave} 
+                            disabled={isSubmitting || !initialBalanceType || initialAmount <= 0}
+                            className="px-4 py-2 bg-orange-500 text-white rounded-md disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                            {isSubmitting ? 'جاري الحفظ...' : AR_LABELS.save}
+                        </button>
+                        <button 
+                            onClick={handleSkipBalance} 
+                            disabled={isSubmitting}
+                            className="px-4 py-2 bg-gray-300 dark:bg-gray-600 text-gray-800 dark:text-gray-200 rounded-md disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                            تخطي
+                        </button>
+                        <button 
+                            onClick={() => setShowInitialBalanceStep(false)} 
+                            disabled={isSubmitting}
+                            className="px-4 py-2 bg-gray-200 dark:bg-gray-600 text-gray-800 dark:text-gray-200 rounded-md disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                            {AR_LABELS.cancel}
+                        </button>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    // Show basic info form
     return (
         <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4" onClick={onClose}>
             <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-md text-right" onClick={e => e.stopPropagation()}>
@@ -2289,11 +2563,11 @@ const AddCustomerModal: React.FC<{
                 </div>
                 <div className="flex justify-start space-x-4 space-x-reverse p-4 bg-gray-50 dark:bg-gray-800/50 border-t dark:border-gray-700 rounded-b-lg">
                     <button 
-                        onClick={handleSave} 
+                        onClick={handleBasicInfoSave} 
                         disabled={isSubmitting}
                         className="px-4 py-2 bg-orange-500 text-white rounded-md disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                        {isSubmitting ? 'جاري الحفظ...' : AR_LABELS.save}
+                        {isSubmitting ? 'جاري الحفظ...' : 'التالي'}
                     </button>
                     <button 
                         onClick={onClose} 
@@ -2368,7 +2642,7 @@ const EditCustomerModal: React.FC<{
         <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4" onClick={onClose}>
             <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-md text-right" onClick={e => e.stopPropagation()}>
                 <div className="p-6 space-y-4">
-                    <h2 className="text-xl font-bold text-gray-900 dark:text-gray-100">{AR_LABELS.edit} {AR_LABELS.customer}</h2>
+                    <h2 className="text-xl font-bold text-gray-900 dark:text-gray-100">{AR_LABELS.edit} {AR_LABELS.customerName}</h2>
                     
                     <div>
                         <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{AR_LABELS.customerName}</label>
@@ -2469,9 +2743,14 @@ const CustomerGridCard: React.FC<{
                         {summary ? formatCurrency(summary.totalSales) : formatCurrency(0)}
                     </span>
                 </div>
-                <div className="flex justify-between text-sm">
-                    <span className="text-gray-600 dark:text-gray-400">{AR_LABELS.totalPayments}:</span>
-                    <span className="font-semibold text-green-600">
+                <div className="flex justify-between items-center text-sm py-2 px-3 bg-green-50 dark:bg-green-900/20 rounded-lg border border-green-200 dark:border-green-800">
+                    <span className="text-gray-700 dark:text-gray-300 font-medium flex items-center gap-1.5">
+                        <span className="inline-flex items-center justify-center w-5 h-5 bg-green-200 dark:bg-green-800 rounded-full">
+                            <span className="text-green-700 dark:text-green-400 text-xs font-bold">$</span>
+                        </span>
+                        {AR_LABELS.totalPayments}:
+                    </span>
+                    <span className="font-bold text-green-700 dark:text-green-400 text-base">
                         {summary ? formatCurrency(summary.totalPaid) : formatCurrency(0)}
                     </span>
                 </div>
@@ -2534,7 +2813,7 @@ const CustomerAccountsView: React.FC<{
     customersError?: string | null;
     onRefreshCustomers?: () => void;
     onRefreshPayments?: () => void;
-}> = ({ sales, customers, payments, setPayments, onSaveCustomer, isLoadingCustomers = false, customersError = null, onRefreshCustomers, onRefreshPayments }) => {
+}> = ({ sales, customers, payments, setPayments, setCustomers, onSaveCustomer, isLoadingCustomers = false, customersError = null, onRefreshCustomers, onRefreshPayments }) => {
     const { formatCurrency } = useCurrency();
     const { user } = useAuthStore();
     const currentUserName = user?.fullName || user?.username || 'Unknown';
@@ -3277,7 +3556,14 @@ const CustomerAccountsView: React.FC<{
                                         <span className="text-xs"><SortIcon field="totalSales" /></span>
                                     </div>
                                 </th>
-                                <th className="px-6 py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">{AR_LABELS.totalPayments}</th>
+                                <th className="px-6 py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                                    <div className="flex items-center justify-end gap-1.5">
+                                        <span className="inline-flex items-center justify-center w-4 h-4 bg-green-100 dark:bg-green-900/30 rounded-full">
+                                            <span className="text-green-600 dark:text-green-400 text-[10px]">$</span>
+                                        </span>
+                                        {AR_LABELS.totalPayments}
+                                    </div>
+                                </th>
                                 <th className="px-6 py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">{AR_LABELS.lastPayment}</th>
                                 <th className="px-6 py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider text-center">{AR_LABELS.actions}</th>
                             </tr>
@@ -3312,8 +3598,16 @@ const CustomerAccountsView: React.FC<{
                                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700 dark:text-gray-300">
                                             {summary ? formatCurrency(summary.totalSales) : formatCurrency(0)}
                                         </td>
-                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-green-600">
-                                            {summary ? formatCurrency(summary.totalPaid) : formatCurrency(0)}
+                                        <td className="px-6 py-4 whitespace-nowrap">
+                                            {summary ? (
+                                                <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-green-50 dark:bg-green-900/20 rounded-lg border border-green-200 dark:border-green-800">
+                                                    <span className="text-green-700 dark:text-green-400 font-bold text-sm">
+                                                        {formatCurrency(summary.totalPaid)}
+                                                    </span>
+                                                </div>
+                                            ) : (
+                                                <span className="text-gray-400 text-sm">{formatCurrency(0)}</span>
+                                            )}
                                         </td>
                                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700 dark:text-gray-300">
                                             {summary?.lastPaymentDate || 'N/A'}
