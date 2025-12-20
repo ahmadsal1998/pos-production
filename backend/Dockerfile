@@ -25,7 +25,7 @@ COPY . .
 RUN NODE_OPTIONS="--max-old-space-size=1536" npm run build
 
 # Remove dev dependencies to reduce image size
-RUN npm prune --production && \
+RUN npm prune --omit=dev && \
     npm cache clean --force
 
 # Expose port
