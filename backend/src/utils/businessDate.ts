@@ -138,14 +138,16 @@ export function getBusinessDateFilterRange(
     start = businessDayStart.toUTC().toJSDate();
     
     // Log detailed calculation for debugging
-    console.log('[BusinessDate] Start date calculation:', {
-      inputDate: startDateStr,
-      timezone: tz,
-      businessDayStartTime: `${hours}:${minutes.toString().padStart(2, '0')}`,
-      businessDayStartLocal: businessDayStart.toISO(),
-      businessDayStartUTC: start.toISOString(),
-      businessDayStartUTCString: start.toUTCString(),
-    });
+    if (start) {
+      console.log('[BusinessDate] Start date calculation:', {
+        inputDate: startDateStr,
+        timezone: tz,
+        businessDayStartTime: `${hours}:${minutes.toString().padStart(2, '0')}`,
+        businessDayStartLocal: businessDayStart.toISO(),
+        businessDayStartUTC: start.toISOString(),
+        businessDayStartUTCString: start.toUTCString(),
+      });
+    }
   }
 
   if (endDate) {
@@ -164,14 +166,16 @@ export function getBusinessDateFilterRange(
     end = nextDay.toUTC().toJSDate();
     
     // Log detailed calculation for debugging
-    console.log('[BusinessDate] End date calculation:', {
-      inputDate: endDateStr,
-      timezone: tz,
-      businessDayStartTime: `${hours}:${minutes.toString().padStart(2, '0')}`,
-      businessDayEndLocal: nextDay.toISO(),
-      businessDayEndUTC: end.toISOString(),
-      businessDayEndUTCString: end.toUTCString(),
-    });
+    if (end) {
+      console.log('[BusinessDate] End date calculation:', {
+        inputDate: endDateStr,
+        timezone: tz,
+        businessDayStartTime: `${hours}:${minutes.toString().padStart(2, '0')}`,
+        businessDayEndLocal: nextDay.toISO(),
+        businessDayEndUTC: end.toISOString(),
+        businessDayEndUTCString: end.toUTCString(),
+      });
+    }
   }
 
   return { start, end };

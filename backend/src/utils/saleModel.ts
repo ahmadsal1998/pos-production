@@ -2,9 +2,9 @@ import mongoose, { Schema, Model, Document } from 'mongoose';
 import Store from '../models/Store';
 import { ISale, ISaleItem } from '../models/Sale';
 
-// Sale document interface (extends ISale)
-// Note: ISale already extends Document, so we extend it directly
-export interface SaleDocument extends ISale {
+// Sale document interface (extends ISale with proper _id type)
+// Note: ISale extends Document which has _id as unknown, so we override it
+export interface SaleDocument extends Omit<ISale, '_id'> {
   _id: mongoose.Types.ObjectId;
 }
 
@@ -178,7 +178,6 @@ saleSchema.index({ paymentMethod: 1, storeId: 1 });
  * based on whether a store is a trial account.
  */
 
-import { Model } from 'mongoose';
 import { Sale } from '../models/Sale';
 import { getModelForStore } from './trialAccountModels';
 
@@ -195,5 +194,7 @@ export async function getSaleModelForStore(storeId: string | null | undefined): 
   }
   
   // Get model with correct collection name based on trial status
-  return getModelForStore(Sale, 'sales', storeId);
+  // Cast to Model<SaleDocument> since SaleDocument is compatible with ISale (just overrides _id type)
+  const model = await getModelForStore(Sale, 'sales', storeId);
+  return model as unknown as Model<SaleDocument>;
 }
