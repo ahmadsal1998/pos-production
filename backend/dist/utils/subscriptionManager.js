@@ -1,94 +1,75 @@
 "use strict";
-var __create = Object.create;
-var __defProp = Object.defineProperty;
-var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
-var __getOwnPropNames = Object.getOwnPropertyNames;
-var __getProtoOf = Object.getPrototypeOf;
-var __hasOwnProp = Object.prototype.hasOwnProperty;
-var __export = (target, all) => {
-  for (var name in all)
-    __defProp(target, name, { get: all[name], enumerable: true });
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
 };
-var __copyProps = (to, from, except, desc) => {
-  if (from && typeof from === "object" || typeof from === "function") {
-    for (let key of __getOwnPropNames(from))
-      if (!__hasOwnProp.call(to, key) && key !== except)
-        __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
-  }
-  return to;
-};
-var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__getProtoOf(mod)) : {}, __copyProps(
-  // If the importer is in node compatibility mode or this is not an ESM
-  // file that has been converted to a CommonJS file using a Babel-
-  // compatible transform (i.e. "__esModule" has not been set), then set
-  // "default" to the CommonJS "module.exports" for node compatibility.
-  isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
-  mod
-));
-var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
-var subscriptionManager_exports = {};
-__export(subscriptionManager_exports, {
-  checkAllExpiredSubscriptions: () => checkAllExpiredSubscriptions,
-  checkAndUpdateStoreSubscription: () => checkAndUpdateStoreSubscription,
-  reactivateStore: () => reactivateStore
-});
-module.exports = __toCommonJS(subscriptionManager_exports);
-var import_Store = __toESM(require("../models/Store"));
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.checkAndUpdateStoreSubscription = checkAndUpdateStoreSubscription;
+exports.checkAllExpiredSubscriptions = checkAllExpiredSubscriptions;
+exports.reactivateStore = reactivateStore;
+const Store_1 = __importDefault(require("../models/Store"));
+/**
+ * Checks if a store's subscription has expired and deactivates it if needed
+ * @param storeId - The store ID to check
+ * @returns Object with isActive status and subscription info
+ */
 async function checkAndUpdateStoreSubscription(storeId) {
-  const store = await import_Store.default.findOne({ storeId: storeId.toLowerCase() });
-  if (!store) {
-    throw new Error("Store not found");
-  }
-  const now = /* @__PURE__ */ new Date();
-  const isExpired = store.subscriptionEndDate < now;
-  const wasActive = store.isActive;
-  if (isExpired && wasActive) {
-    store.isActive = false;
-    await store.save();
-    console.log(`\u26A0\uFE0F Store ${storeId} subscription expired and has been deactivated`);
-  }
-  return {
-    isActive: store.isActive,
-    subscriptionEndDate: store.subscriptionEndDate,
-    subscriptionExpired: isExpired
-  };
+    const store = await Store_1.default.findOne({ storeId: storeId.toLowerCase() });
+    if (!store) {
+        throw new Error('Store not found');
+    }
+    const now = new Date();
+    const isExpired = store.subscriptionEndDate < now;
+    const wasActive = store.isActive;
+    // If subscription expired and store is still active, deactivate it
+    if (isExpired && wasActive) {
+        store.isActive = false;
+        await store.save();
+        console.log(`⚠️ Store ${storeId} subscription expired and has been deactivated`);
+    }
+    // If subscription is valid and store is inactive, keep it inactive (manual reactivation required)
+    // This allows admins to manually reactivate stores after renewal
+    return {
+        isActive: store.isActive,
+        subscriptionEndDate: store.subscriptionEndDate,
+        subscriptionExpired: isExpired,
+    };
 }
+/**
+ * Checks all stores and deactivates expired subscriptions
+ * This can be called periodically (e.g., via cron job)
+ */
 async function checkAllExpiredSubscriptions() {
-  const now = /* @__PURE__ */ new Date();
-  const expiredStores = await import_Store.default.find({
-    subscriptionEndDate: { $lt: now },
-    isActive: true
-  });
-  if (expiredStores.length > 0) {
-    await import_Store.default.updateMany(
-      {
+    const now = new Date();
+    const expiredStores = await Store_1.default.find({
         subscriptionEndDate: { $lt: now },
-        isActive: true
-      },
-      {
-        $set: { isActive: false }
-      }
-    );
-    console.log(`\u26A0\uFE0F Deactivated ${expiredStores.length} expired store subscriptions`);
-  }
-  return expiredStores.length;
+        isActive: true,
+    });
+    if (expiredStores.length > 0) {
+        await Store_1.default.updateMany({
+            subscriptionEndDate: { $lt: now },
+            isActive: true,
+        }, {
+            $set: { isActive: false },
+        });
+        console.log(`⚠️ Deactivated ${expiredStores.length} expired store subscriptions`);
+    }
+    return expiredStores.length;
 }
+/**
+ * Manually reactivate a store (for renewal)
+ * @param storeId - The store ID to reactivate
+ * @param newEndDate - Optional new subscription end date
+ */
 async function reactivateStore(storeId, newEndDate) {
-  const store = await import_Store.default.findOne({ storeId: storeId.toLowerCase() });
-  if (!store) {
-    throw new Error("Store not found");
-  }
-  if (newEndDate) {
-    store.subscriptionEndDate = newEndDate;
-    store.subscriptionStartDate = /* @__PURE__ */ new Date();
-  }
-  store.isActive = true;
-  await store.save();
-  console.log(`\u2705 Store ${storeId} has been reactivated`);
+    const store = await Store_1.default.findOne({ storeId: storeId.toLowerCase() });
+    if (!store) {
+        throw new Error('Store not found');
+    }
+    if (newEndDate) {
+        store.subscriptionEndDate = newEndDate;
+        store.subscriptionStartDate = new Date();
+    }
+    store.isActive = true;
+    await store.save();
+    console.log(`✅ Store ${storeId} has been reactivated`);
 }
-// Annotate the CommonJS export names for ESM import in node:
-0 && (module.exports = {
-  checkAllExpiredSubscriptions,
-  checkAndUpdateStoreSubscription,
-  reactivateStore
-});
