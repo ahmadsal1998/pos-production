@@ -41,6 +41,7 @@ const express_validator_1 = require("express-validator");
 const error_middleware_1 = require("../middleware/error.middleware");
 const productCache_1 = require("../utils/productCache");
 const productModel_1 = require("../utils/productModel");
+const Category_1 = __importDefault(require("../models/Category"));
 const multer_1 = __importDefault(require("multer"));
 const sync_1 = require("csv-parse/sync");
 exports.validateCreateProduct = [
@@ -322,7 +323,6 @@ exports.getProducts = (0, error_middleware_1.asyncHandler)(async (req, res) => {
                         .map((id) => id.toString().trim()))].filter((id) => id.length > 0);
                 if (categoryIds.length > 0) {
                     // Fetch categories for this store using unified Category model
-                    const Category = (await Promise.resolve().then(() => __importStar(require('../models/Category.js')))).default;
                     // Import mongoose for ObjectId conversion
                     const mongoose = await Promise.resolve().then(() => __importStar(require('mongoose')));
                     // Convert string IDs to ObjectIds for querying (categoryId is string, but _id is ObjectId)
@@ -331,7 +331,7 @@ exports.getProducts = (0, error_middleware_1.asyncHandler)(async (req, res) => {
                         .map((id) => new mongoose.default.Types.ObjectId(id));
                     // Query categories by ObjectId
                     const categories = categoryObjectIds.length > 0
-                        ? await Category.find({ _id: { $in: categoryObjectIds } }).lean()
+                        ? await Category_1.default.find({ _id: { $in: categoryObjectIds } }).lean()
                         : [];
                     // Create a map of categoryId -> category data
                     // Use both ObjectId string and original string format for lookup
