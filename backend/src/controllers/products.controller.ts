@@ -4,6 +4,7 @@ import { asyncHandler } from '../middleware/error.middleware';
 import { AuthenticatedRequest } from '../middleware/auth.middleware';
 import { getProductByBarcode as getCachedProductByBarcode, invalidateProductCache, invalidateStoreProductCache, invalidateAllProductBarcodeCaches } from '../utils/productCache';
 import { getProductModelForStore } from '../utils/productModel';
+import Category from '../models/Category';
 import multer from 'multer';
 import { parse } from 'csv-parse/sync';
 
@@ -334,8 +335,6 @@ export const getProducts = asyncHandler(async (req: AuthenticatedRequest, res: R
 
         if (categoryIds.length > 0) {
           // Fetch categories for this store using unified Category model
-          const Category = (await import('../models/Category.js')).default;
-          
           // Import mongoose for ObjectId conversion
           const mongoose = await import('mongoose');
           
