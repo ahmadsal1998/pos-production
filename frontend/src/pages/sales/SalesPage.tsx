@@ -990,8 +990,8 @@ const SalesPage: React.FC<SalesPageProps> = ({ setActivePath }) => {
                         const testParams = { ...params };
                         delete testParams.startDate;
                         delete testParams.endDate;
-                        // Fetch more sales to ensure we get all that might match
-                        testParams.limit = 1000; // Get more sales for client-side filtering
+                        // Fetch more sales to ensure we get all that might match (especially for week/month filters)
+                        testParams.limit = 5000; // Increased limit to ensure we get all sales for the period
                         const testResponse = await salesApi.getSales(testParams);
                         const testBackendResponse = testResponse.data as any;
                         if (testBackendResponse?.data?.sales && testBackendResponse.data.sales.length > 0) {
@@ -1223,17 +1223,12 @@ const SalesPage: React.FC<SalesPageProps> = ({ setActivePath }) => {
             // Apply client-side date filtering to ensure accuracy
             // This is a safety net in case backend/IndexedDB filtering had issues
             if (filters.dateRange.start || filters.dateRange.end) {
-                // Create date objects from the filter strings (YYYY-MM-DD format)
-                const startDate = filters.dateRange.start ? new Date(filters.dateRange.start + 'T00:00:00') : null;
-                const endDate = filters.dateRange.end ? new Date(filters.dateRange.end + 'T23:59:59.999') : null;
+                const filterStart = filters.dateRange.start;
+                const filterEnd = filters.dateRange.end;
                 
                 console.log('[SalesPage] Client-side date filtering:', {
-                    filterStart: filters.dateRange.start,
-                    filterEnd: filters.dateRange.end,
-                    startDate: startDate?.toISOString(),
-                    endDate: endDate?.toISOString(),
-                    startDateLocal: startDate?.toLocaleString(),
-                    endDateLocal: endDate?.toLocaleString(),
+                    filterStart,
+                    filterEnd,
                     salesBeforeFilter: allSales.length
                 });
                 
@@ -1245,7 +1240,6 @@ const SalesPage: React.FC<SalesPageProps> = ({ setActivePath }) => {
                         invoiceNumber: s.invoiceNumber,
                         date: s.date,
                         dateObj: new Date(s.date).toISOString(),
-                        dateLocal: new Date(s.date).toLocaleString(),
                         dateOnly: new Date(s.date).toISOString().split('T')[0]
                     })));
                 }
@@ -1259,18 +1253,17 @@ const SalesPage: React.FC<SalesPageProps> = ({ setActivePath }) => {
                     const saleDate = new Date(sale.date);
                     const saleDateOnly = saleDate.toISOString().split('T')[0]; // Get YYYY-MM-DD
                     
-                    // Compare date strings directly for simplicity
-                    const matchesStart = !filters.dateRange.start || saleDateOnly >= filters.dateRange.start;
-                    const matchesEnd = !filters.dateRange.end || saleDateOnly <= filters.dateRange.end;
+                    // Compare date strings directly for simplicity (YYYY-MM-DD format is naturally sortable)
+                    const matchesStart = !filterStart || saleDateOnly >= filterStart;
+                    const matchesEnd = !filterEnd || saleDateOnly <= filterEnd;
                     const matches = matchesStart && matchesEnd;
                     
                     if (!matches && beforeFilterCount <= 10) {
                         console.log('[SalesPage] Sale filtered out:', {
                             invoiceNumber: sale.invoiceNumber,
-                            saleDate: saleDate.toISOString(),
                             saleDateOnly,
-                            filterStart: filters.dateRange.start,
-                            filterEnd: filters.dateRange.end,
+                            filterStart,
+                            filterEnd,
                             matchesStart,
                             matchesEnd
                         });
@@ -1285,6 +1278,36 @@ const SalesPage: React.FC<SalesPageProps> = ({ setActivePath }) => {
                     filtered: beforeFilterCount - allSales.length
                 });
             }
+            
+            // Calculate summary statistics from filtered sales
+            // This ensures summary cards show correct values even when API summary returns 0
+            const calculateSummaryFromSales = (sales: SaleTransaction[]) => {
+                const summary = {
+                    totalSales: 0,
+                    totalPayments: 0,
+                    invoiceCount: sales.length,
+                    creditSales: 0,
+                    remainingAmount: 0,
+                    netProfit: 0, // Net profit requires product cost data, will be 0 for now
+                };
+                
+                sales.forEach(sale => {
+                    summary.totalSales += sale.totalAmount || 0;
+                    summary.totalPayments += sale.paidAmount || 0;
+                    summary.remainingAmount += sale.remainingAmount || 0;
+                    if (sale.paymentMethod === 'Credit') {
+                        summary.creditSales += sale.totalAmount || 0;
+                    }
+                });
+                
+                return summary;
+            };
+            
+            const calculatedSummary = calculateSummaryFromSales(allSales);
+            console.log('[SalesPage] Calculated summary from filtered sales:', calculatedSummary);
+            
+            // Update statistics with calculated values
+            setStatistics(calculatedSummary);
             
             // Sort by date (most recent first)
             allSales.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
@@ -1645,28 +1668,36 @@ const SalesPage: React.FC<SalesPageProps> = ({ setActivePath }) => {
             }
 
             // Use fast summary endpoint (MongoDB aggregation - much faster than loading all sales)
-            console.log('[SalesPage] Fetching summary statistics...');
+            console.log('[SalesPage] Fetching summary statistics from API...');
             const response = await salesApi.getSalesSummary(params);
             const summaryData = response.data as any;
             
             if (summaryData?.success && summaryData.data) {
                 const { totalSales, totalPayments, creditSales, invoiceCount, remainingAmount, netProfit } = summaryData.data;
 
-                setStatistics({ 
-                    totalSales: totalSales || 0, 
-                    totalPayments: totalPayments || 0, 
-                    creditSales: creditSales || 0, 
-                    invoiceCount: invoiceCount || 0, 
-                    netProfit: netProfit || 0
-                });
-                console.log('[SalesPage] Summary statistics loaded:', { totalSales, invoiceCount, netProfit });
+                // Only use API summary if it has meaningful data
+                // If it returns 0, we'll calculate from filtered sales in fetchSales
+                if (invoiceCount > 0 || totalSales > 0) {
+                    setStatistics({ 
+                        totalSales: totalSales || 0, 
+                        totalPayments: totalPayments || 0, 
+                        creditSales: creditSales || 0, 
+                        invoiceCount: invoiceCount || 0,
+                        remainingAmount: remainingAmount || 0,
+                        netProfit: netProfit || 0
+                    });
+                    console.log('[SalesPage] Summary statistics loaded from API:', { totalSales, invoiceCount, netProfit });
+                } else {
+                    console.log('[SalesPage] API summary returned 0, will be recalculated from filtered sales');
+                    // Don't update statistics here - fetchSales will calculate from filtered sales
+                }
             } else {
-                setStatistics({ totalSales: 0, totalPayments: 0, creditSales: 0, invoiceCount: 0, netProfit: 0 });
+                console.log('[SalesPage] API summary failed or returned no data, will be recalculated from filtered sales');
+                // Don't update statistics here - fetchSales will calculate from filtered sales
             }
         } catch (error) {
             console.error('[SalesPage] Error fetching summary statistics:', error);
-            // Don't set error state - just use defaults so summary cards still show
-            setStatistics({ totalSales: 0, totalPayments: 0, creditSales: 0, invoiceCount: 0, netProfit: 0 });
+            // Don't set error state - fetchSales will calculate from filtered sales
         } finally {
             setIsLoadingStats(false);
         }
