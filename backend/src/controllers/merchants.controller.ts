@@ -2,6 +2,7 @@ import { Response } from 'express';
 import { Merchant, IMerchant } from '../models/Merchant';
 import Store from '../models/Store';
 import { AuthenticatedRequest } from '../middleware/auth.middleware';
+import { log } from '../utils/logger';
 
 /**
  * Get all merchants
@@ -23,7 +24,7 @@ export const getMerchants = async (req: AuthenticatedRequest, res: Response): Pr
       data: { merchants },
     });
   } catch (error: any) {
-    console.error('Get merchants error:', error);
+    log.error('Get merchants error', error);
     res.status(500).json({
       success: false,
       message: 'Internal server error',
@@ -76,7 +77,7 @@ export const getMerchant = async (req: AuthenticatedRequest, res: Response): Pro
       },
     });
   } catch (error: any) {
-    console.error('Get merchant error:', error);
+    log.error('Get merchant error', error);
     res.status(500).json({
       success: false,
       message: 'Internal server error',

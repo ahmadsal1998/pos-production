@@ -1,5 +1,6 @@
 import mongoose, { Connection } from 'mongoose';
 import { sanitizeMongoUri } from '../config/database';
+import { log } from './logger';
 
 /**
  * Configuration for multi-database architecture
@@ -129,9 +130,9 @@ export async function connectToDatabase(databaseId: number, retryCount: number =
     // Log the URI (without credentials) for debugging
     const uriForLogging = uri.replace(/\/\/([^:]+):([^@]+)@/, '//***:***@');
     if (retryCount === 0) {
-      console.log(`🔗 Connecting to database ${dbName} with URI: ${uriForLogging}`);
+      log.info(`Connecting to database ${dbName}`, { uri: uriForLogging });
     } else {
-      console.log(`🔄 Retrying connection to database ${dbName} (attempt ${retryCount + 1}/${MAX_RETRIES})...`);
+      log.info(`Retrying connection to database ${dbName} (attempt ${retryCount + 1}/${MAX_RETRIES})...`);
     }
     
     // Create a new connection for this database with optimized settings for Atlas
@@ -150,7 +151,7 @@ export async function connectToDatabase(databaseId: number, retryCount: number =
     // Wait for connection (timeout is handled by serverSelectionTimeoutMS)
     await connection.asPromise();
     
-    console.log(`✅ Connected to database: ${dbName}`);
+    log.info(`Connected to database: ${dbName}`);
     
     // Cache the connection
     databaseConnections.set(databaseId, connection);
@@ -169,14 +170,14 @@ export async function connectToDatabase(databaseId: number, retryCount: number =
     // Retry on network errors
     if (isNetworkError && retryCount < MAX_RETRIES) {
       const delay = INITIAL_RETRY_DELAY * Math.pow(2, retryCount); // Exponential backoff
-      console.warn(`⚠️ Network error connecting to ${dbName}: ${errorMessage}. Retrying in ${delay}ms...`);
+      log.warn(`Network error connecting to ${dbName}: ${errorMessage}. Retrying in ${delay}ms...`);
       
       await new Promise(resolve => setTimeout(resolve, delay));
       return connectToDatabase(databaseId, retryCount + 1);
     }
 
     // Log error and throw
-    console.error(`❌ Error connecting to database ${dbName}:`, errorMessage);
+    log.error(`Error connecting to database ${dbName}`, error, { errorMessage });
     throw new Error(`Failed to connect to database ${dbName}: ${errorMessage}`);
   }
 }
@@ -204,7 +205,7 @@ export async function determineDatabaseForStore(StoreModel?: any): Promise<numbe
     try {
       totalStores = await StoreModel.countDocuments();
     } catch (error) {
-      console.error('Error counting stores:', error);
+      log.error('Error counting stores', error);
       // Fall back to default
     }
   }
@@ -216,7 +217,7 @@ export async function determineDatabaseForStore(StoreModel?: any): Promise<numbe
   // Ensure we don't exceed the maximum number of databases
   const finalDatabaseId = Math.min(databaseId, DATABASE_CONFIG.DATABASE_COUNT);
   
-  console.log(`📊 Assigning store ${totalStores + 1} to database ${finalDatabaseId}`);
+  log.info(`Assigning store ${totalStores + 1} to database ${finalDatabaseId}`);
   
   return finalDatabaseId;
 }
@@ -253,7 +254,7 @@ export async function getDatabaseIdForStore(
     
     return null;
   } catch (error: any) {
-    console.error(`Error getting database ID for store ${storeId}:`, error);
+    log.error(`Error getting database ID for store ${storeId}`, error);
     throw new Error(`Failed to get database ID for store: ${error.message}`);
   }
 }
@@ -265,7 +266,7 @@ export async function getDatabaseIdForStore(
  * Use this only if you need to pre-warm connections
  */
 export async function initializeAllDatabases(): Promise<void> {
-  console.log('🔄 Initializing all database connections (lazy loading recommended instead)...');
+  log.info('Initializing all database connections (lazy loading recommended instead)...');
   
   // Connect sequentially to avoid overwhelming the system
   for (let i = 1; i <= DATABASE_CONFIG.DATABASE_COUNT; i++) {
@@ -274,29 +275,29 @@ export async function initializeAllDatabases(): Promise<void> {
       // Small delay between connections to prevent memory spikes
       await new Promise(resolve => setTimeout(resolve, 100));
     } catch (error: any) {
-      console.error(`⚠️ Failed to connect to database ${i}:`, error.message);
+      log.error(`Failed to connect to database ${i}`, error);
       // Continue with other databases even if one fails
     }
   }
   
-  console.log(`✅ Initialized ${databaseConnections.size} database connections`);
+  log.info(`Initialized ${databaseConnections.size} database connections`);
 }
 
 /**
  * Close all database connections
  */
 export async function closeAllDatabases(): Promise<void> {
-  console.log('🔄 Closing all database connections...');
+  log.info('Closing all database connections...');
   
   const closePromises = Array.from(databaseConnections.values()).map((connection) => {
     return connection.close().catch((error) => {
-      console.error('Error closing database connection:', error);
+      log.error('Error closing database connection', error);
     });
   });
   
   await Promise.all(closePromises);
   databaseConnections.clear();
-  console.log('✅ All database connections closed');
+  log.info('All database connections closed');
 }
 
 /**

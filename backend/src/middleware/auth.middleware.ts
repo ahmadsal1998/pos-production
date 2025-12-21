@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import { verifyToken } from '../utils/jwt';
 import { AuthTokenPayload } from '../types/auth.types';
 import { checkAndUpdateStoreSubscription } from '../utils/subscriptionManager';
+import { log } from '../utils/logger';
 
 // Extend Express Request to include user
 export interface AuthenticatedRequest extends Request {
@@ -14,15 +15,14 @@ export const authenticate = async (
   next: NextFunction
 ): Promise<void> => {
   try {
-    // Enhanced logging for barcode routes
+    // Enhanced logging for barcode routes (development only)
     const isBarcodeRoute = req.path.includes('/barcode') || req.originalUrl.includes('/barcode');
     if (isBarcodeRoute) {
-      console.log('[Auth Middleware] 🔍 BARCODE ROUTE - Authentication check:', {
+      log.debug('[Auth Middleware] BARCODE ROUTE - Authentication check', {
         path: req.path,
         originalUrl: req.originalUrl,
         method: req.method,
         hasAuthHeader: !!req.headers.authorization,
-        authHeaderPrefix: req.headers.authorization?.substring(0, 20) || 'none',
       });
     }
     
@@ -30,7 +30,7 @@ export const authenticate = async (
 
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
       if (isBarcodeRoute) {
-        console.error('[Auth Middleware] ❌ BARCODE ROUTE - Missing or invalid auth header');
+        log.warn('[Auth Middleware] BARCODE ROUTE - Missing or invalid auth header');
       }
       res.status(401).json({
         success: false,
@@ -46,7 +46,7 @@ export const authenticate = async (
       req.user = decoded;
 
       if (isBarcodeRoute) {
-        console.log('[Auth Middleware] ✅ BARCODE ROUTE - Token verified:', {
+        log.debug('[Auth Middleware] BARCODE ROUTE - Token verified', {
           userId: decoded.userId,
           storeId: decoded.storeId,
           role: decoded.role,
@@ -60,7 +60,7 @@ export const authenticate = async (
           
           if (!subscriptionStatus.isActive || subscriptionStatus.subscriptionExpired) {
             if (isBarcodeRoute) {
-              console.error('[Auth Middleware] ❌ BARCODE ROUTE - Subscription expired');
+              log.warn('[Auth Middleware] BARCODE ROUTE - Subscription expired');
             }
             res.status(403).json({
               success: false,
@@ -72,30 +72,27 @@ export const authenticate = async (
           }
         } catch (error: any) {
           // If store not found, log but continue (shouldn't happen in normal flow)
-          console.error(`Error checking subscription for store ${decoded.storeId}:`, error.message);
+              log.error(`Error checking subscription for store ${decoded.storeId}`, error);
         }
       }
 
       if (isBarcodeRoute) {
-        console.log('[Auth Middleware] ✅ BARCODE ROUTE - Authentication passed, calling next()');
+        log.debug('[Auth Middleware] BARCODE ROUTE - Authentication passed, calling next()');
       }
       next();
     } catch (error: any) {
       // Enhanced error logging for debugging
       const isBarcodeRoute = req.path.includes('/barcode') || req.originalUrl.includes('/barcode');
-      console.error('[Auth Middleware] Token verification failed:', {
-        error: error.message,
+      log.error('[Auth Middleware] Token verification failed', error, {
         tokenLength: token.length,
-        tokenPrefix: token.substring(0, 20) + '...',
         jwtSecretSet: !!process.env.JWT_SECRET,
-        jwtSecretLength: process.env.JWT_SECRET?.length || 0,
         nodeEnv: process.env.NODE_ENV,
         isBarcodeRoute,
         path: req.path,
       });
       
       if (isBarcodeRoute) {
-        console.error('[Auth Middleware] ❌ BARCODE ROUTE - Authentication failed');
+        log.warn('[Auth Middleware] BARCODE ROUTE - Authentication failed');
       }
       
       res.status(401).json({

@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { log } from '../utils/logger';
 
 /**
  * Sanitize MongoDB URI by removing X.509 authentication parameters
@@ -41,8 +42,8 @@ export function sanitizeMongoUri(uri: string): string {
 
   // If we removed X.509 parameters, log a warning
   if (removedParams.length > 0) {
-    console.warn(`⚠️ Removed X.509 authentication parameters from MongoDB URI: ${removedParams.join(', ')}`);
-    console.warn('⚠️ Using standard username/password authentication instead');
+    log.warn(`Removed X.509 authentication parameters from MongoDB URI: ${removedParams.join(', ')}`);
+    log.warn('Using standard username/password authentication instead');
   }
 
   // Reconstruct the URI with cleaned query parameters
@@ -118,9 +119,9 @@ const connectDB = async (retryCount: number = 0): Promise<void> => {
     const uriWithAdminDb = ensureAdminDatabase(mongoUri);
     
     if (retryCount === 0) {
-      console.log('🔗 Connecting to main MongoDB database...');
+      log.info('Connecting to main MongoDB database...');
     } else {
-      console.log(`🔄 Retrying main MongoDB connection (attempt ${retryCount + 1}/${MAX_RETRIES})...`);
+      log.info(`Retrying main MongoDB connection (attempt ${retryCount + 1}/${MAX_RETRIES})...`);
     }
     
     // Connect with options to prevent automatic collection creation
@@ -136,8 +137,8 @@ const connectDB = async (retryCount: number = 0): Promise<void> => {
       family: 4, // Force IPv4 to avoid IPv6 issues
     });
     
-    console.log(`✅ Main MongoDB Connected: ${conn.connection.host}`);
-    console.log(`📊 Database: ${conn.connection.name}`);
+    log.info(`Main MongoDB Connected: ${conn.connection.host}`);
+    log.info(`Database: ${conn.connection.name}`);
     
     // Note: Distributed databases are connected lazily when first accessed
     // This prevents memory issues and unnecessary connections at startup
@@ -155,14 +156,13 @@ const connectDB = async (retryCount: number = 0): Promise<void> => {
     // Retry on network errors
     if (isNetworkError && retryCount < MAX_RETRIES) {
       const delay = INITIAL_RETRY_DELAY * Math.pow(2, retryCount); // Exponential backoff
-      console.warn(`⚠️ Network error connecting to main database: ${errorMessage}. Retrying in ${delay}ms...`);
+      log.warn(`Network error connecting to main database: ${errorMessage}. Retrying in ${delay}ms...`);
       
       await new Promise(resolve => setTimeout(resolve, delay));
       return connectDB(retryCount + 1);
     }
 
-    console.error('❌ MongoDB connection error:', errorMessage);
-    console.error('Full error:', error);
+    log.error('MongoDB connection error', error, { errorMessage });
     // Don't exit the process - let the caller handle the error
     // This allows the server to start even if MongoDB isn't available
     throw error;

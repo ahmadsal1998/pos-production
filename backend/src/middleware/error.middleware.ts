@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import mongoose from 'mongoose';
+import { log } from '../utils/logger';
 
 export interface ApiError extends Error {
   statusCode?: number;
@@ -35,10 +36,8 @@ export const errorHandler = (
     statusCode = 400;
   }
 
-  // Log error in development
-  if (process.env.NODE_ENV === 'development') {
-    console.error('❌ Error:', err);
-  }
+  // Log error (warn and error levels are always logged in production)
+  log.error('API Error', err, { statusCode, message });
 
   res.status(statusCode).json({
     success: false,

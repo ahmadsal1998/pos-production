@@ -1,5 +1,6 @@
 import { Response, NextFunction } from 'express';
 import { AuthenticatedRequest } from './auth.middleware';
+import { log } from '../utils/logger';
 
 /**
  * Middleware to enforce store-level isolation for non-admin users
@@ -19,7 +20,7 @@ export const requireStoreAccess = (
   const isBarcodeRoute = req.path.includes('/barcode') || req.originalUrl.includes('/barcode');
   
   if (isBarcodeRoute) {
-    console.log('[Store Isolation] 🔍 BARCODE ROUTE - Store access check:', {
+    log.debug('[Store Isolation] BARCODE ROUTE - Store access check', {
       path: req.path,
       role: req.user?.role,
       storeId: req.user?.storeId,
@@ -32,7 +33,7 @@ export const requireStoreAccess = (
   // Admin users bypass store restrictions
   if (requesterRole === 'Admin') {
     if (isBarcodeRoute) {
-      console.log('[Store Isolation] ✅ BARCODE ROUTE - Admin user, bypassing store restrictions');
+      log.debug('[Store Isolation] BARCODE ROUTE - Admin user, bypassing store restrictions');
     }
     return next();
   }
@@ -40,7 +41,7 @@ export const requireStoreAccess = (
   // Non-admin users must have a storeId
   if (!requesterStoreId) {
     if (isBarcodeRoute) {
-      console.error('[Store Isolation] ❌ BARCODE ROUTE - Missing storeId');
+      log.warn('[Store Isolation] BARCODE ROUTE - Missing storeId');
     }
     res.status(403).json({
       success: false,
@@ -56,7 +57,7 @@ export const requireStoreAccess = (
   };
 
   if (isBarcodeRoute) {
-    console.log('[Store Isolation] ✅ BARCODE ROUTE - Store access granted, calling next()');
+    log.debug('[Store Isolation] BARCODE ROUTE - Store access granted, calling next()');
   }
   next();
 };
@@ -96,7 +97,7 @@ export const sanitizeStoreId = (
     const source = location === 'body' ? req.body : location === 'params' ? req.params : req.query;
     if (source && source[field]) {
       // Log security warning if storeId was provided in request
-      console.warn(`[SECURITY] storeId provided in ${location}.${field} - removing for user ${req.user?.userId}`);
+      log.warn(`[SECURITY] storeId provided in ${location}.${field} - removing for user ${req.user?.userId}`);
       delete source[field];
     }
 

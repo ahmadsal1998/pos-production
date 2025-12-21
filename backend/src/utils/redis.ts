@@ -1,4 +1,5 @@
 import { createClient, RedisClientType } from 'redis';
+import { log } from './logger';
 
 let redisClient: RedisClientType | null = null;
 let redisConnectionAttempted = false;
@@ -33,7 +34,7 @@ export async function initRedis(): Promise<RedisClientType | null> {
   
   // Only log connection attempt in production or if REDIS_URL is explicitly set
   if (isProduction || process.env.REDIS_URL) {
-    console.log(`🔌 Redis: Attempting to connect to ${redisUrl.replace(/:[^:@]+@/, ':****@')}...`);
+    log.info(`Redis: Attempting to connect to ${redisUrl.replace(/:[^:@]+@/, ':****@')}...`);
   }
   
   redisClient = createClient({
@@ -45,13 +46,13 @@ export async function initRedis(): Promise<RedisClientType | null> {
         // In production, keep retrying with exponential backoff
         if (isProduction) {
           if (retries > MAX_RECONNECT_ATTEMPTS) {
-            console.warn(`⚠️  Redis: Max reconnection attempts (${MAX_RECONNECT_ATTEMPTS}) reached. Will retry on next operation.`);
+            log.warn(`Redis: Max reconnection attempts (${MAX_RECONNECT_ATTEMPTS}) reached. Will retry on next operation.`);
             redisConnectionFailed = true;
             return false; // Stop automatic reconnection, but allow manual retry
           }
           const delay = Math.min(retries * 500, 5000);
           if (retries % 5 === 0) {
-            console.log(`🔄 Redis: Reconnection attempt ${retries}/${MAX_RECONNECT_ATTEMPTS} (delay: ${delay}ms)`);
+            log.debug(`Redis: Reconnection attempt ${retries}/${MAX_RECONNECT_ATTEMPTS} (delay: ${delay}ms)`);
           }
           return delay;
         }
@@ -74,38 +75,38 @@ export async function initRedis(): Promise<RedisClientType | null> {
   let errorLogged = false;
   redisClient.on('error', (err: any) => {
     if (!errorLogged || redisReconnectAttempts % 10 === 0) {
-      if (err.code === 'ECONNREFUSED' || err.message?.includes('ECONNREFUSED')) {
-        if (!errorLogged) {
-          // In development, only log if REDIS_URL is explicitly set (user expects Redis)
-          // Otherwise, Redis is optional and we don't want to spam logs
-          if (isProduction || process.env.REDIS_URL) {
-            console.warn('⚠️  Redis: Not available (connection refused). Caching will be disabled.');
-            if (!isProduction) {
-              console.warn('   To enable caching, start Redis: redis-server');
-            } else {
-              console.warn('   Check REDIS_URL environment variable and ensure Redis server is running.');
+        if (err.code === 'ECONNREFUSED' || err.message?.includes('ECONNREFUSED')) {
+          if (!errorLogged) {
+            // In development, only log if REDIS_URL is explicitly set (user expects Redis)
+            // Otherwise, Redis is optional and we don't want to spam logs
+            if (isProduction || process.env.REDIS_URL) {
+              log.warn('Redis: Not available (connection refused). Caching will be disabled.');
+              if (!isProduction) {
+                log.info('To enable caching, start Redis: redis-server');
+              } else {
+                log.warn('Check REDIS_URL environment variable and ensure Redis server is running.');
+              }
             }
+            errorLogged = true;
           }
-          errorLogged = true;
-        }
-        redisConnectionFailed = true;
-      } else {
-        // Only log non-connection errors in production or when REDIS_URL is set
-        if (isProduction || process.env.REDIS_URL) {
-          console.error(`❌ Redis error: ${err.message}`);
-        }
-        // Don't mark as failed for transient errors in production
-        if (!isProduction) {
           redisConnectionFailed = true;
+        } else {
+          // Only log non-connection errors in production or when REDIS_URL is set
+          if (isProduction || process.env.REDIS_URL) {
+            log.error(`Redis error: ${err.message}`, err);
+          }
+          // Don't mark as failed for transient errors in production
+          if (!isProduction) {
+            redisConnectionFailed = true;
+          }
         }
-      }
     }
   });
 
   redisClient.on('ready', () => {
     // Only log success in production or if REDIS_URL is explicitly set
     if (isProduction || process.env.REDIS_URL) {
-      console.log('✅ Redis: Connected and ready for caching');
+      log.info('Redis: Connected and ready for caching');
     }
     redisConnectionFailed = false;
     redisReconnectAttempts = 0;
@@ -118,7 +119,7 @@ export async function initRedis(): Promise<RedisClientType | null> {
     if (isProduction || process.env.REDIS_URL) {
       // Throttle: only log every 5th reconnection attempt to avoid spam
       if (redisReconnectAttempts % 5 === 0) {
-        console.log('🔄 Redis: Reconnecting...');
+        log.debug('Redis: Reconnecting...');
       }
     }
   });
@@ -126,7 +127,7 @@ export async function initRedis(): Promise<RedisClientType | null> {
   redisClient.on('connect', () => {
     // Only log connection in production or if REDIS_URL is explicitly set
     if (isProduction || process.env.REDIS_URL) {
-      console.log('🔌 Redis: Connection established');
+      log.debug('Redis: Connection established');
     }
     redisConnectionFailed = false;
   });
@@ -138,7 +139,7 @@ export async function initRedis(): Promise<RedisClientType | null> {
     await redisClient.ping();
     // Only log success in production or if REDIS_URL is explicitly set
     if (isProduction || process.env.REDIS_URL) {
-      console.log('✅ Redis: Connection verified and ready');
+      log.info('Redis: Connection verified and ready');
     }
     
     return redisClient;
@@ -147,12 +148,11 @@ export async function initRedis(): Promise<RedisClientType | null> {
       // In development, only log if REDIS_URL is explicitly set (user expects Redis)
       if (isProduction || process.env.REDIS_URL) {
         if (isProduction) {
-          console.error('❌ Redis: Initial connection failed. Will retry on operations.');
-          console.error(`   Error: ${error.message}`);
-          console.error('   The system will continue without caching until Redis is available.');
+          log.error('Redis: Initial connection failed. Will retry on operations.', error);
+          log.warn('The system will continue without caching until Redis is available.');
         } else {
-          console.warn('⚠️  Redis: Connection failed. Caching will be disabled.');
-          console.warn('   To enable caching, start Redis: redis-server');
+          log.warn('Redis: Connection failed. Caching will be disabled.');
+          log.info('To enable caching, start Redis: redis-server');
         }
       }
       errorLogged = true;

@@ -1,6 +1,7 @@
 import mongoose, { Schema, Model, Document, Connection } from 'mongoose';
 import Store from '../models/Store';
 import { getDatabaseConnection, getDatabaseIdForStore, getDatabaseName } from './databaseManager';
+import { log } from './logger';
 
 // Customer Payment document interface
 export interface CustomerPaymentDocument extends Document {
@@ -97,7 +98,7 @@ async function getStorePrefix(storeId: string): Promise<string | null> {
     
     return null;
   } catch (error: any) {
-    console.error(`Error getting store prefix for ${storeId}:`, error);
+    log.error(`Error getting store prefix for ${storeId}`, error);
     throw new Error(`Failed to get store prefix: ${error.message}`);
   }
 }
@@ -144,7 +145,7 @@ export async function getCustomerPaymentModel(
   const connection = await getDatabaseConnection(dbId);
   const connectionDbName = connection.db?.databaseName;
   if (connectionDbName && connectionDbName !== getDatabaseName(dbId)) {
-    console.warn(`⚠️ Database name mismatch: Expected ${getDatabaseName(dbId)}, got ${connectionDbName}`);
+    log.warn(`Database name mismatch: Expected ${getDatabaseName(dbId)}, got ${connectionDbName}`);
   }
   
   // Check if model already exists in this connection

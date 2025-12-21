@@ -82,15 +82,14 @@ export class ApiClient {
           // Ensure Authorization header is set correctly
           config.headers.Authorization = `Bearer ${token}`;
           
-          // Enhanced logging for pagination requests to help debug auth issues
+          // Enhanced logging for pagination requests to help debug auth issues (development only)
           const isPaginationRequest = config.url?.includes('page=') || config.params?.page;
-          if (isPaginationRequest) {
-            console.log('[API Client] 🔐 Pagination request with token:', {
+          if (isPaginationRequest && import.meta.env.DEV) {
+            console.log('[API Client] Pagination request with token', {
               url: config.url,
               page: config.params?.page,
               hasToken: !!token,
               tokenLength: token.length,
-              tokenPrefix: token.substring(0, 20) + '...',
             });
           }
         } else {
@@ -175,7 +174,9 @@ export class ApiClient {
                 localStorage.removeItem('auth-token');
                 // Redirect to login if not already there
                 if (typeof window !== 'undefined' && !window.location.pathname.includes('/login')) {
-                  console.log('[API Client] Redirecting to login due to expired token');
+                  if (import.meta.env.DEV) {
+                    console.log('[API Client] Redirecting to login due to expired token');
+                  }
                   window.location.href = '/login';
                 }
               } else {
@@ -200,7 +201,9 @@ export class ApiClient {
           } else {
             // No token at all - redirect to login
             if (typeof window !== 'undefined' && !window.location.pathname.includes('/login')) {
-              console.log('[API Client] No token found, redirecting to login');
+              if (import.meta.env.DEV) {
+                console.log('[API Client] No token found, redirecting to login');
+              }
               window.location.href = '/login';
             }
           }
@@ -342,13 +345,17 @@ export class ApiClient {
 const getApiBaseUrl = (): string => {
   const envUrl = (import.meta as any).env?.VITE_API_URL;
   if (envUrl) {
-    console.log('[API Client] Using VITE_API_URL:', envUrl);
+    if (import.meta.env.DEV) {
+      console.log('[API Client] Using VITE_API_URL:', envUrl);
+    }
     return envUrl;
   }
   
   // Development fallback
   if (import.meta.env.DEV) {
-    console.log('[API Client] Development mode - using /api proxy');
+    if (import.meta.env.DEV) {
+      console.log('[API Client] Development mode - using /api proxy');
+    }
     return '/api';
   }
   

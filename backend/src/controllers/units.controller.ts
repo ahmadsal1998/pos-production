@@ -5,6 +5,7 @@ import { asyncHandler } from '../middleware/error.middleware';
 import { AuthenticatedRequest } from '../middleware/auth.middleware';
 import Unit from '../models/Unit';
 import User from '../models/User';
+import { log } from '../utils/logger';
 
 export const validateCreateUnit = [
   body('name')
@@ -50,7 +51,7 @@ export const createUnit = asyncHandler(async (req: AuthenticatedRequest, res: Re
   const { name, description } = req.body;
   let storeId = req.user?.storeId || null;
 
-  console.log('🔍 Create Unit - User info from token:', {
+  log.debug('Create Unit - User info from token', {
     userId: req.user?.userId,
     email: req.user?.email,
     role: req.user?.role,
@@ -63,10 +64,10 @@ export const createUnit = asyncHandler(async (req: AuthenticatedRequest, res: Re
       const user = await User.findById(req.user.userId);
       if (user && user.storeId) {
         storeId = user.storeId;
-        console.log('✅ Create Unit - Found storeId from user record:', storeId);
+        log.debug('Create Unit - Found storeId from user record', { storeId });
       }
     } catch (error: any) {
-      console.error('❌ Create Unit - Error fetching user:', error.message);
+      log.error('Create Unit - Error fetching user', error);
     }
   }
 

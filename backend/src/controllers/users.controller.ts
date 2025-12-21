@@ -205,7 +205,7 @@ export const createUser = asyncHandler(
       
       // If a storeId was provided in the request, log a warning but still use requester's storeId
       if (requestStoreId && requestStoreId.toLowerCase() !== requesterStoreId.toLowerCase()) {
-        console.warn(`⚠️ Security: Manager ${req.user?.userId} attempted to create user for different store. Using requester's storeId instead.`);
+        log.warn(`Security: Manager ${req.user?.userId} attempted to create user for different store. Using requester's storeId instead.`);
       }
     }
 

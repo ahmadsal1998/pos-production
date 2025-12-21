@@ -5,6 +5,7 @@ import { asyncHandler } from '../middleware/error.middleware';
 import { AuthenticatedRequest } from '../middleware/auth.middleware';
 import { getWarehouseModelForStore } from '../utils/warehouseModel';
 import User from '../models/User';
+import { log } from '../utils/logger';
 
 export const validateCreateWarehouse = [
   body('name')
@@ -70,7 +71,7 @@ export const createWarehouse = asyncHandler(async (req: AuthenticatedRequest, re
   const { name, description, address, status } = req.body;
   let storeId = req.user?.storeId || null;
 
-  console.log('🔍 Create Warehouse - User info from token:', {
+  log.debug('Create Warehouse - User info from token', {
     userId: req.user?.userId,
     email: req.user?.email,
     role: req.user?.role,
@@ -83,16 +84,16 @@ export const createWarehouse = asyncHandler(async (req: AuthenticatedRequest, re
       const user = await User.findById(req.user.userId);
       if (user && user.storeId) {
         storeId = user.storeId;
-        console.log('✅ Create Warehouse - Found storeId from user record:', storeId);
+        log.debug('Create Warehouse - Found storeId from user record', { storeId });
       }
     } catch (error: any) {
-      console.error('❌ Create Warehouse - Error fetching user:', error.message);
+      log.error('Create Warehouse - Error fetching user', error);
     }
   }
 
   // Store users must have a storeId
   if (!storeId) {
-    console.error('❌ Create Warehouse - No storeId found for user');
+    log.warn('Create Warehouse - No storeId found for user');
     return res.status(400).json({
       success: false,
       message: 'Store ID is required. Please ensure you are logged in as a store user. If you are a store user, please contact your administrator to associate your account with a store.',
@@ -100,14 +101,14 @@ export const createWarehouse = asyncHandler(async (req: AuthenticatedRequest, re
   }
 
   try {
-    console.log('🔍 Create Warehouse - Getting Warehouse model for storeId:', storeId);
+    log.debug('Create Warehouse - Getting Warehouse model for storeId', { storeId });
     // Get store-specific Warehouse model
     let Warehouse;
     try {
       Warehouse = await getWarehouseModelForStore(storeId);
-      console.log('✅ Create Warehouse - Warehouse model obtained');
+      log.debug('Create Warehouse - Warehouse model obtained');
     } catch (modelError: any) {
-      console.error('❌ Create Warehouse - Error getting Warehouse model:', {
+      log.error('Create Warehouse - Error getting Warehouse model', {
         message: modelError.message,
         stack: modelError.stack,
         storeId: storeId,
@@ -142,14 +143,14 @@ export const createWarehouse = asyncHandler(async (req: AuthenticatedRequest, re
       status: status || 'Active',
     });
 
-    console.log('✅ Create Warehouse - Warehouse created successfully:', warehouse._id);
+    log.debug('Create Warehouse - Warehouse created successfully', { warehouseId: warehouse._id });
     res.status(201).json({
       success: true,
       message: 'Warehouse created successfully',
       warehouse,
     });
   } catch (error: any) {
-    console.error('❌ Create Warehouse - Error:', {
+    log.error('Create Warehouse - Error', {
       message: error.message,
       stack: error.stack,
       storeId: storeId,
@@ -225,7 +226,7 @@ export const getWarehouses = asyncHandler(async (req: AuthenticatedRequest, res:
       warehouses: warehousesWithCounts,
     });
   } catch (error: any) {
-    console.error('Error fetching warehouses:', error);
+    log.error('Error fetching warehouses', error);
     return res.status(500).json({
       success: false,
       message: error.message || 'Failed to fetch warehouses. Please try again.',
@@ -268,7 +269,7 @@ export const getWarehouseById = asyncHandler(async (req: AuthenticatedRequest, r
       },
     });
   } catch (error: any) {
-    console.error('Error fetching warehouse:', error);
+    log.error('Error fetching warehouse', error);
     return res.status(500).json({
       success: false,
       message: error.message || 'Failed to fetch warehouse. Please try again.',
@@ -373,7 +374,7 @@ export const updateWarehouse = asyncHandler(async (req: AuthenticatedRequest, re
       },
     });
   } catch (error: any) {
-    console.error('Error updating warehouse:', error);
+    log.error('Error updating warehouse', error);
     
     if (error.name === 'ValidationError') {
       const errorMessages = Object.values(error.errors || {}).map((e: any) => e.message);
@@ -442,7 +443,7 @@ export const deleteWarehouse = asyncHandler(async (req: AuthenticatedRequest, re
       message: 'Warehouse deleted successfully',
     });
   } catch (error: any) {
-    console.error('Error deleting warehouse:', error);
+    log.error('Error deleting warehouse', error);
     return res.status(500).json({
       success: false,
       message: error.message || 'Failed to delete warehouse. Please try again.',
@@ -500,7 +501,7 @@ export const exportWarehouses = asyncHandler(async (req: AuthenticatedRequest, r
     );
     res.status(200).send(utf8WithBom);
   } catch (error: any) {
-    console.error('Error exporting warehouses:', error);
+    log.error('Error exporting warehouses', error);
     return res.status(500).json({
       success: false,
       message: error.message || 'Failed to export warehouses. Please try again.',
@@ -657,7 +658,7 @@ export const importWarehouses = asyncHandler(async (req: AuthenticatedRequest, r
       warehouses,
     });
   } catch (error: any) {
-    console.error('Error importing warehouses:', error);
+    log.error('Error importing warehouses', error);
     return res.status(500).json({
       success: false,
       message: error.message || 'Failed to import warehouses. Please try again.',

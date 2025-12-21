@@ -7,6 +7,7 @@ import { getProductModelForStore } from '../utils/productModel';
 import { invalidateAllProductBarcodeCaches } from '../utils/productCache';
 import Settings from '../models/Settings';
 import { getBusinessDateFilterRange } from '../utils/businessDate';
+import { log } from '../utils/logger';
 
 /**
  * Get the next sequential invoice number
@@ -203,7 +204,7 @@ export const createSale = asyncHandler(async (req: AuthenticatedRequest, res: Re
           costPrice = product.costPrice || 0;
         }
       } catch (error) {
-        console.warn(`[Sales Controller] Failed to fetch cost price for product ${item.productId}:`, error);
+        log.warn(`[Sales Controller] Failed to fetch cost price for product ${item.productId}`, error);
         // Continue with costPrice = 0 if fetch fails
       }
 
@@ -457,7 +458,7 @@ export const getSales = asyncHandler(async (req: AuthenticatedRequest, res: Resp
     ]);
     
     if (calendarTotal > 0) {
-      console.warn('[Sales Controller] Business date filtering returned 0 results, using calendar date filtering fallback');
+      log.warn('[Sales Controller] Business date filtering returned 0 results, using calendar date filtering fallback');
       sales = calendarSales;
       total = calendarTotal;
       query = calendarQuery; // Update query for consistency
@@ -645,12 +646,9 @@ export const getSalesSummary = asyncHandler(async (req: AuthenticatedRequest, re
   try {
     summaryResult = await Sale.aggregate(summaryPipeline);
   } catch (aggregationError: any) {
-    console.error('[Sales Controller] Error in aggregation pipeline:', {
-      error: aggregationError.message,
-      errorName: aggregationError.name,
+    log.error('[Sales Controller] Error in aggregation pipeline', aggregationError, {
       query: sanitizedQuery,
       originalQuery: query,
-      stack: aggregationError.stack
     });
     // If aggregation fails, return empty summary instead of failing the request
     summaryResult = [];
@@ -752,9 +750,7 @@ export const getSalesSummary = asyncHandler(async (req: AuthenticatedRequest, re
             }).select('_id id costPrice').lean();
           }
         } catch (queryError: any) {
-          console.error('[Sales Controller] Error querying products for net profit:', {
-            error: queryError.message,
-            errorName: queryError.name,
+          log.error('[Sales Controller] Error querying products for net profit', queryError, {
             queryConditions,
             stack: queryError.stack
           });
@@ -830,11 +826,7 @@ export const getSalesSummary = asyncHandler(async (req: AuthenticatedRequest, re
       netProfit = (summary.totalSales || 0) - totalCost;
     }
   } catch (error: any) {
-    console.error('[Sales Controller] Error calculating net profit:', {
-      error: error.message,
-      stack: error.stack,
-      name: error.name
-    });
+    log.error('[Sales Controller] Error calculating net profit', error);
     // If net profit calculation fails, set to 0 (don't fail the whole request)
     // This ensures summary still returns successfully even if net profit can't be calculated
     netProfit = 0;
@@ -1196,7 +1188,7 @@ export const processReturn = asyncHandler(async (req: AuthenticatedRequest, res:
         conversionFactor: conversionFactor,
       });
     } catch (error: any) {
-      console.error(`Error updating stock for product ${productId}:`, error);
+      log.error(`Error updating stock for product ${productId}`, error);
       stockUpdates.push({
         productId,
         quantity: returnQuantity,

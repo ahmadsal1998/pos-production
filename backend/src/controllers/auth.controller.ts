@@ -9,6 +9,7 @@ import { generateOTP, getOTPExpiration } from '../utils/otp';
 import { sendOTPEmail } from '../utils/email';
 import User, { UserDocument } from '../models/User';
 import { checkAndUpdateStoreSubscription } from '../utils/subscriptionManager';
+import { log } from '../utils/logger';
 
 // Login controller
 export const login = asyncHandler(

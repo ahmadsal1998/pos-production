@@ -13,13 +13,14 @@ import {
 } from '../controllers/products.controller';
 import { authenticate } from '../middleware/auth.middleware';
 import { requireStoreAccess } from '../middleware/storeIsolation.middleware';
+import { log } from '../utils/logger';
 
 const router = Router();
 
-// Debug middleware to log all requests to products router
+// Debug middleware to log all requests to products router (development only)
 router.use((req, res, next) => {
   if (req.path.includes('barcode') || req.originalUrl.includes('barcode')) {
-    console.log('[Products Router] Incoming request:', {
+    log.debug('[Products Router] Incoming request', {
       method: req.method,
       path: req.path,
       originalUrl: req.originalUrl,
@@ -49,27 +50,29 @@ router.get(/^\/barcode\/(.+)$/, async (req, res, next) => {
     req.params.barcode = match[1];
   }
   
-  console.log('[Products Router] ✓✓✓✓✓ BARCODE ROUTE MATCHED (REGEX) ✓✓✓✓✓');
-  console.log('[Products Router] Method:', req.method);
-  console.log('[Products Router] Path:', req.path);
-  console.log('[Products Router] OriginalUrl:', req.originalUrl);
-  console.log('[Products Router] BaseUrl:', req.baseUrl);
-  console.log('[Products Router] Url:', req.url);
-  console.log('[Products Router] Barcode param:', req.params.barcode);
-  console.log('[Products Router] All params:', req.params);
+  log.debug('[Products Router] BARCODE ROUTE MATCHED (REGEX)', {
+    method: req.method,
+    path: req.path,
+    originalUrl: req.originalUrl,
+    baseUrl: req.baseUrl,
+    url: req.url,
+    barcode: req.params.barcode,
+    params: req.params,
+  });
   next();
 }, getProductByBarcode);
 
 // Also keep the string route as fallback
 router.get('/barcode/:barcode', async (req, res, next) => {
-  console.log('[Products Router] ✓✓✓ Barcode route MATCHED (STRING) ✓✓✓');
-  console.log('[Products Router] Method:', req.method);
-  console.log('[Products Router] Path:', req.path);
-  console.log('[Products Router] OriginalUrl:', req.originalUrl);
-  console.log('[Products Router] BaseUrl:', req.baseUrl);
-  console.log('[Products Router] Url:', req.url);
-  console.log('[Products Router] Barcode param:', req.params.barcode);
-  console.log('[Products Router] All params:', req.params);
+  log.debug('[Products Router] Barcode route MATCHED (STRING)', {
+    method: req.method,
+    path: req.path,
+    originalUrl: req.originalUrl,
+    baseUrl: req.baseUrl,
+    url: req.url,
+    barcode: req.params.barcode,
+    params: req.params,
+  });
   next();
 }, getProductByBarcode);
 
@@ -80,11 +83,12 @@ router.post('/import', upload.single('file'), importProducts);
 router.get('/:id', (req, res, next) => {
   // Log if /:id route is matching a barcode request (this should NOT happen)
   if (req.params.id && req.params.id.includes('barcode') || req.path.includes('barcode')) {
-    console.error('[Products Router] ⚠️⚠️⚠️ WARNING: /:id route matched a barcode request! ⚠️⚠️⚠️');
-    console.error('[Products Router] This means /barcode/:barcode route was NOT matched first');
-    console.error('[Products Router] ID param:', req.params.id);
-    console.error('[Products Router] Path:', req.path);
-    console.error('[Products Router] OriginalUrl:', req.originalUrl);
+    log.error('[Products Router] WARNING: /:id route matched a barcode request!', {
+      message: 'This means /barcode/:barcode route was NOT matched first',
+      idParam: req.params.id,
+      path: req.path,
+      originalUrl: req.originalUrl,
+    });
   }
   next();
 }, getProduct);

@@ -7,6 +7,7 @@ import { getProductModelForStore } from '../utils/productModel';
 import Category from '../models/Category';
 import multer from 'multer';
 import { parse } from 'csv-parse/sync';
+import { log } from '../utils/logger';
 
 export const validateCreateProduct = [
   body('name')
@@ -160,13 +161,7 @@ export const createProduct = asyncHandler(async (req: AuthenticatedRequest, res:
       },
     });
   } catch (error: any) {
-    console.error('Error creating product:', {
-      message: error.message,
-      stack: error.stack,
-      storeId: storeId,
-      name: error.name,
-      code: error.code,
-    });
+    log.error('Error creating product', error, { storeId });
 
     // Handle specific mongoose errors
     if (error.name === 'ValidationError') {
@@ -275,9 +270,7 @@ export const getProducts = asyncHandler(async (req: AuthenticatedRequest, res: R
     try {
       totalProducts = await Product.countDocuments(queryFilter);
     } catch (countError: any) {
-      console.error('Error counting products:', {
-        message: countError.message,
-        stack: countError.stack,
+      log.error('Error counting products', countError, {
         name: countError.name,
         code: countError.code,
       });
@@ -313,9 +306,7 @@ export const getProducts = asyncHandler(async (req: AuthenticatedRequest, res: R
         .limit(limit)
         .lean();
     } catch (queryError: any) {
-      console.error('Error querying products:', {
-        message: queryError.message,
-        stack: queryError.stack,
+      log.error('Error querying products', queryError, {
         name: queryError.name,
       });
       // Return empty array if query fails
@@ -380,7 +371,7 @@ export const getProducts = asyncHandler(async (req: AuthenticatedRequest, res: R
           });
         }
       } catch (categoryError: any) {
-        console.error('Error enriching products with categories:', categoryError);
+        log.error('Error enriching products with categories', categoryError);
         // Continue without category enrichment - products are still valid
       }
     }
@@ -399,9 +390,7 @@ export const getProducts = asyncHandler(async (req: AuthenticatedRequest, res: R
       },
     });
   } catch (error: any) {
-    console.error('Error fetching products:', {
-      message: error.message,
-      stack: error.stack,
+    log.error('Error fetching products', error, {
       storeId: storeId,
       name: error.name,
       code: error.code,
@@ -462,7 +451,7 @@ export const getProduct = asyncHandler(async (req: AuthenticatedRequest, res: Re
       },
     });
   } catch (error: any) {
-    console.error('Error fetching product:', error);
+    log.error('Error fetching product', error);
     return res.status(500).json({
       success: false,
       message: error.message || 'Failed to fetch product',
@@ -529,7 +518,7 @@ export const updateProduct = asyncHandler(async (req: AuthenticatedRequest, res:
       },
     });
   } catch (error: any) {
-    console.error('Error updating product:', error);
+    log.error('Error updating product', error);
     return res.status(500).json({
       success: false,
       message: error.message || 'Failed to update product',
@@ -581,7 +570,7 @@ export const deleteProduct = asyncHandler(async (req: AuthenticatedRequest, res:
       message: 'Product deleted successfully',
     });
   } catch (error: any) {
-    console.error('Error deleting product:', error);
+    log.error('Error deleting product', error);
     return res.status(500).json({
       success: false,
       message: error.message || 'Failed to delete product',
@@ -778,7 +767,7 @@ export const importProducts = asyncHandler(async (req: AuthenticatedRequest, res
         storeId = user.storeId;
       }
     } catch (error: any) {
-      console.error('Error fetching user:', error.message);
+      log.error('Error fetching user', error);
     }
   }
 
@@ -952,9 +941,7 @@ export const importProducts = asyncHandler(async (req: AuthenticatedRequest, res
       },
     });
   } catch (error: any) {
-    console.error('Error importing products:', {
-      message: error.message,
-      stack: error.stack,
+    log.error('Error importing products', error, {
       storeId: storeId,
     });
 
@@ -1088,7 +1075,7 @@ export const getProductMetrics = asyncHandler(async (req: AuthenticatedRequest, 
       },
     });
   } catch (error: any) {
-    console.error('Error fetching product metrics:', error);
+    log.error('Error fetching product metrics', error);
     return res.status(500).json({
       success: false,
       message: error.message || 'Failed to fetch product metrics',
@@ -1169,7 +1156,7 @@ export const getProductByBarcode = asyncHandler(async (req: AuthenticatedRequest
       },
     });
   } catch (error: any) {
-    console.error('Error fetching product by barcode:', error);
+    log.error('Error fetching product by barcode', error);
     return res.status(500).json({
       success: false,
       message: error.message || 'Failed to fetch product by barcode',

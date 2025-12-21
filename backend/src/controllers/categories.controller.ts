@@ -5,6 +5,7 @@ import { asyncHandler } from '../middleware/error.middleware';
 import { AuthenticatedRequest } from '../middleware/auth.middleware';
 import Category from '../models/Category';
 import User from '../models/User';
+import { log } from '../utils/logger';
 
 export const validateCreateCategory = [
   body('name')
@@ -34,7 +35,7 @@ export const createCategory = asyncHandler(async (req: AuthenticatedRequest, res
   const { name, description } = req.body;
   let storeId = req.user?.storeId || null;
 
-  console.log('🔍 Create Category - User info from token:', {
+  log.debug('Create Category - User info from token', {
     userId: req.user?.userId,
     email: req.user?.email,
     role: req.user?.role,
@@ -47,16 +48,16 @@ export const createCategory = asyncHandler(async (req: AuthenticatedRequest, res
       const user = await User.findById(req.user.userId);
       if (user && user.storeId) {
         storeId = user.storeId;
-        console.log('✅ Create Category - Found storeId from user record:', storeId);
+        log.debug('Create Category - Found storeId from user record', { storeId });
       }
     } catch (error: any) {
-      console.error('❌ Create Category - Error fetching user:', error.message);
+      log.error('Create Category - Error fetching user', error);
     }
   }
 
   // Store users must have a storeId
   if (!storeId) {
-    console.error('❌ Create Category - No storeId found for user');
+    log.warn('Create Category - No storeId found for user');
     return res.status(400).json({
       success: false,
       message: 'Store ID is required. Please ensure you are logged in as a store user. If you are a store user, please contact your administrator to associate your account with a store.',
@@ -86,15 +87,14 @@ export const createCategory = asyncHandler(async (req: AuthenticatedRequest, res
       description: description?.trim() || undefined,
     });
 
-    console.log('✅ Create Category - Category created successfully:', category._id);
+    log.debug('Create Category - Category created successfully', { categoryId: category._id });
     res.status(201).json({
       success: true,
       message: 'Category created successfully',
       category,
     });
   } catch (error: any) {
-    console.error('❌ Create Category - Error:', {
-      message: error.message,
+    log.error('Create Category - Error', error, {
       stack: error.stack,
       storeId: storeId,
       name: error.name,
@@ -149,7 +149,7 @@ export const getCategories = asyncHandler(async (req: AuthenticatedRequest, res:
       categories,
     });
   } catch (error: any) {
-    console.error('Error fetching categories:', error);
+    log.error('Error fetching categories', error);
     return res.status(500).json({
       success: false,
       message: error.message || 'Failed to fetch categories. Please try again.',
@@ -208,7 +208,7 @@ export const exportCategories = asyncHandler(async (req: AuthenticatedRequest, r
     );
     res.status(200).send(utf8WithBom);
   } catch (error: any) {
-    console.error('Error exporting categories:', error);
+    log.error('Error exporting categories', error);
     return res.status(500).json({
       success: false,
       message: error.message || 'Failed to export categories. Please try again.',
@@ -346,7 +346,7 @@ export const importCategories = asyncHandler(async (req: AuthenticatedRequest, r
       categories,
     });
   } catch (error: any) {
-    console.error('Error importing categories:', error);
+    log.error('Error importing categories', error);
     return res.status(500).json({
       success: false,
       message: error.message || 'Failed to import categories. Please try again.',

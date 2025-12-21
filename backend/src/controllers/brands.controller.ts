@@ -5,6 +5,7 @@ import { asyncHandler } from '../middleware/error.middleware';
 import { AuthenticatedRequest } from '../middleware/auth.middleware';
 import Brand from '../models/Brand';
 import User from '../models/User';
+import { log } from '../utils/logger';
 
 export const validateCreateBrand = [
   body('name')
@@ -34,7 +35,7 @@ export const createBrand = asyncHandler(async (req: AuthenticatedRequest, res: R
   const { name, description } = req.body;
   let storeId = req.user?.storeId || null;
 
-  console.log('🔍 Create Brand - User info from token:', {
+  log.debug('Create Brand - User info from token', {
     userId: req.user?.userId,
     email: req.user?.email,
     role: req.user?.role,
@@ -47,16 +48,16 @@ export const createBrand = asyncHandler(async (req: AuthenticatedRequest, res: R
       const user = await User.findById(req.user.userId);
       if (user && user.storeId) {
         storeId = user.storeId;
-        console.log('✅ Create Brand - Found storeId from user record:', storeId);
+        log.debug('Create Brand - Found storeId from user record', { storeId });
       }
     } catch (error: any) {
-      console.error('❌ Create Brand - Error fetching user:', error.message);
+      log.error('Create Brand - Error fetching user', error);
     }
   }
 
   // Store users must have a storeId
   if (!storeId) {
-    console.error('❌ Create Brand - No storeId found for user');
+    log.warn('Create Brand - No storeId found for user');
     return res.status(400).json({
       success: false,
       message: 'Store ID is required. Please ensure you are logged in as a store user. If you are a store user, please contact your administrator to associate your account with a store.',
@@ -88,20 +89,14 @@ export const createBrand = asyncHandler(async (req: AuthenticatedRequest, res: R
       description: description?.trim() || undefined,
     });
 
-    console.log('✅ Create Brand - Brand created successfully:', brand._id);
+    log.debug('Create Brand - Brand created successfully', { brandId: brand._id });
     res.status(201).json({
       success: true,
       message: 'Brand created successfully',
       brand,
     });
   } catch (error: any) {
-    console.error('❌ Create Brand - Error:', {
-      message: error.message,
-      stack: error.stack,
-      storeId: storeId,
-      name: error.name,
-      code: error.code,
-    });
+    log.error('Create Brand - Error', error, { storeId });
     
     // Handle specific mongoose errors
     if (error.name === 'ValidationError') {
@@ -151,7 +146,7 @@ export const getBrands = asyncHandler(async (req: AuthenticatedRequest, res: Res
       brands,
     });
   } catch (error: any) {
-    console.error('Error fetching brands:', error);
+    log.error('Error fetching brands', error);
     return res.status(500).json({
       success: false,
       message: error.message || 'Failed to fetch brands. Please try again.',
@@ -206,7 +201,7 @@ export const exportBrands = asyncHandler(async (req: AuthenticatedRequest, res: 
     );
     res.status(200).send(utf8WithBom);
   } catch (error: any) {
-    console.error('Error exporting brands:', error);
+    log.error('Error exporting brands', error);
     return res.status(500).json({
       success: false,
       message: error.message || 'Failed to export brands. Please try again.',
@@ -337,7 +332,7 @@ export const importBrands = asyncHandler(async (req: AuthenticatedRequest, res: 
       brands,
     });
   } catch (error: any) {
-    console.error('Error importing brands:', error);
+    log.error('Error importing brands', error);
     return res.status(500).json({
       success: false,
       message: error.message || 'Failed to import brands. Please try again.',

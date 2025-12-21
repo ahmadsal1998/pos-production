@@ -6,6 +6,7 @@ import { AuthenticatedRequest } from '../middleware/auth.middleware';
 import { getCustomerPaymentModelForStore } from '../utils/customerPaymentModel';
 import { getCustomerModelForStore } from '../utils/customerModel';
 import User from '../models/User';
+import { log } from '../utils/logger';
 
 export const validateCreateCustomer = [
   body('name')
@@ -51,7 +52,7 @@ export const createCustomer = asyncHandler(async (req: AuthenticatedRequest, res
         storeId = user.storeId;
       }
     } catch (error: any) {
-      console.error('Error fetching user:', error.message);
+      log.error('Error fetching user', error);
     }
   }
 
@@ -110,7 +111,7 @@ export const createCustomer = asyncHandler(async (req: AuthenticatedRequest, res
       },
     });
   } catch (error: any) {
-    console.error('Error creating customer:', error);
+    log.error('Error creating customer', error);
     
     // Handle specific mongoose errors
     if (error.name === 'ValidationError') {
@@ -201,7 +202,7 @@ export const getCustomers = asyncHandler(async (req: AuthenticatedRequest, res: 
       },
     });
   } catch (error: any) {
-    console.error('Error fetching customers:', error);
+    log.error('Error fetching customers', error);
     return res.status(500).json({
       success: false,
       message: error.message || 'Failed to fetch customers. Please try again.',
@@ -259,7 +260,7 @@ export const getCustomerById = asyncHandler(async (req: AuthenticatedRequest, re
       },
     });
   } catch (error: any) {
-    console.error('Error fetching customer:', error);
+    log.error('Error fetching customer', error);
     return res.status(500).json({
       success: false,
       message: error.message || 'Failed to fetch customer. Please try again.',
@@ -395,7 +396,7 @@ export const updateCustomer = asyncHandler(async (req: AuthenticatedRequest, res
       },
     });
   } catch (error: any) {
-    console.error('Error updating customer:', error);
+    log.error('Error updating customer', error);
 
     // Handle specific mongoose errors
     if (error.name === 'ValidationError') {
@@ -462,7 +463,7 @@ export const deleteCustomer = asyncHandler(async (req: AuthenticatedRequest, res
       message: 'Customer deleted successfully',
     });
   } catch (error: any) {
-    console.error('Error deleting customer:', error);
+    log.error('Error deleting customer', error);
     return res.status(500).json({
       success: false,
       message: error.message || 'Failed to delete customer. Please try again.',
@@ -522,7 +523,7 @@ export const createCustomerPayment = asyncHandler(async (req: AuthenticatedReque
         storeId = user.storeId;
       }
     } catch (error: any) {
-      console.error('Error fetching user:', error.message);
+      log.error('Error fetching user', error);
     }
   }
 
@@ -586,7 +587,7 @@ export const createCustomerPayment = asyncHandler(async (req: AuthenticatedReque
       },
     });
   } catch (error: any) {
-    console.error('Error creating customer payment:', error);
+    log.error('Error creating customer payment', error);
     
     // Handle specific mongoose errors
     if (error.name === 'ValidationError') {
@@ -650,7 +651,7 @@ export const getCustomerPayments = asyncHandler(async (req: AuthenticatedRequest
       },
     });
   } catch (error: any) {
-    console.error('Error fetching customer payments:', error);
+    log.error('Error fetching customer payments', error);
     return res.status(500).json({
       success: false,
       message: error.message || 'Failed to fetch customer payments. Please try again.',

@@ -1,6 +1,7 @@
 import { Response } from 'express';
 import { Payment, IPayment } from '../models/Payment';
 import { AuthenticatedRequest } from '../middleware/auth.middleware';
+import { log } from '../utils/logger';
 
 /**
  * Create payment record (without terminal integration)
@@ -49,7 +50,7 @@ export const processPayment = async (req: AuthenticatedRequest, res: Response): 
       },
     });
   } catch (error: any) {
-    console.error('Payment processing error:', error);
+    log.error('Payment processing error', error);
     res.status(500).json({
       success: false,
       message: 'Internal server error',
@@ -84,7 +85,7 @@ export const getPayment = async (req: AuthenticatedRequest, res: Response): Prom
       data: { payment },
     });
   } catch (error: any) {
-    console.error('Get payment error:', error);
+    log.error('Get payment error', error);
     res.status(500).json({
       success: false,
       message: 'Internal server error',

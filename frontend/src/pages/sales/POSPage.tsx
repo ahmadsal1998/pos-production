@@ -697,7 +697,9 @@ const POSPage: React.FC = () => {
                 if (token) {
                     const payload = JSON.parse(atob(token.split('.')[1]));
                     const storeId = payload.storeId;
-                    console.log('[POS] Current storeId from token:', storeId, '(type:', typeof storeId, ')');
+                    if (import.meta.env.DEV) {
+                      console.log('[POS] Current storeId from token:', storeId, '(type:', typeof storeId, ')');
+                    }
                 } else {
                     console.warn('[POS] No auth token found in localStorage');
                 }

@@ -9,6 +9,7 @@ import { createStoreCollections } from '../utils/storeCollections';
 import User from '../models/User';
 import { reactivateStore } from '../utils/subscriptionManager';
 import { clearTrialStatusCache } from '../utils/trialAccountModels';
+import { log } from '../utils/logger';
 import {
   generatePurgeReport,
   purgeTrialAccounts,
@@ -159,7 +160,7 @@ export const createStore = asyncHandler(
     // Determine which database this store should be assigned to
     const databaseId = await determineDatabaseForStore(Store);
     
-    console.log(`📊 Assigning new store "${name}" to database ${databaseId}`);
+    log.info(`Assigning new store "${name}" to database ${databaseId}`);
 
     // Generate the next sequential store number
     const lastStore = await Store.findOne().sort({ storeNumber: -1 });
@@ -180,7 +181,7 @@ export const createStore = asyncHandler(
 
     // Collections are now unified with storeId and created automatically by Mongoose
     // when the first document is inserted. No need to create them manually.
-    console.log(`✅ Store created. Collections will be created automatically when first documents are inserted.`);
+    log.info('Store created. Collections will be created automatically when first documents are inserted.');
 
     // Optionally create a default store admin user
     // Note: Email uniqueness was already checked above before store creation

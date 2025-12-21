@@ -1,4 +1,5 @@
 import { DateTime } from 'luxon';
+import { log } from './logger';
 
 /**
  * Parse business day start time from settings
@@ -114,7 +115,7 @@ export function getBusinessDateFilterRange(
   
   // Log warning if timezone is not provided (this can cause incorrect date filtering)
   if (!timezone) {
-    console.warn('[BusinessDate] ⚠️ No timezone provided for date filtering, defaulting to UTC. This may cause incorrect business day calculations.', {
+    log.warn('[BusinessDate] No timezone provided for date filtering, defaulting to UTC. This may cause incorrect business day calculations.', {
       startDate,
       endDate,
       businessDayStartTime,
@@ -139,7 +140,7 @@ export function getBusinessDateFilterRange(
     
     // Log detailed calculation for debugging
     if (start) {
-      console.log('[BusinessDate] Start date calculation:', {
+      log.debug('[BusinessDate] Start date calculation', {
         inputDate: startDateStr,
         timezone: tz,
         businessDayStartTime: `${hours}:${minutes.toString().padStart(2, '0')}`,
@@ -167,7 +168,7 @@ export function getBusinessDateFilterRange(
     
     // Log detailed calculation for debugging
     if (end) {
-      console.log('[BusinessDate] End date calculation:', {
+      log.debug('[BusinessDate] End date calculation', {
         inputDate: endDateStr,
         timezone: tz,
         businessDayStartTime: `${hours}:${minutes.toString().padStart(2, '0')}`,
