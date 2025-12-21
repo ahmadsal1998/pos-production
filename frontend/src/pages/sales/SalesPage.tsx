@@ -2650,7 +2650,14 @@ const SalesGridCard: React.FC<{sale: SaleTransaction, onView: (s: SaleTransactio
                             }
                         });
                         if (hasAllCosts) {
-                            cardNetProfit = (sale.totalAmount || 0) - totalCost;
+                            // Calculate net profit: Sale Price - Cost Price
+                            // For returns, sale.totalAmount is negative, so we use absolute value
+                            const salePrice = isReturn ? Math.abs(sale.totalAmount || 0) : (sale.totalAmount || 0);
+                            cardNetProfit = salePrice - totalCost;
+                            // For returns, make it negative
+                            if (isReturn) {
+                                cardNetProfit = -cardNetProfit;
+                            }
                         }
                     }
                     return cardNetProfit !== null ? (
@@ -2732,8 +2739,11 @@ const SalesTableRow: React.FC<{sale: SaleTransaction, onView: (s: SaleTransactio
                     }
                 }
                 
-                const profit = (sale.totalAmount || 0) - totalCost;
-                setNetProfit(isReturn ? -Math.abs(profit) : profit);
+                // Calculate net profit: Sale Price - Cost Price
+                // For returns, sale.totalAmount is negative, so we use absolute value
+                const salePrice = isReturn ? Math.abs(sale.totalAmount || 0) : (sale.totalAmount || 0);
+                const profit = salePrice - totalCost;
+                setNetProfit(isReturn ? -profit : profit);
             } catch (error) {
                 console.error('Error calculating net profit:', error);
                 setNetProfit(0);
