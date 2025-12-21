@@ -17,6 +17,7 @@ import { productsDB } from '@/lib/db/productsDB';
 import { customerSync } from '@/lib/sync/customerSync';
 import { customersDB } from '@/lib/db/customersDB';
 import { salesSync } from '@/lib/sync/salesSync';
+import { salesDB } from '@/lib/db/salesDB';
 import { inventorySync } from '@/lib/sync/inventorySync';
 import { ProductNotFoundModal } from '@/shared/components/ui/ProductNotFoundModal';
 // PaymentProcessingModal removed - using simple payment flow
@@ -3436,19 +3437,31 @@ const POSPage: React.FC = () => {
                 };
 
                 // Use IndexedDB sync service (saves locally and syncs with backend)
-                const syncResult = await salesSync.createAndSyncSale(saleData, storeId);
-                
-                if (syncResult.success) {
-                    console.log('✅ Sale saved to IndexedDB and synced:', finalInvoice.id);
-                    
-                    // Show warning if sync had errors but sale was saved locally
-                    if (syncResult.error) {
-                        console.warn('⚠️ Sale saved locally, will sync later:', syncResult.error);
+                // CRITICAL: Ensure sale is saved to IndexedDB even if sync fails
+                let syncResult;
+                try {
+                    syncResult = await salesSync.createAndSyncSale(saleData, storeId);
+                } catch (syncError: any) {
+                    // If createAndSyncSale throws an error, try to save directly to IndexedDB
+                    console.error('❌ Error in createAndSyncSale, attempting direct IndexedDB save:', syncError);
+                    try {
+                        await salesDB.init();
+                        saleData.synced = false;
+                        await salesDB.saveSale(saleData);
+                        console.log('✅ Sale saved directly to IndexedDB after sync error:', finalInvoice.id);
+                        syncResult = { success: true, saleId: saleData.id || finalInvoice.id, error: syncError?.message };
+                    } catch (dbError: any) {
+                        console.error('❌ Failed to save sale to IndexedDB:', dbError);
+                        // Still try to save to localStorage as last resort
+                        syncResult = { success: false, error: dbError?.message || 'Failed to save sale' };
                     }
-
+                }
+                
+                // Always save to localStorage as backup, even if IndexedDB save failed
+                try {
                     // Convert POSInvoice to SaleTransaction for localStorage backup
                     let saleTransaction: SaleTransaction = {
-                        id: syncResult.saleId || finalInvoice.id,
+                        id: syncResult?.saleId || finalInvoice.id,
                         date: finalInvoice.date instanceof Date 
                             ? finalInvoice.date.toISOString() 
                             : new Date().toISOString(),
@@ -3478,9 +3491,21 @@ const POSPage: React.FC = () => {
 
                     // Save to localStorage as backup (legacy support)
                     saveSale(saleTransaction);
-                    console.log('Sale transaction saved to localStorage (backup):', saleTransaction);
+                    console.log('✅ Sale transaction saved to localStorage (backup):', saleTransaction);
+                } catch (localStorageError) {
+                    console.error('❌ Failed to save sale to localStorage:', localStorageError);
+                }
+                
+                if (syncResult?.success) {
+                    console.log('✅ Sale saved to IndexedDB and synced:', finalInvoice.id);
+                    
+                    // Show warning if sync had errors but sale was saved locally
+                    if (syncResult.error) {
+                        console.warn('⚠️ Sale saved locally, will sync later:', syncResult.error);
+                    }
                 } else {
-                    throw new Error(syncResult.error || 'Failed to save sale');
+                    // Sale was saved to localStorage at least, log warning
+                    console.warn('⚠️ Sale saved to localStorage only, IndexedDB save may have failed:', syncResult?.error);
                 }
             } catch (error: any) {
                 console.error('❌ Failed to save sale in background:', error);

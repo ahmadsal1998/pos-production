@@ -13,6 +13,7 @@ import { useAuthStore } from '@/app/store';
 import { printReceipt } from '@/shared/utils/printUtils';
 import { customerSync } from '@/lib/sync/customerSync';
 import { customersDB } from '@/lib/db/customersDB';
+import { salesDB } from '@/lib/db/salesDB';
 import { loadSettings, saveSettings } from '@/shared/utils/settingsStorage';
 import { getBusinessDateFilterRange, getBusinessDayStartTime, getBusinessDayTimezone } from '@/shared/utils/businessDate';
 import { useResponsiveViewMode } from '@/shared/hooks';
@@ -688,8 +689,9 @@ const FilterModal: React.FC<{
             end = today.toISOString().split('T')[0];
         } else if (preset === 'month') {
             const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+            const monthEnd = new Date(today.getFullYear(), today.getMonth() + 1, 0); // Last day of current month
             start = monthStart.toISOString().split('T')[0];
-            end = today.toISOString().split('T')[0];
+            end = monthEnd.toISOString().split('T')[0];
         }
 
         onFilterChange({
@@ -957,65 +959,166 @@ const SalesPage: React.FC<SalesPageProps> = ({ setActivePath }) => {
             }
 
             console.log('[SalesPage] Fetching sales with params:', params);
-            const response = await salesApi.getSales(params);
-            const backendResponse = response.data as any;
             
-            if (backendResponse?.success && Array.isArray(backendResponse.data?.sales)) {
-                // Transform API sales to SaleTransaction format
-                const apiSales: SaleTransaction[] = backendResponse.data.sales.map((sale: any) => ({
-                    id: sale.id || sale._id || sale.invoiceNumber,
-                    invoiceNumber: sale.invoiceNumber || sale.id || sale._id,
-                    date: sale.date || sale.createdAt || new Date().toISOString(),
-                    customerName: sale.customerName || 'عميل نقدي',
-                    customerId: sale.customerId || 'walk-in-customer',
-                    totalAmount: sale.total || sale.totalAmount || 0,
-                    paidAmount: sale.paidAmount || 0,
-                    remainingAmount: sale.remainingAmount || (sale.total - (sale.paidAmount || 0)),
-                    paymentMethod: (sale.paymentMethod?.charAt(0).toUpperCase() + sale.paymentMethod?.slice(1).toLowerCase()) as SalePaymentMethod || 'Cash',
-                    status: sale.status === 'completed' ? 'Paid' : sale.status === 'partial_payment' ? 'Partial' : sale.status === 'pending' ? 'Due' : sale.status === 'refunded' || sale.status === 'partial_refund' ? 'Returned' : (sale.status as SaleStatus) || 'Paid',
-                    seller: sale.seller || sale.cashier || currentUserName,
-                    items: Array.isArray(sale.items) ? sale.items.map((item: any) => ({
-                        productId: typeof item.productId === 'string' ? parseInt(item.productId) || 0 : item.productId || 0,
-                        name: item.productName || item.name || '',
-                        unit: item.unit || 'قطعة',
-                        quantity: item.quantity || 0,
-                        unitPrice: item.unitPrice || 0,
-                        total: item.totalPrice || item.total || 0,
-                        discount: item.discount || 0,
-                        conversionFactor: item.conversionFactor,
-                    })) : [],
-                    subtotal: sale.subtotal || 0,
-                    totalItemDiscount: sale.totalItemDiscount || 0,
-                    invoiceDiscount: sale.invoiceDiscount || sale.discount || 0,
-                    tax: sale.tax || 0,
-                }));
+            // Try to fetch from API first
+            let apiSales: SaleTransaction[] = [];
+            let pagination: any = null;
+            
+            try {
+                const response = await salesApi.getSales(params);
+                const backendResponse = response.data as any;
                 
-                // Sort by date (most recent first)
-                apiSales.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-                
-                // Seller filter is now handled by backend
-                setSales(apiSales);
-                salesRef.current = apiSales;
-                
-                // Update pagination info
-                const pagination = backendResponse.data?.pagination;
-                if (pagination) {
-                    setTotalSales(pagination.totalSales || 0);
-                    setTotalPages(pagination.totalPages || 1);
-                } else {
-                    // Fallback: estimate from current page
-                    setTotalSales(apiSales.length);
-                    setTotalPages(1);
+                if (backendResponse?.success && Array.isArray(backendResponse.data?.sales)) {
+                    // Transform API sales to SaleTransaction format
+                    apiSales = backendResponse.data.sales.map((sale: any) => ({
+                        id: sale.id || sale._id || sale.invoiceNumber,
+                        invoiceNumber: sale.invoiceNumber || sale.id || sale._id,
+                        date: sale.date || sale.createdAt || new Date().toISOString(),
+                        customerName: sale.customerName || 'عميل نقدي',
+                        customerId: sale.customerId || 'walk-in-customer',
+                        totalAmount: sale.total || sale.totalAmount || 0,
+                        paidAmount: sale.paidAmount || 0,
+                        remainingAmount: sale.remainingAmount || (sale.total - (sale.paidAmount || 0)),
+                        paymentMethod: (sale.paymentMethod?.charAt(0).toUpperCase() + sale.paymentMethod?.slice(1).toLowerCase()) as SalePaymentMethod || 'Cash',
+                        status: sale.status === 'completed' ? 'Paid' : sale.status === 'partial_payment' ? 'Partial' : sale.status === 'pending' ? 'Due' : sale.status === 'refunded' || sale.status === 'partial_refund' ? 'Returned' : (sale.status as SaleStatus) || 'Paid',
+                        seller: sale.seller || sale.cashier || currentUserName,
+                        items: Array.isArray(sale.items) ? sale.items.map((item: any) => ({
+                            productId: typeof item.productId === 'string' ? parseInt(item.productId) || 0 : item.productId || 0,
+                            name: item.productName || item.name || '',
+                            unit: item.unit || 'قطعة',
+                            quantity: item.quantity || 0,
+                            unitPrice: item.unitPrice || 0,
+                            total: item.totalPrice || item.total || 0,
+                            discount: item.discount || 0,
+                            conversionFactor: item.conversionFactor,
+                        })) : [],
+                        subtotal: sale.subtotal || 0,
+                        totalItemDiscount: sale.totalItemDiscount || 0,
+                        invoiceDiscount: sale.invoiceDiscount || sale.discount || 0,
+                        tax: sale.tax || 0,
+                    }));
+                    
+                    pagination = backendResponse.data?.pagination;
                 }
-                
-                console.log(`[SalesPage] Loaded ${apiSales.length} sales from database (page ${page})`);
-            } else {
-                setSales([]);
-                salesRef.current = [];
-                setTotalSales(0);
-                setTotalPages(0);
-                console.log('[SalesPage] No sales found in database');
+            } catch (apiError: any) {
+                console.warn('[SalesPage] API fetch failed, will try IndexedDB:', apiError);
+                // Continue to load from IndexedDB
             }
+            
+            // Also load from IndexedDB to get offline/unsynced sales
+            let indexedDBSales: SaleTransaction[] = [];
+            try {
+                const storeId = user?.storeId;
+                
+                if (storeId) {
+                    await salesDB.init();
+                    const dbFilters: any = {};
+                    
+                    // Apply date filters
+                    if (filters.dateRange.start) {
+                        dbFilters.startDate = new Date(filters.dateRange.start);
+                    }
+                    if (filters.dateRange.end) {
+                        dbFilters.endDate = new Date(filters.dateRange.end);
+                    }
+                    
+                    // Apply other filters
+                    if (filters.paymentMethod !== 'all') {
+                        dbFilters.paymentMethod = filters.paymentMethod.toLowerCase();
+                    }
+                    if (filters.status !== 'all') {
+                        dbFilters.status = filters.status;
+                    }
+                    if (filters.customerId !== 'all') {
+                        dbFilters.customerId = filters.customerId;
+                    }
+                    if (filters.seller !== 'all') {
+                        dbFilters.seller = filters.seller;
+                    }
+                    
+                    const dbSales = await salesDB.getSalesByStore(storeId, dbFilters);
+                    
+                    // Transform IndexedDB sales to SaleTransaction format
+                    indexedDBSales = dbSales.map((sale: any) => ({
+                        id: sale.id || sale._id || sale.invoiceNumber,
+                        invoiceNumber: sale.invoiceNumber || sale.id || sale._id,
+                        date: sale.date || sale.createdAt || new Date().toISOString(),
+                        customerName: sale.customerName || 'عميل نقدي',
+                        customerId: sale.customerId || 'walk-in-customer',
+                        totalAmount: sale.total || sale.totalAmount || 0,
+                        paidAmount: sale.paidAmount || 0,
+                        remainingAmount: sale.remainingAmount || (sale.total - (sale.paidAmount || 0)),
+                        paymentMethod: (sale.paymentMethod?.charAt(0).toUpperCase() + sale.paymentMethod?.slice(1).toLowerCase()) as SalePaymentMethod || 'Cash',
+                        status: sale.status === 'completed' ? 'Paid' : sale.status === 'partial_payment' ? 'Partial' : sale.status === 'pending' ? 'Due' : sale.status === 'refunded' || sale.status === 'partial_refund' ? 'Returned' : (sale.status as SaleStatus) || 'Paid',
+                        seller: sale.seller || sale.cashier || currentUserName,
+                        items: Array.isArray(sale.items) ? sale.items.map((item: any) => ({
+                            productId: typeof item.productId === 'string' ? parseInt(item.productId) || 0 : item.productId || 0,
+                            name: item.productName || item.name || '',
+                            unit: item.unit || 'قطعة',
+                            quantity: item.quantity || 0,
+                            unitPrice: item.unitPrice || 0,
+                            total: item.totalPrice || item.total || 0,
+                            discount: item.discount || 0,
+                            conversionFactor: item.conversionFactor,
+                        })) : [],
+                        subtotal: sale.subtotal || 0,
+                        totalItemDiscount: sale.totalItemDiscount || 0,
+                        invoiceDiscount: sale.invoiceDiscount || sale.discount || 0,
+                        tax: sale.tax || 0,
+                    }));
+                    
+                    console.log(`[SalesPage] Loaded ${indexedDBSales.length} sales from IndexedDB`);
+                }
+            } catch (dbError: any) {
+                console.warn('[SalesPage] Error loading sales from IndexedDB:', dbError);
+            }
+            
+            // Merge API and IndexedDB sales, removing duplicates by invoiceNumber
+            const salesMap = new Map<string, SaleTransaction>();
+            
+            // Add API sales first (they take precedence)
+            apiSales.forEach(sale => {
+                const key = sale.invoiceNumber || sale.id;
+                if (key) {
+                    salesMap.set(key, sale);
+                }
+            });
+            
+            // Add IndexedDB sales (only if not already in map, or if unsynced)
+            indexedDBSales.forEach(sale => {
+                const key = sale.invoiceNumber || sale.id;
+                if (key) {
+                    // If sale is not in map, or if it's unsynced (might be newer), add it
+                    if (!salesMap.has(key)) {
+                        salesMap.set(key, sale);
+                    }
+                }
+            });
+            
+            // Convert map to array and sort by date (most recent first)
+            const allSales = Array.from(salesMap.values());
+            allSales.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+            
+            // Apply pagination
+            const startIndex = (page - 1) * pageSize;
+            const endIndex = startIndex + pageSize;
+            const paginatedSales = allSales.slice(startIndex, endIndex);
+            
+            setSales(paginatedSales);
+            salesRef.current = paginatedSales;
+            
+            // Update pagination info
+            if (pagination) {
+                // Adjust total to include IndexedDB sales
+                const totalFromDB = indexedDBSales.filter(s => !apiSales.some(a => (a.invoiceNumber || a.id) === (s.invoiceNumber || s.id))).length;
+                setTotalSales((pagination.totalSales || 0) + totalFromDB);
+                setTotalPages(Math.ceil(allSales.length / pageSize));
+            } else {
+                setTotalSales(allSales.length);
+                setTotalPages(Math.ceil(allSales.length / pageSize));
+            }
+            
+            console.log(`[SalesPage] Loaded ${paginatedSales.length} sales (${apiSales.length} from API, ${indexedDBSales.length} from IndexedDB, ${allSales.length} total after merge)`);
         } catch (error: any) {
             const apiError = error as ApiError;
             console.error('[SalesPage] Error fetching sales:', apiError);
@@ -1028,7 +1131,7 @@ const SalesPage: React.FC<SalesPageProps> = ({ setActivePath }) => {
             setIsLoadingSales(false);
             fetchingRef.current = false;
         }
-    }, [filters, pageSize, currentUserName]);
+    }, [filters, pageSize, currentUserName, user]);
 
     // Reset to page 1 when filters or page size change, then fetch
     // Combine both operations in a single effect to avoid duplicate calls
@@ -2910,8 +3013,9 @@ const CustomerAccountsView: React.FC<{
             end = today.toISOString().split('T')[0];
         } else if (preset === 'month') {
             const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+            const monthEnd = new Date(today.getFullYear(), today.getMonth() + 1, 0); // Last day of current month
             start = monthStart.toISOString().split('T')[0];
-            end = today.toISOString().split('T')[0];
+            end = monthEnd.toISOString().split('T')[0];
         } else {
             // custom - keep existing range
             start = dateRange.start;
