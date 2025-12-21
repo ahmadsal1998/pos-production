@@ -14,6 +14,7 @@ import { printReceipt } from '@/shared/utils/printUtils';
 import { customerSync } from '@/lib/sync/customerSync';
 import { customersDB } from '@/lib/db/customersDB';
 import { salesDB } from '@/lib/db/salesDB';
+import { productsDB } from '@/lib/db/productsDB';
 import { loadSettings, saveSettings } from '@/shared/utils/settingsStorage';
 import { getBusinessDateFilterRange, getBusinessDayStartTime, getBusinessDayTimezone } from '@/shared/utils/businessDate';
 import { useResponsiveViewMode } from '@/shared/hooks';
@@ -24,6 +25,38 @@ const FilterIcon = () => (
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
     </svg>
 );
+
+// Utility function to calculate cost price for a sale
+const calculateCostPrice = async (items: any[]): Promise<number> => {
+    if (!items || items.length === 0) return 0;
+    
+    let totalCost = 0;
+    
+    for (const item of items) {
+        // If cost is already stored in the item, use it
+        if (item.cost !== undefined && item.cost !== null) {
+            totalCost += item.cost * Math.abs(item.quantity || 0);
+            continue;
+        }
+        
+        // Otherwise, try to fetch from IndexedDB
+        try {
+            const productId = item.productId || item.originalId;
+            if (productId) {
+                const product = await productsDB.getProduct(productId);
+                if (product) {
+                    const cost = product.costPrice || product.cost || 0;
+                    totalCost += cost * Math.abs(item.quantity || 0);
+                }
+            }
+        } catch (error) {
+            console.warn(`Failed to fetch cost for product ${item.productId}:`, error);
+            // Continue with other items even if one fails
+        }
+    }
+    
+    return totalCost;
+};
 
 interface SalesPageProps {
   setActivePath?: (path: string) => void; // Make optional for backward compatibility
@@ -662,15 +695,40 @@ const FilterModal: React.FC<{
         customerId: string;
         seller: string;
     };
-    onFilterChange: (filters: any) => void;
+    onApply: (filters: any) => void;
     onClearFilters: () => void;
     customers: Customer[];
     sellers: string[];
-}> = ({ isOpen, onClose, filters, onFilterChange, onClearFilters, customers, sellers }) => {
+}> = ({ isOpen, onClose, filters, onApply, onClearFilters, customers, sellers }) => {
+    // Temporary filter state - only applied when user clicks Apply
+    const [tempFilters, setTempFilters] = useState(filters);
+
+    // Initialize temporary filters when modal opens or filters prop changes
+    useEffect(() => {
+        if (isOpen) {
+            setTempFilters(filters);
+        }
+    }, [isOpen, filters]);
+
     if (!isOpen) return null;
 
     const handleClearFilters = () => {
+        const currentToday = new Date().toISOString().split('T')[0];
+        const resetFilters = {
+            dateRange: { start: currentToday, end: currentToday },
+            datePreset: 'today' as const,
+            paymentMethod: 'all',
+            status: 'all',
+            customerId: 'all',
+            seller: 'all',
+        };
+        setTempFilters(resetFilters);
         onClearFilters();
+        onClose();
+    };
+
+    const handleApply = () => {
+        onApply(tempFilters);
         onClose();
     };
 
@@ -694,8 +752,8 @@ const FilterModal: React.FC<{
             end = monthEnd.toISOString().split('T')[0];
         }
 
-        onFilterChange({
-            ...filters,
+        setTempFilters({
+            ...tempFilters,
             datePreset: preset,
             dateRange: { start, end },
         });
@@ -713,25 +771,25 @@ const FilterModal: React.FC<{
                         <div className="grid grid-cols-4 gap-2">
                             <button
                                 onClick={() => handlePresetChange('today')}
-                                className={`px-4 py-2 rounded-md text-sm ${filters.datePreset === 'today' ? 'bg-blue-500 text-white' : 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300'}`}
+                                className={`px-4 py-2 rounded-md text-sm ${tempFilters.datePreset === 'today' ? 'bg-blue-500 text-white' : 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300'}`}
                             >
                                 اليوم
                             </button>
                             <button
                                 onClick={() => handlePresetChange('week')}
-                                className={`px-4 py-2 rounded-md text-sm ${filters.datePreset === 'week' ? 'bg-blue-500 text-white' : 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300'}`}
+                                className={`px-4 py-2 rounded-md text-sm ${tempFilters.datePreset === 'week' ? 'bg-blue-500 text-white' : 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300'}`}
                             >
                                 هذا الأسبوع
                             </button>
                             <button
                                 onClick={() => handlePresetChange('month')}
-                                className={`px-4 py-2 rounded-md text-sm ${filters.datePreset === 'month' ? 'bg-blue-500 text-white' : 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300'}`}
+                                className={`px-4 py-2 rounded-md text-sm ${tempFilters.datePreset === 'month' ? 'bg-blue-500 text-white' : 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300'}`}
                             >
                                 هذا الشهر
                             </button>
                             <button
                                 onClick={() => handlePresetChange('custom')}
-                                className={`px-4 py-2 rounded-md text-sm ${filters.datePreset === 'custom' ? 'bg-blue-500 text-white' : 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300'}`}
+                                className={`px-4 py-2 rounded-md text-sm ${tempFilters.datePreset === 'custom' ? 'bg-blue-500 text-white' : 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300'}`}
                             >
                                 مخصص
                             </button>
@@ -739,14 +797,14 @@ const FilterModal: React.FC<{
                     </div>
 
                     {/* Custom Date Range */}
-                    {filters.datePreset === 'custom' && (
+                    {tempFilters.datePreset === 'custom' && (
                         <div className="grid grid-cols-2 gap-4">
                             <div>
                                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">من</label>
                                 <input
                                     type="date"
-                                    value={filters.dateRange.start}
-                                    onChange={(e) => onFilterChange({ ...filters, dateRange: { ...filters.dateRange, start: e.target.value } })}
+                                    value={tempFilters.dateRange.start}
+                                    onChange={(e) => setTempFilters({ ...tempFilters, dateRange: { ...tempFilters.dateRange, start: e.target.value } })}
                                     className="w-full p-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200 rounded-md"
                                 />
                             </div>
@@ -754,8 +812,8 @@ const FilterModal: React.FC<{
                                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">إلى</label>
                                 <input
                                     type="date"
-                                    value={filters.dateRange.end}
-                                    onChange={(e) => onFilterChange({ ...filters, dateRange: { ...filters.dateRange, end: e.target.value } })}
+                                    value={tempFilters.dateRange.end}
+                                    onChange={(e) => setTempFilters({ ...tempFilters, dateRange: { ...tempFilters.dateRange, end: e.target.value } })}
                                     className="w-full p-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200 rounded-md"
                                 />
                             </div>
@@ -767,8 +825,8 @@ const FilterModal: React.FC<{
                         <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">طريقة الدفع</label>
                         <CustomDropdown
                             id="filter-payment-method"
-                            value={filters.paymentMethod}
-                            onChange={(value) => onFilterChange({ ...filters, paymentMethod: value })}
+                            value={tempFilters.paymentMethod}
+                            onChange={(value) => setTempFilters({ ...tempFilters, paymentMethod: value })}
                             options={[
                                 { value: 'all', label: 'الكل' },
                                 { value: 'cash', label: AR_LABELS.cash },
@@ -785,8 +843,8 @@ const FilterModal: React.FC<{
                         <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">الحالة</label>
                         <CustomDropdown
                             id="filter-status"
-                            value={filters.status}
-                            onChange={(value) => onFilterChange({ ...filters, status: value })}
+                            value={tempFilters.status}
+                            onChange={(value) => setTempFilters({ ...tempFilters, status: value })}
                             options={[
                                 { value: 'all', label: 'الكل' },
                                 { value: 'completed', label: AR_LABELS.paid },
@@ -803,8 +861,8 @@ const FilterModal: React.FC<{
                         <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">العميل</label>
                         <CustomDropdown
                             id="filter-customer"
-                            value={filters.customerId}
-                            onChange={(value) => onFilterChange({ ...filters, customerId: value })}
+                            value={tempFilters.customerId}
+                            onChange={(value) => setTempFilters({ ...tempFilters, customerId: value })}
                             options={[
                                 { value: 'all', label: 'الكل' },
                                 ...customers.map(c => ({ value: c.id, label: c.name || c.phone })),
@@ -820,8 +878,8 @@ const FilterModal: React.FC<{
                             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">البائع</label>
                             <CustomDropdown
                                 id="filter-seller"
-                                value={filters.seller}
-                                onChange={(value) => onFilterChange({ ...filters, seller: value })}
+                                value={tempFilters.seller}
+                                onChange={(value) => setTempFilters({ ...tempFilters, seller: value })}
                                 options={[
                                     { value: 'all', label: 'الكل' },
                                     ...sellers.map(s => ({ value: s, label: s })),
@@ -840,7 +898,7 @@ const FilterModal: React.FC<{
                         مسح جميع الفلاتر
                     </button>
                     <div className="flex gap-2">
-                        <button onClick={onClose} className="px-4 py-2 bg-orange-500 hover:bg-orange-600 text-white rounded-md text-sm font-medium transition-colors">تطبيق</button>
+                        <button onClick={handleApply} className="px-4 py-2 bg-orange-500 hover:bg-orange-600 text-white rounded-md text-sm font-medium transition-colors">تطبيق</button>
                         <button onClick={onClose} className="px-4 py-2 bg-gray-200 dark:bg-gray-600 text-gray-800 dark:text-gray-200 rounded-md text-sm font-medium hover:bg-gray-300 dark:hover:bg-gray-500 transition-colors">{AR_LABELS.cancel}</button>
                     </div>
                 </div>
@@ -879,6 +937,18 @@ const SalesPage: React.FC<SalesPageProps> = ({ setActivePath }) => {
     const [filters, setFilters] = useState(defaultFilters);
     const [isFilterModalOpen, setIsFilterModalOpen] = useState(false);
 
+    // Summary statistics state - loaded first for fast display
+    // Initialize with 0 values so cards show immediately
+    // NOTE: Declared early so it can be used in handleClearFilters
+    const [statistics, setStatistics] = useState({
+        totalSales: 0,
+        totalPayments: 0,
+        creditSales: 0,
+        invoiceCount: 0,
+        netProfit: 0,
+    });
+    const [isLoadingStats, setIsLoadingStats] = useState(false); // Start as false so cards show immediately
+
     // Function to reset filters to default (Today)
     const handleClearFilters = useCallback(() => {
         const currentToday = new Date().toISOString().split('T')[0];
@@ -890,13 +960,21 @@ const SalesPage: React.FC<SalesPageProps> = ({ setActivePath }) => {
             customerId: 'all',
             seller: 'all',
         };
+        // Immediately reset statistics to 0 before applying filters
+        setStatistics({
+            totalSales: 0,
+            totalPayments: 0,
+            creditSales: 0,
+            invoiceCount: 0,
+            netProfit: 0,
+        });
         setFilters(resetFilters);
         setCurrentPage(1); // Reset to first page
-    }, []);
+    }, [setStatistics]);
     
     // Pagination state
     const [currentPage, setCurrentPage] = useState(1);
-    const [pageSize, setPageSize] = useState(20); // Items per page
+    const [pageSize, setPageSize] = useState(25); // Items per page (20-25 as requested)
     const [totalSales, setTotalSales] = useState(0);
     const [totalPages, setTotalPages] = useState(0);
 
@@ -904,15 +982,17 @@ const SalesPage: React.FC<SalesPageProps> = ({ setActivePath }) => {
     const fetchingRef = useRef(false);
     const lastRequestKeyRef = useRef<string>('');
     const salesRef = useRef<SaleTransaction[]>([]);
+    const isInitialMountRef = useRef(true);
+    const previousFiltersRef = useRef<string>('');
+    const hasInitialStatsRef = useRef(false); // Track if we've set initial stats from displayed sales
 
-    // Fetch sales from database with filters and pagination
+    // Fetch sales from database with server-side filtering and pagination
     const fetchSales = useCallback(async (page: number = 1) => {
         // Create a unique request key to prevent duplicate requests
         const requestKey = `${page}-${pageSize}-${JSON.stringify(filters)}`;
         
         // If we're already fetching the exact same request, skip it
         if (fetchingRef.current && lastRequestKeyRef.current === requestKey) {
-            console.log('[SalesPage] ⏭️ Skipping duplicate request:', requestKey);
             return;
         }
 
@@ -924,7 +1004,7 @@ const SalesPage: React.FC<SalesPageProps> = ({ setActivePath }) => {
         setSalesError(null);
         
         try {
-            // Build query parameters
+            // Build query parameters for server-side filtering and pagination
             const params: any = {
                 page,
                 limit: pageSize,
@@ -933,11 +1013,9 @@ const SalesPage: React.FC<SalesPageProps> = ({ setActivePath }) => {
             // Add date filters - ensure dates are in YYYY-MM-DD format
             if (filters.dateRange.start) {
                 params.startDate = filters.dateRange.start;
-                console.log('[SalesPage] Filter startDate:', params.startDate, 'Type:', typeof params.startDate);
             }
             if (filters.dateRange.end) {
                 params.endDate = filters.dateRange.end;
-                console.log('[SalesPage] Filter endDate:', params.endDate, 'Type:', typeof params.endDate);
             }
 
             // Add payment method filter
@@ -945,7 +1023,7 @@ const SalesPage: React.FC<SalesPageProps> = ({ setActivePath }) => {
                 params.paymentMethod = filters.paymentMethod;
             }
 
-            // Add status filter
+            // Add status filter (FilterModal already uses backend status values)
             if (filters.status !== 'all') {
                 params.status = filters.status;
             }
@@ -960,14 +1038,7 @@ const SalesPage: React.FC<SalesPageProps> = ({ setActivePath }) => {
                 params.seller = filters.seller;
             }
 
-            console.log('[SalesPage] Fetching sales with params:', params);
-            console.log('[SalesPage] Date filter range:', {
-                start: filters.dateRange.start,
-                end: filters.dateRange.end,
-                preset: filters.datePreset
-            });
-            
-            // Try to fetch from API first
+            // Fetch from API with server-side filtering and pagination
             let apiSales: SaleTransaction[] = [];
             let pagination: any = null;
             
@@ -975,102 +1046,8 @@ const SalesPage: React.FC<SalesPageProps> = ({ setActivePath }) => {
                 const response = await salesApi.getSales(params);
                 const backendResponse = response.data as any;
                 
-                console.log('[SalesPage] API response:', {
-                    success: backendResponse?.success,
-                    salesCount: backendResponse?.data?.sales?.length || 0,
-                    pagination: backendResponse?.data?.pagination,
-                    hasData: !!backendResponse?.data
-                });
-                
-                // FIX: If no sales found with date filters, try fetching without date filters
-                // The backend's business date filtering might be too strict and excluding valid sales
-                if ((!backendResponse?.data?.sales || backendResponse.data.sales.length === 0) && (filters.dateRange.start || filters.dateRange.end)) {
-                    console.warn('[SalesPage] ⚠️ No sales found with date filters, fetching all sales and filtering client-side...');
-                    try {
-                        const testParams = { ...params };
-                        delete testParams.startDate;
-                        delete testParams.endDate;
-                        // Fetch more sales to ensure we get all that might match (especially for week/month filters)
-                        testParams.limit = 5000; // Increased limit to ensure we get all sales for the period
-                        const testResponse = await salesApi.getSales(testParams);
-                        const testBackendResponse = testResponse.data as any;
-                        if (testBackendResponse?.data?.sales && testBackendResponse.data.sales.length > 0) {
-                            console.log('[SalesPage] ✅ Found', testBackendResponse.data.sales.length, 'sales without date filters');
-                            
-                            // Transform and filter client-side by date range
-                            const filterStart = filters.dateRange.start;
-                            const filterEnd = filters.dateRange.end;
-                            
-                            const allTestSales = testBackendResponse.data.sales.map((sale: any) => ({
-                                id: sale.id || sale._id || sale.invoiceNumber,
-                                invoiceNumber: sale.invoiceNumber || sale.id || sale._id,
-                                date: sale.date || sale.createdAt || new Date().toISOString(),
-                                customerName: sale.customerName || 'عميل نقدي',
-                                customerId: sale.customerId || 'walk-in-customer',
-                                totalAmount: sale.total || sale.totalAmount || 0,
-                                paidAmount: sale.paidAmount || 0,
-                                remainingAmount: sale.remainingAmount || (sale.total - (sale.paidAmount || 0)),
-                                paymentMethod: (sale.paymentMethod?.charAt(0).toUpperCase() + sale.paymentMethod?.slice(1).toLowerCase()) as SalePaymentMethod || 'Cash',
-                                status: sale.status === 'completed' ? 'Paid' : sale.status === 'partial_payment' ? 'Partial' : sale.status === 'pending' ? 'Due' : sale.status === 'refunded' || sale.status === 'partial_refund' ? 'Returned' : (sale.status as SaleStatus) || 'Paid',
-                                seller: sale.seller || sale.cashier || currentUserName,
-                                items: Array.isArray(sale.items) ? sale.items.map((item: any) => ({
-                                    productId: typeof item.productId === 'string' ? parseInt(item.productId) || 0 : item.productId || 0,
-                                    name: item.productName || item.name || '',
-                                    unit: item.unit || 'قطعة',
-                                    quantity: item.quantity || 0,
-                                    unitPrice: item.unitPrice || 0,
-                                    total: item.totalPrice || item.total || 0,
-                                    discount: item.discount || 0,
-                                    conversionFactor: item.conversionFactor,
-                                })) : [],
-                                subtotal: sale.subtotal || 0,
-                                totalItemDiscount: sale.totalItemDiscount || 0,
-                                invoiceDiscount: sale.invoiceDiscount || sale.discount || 0,
-                                tax: sale.tax || 0,
-                            }));
-                            
-                            // Filter by date range client-side
-                            const matchingSales = allTestSales.filter((sale: SaleTransaction) => {
-                                if (!sale.date) return false;
-                                const saleDateOnly = new Date(sale.date).toISOString().split('T')[0];
-                                const matchesStart = !filterStart || saleDateOnly >= filterStart;
-                                const matchesEnd = !filterEnd || saleDateOnly <= filterEnd;
-                                return matchesStart && matchesEnd;
-                            });
-                            
-                            console.log('[SalesPage] Client-side filtered sales:', {
-                                filterStart,
-                                filterEnd,
-                                totalSales: allTestSales.length,
-                                matchingCount: matchingSales.length,
-                                matchingInvoices: matchingSales.map(s => s.invoiceNumber)
-                            });
-                            
-                            // Use the client-side filtered sales instead of empty API response
-                            if (matchingSales.length > 0) {
-                                console.log('[SalesPage] Using client-side filtered sales due to backend business date filtering exclusion');
-                                apiSales = matchingSales;
-                                // Update pagination info
-                                pagination = {
-                                    totalSales: matchingSales.length,
-                                    totalPages: Math.ceil(matchingSales.length / pageSize),
-                                    currentPage: page,
-                                    limit: pageSize,
-                                    hasNextPage: page * pageSize < matchingSales.length,
-                                    hasPreviousPage: page > 1,
-                                };
-                            }
-                        } else {
-                            console.log('[SalesPage] No sales found even without date filters - database may be empty');
-                        }
-                    } catch (testError) {
-                        console.warn('[SalesPage] Error testing without date filters:', testError);
-                    }
-                }
-                
-                // Only transform API sales if we haven't already populated apiSales from the fallback query
-                if (apiSales.length === 0 && backendResponse?.success && Array.isArray(backendResponse.data?.sales)) {
-                    // Transform API sales to SaleTransaction format
+                // Transform API sales to SaleTransaction format
+                if (backendResponse?.success && Array.isArray(backendResponse.data?.sales)) {
                     apiSales = backendResponse.data.sales.map((sale: any) => ({
                         id: sale.id || sale._id || sale.invoiceNumber,
                         invoiceNumber: sale.invoiceNumber || sale.id || sale._id,
@@ -1092,6 +1069,8 @@ const SalesPage: React.FC<SalesPageProps> = ({ setActivePath }) => {
                             total: item.totalPrice || item.total || 0,
                             discount: item.discount || 0,
                             conversionFactor: item.conversionFactor,
+                            costPrice: item.costPrice, // Include costPrice from API
+                            cost: item.cost || item.costPrice, // Include cost (legacy) or costPrice
                         })) : [],
                         subtotal: sale.subtotal || 0,
                         totalItemDiscount: sale.totalItemDiscount || 0,
@@ -1099,69 +1078,68 @@ const SalesPage: React.FC<SalesPageProps> = ({ setActivePath }) => {
                         tax: sale.tax || 0,
                     }));
                     
+                    // Use server-side pagination info
                     pagination = backendResponse.data?.pagination;
                 }
             } catch (apiError: any) {
-                console.warn('[SalesPage] API fetch failed, will try IndexedDB:', apiError);
-                // Continue to load from IndexedDB
+                console.error('[SalesPage] API fetch failed:', apiError);
+                setSalesError(apiError.message || 'فشل تحميل المبيعات');
+                setSales([]);
+                salesRef.current = [];
+                setTotalSales(0);
+                setTotalPages(0);
+                return;
             }
             
-            // Also load from IndexedDB to get offline/unsynced sales
-            let indexedDBSales: SaleTransaction[] = [];
+            // Load unsynced sales from IndexedDB (only those that haven't been synced to server)
+            // These are sales created offline that match the current filters
+            let unsyncedSales: SaleTransaction[] = [];
             try {
                 const storeId = user?.storeId;
                 
                 if (storeId) {
                     await salesDB.init();
-                    const dbFilters: any = {};
                     
-                    // Apply date filters - ensure full day range is included
-                    if (filters.dateRange.start) {
-                        const startDate = new Date(filters.dateRange.start);
-                        startDate.setHours(0, 0, 0, 0); // Start of day
-                        dbFilters.startDate = startDate;
-                    }
-                    if (filters.dateRange.end) {
-                        const endDate = new Date(filters.dateRange.end);
-                        endDate.setHours(23, 59, 59, 999); // End of day
-                        dbFilters.endDate = endDate;
+                    // Get all unsynced sales first
+                    const allUnsynced = await salesDB.getUnsyncedSales(storeId);
+                    
+                    // Apply filters to unsynced sales manually
+                    let filteredUnsynced = allUnsynced;
+                    
+                    // Apply date filters
+                    if (filters.dateRange.start || filters.dateRange.end) {
+                        const filterStartStr = filters.dateRange.start ? new Date(filters.dateRange.start).toISOString().split('T')[0] : null;
+                        const filterEndStr = filters.dateRange.end ? new Date(filters.dateRange.end).toISOString().split('T')[0] : null;
+                        
+                        filteredUnsynced = filteredUnsynced.filter((sale) => {
+                            if (!sale.date) return false;
+                            const saleDateStr = new Date(sale.date).toISOString().split('T')[0];
+                            const matchesStart = !filterStartStr || saleDateStr >= filterStartStr;
+                            const matchesEnd = !filterEndStr || saleDateStr <= filterEndStr;
+                            return matchesStart && matchesEnd;
+                        });
                     }
                     
                     // Apply other filters
                     if (filters.paymentMethod !== 'all') {
-                        dbFilters.paymentMethod = filters.paymentMethod.toLowerCase();
+                        filteredUnsynced = filteredUnsynced.filter(
+                            (sale) => sale.paymentMethod?.toLowerCase() === filters.paymentMethod.toLowerCase()
+                        );
                     }
                     if (filters.status !== 'all') {
-                        dbFilters.status = filters.status;
+                        filteredUnsynced = filteredUnsynced.filter((sale) => sale.status === filters.status);
                     }
                     if (filters.customerId !== 'all') {
-                        dbFilters.customerId = filters.customerId;
+                        filteredUnsynced = filteredUnsynced.filter((sale) => sale.customerId === filters.customerId);
                     }
                     if (filters.seller !== 'all') {
-                        dbFilters.seller = filters.seller;
+                        filteredUnsynced = filteredUnsynced.filter((sale) => sale.seller === filters.seller);
                     }
                     
-                    console.log('[SalesPage] IndexedDB filters:', {
-                        startDate: dbFilters.startDate?.toISOString(),
-                        endDate: dbFilters.endDate?.toISOString(),
-                        paymentMethod: dbFilters.paymentMethod,
-                        status: dbFilters.status
-                    });
-                    
-                    const dbSales = await salesDB.getSalesByStore(storeId, dbFilters);
-                    
-                    console.log('[SalesPage] IndexedDB returned', dbSales.length, 'sales');
-                    if (dbSales.length > 0) {
-                        console.log('[SalesPage] Sample IndexedDB sale dates:', dbSales.slice(0, 3).map(s => ({
-                            invoiceNumber: s.invoiceNumber,
-                            date: s.date,
-                            dateType: typeof s.date,
-                            dateObj: new Date(s.date).toISOString()
-                        })));
-                    }
+                    const dbSales = filteredUnsynced;
                     
                     // Transform IndexedDB sales to SaleTransaction format
-                    indexedDBSales = dbSales.map((sale: any) => ({
+                    unsyncedSales = dbSales.map((sale: any) => ({
                         id: sale.id || sale._id || sale.invoiceNumber,
                         invoiceNumber: sale.invoiceNumber || sale.id || sale._id,
                         date: sale.date || sale.createdAt || new Date().toISOString(),
@@ -1182,20 +1160,22 @@ const SalesPage: React.FC<SalesPageProps> = ({ setActivePath }) => {
                             total: item.totalPrice || item.total || 0,
                             discount: item.discount || 0,
                             conversionFactor: item.conversionFactor,
+                            costPrice: item.costPrice, // Include costPrice if available
+                            cost: item.cost || item.costPrice, // Include cost if available
                         })) : [],
                         subtotal: sale.subtotal || 0,
                         totalItemDiscount: sale.totalItemDiscount || 0,
                         invoiceDiscount: sale.invoiceDiscount || sale.discount || 0,
                         tax: sale.tax || 0,
                     }));
-                    
-                    console.log(`[SalesPage] Loaded ${indexedDBSales.length} sales from IndexedDB`);
                 }
             } catch (dbError: any) {
-                console.warn('[SalesPage] Error loading sales from IndexedDB:', dbError);
+                console.warn('[SalesPage] Error loading unsynced sales from IndexedDB:', dbError);
+                // Continue with API sales only
             }
             
-            // Merge API and IndexedDB sales, removing duplicates by invoiceNumber
+            // Merge API and unsynced IndexedDB sales
+            // Remove duplicates by invoiceNumber (API sales take precedence)
             const salesMap = new Map<string, SaleTransaction>();
             
             // Add API sales first (they take precedence)
@@ -1206,132 +1186,43 @@ const SalesPage: React.FC<SalesPageProps> = ({ setActivePath }) => {
                 }
             });
             
-            // Add IndexedDB sales (only if not already in map, or if unsynced)
-            indexedDBSales.forEach(sale => {
+            // Add unsynced IndexedDB sales (only if not already in API results)
+            unsyncedSales.forEach(sale => {
                 const key = sale.invoiceNumber || sale.id;
-                if (key) {
-                    // If sale is not in map, or if it's unsynced (might be newer), add it
-                    if (!salesMap.has(key)) {
-                        salesMap.set(key, sale);
-                    }
+                if (key && !salesMap.has(key)) {
+                    salesMap.set(key, sale);
                 }
             });
             
-            // Convert map to array and sort by date (most recent first)
-            let allSales = Array.from(salesMap.values());
-            
-            // Apply client-side date filtering to ensure accuracy
-            // This is a safety net in case backend/IndexedDB filtering had issues
-            if (filters.dateRange.start || filters.dateRange.end) {
-                const filterStart = filters.dateRange.start;
-                const filterEnd = filters.dateRange.end;
-                
-                console.log('[SalesPage] Client-side date filtering:', {
-                    filterStart,
-                    filterEnd,
-                    salesBeforeFilter: allSales.length
-                });
-                
-                const beforeFilterCount = allSales.length;
-                
-                // Log sample sales before filtering for debugging
-                if (beforeFilterCount > 0 && beforeFilterCount <= 10) {
-                    console.log('[SalesPage] Sample sales before client filter:', allSales.slice(0, 3).map(s => ({
-                        invoiceNumber: s.invoiceNumber,
-                        date: s.date,
-                        dateObj: new Date(s.date).toISOString(),
-                        dateOnly: new Date(s.date).toISOString().split('T')[0]
-                    })));
-                }
-                
-                allSales = allSales.filter(sale => {
-                    if (!sale.date) {
-                        console.warn('[SalesPage] Sale missing date:', sale.invoiceNumber);
-                        return false;
-                    }
-                    
-                    const saleDate = new Date(sale.date);
-                    const saleDateOnly = saleDate.toISOString().split('T')[0]; // Get YYYY-MM-DD
-                    
-                    // Compare date strings directly for simplicity (YYYY-MM-DD format is naturally sortable)
-                    const matchesStart = !filterStart || saleDateOnly >= filterStart;
-                    const matchesEnd = !filterEnd || saleDateOnly <= filterEnd;
-                    const matches = matchesStart && matchesEnd;
-                    
-                    if (!matches && beforeFilterCount <= 10) {
-                        console.log('[SalesPage] Sale filtered out:', {
-                            invoiceNumber: sale.invoiceNumber,
-                            saleDateOnly,
-                            filterStart,
-                            filterEnd,
-                            matchesStart,
-                            matchesEnd
-                        });
-                    }
-                    
-                    return matches;
-                });
-                
-                console.log('[SalesPage] After client-side filtering:', {
-                    before: beforeFilterCount,
-                    after: allSales.length,
-                    filtered: beforeFilterCount - allSales.length
-                });
-            }
-            
-            // Calculate summary statistics from filtered sales
-            // This ensures summary cards show correct values even when API summary returns 0
-            const calculateSummaryFromSales = (sales: SaleTransaction[]) => {
-                const summary = {
-                    totalSales: 0,
-                    totalPayments: 0,
-                    invoiceCount: sales.length,
-                    creditSales: 0,
-                    remainingAmount: 0,
-                    netProfit: 0, // Net profit requires product cost data, will be 0 for now
-                };
-                
-                sales.forEach(sale => {
-                    summary.totalSales += sale.totalAmount || 0;
-                    summary.totalPayments += sale.paidAmount || 0;
-                    summary.remainingAmount += sale.remainingAmount || 0;
-                    if (sale.paymentMethod === 'Credit') {
-                        summary.creditSales += sale.totalAmount || 0;
-                    }
-                });
-                
-                return summary;
-            };
-            
-            const calculatedSummary = calculateSummaryFromSales(allSales);
-            console.log('[SalesPage] Calculated summary from filtered sales:', calculatedSummary);
-            
-            // Update statistics with calculated values
-            setStatistics(calculatedSummary);
-            
-            // Sort by date (most recent first)
+            // Convert to array and sort by date (most recent first)
+            const allSales = Array.from(salesMap.values());
             allSales.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
             
-            // Apply pagination
-            const startIndex = (page - 1) * pageSize;
-            const endIndex = startIndex + pageSize;
-            const paginatedSales = allSales.slice(startIndex, endIndex);
+            // Use server-side pagination as the primary source
+            // Only merge unsynced sales on page 1 to avoid breaking pagination
+            let finalSales: SaleTransaction[] = [];
+            let finalTotalSales: number;
+            let finalTotalPages: number;
             
-            setSales(paginatedSales);
-            salesRef.current = paginatedSales;
-            
-            // Update pagination info
-            if (pagination) {
-                // Adjust total to include IndexedDB sales
-                const totalFromDB = indexedDBSales.filter(s => !apiSales.some(a => (a.invoiceNumber || a.id) === (s.invoiceNumber || s.id))).length;
-                setTotalSales((pagination.totalSales || 0) + totalFromDB);
-                setTotalPages(Math.ceil(allSales.length / pageSize));
+            if (page === 1 && unsyncedSales.length > 0) {
+                // On page 1: merge unsynced sales with API sales
+                // Sort by date (most recent first) and limit to pageSize
+                finalSales = allSales.slice(0, pageSize);
+                // Adjust total to include unsynced sales that match filters
+                const apiTotal = pagination?.totalSales || apiSales.length;
+                finalTotalSales = apiTotal + unsyncedSales.length;
+                finalTotalPages = Math.ceil(finalTotalSales / pageSize);
             } else {
-                setTotalSales(allSales.length);
-                setTotalPages(Math.ceil(allSales.length / pageSize));
+                // Use API results directly (server-side paginated)
+                finalSales = apiSales;
+                finalTotalSales = pagination?.totalSales || 0;
+                finalTotalPages = pagination?.totalPages || Math.ceil(finalTotalSales / pageSize) || 1;
             }
             
-            console.log(`[SalesPage] Loaded ${paginatedSales.length} sales (${apiSales.length} from API, ${indexedDBSales.length} from IndexedDB, ${allSales.length} total after merge)`);
+            setSales(finalSales);
+            salesRef.current = finalSales;
+            setTotalSales(finalTotalSales);
+            setTotalPages(finalTotalPages);
         } catch (error: any) {
             const apiError = error as ApiError;
             console.error('[SalesPage] Error fetching sales:', apiError);
@@ -1557,7 +1448,6 @@ const SalesPage: React.FC<SalesPageProps> = ({ setActivePath }) => {
     // Fetch all users from the store to populate seller filter
     const fetchSellers = useCallback(async () => {
         try {
-            console.log('[SalesPage] Fetching users for seller filter...');
             const response = await usersApi.getUsers();
             const usersData = (response.data as any)?.data?.users || [];
             
@@ -1630,20 +1520,98 @@ const SalesPage: React.FC<SalesPageProps> = ({ setActivePath }) => {
         };
     }, [getFilterLabelSuffix]);
 
-    // Summary statistics state - loaded first for fast display
-    // Initialize with 0 values so cards show immediately
-    const [statistics, setStatistics] = useState({
-        totalSales: 0,
-        totalPayments: 0,
-        creditSales: 0,
-        invoiceCount: 0,
-        netProfit: 0,
-    });
-    const [isLoadingStats, setIsLoadingStats] = useState(false); // Start as false so cards show immediately
+    // Helper function to calculate statistics from sales array
+    const calculateStatisticsFromSales = useCallback(async (sales: SaleTransaction[]) => {
+        const stats = {
+            totalSales: 0,
+            totalPayments: 0,
+            creditSales: 0,
+            invoiceCount: sales.length,
+            remainingAmount: 0,
+            netProfit: 0,
+        };
+
+        sales.forEach((sale) => {
+            stats.totalSales += sale.totalAmount || 0;
+            stats.totalPayments += sale.paidAmount || 0;
+            stats.remainingAmount += sale.remainingAmount || 0;
+            
+            // Credit sales are sales with status 'Due' or 'Partial'
+            if (sale.status === 'Due' || sale.status === 'Partial') {
+                stats.creditSales += sale.totalAmount || 0;
+            }
+        });
+
+        // Calculate net profit: totalSales - totalCost
+        // First, calculate from stored cost prices in items (fastest and most accurate)
+        let totalCost = 0;
+        const itemsNeedingLookup: any[] = [];
+
+        sales.forEach((sale) => {
+            if (sale.items && Array.isArray(sale.items)) {
+                sale.items.forEach((item: any) => {
+                    const quantity = Math.abs(item.quantity || 0);
+                    
+                    // Check for costPrice first (new field), then cost (legacy)
+                    if (item.costPrice !== undefined && item.costPrice !== null) {
+                        totalCost += (item.costPrice || 0) * quantity;
+                    } else if (item.cost !== undefined && item.cost !== null) {
+                        totalCost += (item.cost || 0) * quantity;
+                    } else {
+                        // Need to fetch cost price for this item
+                        itemsNeedingLookup.push(item);
+                    }
+                });
+            }
+        });
+
+        // For items missing cost prices, fetch from products in batch
+        if (itemsNeedingLookup.length > 0) {
+            try {
+                const costPromises = itemsNeedingLookup.map(item => calculateCostPrice([item]));
+                const costs = await Promise.all(costPromises);
+                costs.forEach(cost => {
+                    totalCost += cost;
+                });
+            } catch (error) {
+                console.warn('[SalesPage] Failed to calculate some costs:', error);
+                // Continue with partial calculation
+            }
+        }
+
+        stats.netProfit = stats.totalSales - totalCost;
+
+        return stats;
+    }, []);
 
     // Fast summary fetch using dedicated endpoint (loads first, before detailed sales)
     const fetchStatistics = useCallback(async () => {
         setIsLoadingStats(true);
+        
+        // Check if filters have actually changed (not just initial mount)
+        const currentFiltersKey = JSON.stringify(filters);
+        const filtersChanged = previousFiltersRef.current !== currentFiltersKey;
+        previousFiltersRef.current = currentFiltersKey;
+        
+        // Only reset statistics to 0 when filters change (not on initial mount)
+        // This prevents showing zeros on initial load
+        if (filtersChanged && !isInitialMountRef.current) {
+            setStatistics({
+                totalSales: 0,
+                totalPayments: 0,
+                creditSales: 0,
+                invoiceCount: 0,
+                netProfit: 0,
+            });
+            // Reset the initial stats flag when filters change so new stats can update
+            hasInitialStatsRef.current = false;
+        }
+        
+        // Mark that initial mount is complete
+        if (isInitialMountRef.current) {
+            isInitialMountRef.current = false;
+        }
+        
         try {
             // Build query parameters (same as sales, but without pagination)
             const params: any = {};
@@ -1667,46 +1635,225 @@ const SalesPage: React.FC<SalesPageProps> = ({ setActivePath }) => {
                 params.customerId = filters.customerId;
             }
 
+            if (filters.seller !== 'all') {
+                params.seller = filters.seller;
+            }
+
             // Use fast summary endpoint (MongoDB aggregation - much faster than loading all sales)
             console.log('[SalesPage] Fetching summary statistics from API...');
-            const response = await salesApi.getSalesSummary(params);
-            const summaryData = response.data as any;
-            
-            if (summaryData?.success && summaryData.data) {
-                const { totalSales, totalPayments, creditSales, invoiceCount, remainingAmount, netProfit } = summaryData.data;
+            let apiStats = {
+                totalSales: 0,
+                totalPayments: 0,
+                creditSales: 0,
+                invoiceCount: 0,
+                remainingAmount: 0,
+                netProfit: 0,
+            };
 
-                // Only use API summary if it has meaningful data
-                // If it returns 0, we'll calculate from filtered sales in fetchSales
-                if (invoiceCount > 0 || totalSales > 0) {
-                    setStatistics({ 
-                        totalSales: totalSales || 0, 
-                        totalPayments: totalPayments || 0, 
-                        creditSales: creditSales || 0, 
+            try {
+                const response = await salesApi.getSalesSummary(params);
+                const summaryData = response.data as any;
+                
+                if (summaryData?.success && summaryData.data) {
+                    const { totalSales, totalPayments, creditSales, invoiceCount, remainingAmount, netProfit } = summaryData.data;
+                    apiStats = {
+                        totalSales: totalSales || 0,
+                        totalPayments: totalPayments || 0,
+                        creditSales: creditSales || 0,
                         invoiceCount: invoiceCount || 0,
                         remainingAmount: remainingAmount || 0,
-                        netProfit: netProfit || 0
-                    });
-                    console.log('[SalesPage] Summary statistics loaded from API:', { totalSales, invoiceCount, netProfit });
-                } else {
-                    console.log('[SalesPage] API summary returned 0, will be recalculated from filtered sales');
-                    // Don't update statistics here - fetchSales will calculate from filtered sales
+                        netProfit: netProfit || 0,
+                    };
                 }
-            } else {
-                console.log('[SalesPage] API summary failed or returned no data, will be recalculated from filtered sales');
-                // Don't update statistics here - fetchSales will calculate from filtered sales
+            } catch (apiError) {
+                console.error('[SalesPage] Error fetching summary statistics from API:', apiError);
+                // Continue to try offline data even if API fails
             }
+
+            // Now load and calculate statistics from offline/unsynced sales
+            let offlineStats = {
+                totalSales: 0,
+                totalPayments: 0,
+                creditSales: 0,
+                invoiceCount: 0,
+                remainingAmount: 0,
+                netProfit: 0,
+            };
+
+            try {
+                const storeId = user?.storeId;
+                
+                if (storeId) {
+                    await salesDB.init();
+                    
+                    // Get all unsynced sales first
+                    const allUnsynced = await salesDB.getUnsyncedSales(storeId);
+                    
+                    // Apply filters to unsynced sales manually (same logic as in fetchSales)
+                    let filteredUnsynced = allUnsynced;
+                    
+                    // Apply date filters
+                    if (filters.dateRange.start || filters.dateRange.end) {
+                        const filterStartStr = filters.dateRange.start ? new Date(filters.dateRange.start).toISOString().split('T')[0] : null;
+                        const filterEndStr = filters.dateRange.end ? new Date(filters.dateRange.end).toISOString().split('T')[0] : null;
+                        
+                        filteredUnsynced = filteredUnsynced.filter((sale) => {
+                            if (!sale.date) return false;
+                            const saleDateStr = new Date(sale.date).toISOString().split('T')[0];
+                            const matchesStart = !filterStartStr || saleDateStr >= filterStartStr;
+                            const matchesEnd = !filterEndStr || saleDateStr <= filterEndStr;
+                            return matchesStart && matchesEnd;
+                        });
+                    }
+                    
+                    // Apply other filters
+                    if (filters.paymentMethod !== 'all') {
+                        filteredUnsynced = filteredUnsynced.filter(
+                            (sale) => sale.paymentMethod?.toLowerCase() === filters.paymentMethod.toLowerCase()
+                        );
+                    }
+                    if (filters.status !== 'all') {
+                        filteredUnsynced = filteredUnsynced.filter((sale) => {
+                            // Map IndexedDB status to SaleStatus format
+                            const dbStatus = sale.status;
+                            if (dbStatus === 'completed') return filters.status === 'Paid';
+                            if (dbStatus === 'partial_payment') return filters.status === 'Partial';
+                            if (dbStatus === 'pending') return filters.status === 'Due';
+                            if (dbStatus === 'refunded' || dbStatus === 'partial_refund') return filters.status === 'Returned';
+                            return dbStatus === filters.status;
+                        });
+                    }
+                    if (filters.customerId !== 'all') {
+                        filteredUnsynced = filteredUnsynced.filter((sale) => sale.customerId === filters.customerId);
+                    }
+                    if (filters.seller !== 'all') {
+                        filteredUnsynced = filteredUnsynced.filter((sale) => sale.seller === filters.seller);
+                    }
+                    
+                    // Transform IndexedDB sales to SaleTransaction format
+                    const unsyncedSales: SaleTransaction[] = filteredUnsynced.map((sale: any) => ({
+                        id: sale.id || sale._id || sale.invoiceNumber,
+                        invoiceNumber: sale.invoiceNumber || sale.id || sale._id,
+                        date: sale.date || sale.createdAt || new Date().toISOString(),
+                        customerName: sale.customerName || 'عميل نقدي',
+                        customerId: sale.customerId || 'walk-in-customer',
+                        totalAmount: sale.total || sale.totalAmount || 0,
+                        paidAmount: sale.paidAmount || 0,
+                        remainingAmount: sale.remainingAmount || (sale.total - (sale.paidAmount || 0)),
+                        paymentMethod: (sale.paymentMethod?.charAt(0).toUpperCase() + sale.paymentMethod?.slice(1).toLowerCase()) as SalePaymentMethod || 'Cash',
+                        status: sale.status === 'completed' ? 'Paid' : sale.status === 'partial_payment' ? 'Partial' : sale.status === 'pending' ? 'Due' : sale.status === 'refunded' || sale.status === 'partial_refund' ? 'Returned' : (sale.status as SaleStatus) || 'Paid',
+                        seller: sale.seller || sale.cashier || currentUserName,
+                        items: Array.isArray(sale.items) ? sale.items.map((item: any) => ({
+                            productId: typeof item.productId === 'string' ? parseInt(item.productId) || 0 : item.productId || 0,
+                            name: item.productName || item.name || '',
+                            unit: item.unit || 'قطعة',
+                            quantity: item.quantity || 0,
+                            unitPrice: item.unitPrice || 0,
+                            total: item.totalPrice || item.total || 0,
+                            discount: item.discount || 0,
+                            conversionFactor: item.conversionFactor,
+                            costPrice: item.costPrice, // Include costPrice if available (new field)
+                            cost: item.cost || item.costPrice, // Include cost if available (legacy field)
+                        })) : [],
+                        subtotal: sale.subtotal || 0,
+                        totalItemDiscount: sale.totalItemDiscount || 0,
+                        invoiceDiscount: sale.invoiceDiscount || sale.discount || 0,
+                        tax: sale.tax || 0,
+                    }));
+
+                    // Calculate statistics from unsynced sales
+                    if (unsyncedSales.length > 0) {
+                        offlineStats = await calculateStatisticsFromSales(unsyncedSales);
+                    }
+                }
+            } catch (offlineError) {
+                console.warn('[SalesPage] Error loading offline statistics from IndexedDB:', offlineError);
+                // Continue with API stats only
+            }
+
+            // Merge API and offline statistics
+            const mergedStats = {
+                totalSales: apiStats.totalSales + offlineStats.totalSales,
+                totalPayments: apiStats.totalPayments + offlineStats.totalPayments,
+                creditSales: apiStats.creditSales + offlineStats.creditSales,
+                invoiceCount: apiStats.invoiceCount + offlineStats.invoiceCount,
+                remainingAmount: apiStats.remainingAmount + offlineStats.remainingAmount,
+                netProfit: apiStats.netProfit + offlineStats.netProfit,
+            };
+
+            // Update statistics with merged values
+            // But don't overwrite valid initial stats with zeros on initial mount
+            setStatistics(prevStats => {
+                // If we already have valid stats from displayed sales (initial load),
+                // only update if the new stats are actually valid (non-zero when we have sales)
+                if (hasInitialStatsRef.current) {
+                    // Only update if merged stats are valid (have invoices) or if they're better than current
+                    if (mergedStats.invoiceCount > 0 || prevStats.invoiceCount === 0) {
+                        return mergedStats;
+                    }
+                    // Keep existing stats if they're valid and new ones are zeros
+                    return prevStats;
+                }
+                // Normal update for subsequent calls or when we don't have initial stats yet
+                return mergedStats;
+            });
         } catch (error) {
             console.error('[SalesPage] Error fetching summary statistics:', error);
-            // Don't set error state - fetchSales will calculate from filtered sales
+            // Don't reset to zero on error if we already have valid stats from displayed sales
+            setStatistics(prevStats => {
+                // If we have initial stats, keep them instead of resetting to zero
+                if (hasInitialStatsRef.current && prevStats.invoiceCount > 0) {
+                    return prevStats;
+                }
+                // Otherwise reset to zero
+                return {
+                    totalSales: 0,
+                    totalPayments: 0,
+                    creditSales: 0,
+                    invoiceCount: 0,
+                    netProfit: 0,
+                };
+            });
         } finally {
             setIsLoadingStats(false);
         }
-    }, [filters]);
+    }, [filters, user?.storeId, currentUserName, calculateStatisticsFromSales]);
 
     // Fetch summary FIRST when filters change (before detailed sales)
     useEffect(() => {
         fetchStatistics();
     }, [fetchStatistics]);
+
+    // Calculate statistics from displayed sales as a fallback/backup
+    // This ensures summary cards always reflect what's shown in the table on initial load
+    // Note: fetchStatistics calculates from ALL matching invoices (not paginated), which is the correct approach
+    // This effect provides immediate feedback from displayed sales until fetchStatistics completes
+    useEffect(() => {
+        if (sales.length > 0) {
+            const calculateStats = async () => {
+                const calculatedStats = await calculateStatisticsFromSales(sales);
+                
+                // Only update statistics if:
+                // 1. It's the initial mount (to show values immediately)
+                // 2. OR current stats are zero and we have sales (meaning fetchStatistics hasn't completed yet or returned empty)
+                setStatistics(prevStats => {
+                    const shouldUpdate = isInitialMountRef.current || 
+                        (prevStats.invoiceCount === 0 && calculatedStats.invoiceCount > 0);
+                    
+                    if (shouldUpdate) {
+                        // Mark that we've set initial stats
+                        hasInitialStatsRef.current = true;
+                        // Use calculated stats as initial/fallback value
+                        return calculatedStats;
+                    }
+                    // Otherwise, keep the stats from fetchStatistics (which includes ALL invoices, not just current page)
+                    // This ensures we show totals for all invoices, not just the current page
+                    return prevStats;
+                });
+            };
+            calculateStats();
+        }
+    }, [sales, calculateStatisticsFromSales]);
 
     return (
         <div className="relative min-h-screen overflow-hidden">
@@ -2005,7 +2152,21 @@ const SalesPage: React.FC<SalesPageProps> = ({ setActivePath }) => {
                     isOpen={isFilterModalOpen}
                     onClose={() => setIsFilterModalOpen(false)}
                     filters={filters}
-                    onFilterChange={setFilters}
+                    onApply={(newFilters) => {
+                        // Immediately reset statistics to 0 when "Today" or "This Week" is selected
+                        // This prevents showing stale values while new data is loading
+                        if (newFilters.datePreset === 'today' || newFilters.datePreset === 'week') {
+                            setStatistics({
+                                totalSales: 0,
+                                totalPayments: 0,
+                                creditSales: 0,
+                                invoiceCount: 0,
+                                netProfit: 0,
+                            });
+                        }
+                        setFilters(newFilters);
+                        setCurrentPage(1); // Reset to first page when filters are applied
+                    }}
                     onClearFilters={handleClearFilters}
                     customers={customers}
                     sellers={sellers}
@@ -2176,6 +2337,7 @@ const SalesTableView: React.FC<{
                     options={[
                         { value: '10', label: '10 لكل صفحة' },
                         { value: '20', label: '20 لكل صفحة' },
+                        { value: '25', label: '25 لكل صفحة' },
                         { value: '50', label: '50 لكل صفحة' },
                         { value: '100', label: '100 لكل صفحة' }
                     ]}
@@ -2291,6 +2453,7 @@ const SalesTableView: React.FC<{
                                     <th className="px-6 py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">{AR_LABELS.totalAmount}</th>
                                     <th className="px-6 py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">{AR_LABELS.paid}</th>
                                     <th className="px-6 py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">{AR_LABELS.remaining}</th>
+                                    <th className="px-6 py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">صافي الربح</th>
                                     <th className="px-6 py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">{AR_LABELS.status}</th>
                                     <th className="px-6 py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">{AR_LABELS.actions}</th>
                                 </tr>
@@ -2309,40 +2472,60 @@ const SalesTableView: React.FC<{
                 )}
                 
                 {/* Pagination Controls */}
-                {totalPages > 1 && (
-                    <div className="flex items-center justify-between border-t border-gray-200 dark:border-gray-700 pt-4">
-                        <div className="text-sm text-gray-700 dark:text-gray-300">
-                            عرض {((currentPage - 1) * pageSize) + 1} - {Math.min(currentPage * pageSize, totalSales)} من {totalSales} فاتورة
+                {(() => {
+                    // Calculate pagination - use totalPages if available, otherwise calculate from totalSales
+                    const effectiveTotalPages = totalPages > 0 ? totalPages : Math.max(1, Math.ceil(totalSales / pageSize));
+                    // Show pagination if there are more pages than 1, or if we have more sales than the page size
+                    const shouldShowPagination = effectiveTotalPages > 1 || totalSales > pageSize;
+                    
+                    if (!shouldShowPagination && totalSales > pageSize) {
+                        console.warn('[SalesPage] ⚠️ Pagination should show but conditions not met!', {
+                            totalPages,
+                            totalSales,
+                            pageSize,
+                            salesLength: sales.length,
+                            effectiveTotalPages,
+                            calculatedPages: Math.ceil(totalSales / pageSize),
+                            condition1Result: effectiveTotalPages > 1,
+                            condition2Result: totalSales > pageSize
+                        });
+                    }
+                    
+                    return shouldShowPagination ? (
+                        <div className="flex items-center justify-between border-t border-gray-200 dark:border-gray-700 pt-4 mt-4 w-full">
+                            <div className="text-sm text-gray-700 dark:text-gray-300">
+                                عرض {((currentPage - 1) * pageSize) + 1} - {Math.min(currentPage * pageSize, totalSales)} من {totalSales} فاتورة
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <button
+                                    onClick={() => onPageChange(Math.max(1, currentPage - 1))}
+                                    disabled={currentPage === 1}
+                                    className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+                                        currentPage === 1
+                                            ? 'bg-gray-200 dark:bg-gray-700 text-gray-400 dark:text-gray-500 cursor-not-allowed'
+                                            : 'bg-blue-500 text-white hover:bg-blue-600'
+                                    }`}
+                                >
+                                    السابق
+                                </button>
+                                <span className="px-4 py-2 text-sm text-gray-700 dark:text-gray-300">
+                                    صفحة {currentPage} من {effectiveTotalPages}
+                                </span>
+                                <button
+                                    onClick={() => onPageChange(Math.min(effectiveTotalPages, currentPage + 1))}
+                                    disabled={currentPage >= effectiveTotalPages}
+                                    className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+                                        currentPage >= effectiveTotalPages
+                                            ? 'bg-gray-200 dark:bg-gray-700 text-gray-400 dark:text-gray-500 cursor-not-allowed'
+                                            : 'bg-blue-500 text-white hover:bg-blue-600'
+                                    }`}
+                                >
+                                    التالي
+                                </button>
+                            </div>
                         </div>
-                        <div className="flex items-center gap-2">
-                            <button
-                                onClick={() => onPageChange(currentPage - 1)}
-                                disabled={currentPage === 1}
-                                className={`px-4 py-2 rounded-md text-sm font-medium ${
-                                    currentPage === 1
-                                        ? 'bg-gray-200 dark:bg-gray-700 text-gray-400 dark:text-gray-500 cursor-not-allowed'
-                                        : 'bg-blue-500 text-white hover:bg-blue-600'
-                                }`}
-                            >
-                                السابق
-                            </button>
-                            <span className="px-4 py-2 text-sm text-gray-700 dark:text-gray-300">
-                                صفحة {currentPage} من {totalPages}
-                            </span>
-                            <button
-                                onClick={() => onPageChange(currentPage + 1)}
-                                disabled={currentPage === totalPages}
-                                className={`px-4 py-2 rounded-md text-sm font-medium ${
-                                    currentPage === totalPages
-                                        ? 'bg-gray-200 dark:bg-gray-700 text-gray-400 dark:text-gray-500 cursor-not-allowed'
-                                        : 'bg-blue-500 text-white hover:bg-blue-600'
-                                }`}
-                            >
-                                التالي
-                            </button>
-                        </div>
-                    </div>
-                )}
+                    ) : null;
+                })()}
             </>
         )}
       </div>
@@ -2351,6 +2534,9 @@ const SalesTableView: React.FC<{
 
 const SalesGridCard: React.FC<{sale: SaleTransaction, onView: (s: SaleTransaction) => void}> = ({sale, onView}) => {
     const { formatCurrency } = useCurrency();
+    const [costPrice, setCostPrice] = useState<number | null>(null);
+    const [isLoadingCost, setIsLoadingCost] = useState(true);
+    
     const statusStyles: Record<SaleStatus, string> = {
         Paid: 'bg-green-100 text-green-800 dark:bg-green-900/50 dark:text-green-300',
         Partial: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/50 dark:text-yellow-300',
@@ -2374,6 +2560,24 @@ const SalesGridCard: React.FC<{sale: SaleTransaction, onView: (s: SaleTransactio
     const displayTotal = isReturn ? Math.abs(sale.totalAmount) : sale.totalAmount;
     const displayPaid = isReturn ? Math.abs(sale.paidAmount) : sale.paidAmount;
     const displayRemaining = isReturn ? Math.abs(sale.remainingAmount) : sale.remainingAmount;
+    
+    // Calculate cost price when component mounts or sale changes
+    useEffect(() => {
+        const loadCostPrice = async () => {
+            setIsLoadingCost(true);
+            try {
+                const cost = await calculateCostPrice(sale.items || []);
+                setCostPrice(cost);
+            } catch (error) {
+                console.error('Error calculating cost price:', error);
+                setCostPrice(0);
+            } finally {
+                setIsLoadingCost(false);
+            }
+        };
+        
+        loadCostPrice();
+    }, [sale.items]);
     
     return (
         <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4 hover:shadow-lg transition-shadow duration-200">
@@ -2408,6 +2612,16 @@ const SalesGridCard: React.FC<{sale: SaleTransaction, onView: (s: SaleTransactio
                     </span>
                 </div>
                 <div className="flex justify-between text-sm">
+                    <span className="text-gray-600 dark:text-gray-400">{AR_LABELS.costPrice}:</span>
+                    <span className={`font-semibold ${isReturn ? 'text-red-600' : 'text-gray-700 dark:text-gray-300'}`}>
+                        {isLoadingCost ? (
+                            <span className="text-gray-400">...</span>
+                        ) : (
+                            <span>{isReturn ? '-' : ''}{formatCurrency(costPrice || 0)}</span>
+                        )}
+                    </span>
+                </div>
+                <div className="flex justify-between text-sm">
                     <span className="text-gray-600 dark:text-gray-400">{AR_LABELS.paid}:</span>
                     <span className={`font-semibold ${isReturn ? 'text-red-600' : 'text-green-600'}`}>
                         {isReturn ? '-' : ''}{formatCurrency(displayPaid)}
@@ -2419,6 +2633,35 @@ const SalesGridCard: React.FC<{sale: SaleTransaction, onView: (s: SaleTransactio
                         {isReturn ? '-' : ''}{formatCurrency(displayRemaining)}
                     </span>
                 </div>
+                {(() => {
+                    // Calculate net profit for grid card
+                    let cardNetProfit: number | null = null;
+                    if (sale.items && Array.isArray(sale.items)) {
+                        let totalCost = 0;
+                        let hasAllCosts = true;
+                        sale.items.forEach((item: any) => {
+                            const quantity = Math.abs(item.quantity || 0);
+                            if (item.costPrice !== undefined && item.costPrice !== null) {
+                                totalCost += (item.costPrice || 0) * quantity;
+                            } else if (item.cost !== undefined && item.cost !== null) {
+                                totalCost += (item.cost || 0) * quantity;
+                            } else {
+                                hasAllCosts = false;
+                            }
+                        });
+                        if (hasAllCosts) {
+                            cardNetProfit = (sale.totalAmount || 0) - totalCost;
+                        }
+                    }
+                    return cardNetProfit !== null ? (
+                        <div className="flex justify-between text-sm">
+                            <span className="text-gray-600 dark:text-gray-400">صافي الربح:</span>
+                            <span className={`font-semibold ${cardNetProfit >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
+                                {isReturn ? '-' : ''}{formatCurrency(Math.abs(cardNetProfit))}
+                            </span>
+                        </div>
+                    ) : null;
+                })()}
             </div>
             
             <button 
@@ -2434,6 +2677,9 @@ const SalesGridCard: React.FC<{sale: SaleTransaction, onView: (s: SaleTransactio
 
 const SalesTableRow: React.FC<{sale: SaleTransaction, onView: (s: SaleTransaction) => void}> = ({sale, onView}) => {
     const { formatCurrency } = useCurrency();
+    const [netProfit, setNetProfit] = useState<number | null>(null);
+    const [isCalculatingProfit, setIsCalculatingProfit] = useState(true);
+    
     const statusStyles: Record<SaleStatus, string> = {
         Paid: 'bg-green-100 text-green-800 dark:bg-green-900/50 dark:text-green-300',
         Partial: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/50 dark:text-yellow-300',
@@ -2458,6 +2704,47 @@ const SalesTableRow: React.FC<{sale: SaleTransaction, onView: (s: SaleTransactio
     const displayPaid = isReturn ? Math.abs(sale.paidAmount) : sale.paidAmount;
     const displayRemaining = isReturn ? Math.abs(sale.remainingAmount) : sale.remainingAmount;
     
+    // Calculate net profit for this invoice
+    useEffect(() => {
+        const calculateProfit = async () => {
+            setIsCalculatingProfit(true);
+            try {
+                let totalCost = 0;
+                
+                if (sale.items && Array.isArray(sale.items)) {
+                    for (const item of sale.items) {
+                        const quantity = Math.abs(item.quantity || 0);
+                        
+                        // Check for costPrice first (new field), then cost (legacy)
+                        if (item.costPrice !== undefined && item.costPrice !== null) {
+                            totalCost += (item.costPrice || 0) * quantity;
+                        } else if (item.cost !== undefined && item.cost !== null) {
+                            totalCost += (item.cost || 0) * quantity;
+                        } else {
+                            // Fetch cost price from product
+                            try {
+                                const itemCost = await calculateCostPrice([item]);
+                                totalCost += itemCost;
+                            } catch (error) {
+                                console.warn(`Failed to fetch cost for product ${item.productId}:`, error);
+                            }
+                        }
+                    }
+                }
+                
+                const profit = (sale.totalAmount || 0) - totalCost;
+                setNetProfit(isReturn ? -Math.abs(profit) : profit);
+            } catch (error) {
+                console.error('Error calculating net profit:', error);
+                setNetProfit(0);
+            } finally {
+                setIsCalculatingProfit(false);
+            }
+        };
+        
+        calculateProfit();
+    }, [sale.items, sale.totalAmount, isReturn]);
+    
     return (
         <tr className="hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors duration-150">
             <td className="px-6 py-4 whitespace-nowrap text-sm">
@@ -2481,6 +2768,13 @@ const SalesTableRow: React.FC<{sale: SaleTransaction, onView: (s: SaleTransactio
             </td>
             <td className={`px-6 py-4 whitespace-nowrap text-sm ${isReturn ? 'text-red-600' : 'text-red-600'}`}>
                 {isReturn ? '-' : ''}{formatCurrency(displayRemaining)}
+            </td>
+            <td className={`px-6 py-4 whitespace-nowrap text-sm font-semibold ${netProfit !== null && netProfit >= 0 ? 'text-emerald-600 dark:text-emerald-400' : netProfit !== null ? 'text-red-600 dark:text-red-400' : 'text-gray-400'}`}>
+                {isCalculatingProfit ? (
+                    <span className="text-xs text-gray-400">...</span>
+                ) : (
+                    <span>{netProfit !== null && netProfit < 0 ? '-' : ''}{formatCurrency(Math.abs(netProfit || 0))}</span>
+                )}
             </td>
             <td className="px-6 py-4 whitespace-nowrap text-sm">
                 <span className={`px-2 py-1 text-xs font-semibold rounded-full ${statusStyles[sale.status]}`}>
@@ -3185,17 +3479,19 @@ const CustomerAccountsView: React.FC<{
                     paymentMethod: (sale.paymentMethod?.charAt(0).toUpperCase() + sale.paymentMethod?.slice(1).toLowerCase()) as SalePaymentMethod || 'Cash',
                     status: sale.status === 'completed' ? 'Paid' : sale.status === 'partial_payment' ? 'Partial' : sale.status === 'pending' ? 'Due' : sale.status === 'refunded' || sale.status === 'partial_refund' ? 'Returned' : (sale.status as SaleStatus) || 'Paid',
                     seller: sale.seller || sale.cashier || currentUserName,
-                    items: Array.isArray(sale.items) ? sale.items.map((item: any) => ({
-                        productId: typeof item.productId === 'string' ? parseInt(item.productId) || 0 : item.productId || 0,
-                        name: item.productName || item.name || '',
-                        unit: item.unit || 'قطعة',
-                        quantity: item.quantity || 0,
-                        unitPrice: item.unitPrice || 0,
-                        total: item.totalPrice || item.total || 0,
-                        discount: item.discount || 0,
-                        conversionFactor: item.conversionFactor,
-                    })) : [],
-                    subtotal: sale.subtotal || 0,
+                        items: Array.isArray(sale.items) ? sale.items.map((item: any) => ({
+                            productId: typeof item.productId === 'string' ? parseInt(item.productId) || 0 : item.productId || 0,
+                            name: item.productName || item.name || '',
+                            unit: item.unit || 'قطعة',
+                            quantity: item.quantity || 0,
+                            unitPrice: item.unitPrice || 0,
+                            total: item.totalPrice || item.total || 0,
+                            discount: item.discount || 0,
+                            conversionFactor: item.conversionFactor,
+                            costPrice: item.costPrice, // Include costPrice from API
+                            cost: item.cost || item.costPrice, // Include cost (legacy) or costPrice
+                        })) : [],
+                        subtotal: sale.subtotal || 0,
                     totalItemDiscount: sale.totalItemDiscount || 0,
                     invoiceDiscount: sale.invoiceDiscount || sale.discount || 0,
                     tax: sale.tax || 0,

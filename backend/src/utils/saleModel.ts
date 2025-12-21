@@ -47,6 +47,11 @@ const saleItemSchema = new Schema<ISaleItem>(
       type: Number,
       default: 1,
     },
+    costPrice: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
   },
   { _id: false }
 );

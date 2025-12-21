@@ -169,6 +169,7 @@ export const AR_LABELS = {
   seller: 'البائع',
   paid: 'مدفوع',
   remaining: 'المتبقي',
+  costPrice: 'سعر التكلفة',
   partial: 'جزئي',
   due: 'مستحق',
   totalSalesToday: 'إجمالي مبيعات اليوم',

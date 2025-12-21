@@ -174,23 +174,85 @@ const ProductListPage: React.FC<ProductListPageProps> = () => {
         }
 
         // Fetch from API (with pagination for regular mode, or all for advanced mode)
-        const productsRes = await productsApi.getProducts({
+        const apiParams = {
           page: isAdvancedMode ? undefined : currentPage,
           limit: isAdvancedMode ? undefined : itemsPerPage,
           all: isAdvancedMode, // Fetch all for advanced mode
           includeCategories: true, // Include category data
           search: (!isAdvancedMode && searchTerm) ? searchTerm.trim() : undefined,
-        });
+        };
+        
+        if (process.env.NODE_ENV === 'development') {
+          console.log('[ProductListPage] Fetching products with params:', apiParams);
+        }
+        
+        const productsRes = await productsApi.getProducts(apiParams);
 
         if (productsRes.success) {
           const responseData = productsRes.data as any;
           const productsData = responseData?.products || [];
           setBackendProducts(productsData);
 
-          // Update pagination info
-          if (responseData?.pagination) {
-            setTotalPages(responseData.pagination.totalPages);
-            setTotalProducts(responseData.pagination.totalProducts);
+          // Update pagination info - ensure it's always set correctly
+          // The API response structure is: { success, message, products, pagination }
+          // Note: productsRes.data is the ProductsPaginationResponse
+          const paginationData = responseData?.pagination;
+          
+          // Debug logging to help diagnose pagination issues
+          if (process.env.NODE_ENV === 'development') {
+            console.log('[ProductListPage] API Response:', {
+              hasPagination: !!paginationData,
+              paginationData,
+              productsCount: productsData.length,
+              currentPage,
+              itemsPerPage,
+              isAdvancedMode,
+              responseKeys: Object.keys(responseData || {}),
+              fullResponseData: responseData
+            });
+          }
+          
+          if (!isAdvancedMode) {
+            if (paginationData) {
+              // Use pagination data from API
+              const calculatedTotalPages = Math.max(1, paginationData.totalPages || 1);
+              const calculatedTotalProducts = paginationData.totalProducts || 0;
+              
+              if (process.env.NODE_ENV === 'development') {
+                console.log('[ProductListPage] Setting pagination from API:', {
+                  totalPages: calculatedTotalPages,
+                  totalProducts: calculatedTotalProducts,
+                  willShowPagination: calculatedTotalPages > 1
+                });
+              }
+              
+              setTotalPages(calculatedTotalPages);
+              setTotalProducts(calculatedTotalProducts);
+            } else {
+              // Pagination info missing - this shouldn't happen, but handle gracefully
+              console.warn('[ProductListPage] ⚠️ Pagination info missing from API response', {
+                hasResponseData: !!responseData,
+                responseKeys: responseData ? Object.keys(responseData) : [],
+                productsReceived: productsData.length,
+                itemsPerPage,
+                currentPage,
+                fullResponse: responseData
+              });
+              
+              // Fallback: If we got a full page of results, assume there are more pages
+              // This is a temporary fix - the API should always return pagination
+              if (productsData.length === itemsPerPage) {
+                // Full page - estimate there are more pages
+                // Set to at least 2 to show pagination controls
+                // This allows user to try navigating, and we'll get real data on next page
+                setTotalPages(Math.max(2, currentPage + 1));
+                setTotalProducts(itemsPerPage * (currentPage + 1)); // Estimate
+              } else {
+                // Partial page - likely the last page
+                setTotalPages(currentPage);
+                setTotalProducts((currentPage - 1) * itemsPerPage + productsData.length);
+              }
+            }
           }
 
           // Build enriched category map from embedded category data
@@ -525,6 +587,16 @@ const ProductListPage: React.FC<ProductListPageProps> = () => {
 
   // Handle page change
   const handlePageChange = (page: number) => {
+    if (process.env.NODE_ENV === 'development') {
+      console.log('[ProductListPage] Page change requested:', {
+        from: currentPage,
+        to: page,
+        totalPages,
+        calculatedTotalPages: isAdvancedMode 
+          ? Math.max(1, Math.ceil(filteredProducts.length / itemsPerPage))
+          : totalPages
+      });
+    }
     setCurrentPage(page);
     // Scroll to top when page changes
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -592,9 +664,26 @@ const ProductListPage: React.FC<ProductListPageProps> = () => {
   // Calculate total pages for filtered products
   const calculatedTotalPages = useMemo(() => {
     if (isAdvancedMode) {
-      return Math.max(1, Math.ceil(filteredProducts.length / itemsPerPage));
+      const pages = Math.max(1, Math.ceil(filteredProducts.length / itemsPerPage));
+      if (process.env.NODE_ENV === 'development') {
+        console.log('[ProductListPage] Calculated total pages (advanced mode):', {
+          filteredProducts: filteredProducts.length,
+          itemsPerPage,
+          pages
+        });
+      }
+      return pages;
     }
-    return totalPages;
+    // In regular mode, use totalPages from API, but ensure it's at least 1
+    const pages = Math.max(1, totalPages || 1);
+    if (process.env.NODE_ENV === 'development') {
+      console.log('[ProductListPage] Calculated total pages (regular mode):', {
+        totalPages,
+        pages,
+        willShowPagination: pages > 1
+      });
+    }
+    return pages;
   }, [filteredProducts.length, itemsPerPage, isAdvancedMode, totalPages]);
 
   // Calculate total products for filtered results
@@ -1059,17 +1148,28 @@ const ProductListPage: React.FC<ProductListPageProps> = () => {
           </div>
           
         {/* Pagination for Grid View */}
-        {calculatedTotalPages > 1 && (
-          <div className="px-6 py-4 border-t border-gray-200 dark:border-gray-700">
-            <Pagination
-              currentPage={currentPage}
-              totalPages={calculatedTotalPages}
-              totalItems={calculatedTotalProducts}
-              itemsPerPage={itemsPerPage}
-              onPageChange={handlePageChange}
-            />
-          </div>
-        )}
+        {(() => {
+          const shouldShowPagination = calculatedTotalPages > 1;
+          if (process.env.NODE_ENV === 'development' && !shouldShowPagination && totalProducts > itemsPerPage) {
+            console.warn('[ProductListPage] Pagination should show but calculatedTotalPages is', calculatedTotalPages, {
+              totalProducts,
+              itemsPerPage,
+              totalPages,
+              isAdvancedMode
+            });
+          }
+          return shouldShowPagination ? (
+            <div className="px-6 py-4 border-t border-gray-200 dark:border-gray-700">
+              <Pagination
+                currentPage={currentPage}
+                totalPages={calculatedTotalPages}
+                totalItems={calculatedTotalProducts}
+                itemsPerPage={itemsPerPage}
+                onPageChange={handlePageChange}
+              />
+            </div>
+          ) : null;
+        })()}
         </div>
       )}
     </div>

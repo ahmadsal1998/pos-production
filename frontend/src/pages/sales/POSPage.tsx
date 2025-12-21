@@ -237,6 +237,7 @@ const POSPage: React.FC = () => {
     const [quantityDrafts, setQuantityDrafts] = useState<Record<string, string>>({});
     const [storeAddress, setStoreAddress] = useState<string>(''); // Store address for receipts
     const [businessName, setBusinessName] = useState<string>(''); // Store business name for receipts
+    const [showCostPrice, setShowCostPrice] = useState<boolean>(false); // Toggle for cost price column visibility
 
     const QUANTITY_STEP = 0.5;
     const MIN_QUANTITY = 0.5;
@@ -1781,6 +1782,7 @@ const POSPage: React.FC = () => {
                                   total: updatedTotal,
                                   unitPrice: averagedUnitPrice,
                                   conversionFactor: item.conversionFactor || conversionFactor || piecesPerMainUnit,
+                                  costPrice: item.costPrice ?? (product.costPrice || product.cost || 0), // Preserve existing or set from product
                               }
                             : item;
                     }),
@@ -1802,6 +1804,7 @@ const POSPage: React.FC = () => {
                 total: initialTotal,
                 discount: 0,
                 conversionFactor: conversionFactor || piecesPerMainUnit,
+                costPrice: product.costPrice || product.cost || 0, // Include cost price from product
             };
             return { ...inv, items: [...inv.items, newItem] };
         });
@@ -3851,6 +3854,16 @@ const POSPage: React.FC = () => {
                         </form>
                         {/* Cart */}
                         <div className="flex-grow overflow-y-auto overflow-x-auto min-w-0 relative">
+                            {/* Toggle button for cost price column */}
+                            <div className="mb-2 flex justify-end">
+                                <button
+                                    type="button"
+                                    onClick={() => setShowCostPrice(!showCostPrice)}
+                                    className="inline-flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-600 transition-colors"
+                                >
+                                    <span>{showCostPrice ? 'إخفاء' : 'إظهار'} {AR_LABELS.costPrice}</span>
+                                </button>
+                            </div>
                             <div className="overflow-x-auto min-w-0">
                                 <table className="w-full text-right min-w-full">
                                     <thead className="bg-gray-50 dark:bg-gray-700 sticky top-0">
@@ -3859,13 +3872,16 @@ const POSPage: React.FC = () => {
                                             <th className="px-2 sm:px-3 py-2 sm:py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[30%] align-middle">{AR_LABELS.productName}</th>
                                             <th className="px-2 sm:px-3 py-2 sm:py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[12%] text-center align-middle">{AR_LABELS.quantity}</th>
                                             <th className="px-2 sm:px-3 py-2 sm:py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[12%] text-center align-middle">{AR_LABELS.price}</th>
+                                            {showCostPrice && (
+                                                <th className="px-2 sm:px-3 py-2 sm:py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[12%] text-center align-middle">{AR_LABELS.costPrice}</th>
+                                            )}
                                             <th className="px-2 sm:px-3 py-2 sm:py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[15%] text-center align-middle">{AR_LABELS.totalAmount}</th>
                                             <th className="px-2 sm:px-3 py-2 sm:py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[10%] text-center align-middle"></th>
                                         </tr>
                                     </thead>
                                 <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
                                    {currentInvoice.items.length === 0 ? (
-                                            <tr><td colSpan={6} className="text-center align-middle py-8 sm:py-10 text-xs sm:text-sm text-gray-500 dark:text-gray-400">{AR_LABELS.noItemsInCart}</td></tr>
+                                            <tr><td colSpan={showCostPrice ? 7 : 6} className="text-center align-middle py-8 sm:py-10 text-xs sm:text-sm text-gray-500 dark:text-gray-400">{AR_LABELS.noItemsInCart}</td></tr>
                                    ) : currentInvoice.items.slice().reverse().map((item, index) => (
                                         <tr key={item.cartItemId || `item-${index}`} className="hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors duration-150">
                                                 <td className="px-2 sm:px-3 py-3 sm:py-4 text-xs sm:text-sm text-gray-500 dark:text-gray-400 align-middle">{index + 1}</td>
@@ -3956,6 +3972,9 @@ const POSPage: React.FC = () => {
                                                 </div>
                                             </td>
                                             <td className="px-2 sm:px-3 py-3 sm:py-4 text-xs sm:text-sm text-gray-700 dark:text-gray-300 whitespace-nowrap text-center align-middle">{formatCurrency(item.unitPrice)}</td>
+                                            {showCostPrice && (
+                                                <td className="px-2 sm:px-3 py-3 sm:py-4 text-xs sm:text-sm text-gray-600 dark:text-gray-400 whitespace-nowrap text-center align-middle">{formatCurrency(item.costPrice || item.cost || 0)}</td>
+                                            )}
                                             <td className="px-2 sm:px-3 py-3 sm:py-4 text-xs sm:text-sm font-semibold text-orange-600 whitespace-nowrap text-center align-middle">{formatCurrency(item.total - (item.discount * item.quantity))}</td>
                                             <td className="px-2 sm:px-3 py-3 sm:py-4 text-center align-middle">
                                                 <button 

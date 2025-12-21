@@ -6,6 +6,7 @@ export interface ISaleItem {
   quantity: number;
   unitPrice: number;
   totalPrice: number;
+  costPrice?: number; // Cost price of the product at time of sale
   unit?: string;
   discount?: number;
   conversionFactor?: number;
@@ -72,6 +73,11 @@ const saleItemSchema = new Schema<ISaleItem>(
     conversionFactor: {
       type: Number,
       default: 1,
+    },
+    costPrice: {
+      type: Number,
+      default: 0,
+      min: 0,
     },
   },
   { _id: false }

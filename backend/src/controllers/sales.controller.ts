@@ -156,6 +156,71 @@ export const createSale = asyncHandler(async (req: AuthenticatedRequest, res: Re
     });
   }
 
+  // Fetch cost prices for items if not provided
+  // This ensures accurate net profit calculation
+  const Product = await getProductModelForStore(storeId);
+  const itemsWithCostPrice = await Promise.all(
+    items.map(async (item: any) => {
+      // If costPrice is already provided, use it
+      if (item.costPrice !== undefined && item.costPrice !== null) {
+        return {
+          productId: String(item.productId),
+          productName: item.productName || item.name || '',
+          quantity: item.quantity || 0,
+          unitPrice: item.unitPrice || 0,
+          totalPrice: item.totalPrice || (item.total || 0),
+          costPrice: Number(item.costPrice) || 0,
+          unit: item.unit || 'قطعة',
+          discount: item.discount || 0,
+          conversionFactor: item.conversionFactor || 1,
+        };
+      }
+
+      // Otherwise, fetch from product
+      let costPrice = 0;
+      try {
+        const productId = String(item.productId);
+        // Try to find product by _id (ObjectId) or by id field
+        const mongoose = (await import('mongoose')).default;
+        let product = null;
+
+        if (mongoose.Types.ObjectId.isValid(productId) && productId.length === 24) {
+          product = await Product.findOne({
+            _id: productId,
+            storeId: storeId.toLowerCase(),
+          }).select('costPrice').lean();
+        }
+
+        if (!product) {
+          // Try finding by custom id field
+          product = await Product.findOne({
+            id: productId,
+            storeId: storeId.toLowerCase(),
+          }).select('costPrice').lean();
+        }
+
+        if (product) {
+          costPrice = product.costPrice || 0;
+        }
+      } catch (error) {
+        console.warn(`[Sales Controller] Failed to fetch cost price for product ${item.productId}:`, error);
+        // Continue with costPrice = 0 if fetch fails
+      }
+
+      return {
+        productId: String(item.productId),
+        productName: item.productName || item.name || '',
+        quantity: item.quantity || 0,
+        unitPrice: item.unitPrice || 0,
+        totalPrice: item.totalPrice || (item.total || 0),
+        costPrice: costPrice,
+        unit: item.unit || 'قطعة',
+        discount: item.discount || 0,
+        conversionFactor: item.conversionFactor || 1,
+      };
+    })
+  );
+
   // Create sale record
   const sale = new Sale({
     invoiceNumber,
@@ -163,16 +228,7 @@ export const createSale = asyncHandler(async (req: AuthenticatedRequest, res: Re
     date: date ? new Date(date) : new Date(),
     customerId: customerId || null,
     customerName,
-    items: items.map((item: any) => ({
-      productId: String(item.productId),
-      productName: item.productName || item.name || '',
-      quantity: item.quantity || 0,
-      unitPrice: item.unitPrice || 0,
-      totalPrice: item.totalPrice || (item.total || 0),
-      unit: item.unit || 'قطعة',
-      discount: item.discount || 0,
-      conversionFactor: item.conversionFactor || 1,
-    })),
+    items: itemsWithCostPrice,
     subtotal: subtotal || 0,
     totalItemDiscount: totalItemDiscount || 0,
     invoiceDiscount: invoiceDiscount || 0,
@@ -263,7 +319,7 @@ export const getSales = asyncHandler(async (req: AuthenticatedRequest, res: Resp
   const Sale = await getSaleModelForStore(modelStoreId);
 
   // Build query - filter by storeId if specified (for non-admin or admin with storeId filter)
-  const query: any = {};
+  let query: any = {};
   if (targetStoreId) {
     query.storeId = targetStoreId;
   }
@@ -320,20 +376,14 @@ export const getSales = asyncHandler(async (req: AuthenticatedRequest, res: Resp
     }
   }
 
+  // Track if we're using date filtering and if we should try fallback
+  let usingDateFilter = false;
+  let businessDateQuery: any = null;
+  
   if (startDate || endDate) {
+    usingDateFilter = true;
     // Use business date filtering instead of calendar date filtering
     // This now uses timezone-aware calculations to properly handle business days
-    
-    // Log date filtering parameters for debugging
-    console.log('[Sales Controller] Date filtering parameters:', {
-      startDate,
-      endDate,
-      businessDayStartTime,
-      businessDayTimezone,
-      settingsStoreId,
-      targetStoreId,
-      modelStoreId,
-    });
     
     const { start, end } = getBusinessDateFilterRange(
       startDate as string | null,
@@ -342,21 +392,17 @@ export const getSales = asyncHandler(async (req: AuthenticatedRequest, res: Resp
       businessDayTimezone
     );
     
-    // Log calculated date range for debugging
-    console.log('[Sales Controller] Calculated date range:', {
-      start: start ? start.toISOString() : null,
-      end: end ? end.toISOString() : null,
-      startUTC: start ? start.toUTCString() : null,
-      endUTC: end ? end.toUTCString() : null,
-    });
-    
-    query.date = {};
+    // Store the business date query for potential fallback
+    businessDateQuery = { ...query };
+    businessDateQuery.date = {};
     if (start) {
-      query.date.$gte = start;
+      businessDateQuery.date.$gte = start;
     }
     if (end) {
-      query.date.$lte = end;
+      businessDateQuery.date.$lte = end;
     }
+    
+    query.date = businessDateQuery.date;
   }
 
   // Calculate pagination
@@ -364,26 +410,8 @@ export const getSales = asyncHandler(async (req: AuthenticatedRequest, res: Resp
   const limitNum = parseInt(limit as string, 10) || 100;
   const skip = (pageNum - 1) * limitNum;
   
-  // Log pagination parameters for debugging
-  console.log('[Sales Controller] Pagination parameters:', {
-    page: page as string,
-    limit: limit as string,
-    pageNum,
-    limitNum,
-    skip,
-    queryParams: { page, limit, startDate, endDate, customerId, status, paymentMethod, storeId: queryStoreId },
-  });
-
-  // Log final query for debugging
-  console.log('[Sales Controller] Final query:', {
-    query: JSON.stringify(query, null, 2),
-    sort: { date: -1 },
-    skip,
-    limit: limitNum,
-  });
-  
-  // Execute query
-  const [sales, total] = await Promise.all([
+  // Execute query with business date filtering
+  let [sales, total] = await Promise.all([
     Sale.find(query)
       .sort({ date: -1 })
       .skip(skip)
@@ -392,17 +420,49 @@ export const getSales = asyncHandler(async (req: AuthenticatedRequest, res: Resp
     Sale.countDocuments(query),
   ]);
   
-  // Log query results for debugging
-  console.log('[Sales Controller] Query results:', {
-    salesCount: sales.length,
-    total,
-    pagination: {
-      currentPage: pageNum,
-      totalPages: Math.ceil(total / limitNum),
-      totalSales: total,
-      limit: limitNum,
-    },
-  });
+  // If business date filtering returned 0 results but we have date filters,
+  // try simple calendar date filtering as a fallback
+  if (usingDateFilter && total === 0 && (startDate || endDate)) {
+    // Build calendar query preserving all other filters (storeId, customerId, status, etc.)
+    const calendarQuery: any = {};
+    
+    // Copy all non-date filters from the original query
+    Object.keys(query).forEach(key => {
+      if (key !== 'date') {
+        calendarQuery[key] = query[key];
+      }
+    });
+    
+    // Apply simple calendar date filtering
+    calendarQuery.date = {};
+    if (startDate) {
+      const startDateObj = new Date(startDate as string);
+      startDateObj.setHours(0, 0, 0, 0);
+      calendarQuery.date.$gte = startDateObj;
+    }
+    if (endDate) {
+      const endDateObj = new Date(endDate as string);
+      endDateObj.setHours(23, 59, 59, 999);
+      calendarQuery.date.$lte = endDateObj;
+    }
+    
+    // Retry query with calendar date filtering
+    const [calendarSales, calendarTotal] = await Promise.all([
+      Sale.find(calendarQuery)
+        .sort({ date: -1 })
+        .skip(skip)
+        .limit(limitNum)
+        .lean(),
+      Sale.countDocuments(calendarQuery),
+    ]);
+    
+    if (calendarTotal > 0) {
+      console.warn('[Sales Controller] Business date filtering returned 0 results, using calendar date filtering fallback');
+      sales = calendarSales;
+      total = calendarTotal;
+      query = calendarQuery; // Update query for consistency
+    }
+  }
 
   res.status(200).json({
     success: true,
@@ -734,6 +794,15 @@ export const getSalesSummary = asyncHandler(async (req: AuthenticatedRequest, re
       salesWithItems.forEach((sale: any) => {
         if (sale.items && Array.isArray(sale.items)) {
           sale.items.forEach((item: any) => {
+            const quantity = Math.abs(item.quantity || 0);
+            
+            // First, try to use costPrice stored in the sale item (fastest and most accurate)
+            if (item.costPrice !== undefined && item.costPrice !== null) {
+              totalCost += (item.costPrice || 0) * quantity;
+              return;
+            }
+            
+            // Fallback: Look up cost price from product map (for backward compatibility with old sales)
             const itemProductId = item.productId;
             if (!itemProductId) return;
             
@@ -753,7 +822,6 @@ export const getSalesSummary = asyncHandler(async (req: AuthenticatedRequest, re
               }
             }
             
-            const quantity = Math.abs(item.quantity || 0);
             totalCost += costPrice * quantity;
           });
         }
