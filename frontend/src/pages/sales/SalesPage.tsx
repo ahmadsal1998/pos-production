@@ -1609,18 +1609,36 @@ const SalesPage: React.FC<SalesPageProps> = ({ setActivePath }) => {
         const itemsNeedingLookup: any[] = [];
 
         sales.forEach((sale) => {
+            // Detect return by checking status, ID prefix, OR negative totalAmount
+            // This ensures we catch returns even if status is not set correctly
+            const saleIsReturn = sale.status === 'Returned' || 
+                                sale.id.startsWith('RET-') || 
+                                (sale.totalAmount && sale.totalAmount < 0);
+            
             if (sale.items && Array.isArray(sale.items)) {
                 sale.items.forEach((item: any) => {
-                    const quantity = Math.abs(item.quantity || 0);
+                    // Use actual quantity (negative for returns, positive for sales)
+                    const quantity = item.quantity || 0;
+                    const absQuantity = Math.abs(quantity);
+                    
+                    // Detect return at item level: sale is return OR quantity is negative
+                    // This provides multiple layers of detection for accuracy
+                    const isReturn = saleIsReturn || quantity < 0;
                     
                     // Check for costPrice first (new field), then cost (legacy)
                     if (item.costPrice !== undefined && item.costPrice !== null) {
-                        totalCost += (item.costPrice || 0) * quantity;
+                        const itemCost = (item.costPrice || 0) * absQuantity;
+                        // For returns, subtract cost (we're getting the cost back, so it reduces our cost)
+                        // For sales, add cost (we're spending the cost, so it increases our cost)
+                        totalCost += isReturn ? -itemCost : itemCost;
                     } else if (item.cost !== undefined && item.cost !== null) {
-                        totalCost += (item.cost || 0) * quantity;
+                        const itemCost = (item.cost || 0) * absQuantity;
+                        // For returns, subtract cost (we're getting the cost back, so it reduces our cost)
+                        // For sales, add cost (we're spending the cost, so it increases our cost)
+                        totalCost += isReturn ? -itemCost : itemCost;
                     } else {
                         // Need to fetch cost price for this item
-                        itemsNeedingLookup.push(item);
+                        itemsNeedingLookup.push({ item, isReturn });
                     }
                 });
             }
@@ -1629,10 +1647,13 @@ const SalesPage: React.FC<SalesPageProps> = ({ setActivePath }) => {
         // For items missing cost prices, fetch from products in batch
         if (itemsNeedingLookup.length > 0) {
             try {
-                const costPromises = itemsNeedingLookup.map(item => calculateCostPrice([item]));
+                const costPromises = itemsNeedingLookup.map(({ item }) => calculateCostPrice([item]));
                 const costs = await Promise.all(costPromises);
-                costs.forEach(cost => {
-                    totalCost += cost;
+                costs.forEach((cost, index) => {
+                    const { isReturn } = itemsNeedingLookup[index];
+                    // For returns, subtract cost (we're getting the cost back)
+                    // For sales, add cost (we're spending the cost)
+                    totalCost += isReturn ? -cost : cost;
                 });
             } catch (error) {
                 console.warn('[SalesPage] Failed to calculate some costs:', error);

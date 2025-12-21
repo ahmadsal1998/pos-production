@@ -784,17 +784,32 @@ export const getSalesSummary = asyncHandler(async (req: AuthenticatedRequest, re
 
       // Calculate total cost in memory (simpler and efficient)
       // Use sanitizedQuery to ensure consistency and prevent CastErrors
-      const salesWithItems = await Sale.find(sanitizedQuery).select('items').lean();
+      // Note: We need to select 'total' field to detect returns by sign
+      const salesWithItems = await Sale.find(sanitizedQuery).select('items isReturn total').lean();
       let totalCost = 0;
       
       salesWithItems.forEach((sale: any) => {
+        // Detect return by checking isReturn flag OR by negative total
+        // This ensures we catch returns even if isReturn flag is missing
+        const saleIsReturn = sale.isReturn || (sale.total && sale.total < 0);
+        
         if (sale.items && Array.isArray(sale.items)) {
           sale.items.forEach((item: any) => {
-            const quantity = Math.abs(item.quantity || 0);
+            // Use actual quantity (negative for returns, positive for sales)
+            // This ensures correct cost calculation for returns
+            const quantity = item.quantity || 0;
+            const absQuantity = Math.abs(quantity);
+            
+            // Detect return at item level: sale is return OR quantity is negative
+            // This provides multiple layers of detection for accuracy
+            const isReturn = saleIsReturn || quantity < 0;
             
             // First, try to use costPrice stored in the sale item (fastest and most accurate)
             if (item.costPrice !== undefined && item.costPrice !== null) {
-              totalCost += (item.costPrice || 0) * quantity;
+              const itemCost = (item.costPrice || 0) * absQuantity;
+              // For returns, subtract cost (we're getting the cost back, so it reduces our cost)
+              // For sales, add cost (we're spending the cost, so it increases our cost)
+              totalCost += isReturn ? -itemCost : itemCost;
               return;
             }
             
@@ -818,11 +833,16 @@ export const getSalesSummary = asyncHandler(async (req: AuthenticatedRequest, re
               }
             }
             
-            totalCost += costPrice * quantity;
+            const itemCost = costPrice * absQuantity;
+            // For returns, subtract cost (we're getting the cost back, so it reduces our cost)
+            // For sales, add cost (we're spending the cost, so it increases our cost)
+            totalCost += isReturn ? -itemCost : itemCost;
           });
         }
       });
 
+      // Net profit = Total Sales (which includes negative returns) - Total Cost (which includes negative returns)
+      // This formula correctly handles both sales and returns
       netProfit = (summary.totalSales || 0) - totalCost;
     }
   } catch (error: any) {
