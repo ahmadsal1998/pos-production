@@ -930,12 +930,14 @@ const SalesPage: React.FC<SalesPageProps> = ({ setActivePath }) => {
                 limit: pageSize,
             };
 
-            // Add date filters
+            // Add date filters - ensure dates are in YYYY-MM-DD format
             if (filters.dateRange.start) {
                 params.startDate = filters.dateRange.start;
+                console.log('[SalesPage] Filter startDate:', params.startDate, 'Type:', typeof params.startDate);
             }
             if (filters.dateRange.end) {
                 params.endDate = filters.dateRange.end;
+                console.log('[SalesPage] Filter endDate:', params.endDate, 'Type:', typeof params.endDate);
             }
 
             // Add payment method filter
@@ -959,6 +961,11 @@ const SalesPage: React.FC<SalesPageProps> = ({ setActivePath }) => {
             }
 
             console.log('[SalesPage] Fetching sales with params:', params);
+            console.log('[SalesPage] Date filter range:', {
+                start: filters.dateRange.start,
+                end: filters.dateRange.end,
+                preset: filters.datePreset
+            });
             
             // Try to fetch from API first
             let apiSales: SaleTransaction[] = [];
@@ -967,6 +974,60 @@ const SalesPage: React.FC<SalesPageProps> = ({ setActivePath }) => {
             try {
                 const response = await salesApi.getSales(params);
                 const backendResponse = response.data as any;
+                
+                console.log('[SalesPage] API response:', {
+                    success: backendResponse?.success,
+                    salesCount: backendResponse?.data?.sales?.length || 0,
+                    pagination: backendResponse?.data?.pagination,
+                    hasData: !!backendResponse?.data
+                });
+                
+                // Debug: If no sales found with filters, try fetching without date filters to see if there are any sales
+                if ((!backendResponse?.data?.sales || backendResponse.data.sales.length === 0) && (filters.dateRange.start || filters.dateRange.end)) {
+                    console.warn('[SalesPage] ⚠️ No sales found with date filters, testing without date filters to debug...');
+                    try {
+                        const testParams = { ...params };
+                        delete testParams.startDate;
+                        delete testParams.endDate;
+                        const testResponse = await salesApi.getSales(testParams);
+                        const testBackendResponse = testResponse.data as any;
+                        if (testBackendResponse?.data?.sales && testBackendResponse.data.sales.length > 0) {
+                            console.log('[SalesPage] ✅ Found', testBackendResponse.data.sales.length, 'sales without date filters');
+                            // Log sample sale dates to debug
+                            const sampleSales = testBackendResponse.data.sales.slice(0, 10);
+                            console.log('[SalesPage] Sample sale dates (no filter):', sampleSales.map((s: any) => ({
+                                invoiceNumber: s.invoiceNumber,
+                                date: s.date,
+                                dateType: typeof s.date,
+                                dateObj: s.date ? new Date(s.date).toISOString() : null,
+                                dateOnly: s.date ? new Date(s.date).toISOString().split('T')[0] : null,
+                                dateLocal: s.date ? new Date(s.date).toLocaleString() : null
+                            })));
+                            
+                            // Check if any of these sales match our date range
+                            const filterStart = filters.dateRange.start;
+                            const filterEnd = filters.dateRange.end;
+                            const matchingSales = sampleSales.filter((s: any) => {
+                                if (!s.date) return false;
+                                const saleDateOnly = new Date(s.date).toISOString().split('T')[0];
+                                const matchesStart = !filterStart || saleDateOnly >= filterStart;
+                                const matchesEnd = !filterEnd || saleDateOnly <= filterEnd;
+                                return matchesStart && matchesEnd;
+                            });
+                            
+                            console.log('[SalesPage] Sales matching date range:', {
+                                filterStart,
+                                filterEnd,
+                                matchingCount: matchingSales.length,
+                                matchingInvoices: matchingSales.map((s: any) => s.invoiceNumber)
+                            });
+                        } else {
+                            console.log('[SalesPage] No sales found even without date filters - database may be empty');
+                        }
+                    } catch (testError) {
+                        console.warn('[SalesPage] Error testing without date filters:', testError);
+                    }
+                }
                 
                 if (backendResponse?.success && Array.isArray(backendResponse.data?.sales)) {
                     // Transform API sales to SaleTransaction format
@@ -1040,7 +1101,24 @@ const SalesPage: React.FC<SalesPageProps> = ({ setActivePath }) => {
                         dbFilters.seller = filters.seller;
                     }
                     
+                    console.log('[SalesPage] IndexedDB filters:', {
+                        startDate: dbFilters.startDate?.toISOString(),
+                        endDate: dbFilters.endDate?.toISOString(),
+                        paymentMethod: dbFilters.paymentMethod,
+                        status: dbFilters.status
+                    });
+                    
                     const dbSales = await salesDB.getSalesByStore(storeId, dbFilters);
+                    
+                    console.log('[SalesPage] IndexedDB returned', dbSales.length, 'sales');
+                    if (dbSales.length > 0) {
+                        console.log('[SalesPage] Sample IndexedDB sale dates:', dbSales.slice(0, 3).map(s => ({
+                            invoiceNumber: s.invoiceNumber,
+                            date: s.date,
+                            dateType: typeof s.date,
+                            dateObj: new Date(s.date).toISOString()
+                        })));
+                    }
                     
                     // Transform IndexedDB sales to SaleTransaction format
                     indexedDBSales = dbSales.map((sale: any) => ({
@@ -1102,22 +1180,69 @@ const SalesPage: React.FC<SalesPageProps> = ({ setActivePath }) => {
             // Convert map to array and sort by date (most recent first)
             let allSales = Array.from(salesMap.values());
             
-            // Apply client-side date filtering to ensure accuracy (in case backend/IndexedDB filtering missed some)
+            // Apply client-side date filtering to ensure accuracy
+            // This is a safety net in case backend/IndexedDB filtering had issues
             if (filters.dateRange.start || filters.dateRange.end) {
-                const startDate = filters.dateRange.start ? new Date(filters.dateRange.start) : null;
-                const endDate = filters.dateRange.end ? new Date(filters.dateRange.end) : null;
+                // Create date objects from the filter strings (YYYY-MM-DD format)
+                const startDate = filters.dateRange.start ? new Date(filters.dateRange.start + 'T00:00:00') : null;
+                const endDate = filters.dateRange.end ? new Date(filters.dateRange.end + 'T23:59:59.999') : null;
                 
-                if (startDate) startDate.setHours(0, 0, 0, 0);
-                if (endDate) endDate.setHours(23, 59, 59, 999);
+                console.log('[SalesPage] Client-side date filtering:', {
+                    filterStart: filters.dateRange.start,
+                    filterEnd: filters.dateRange.end,
+                    startDate: startDate?.toISOString(),
+                    endDate: endDate?.toISOString(),
+                    startDateLocal: startDate?.toLocaleString(),
+                    endDateLocal: endDate?.toLocaleString(),
+                    salesBeforeFilter: allSales.length
+                });
+                
+                const beforeFilterCount = allSales.length;
+                
+                // Log sample sales before filtering for debugging
+                if (beforeFilterCount > 0 && beforeFilterCount <= 10) {
+                    console.log('[SalesPage] Sample sales before client filter:', allSales.slice(0, 3).map(s => ({
+                        invoiceNumber: s.invoiceNumber,
+                        date: s.date,
+                        dateObj: new Date(s.date).toISOString(),
+                        dateLocal: new Date(s.date).toLocaleString(),
+                        dateOnly: new Date(s.date).toISOString().split('T')[0]
+                    })));
+                }
                 
                 allSales = allSales.filter(sale => {
-                    const saleDate = new Date(sale.date);
-                    const saleDateStart = new Date(saleDate);
-                    saleDateStart.setHours(0, 0, 0, 0);
+                    if (!sale.date) {
+                        console.warn('[SalesPage] Sale missing date:', sale.invoiceNumber);
+                        return false;
+                    }
                     
-                    if (startDate && saleDateStart < startDate) return false;
-                    if (endDate && saleDate > endDate) return false;
-                    return true;
+                    const saleDate = new Date(sale.date);
+                    const saleDateOnly = saleDate.toISOString().split('T')[0]; // Get YYYY-MM-DD
+                    
+                    // Compare date strings directly for simplicity
+                    const matchesStart = !filters.dateRange.start || saleDateOnly >= filters.dateRange.start;
+                    const matchesEnd = !filters.dateRange.end || saleDateOnly <= filters.dateRange.end;
+                    const matches = matchesStart && matchesEnd;
+                    
+                    if (!matches && beforeFilterCount <= 10) {
+                        console.log('[SalesPage] Sale filtered out:', {
+                            invoiceNumber: sale.invoiceNumber,
+                            saleDate: saleDate.toISOString(),
+                            saleDateOnly,
+                            filterStart: filters.dateRange.start,
+                            filterEnd: filters.dateRange.end,
+                            matchesStart,
+                            matchesEnd
+                        });
+                    }
+                    
+                    return matches;
+                });
+                
+                console.log('[SalesPage] After client-side filtering:', {
+                    before: beforeFilterCount,
+                    after: allSales.length,
+                    filtered: beforeFilterCount - allSales.length
                 });
             }
             

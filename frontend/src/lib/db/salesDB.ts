@@ -342,61 +342,70 @@ class SalesDB {
       const request = index.getAll(storeId.toLowerCase().trim());
       request.onsuccess = () => {
         let sales: SaleRecord[] = request.result || [];
+        
+        console.log('[SalesDB] Total sales in IndexedDB for store:', sales.length);
+        if (sales.length > 0 && sales.length <= 5) {
+          console.log('[SalesDB] Sample sales before filtering:', sales.slice(0, 3).map(s => ({
+            invoiceNumber: s.invoiceNumber,
+            date: s.date,
+            dateType: typeof s.date,
+            dateObj: new Date(s.date).toISOString(),
+            dateOnly: new Date(s.date).toISOString().split('T')[0]
+          })));
+        }
 
         // Apply filters
         if (filters) {
           if (filters.startDate || filters.endDate) {
-            // Use business date filtering
-            try {
-              const businessDayStartTime = getBusinessDayStartTime();
-              const timezone = getBusinessDayTimezone();
-              const timeStr = businessDayStartTime.hours.toString().padStart(2, '0') + ':' + businessDayStartTime.minutes.toString().padStart(2, '0');
-              const { start, end } = getBusinessDateFilterRange(
-                filters.startDate || null,
-                filters.endDate || null,
-                timeStr,
-                timezone
-              );
+            console.log('[SalesDB] Filtering sales by date:', {
+              startDate: filters.startDate?.toISOString(),
+              endDate: filters.endDate?.toISOString(),
+              totalSalesBeforeFilter: sales.length
+            });
+            
+            // Use simple calendar date filtering for better reliability
+            // Business date filtering can be complex and may exclude valid sales
+            const beforeFilterCount = sales.length;
+            
+            // Convert filter dates to YYYY-MM-DD strings for simple comparison
+            const filterStartStr = filters.startDate ? new Date(filters.startDate).toISOString().split('T')[0] : null;
+            const filterEndStr = filters.endDate ? new Date(filters.endDate).toISOString().split('T')[0] : null;
+            
+            console.log('[SalesDB] Date filter strings:', {
+              filterStartStr,
+              filterEndStr
+            });
+            
+            sales = sales.filter((sale) => {
+              if (!sale.date) {
+                console.warn('[SalesDB] Sale missing date:', sale.invoiceNumber);
+                return false;
+              }
               
-              sales = sales.filter((sale) => {
-                const saleDate = new Date(sale.date);
-                // Normalize sale date to start of day for comparison
-                const saleDateStart = new Date(saleDate);
-                saleDateStart.setHours(0, 0, 0, 0);
-                
-                if (start) {
-                  const startOfDay = new Date(start);
-                  startOfDay.setHours(0, 0, 0, 0);
-                  if (saleDateStart < startOfDay) return false;
-                }
-                if (end) {
-                  const endOfDay = new Date(end);
-                  endOfDay.setHours(23, 59, 59, 999);
-                  if (saleDate > endOfDay) return false;
-                }
-                return true;
-              });
-            } catch (error) {
-              // Fallback to calendar date filtering if business date calculation fails
-              console.warn('Business date filtering failed, using calendar dates:', error);
-              sales = sales.filter((sale) => {
-                const saleDate = new Date(sale.date);
-                // Normalize sale date to start of day for comparison
-                const saleDateStart = new Date(saleDate);
-                saleDateStart.setHours(0, 0, 0, 0);
-                
-                if (filters.startDate) {
-                  const startOfDay = new Date(filters.startDate);
-                  startOfDay.setHours(0, 0, 0, 0);
-                  if (saleDateStart < startOfDay) return false;
-                }
-                if (filters.endDate) {
-                  const endOfDay = new Date(filters.endDate);
-                  endOfDay.setHours(23, 59, 59, 999);
-                  if (saleDate > endOfDay) return false;
-                }
-                return true;
-              });
+              // Convert sale date to YYYY-MM-DD string for simple comparison
+              const saleDate = new Date(sale.date);
+              const saleDateStr = saleDate.toISOString().split('T')[0];
+              
+              // Simple string comparison (YYYY-MM-DD format is naturally sortable)
+              const matchesStart = !filterStartStr || saleDateStr >= filterStartStr;
+              const matchesEnd = !filterEndStr || saleDateStr <= filterEndStr;
+              
+              return matchesStart && matchesEnd;
+            });
+            
+            console.log('[SalesDB] After calendar date filtering:', {
+              before: beforeFilterCount,
+              after: sales.length,
+              filtered: beforeFilterCount - sales.length
+            });
+            
+            // Log sample filtered sales for debugging
+            if (sales.length > 0 && sales.length <= 5) {
+              console.log('[SalesDB] Sample filtered sales:', sales.map(s => ({
+                invoiceNumber: s.invoiceNumber,
+                date: s.date,
+                dateObj: new Date(s.date).toISOString()
+              })));
             }
           }
 
