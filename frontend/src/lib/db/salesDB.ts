@@ -360,8 +360,20 @@ class SalesDB {
               
               sales = sales.filter((sale) => {
                 const saleDate = new Date(sale.date);
-                if (start && saleDate < start) return false;
-                if (end && saleDate > end) return false;
+                // Normalize sale date to start of day for comparison
+                const saleDateStart = new Date(saleDate);
+                saleDateStart.setHours(0, 0, 0, 0);
+                
+                if (start) {
+                  const startOfDay = new Date(start);
+                  startOfDay.setHours(0, 0, 0, 0);
+                  if (saleDateStart < startOfDay) return false;
+                }
+                if (end) {
+                  const endOfDay = new Date(end);
+                  endOfDay.setHours(23, 59, 59, 999);
+                  if (saleDate > endOfDay) return false;
+                }
                 return true;
               });
             } catch (error) {
@@ -369,11 +381,19 @@ class SalesDB {
               console.warn('Business date filtering failed, using calendar dates:', error);
               sales = sales.filter((sale) => {
                 const saleDate = new Date(sale.date);
-                if (filters.startDate && saleDate < filters.startDate) return false;
+                // Normalize sale date to start of day for comparison
+                const saleDateStart = new Date(saleDate);
+                saleDateStart.setHours(0, 0, 0, 0);
+                
+                if (filters.startDate) {
+                  const startOfDay = new Date(filters.startDate);
+                  startOfDay.setHours(0, 0, 0, 0);
+                  if (saleDateStart < startOfDay) return false;
+                }
                 if (filters.endDate) {
-                  const endDate = new Date(filters.endDate);
-                  endDate.setHours(23, 59, 59, 999);
-                  if (saleDate > endDate) return false;
+                  const endOfDay = new Date(filters.endDate);
+                  endOfDay.setHours(23, 59, 59, 999);
+                  if (saleDate > endOfDay) return false;
                 }
                 return true;
               });

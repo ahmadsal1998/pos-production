@@ -1014,12 +1014,16 @@ const SalesPage: React.FC<SalesPageProps> = ({ setActivePath }) => {
                     await salesDB.init();
                     const dbFilters: any = {};
                     
-                    // Apply date filters
+                    // Apply date filters - ensure full day range is included
                     if (filters.dateRange.start) {
-                        dbFilters.startDate = new Date(filters.dateRange.start);
+                        const startDate = new Date(filters.dateRange.start);
+                        startDate.setHours(0, 0, 0, 0); // Start of day
+                        dbFilters.startDate = startDate;
                     }
                     if (filters.dateRange.end) {
-                        dbFilters.endDate = new Date(filters.dateRange.end);
+                        const endDate = new Date(filters.dateRange.end);
+                        endDate.setHours(23, 59, 59, 999); // End of day
+                        dbFilters.endDate = endDate;
                     }
                     
                     // Apply other filters
@@ -1096,7 +1100,28 @@ const SalesPage: React.FC<SalesPageProps> = ({ setActivePath }) => {
             });
             
             // Convert map to array and sort by date (most recent first)
-            const allSales = Array.from(salesMap.values());
+            let allSales = Array.from(salesMap.values());
+            
+            // Apply client-side date filtering to ensure accuracy (in case backend/IndexedDB filtering missed some)
+            if (filters.dateRange.start || filters.dateRange.end) {
+                const startDate = filters.dateRange.start ? new Date(filters.dateRange.start) : null;
+                const endDate = filters.dateRange.end ? new Date(filters.dateRange.end) : null;
+                
+                if (startDate) startDate.setHours(0, 0, 0, 0);
+                if (endDate) endDate.setHours(23, 59, 59, 999);
+                
+                allSales = allSales.filter(sale => {
+                    const saleDate = new Date(sale.date);
+                    const saleDateStart = new Date(saleDate);
+                    saleDateStart.setHours(0, 0, 0, 0);
+                    
+                    if (startDate && saleDateStart < startDate) return false;
+                    if (endDate && saleDate > endDate) return false;
+                    return true;
+                });
+            }
+            
+            // Sort by date (most recent first)
             allSales.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
             
             // Apply pagination
