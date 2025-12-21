@@ -1,69 +1,75 @@
 "use strict";
-/**
- * Utility script to check user details in MongoDB
- * Run with: npx ts-node src/utils/checkUser.ts
- */
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
+var __create = Object.create;
+var __defProp = Object.defineProperty;
+var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __getProtoOf = Object.getPrototypeOf;
+var __hasOwnProp = Object.prototype.hasOwnProperty;
+var __copyProps = (to, from, except, desc) => {
+  if (from && typeof from === "object" || typeof from === "function") {
+    for (let key of __getOwnPropNames(from))
+      if (!__hasOwnProp.call(to, key) && key !== except)
+        __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
+  }
+  return to;
 };
-Object.defineProperty(exports, "__esModule", { value: true });
-const mongoose_1 = __importDefault(require("mongoose"));
-const dotenv_1 = __importDefault(require("dotenv"));
-const User_1 = __importDefault(require("../models/User"));
-const database_1 = __importDefault(require("../config/database"));
-dotenv_1.default.config();
+var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__getProtoOf(mod)) : {}, __copyProps(
+  // If the importer is in node compatibility mode or this is not an ESM
+  // file that has been converted to a CommonJS file using a Babel-
+  // compatible transform (i.e. "__esModule" has not been set), then set
+  // "default" to the CommonJS "module.exports" for node compatibility.
+  isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
+  mod
+));
+var import_mongoose = __toESM(require("mongoose"));
+var import_dotenv = __toESM(require("dotenv"));
+var import_User = __toESM(require("../models/User"));
+var import_database = __toESM(require("../config/database"));
+import_dotenv.default.config();
 const checkUser = async () => {
-    try {
-        // Connect to database
-        await (0, database_1.default)();
-        // Get email from environment variable
-        const email = process.env.CHECK_USER_EMAIL;
-        if (!email) {
-            console.error('❌ Error: CHECK_USER_EMAIL environment variable is not set');
-            console.log('   Please set CHECK_USER_EMAIL in your .env file');
-            console.log('   Example: CHECK_USER_EMAIL=your-email@example.com\n');
-            return;
-        }
-        console.log('\n🔍 Checking user details...\n');
-        // Find user by email
-        const user = await User_1.default.findOne({ email: email.toLowerCase() }).select('+password');
-        if (!user) {
-            console.log('❌ User not found with email:', email);
-            return;
-        }
-        console.log('✅ User found!');
-        console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-        console.log('📧 Email:', user.email);
-        console.log('👤 Username:', user.username);
-        console.log('👨‍💼 Full Name:', user.fullName);
-        console.log('🔐 Role:', user.role);
-        console.log('📊 Status:', user.status);
-        console.log('🔑 Has Password:', user.password ? 'Yes (hashed)' : 'No');
-        console.log('📝 Created At:', user.createdAt);
-        console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
-        // Check status
-        if (user.status !== 'Active') {
-            console.log('⚠️  WARNING: User status is not "Active"');
-            console.log('   You need to set status to "Active" to allow login.\n');
-        }
-        // Check if password exists
-        if (!user.password) {
-            console.log('⚠️  WARNING: User does not have a password set');
-            console.log('   You need to set a password using the reset password flow.\n');
-        }
-        console.log('💡 Login Tips:');
-        console.log('   - Use email: ' + user.email);
-        console.log('   - Or username: ' + user.username);
-        console.log('   - Password: (the password that was set when user was created)');
-        console.log('   - If you forgot password, use the forgot password flow\n');
+  try {
+    await (0, import_database.default)();
+    const email = process.env.CHECK_USER_EMAIL;
+    if (!email) {
+      console.error("\u274C Error: CHECK_USER_EMAIL environment variable is not set");
+      console.log("   Please set CHECK_USER_EMAIL in your .env file");
+      console.log("   Example: CHECK_USER_EMAIL=your-email@example.com\n");
+      return;
     }
-    catch (error) {
-        console.error('❌ Error:', error.message);
+    console.log("\n\u{1F50D} Checking user details...\n");
+    const user = await import_User.default.findOne({ email: email.toLowerCase() }).select("+password");
+    if (!user) {
+      console.log("\u274C User not found with email:", email);
+      return;
     }
-    finally {
-        // Close connection
-        await mongoose_1.default.connection.close();
-        process.exit(0);
+    console.log("\u2705 User found!");
+    console.log("\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501");
+    console.log("\u{1F4E7} Email:", user.email);
+    console.log("\u{1F464} Username:", user.username);
+    console.log("\u{1F468}\u200D\u{1F4BC} Full Name:", user.fullName);
+    console.log("\u{1F510} Role:", user.role);
+    console.log("\u{1F4CA} Status:", user.status);
+    console.log("\u{1F511} Has Password:", user.password ? "Yes (hashed)" : "No");
+    console.log("\u{1F4DD} Created At:", user.createdAt);
+    console.log("\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\n");
+    if (user.status !== "Active") {
+      console.log('\u26A0\uFE0F  WARNING: User status is not "Active"');
+      console.log('   You need to set status to "Active" to allow login.\n');
     }
+    if (!user.password) {
+      console.log("\u26A0\uFE0F  WARNING: User does not have a password set");
+      console.log("   You need to set a password using the reset password flow.\n");
+    }
+    console.log("\u{1F4A1} Login Tips:");
+    console.log("   - Use email: " + user.email);
+    console.log("   - Or username: " + user.username);
+    console.log("   - Password: (the password that was set when user was created)");
+    console.log("   - If you forgot password, use the forgot password flow\n");
+  } catch (error) {
+    console.error("\u274C Error:", error.message);
+  } finally {
+    await import_mongoose.default.connection.close();
+    process.exit(0);
+  }
 };
 checkUser();

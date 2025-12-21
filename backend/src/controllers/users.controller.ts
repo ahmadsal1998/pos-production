@@ -42,6 +42,7 @@ import Store from '../models/Store';
 import { AuthenticatedRequest } from '../middleware/auth.middleware';
 import { asyncHandler } from '../middleware/error.middleware';
 import User, { UserDocument } from '../models/User';
+import { log } from '../utils/logger';
 
 // Get all users
 export const getUsers = asyncHandler(

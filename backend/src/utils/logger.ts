@@ -90,12 +90,13 @@ function sanitizeData(data: any): any {
 /**
  * Custom format that sanitizes sensitive data
  */
-const sanitizeFormat = winston.format((info) => {
+const sanitizeFormat = winston.format((info: any) => {
   if (info.message && typeof info.message === 'object') {
     info.message = sanitizeData(info.message);
   }
-  if (info[Symbol.for('splat')]) {
-    info[Symbol.for('splat')] = info[Symbol.for('splat')].map((arg: any) => sanitizeData(arg));
+  const splatSymbol = Symbol.for('splat');
+  if (info[splatSymbol] && Array.isArray(info[splatSymbol])) {
+    info[splatSymbol] = info[splatSymbol].map((arg: any) => sanitizeData(arg));
   }
   return info;
 });
@@ -140,12 +141,17 @@ const logger = winston.createLogger({
       format: winston.format.combine(
         sanitizeFormat(),
         winston.format.colorize(),
-        winston.format.printf(({ timestamp, level, message, ...meta }) => {
+        winston.format.printf(({ timestamp, level, message, ...meta }: any) => {
           let msg = `${timestamp} [${level}]: ${message}`;
           // Only include metadata if it exists and is not empty
-          const metaKeys = Object.keys(meta).filter(key => key !== 'service' && key !== Symbol.for('splat'));
+          // Remove known internal keys (service, splat symbol) before stringifying
+          const cleanMeta = { ...meta };
+          delete cleanMeta.service;
+          const splatSymbol = Symbol.for('splat');
+          delete cleanMeta[splatSymbol];
+          const metaKeys = Object.keys(cleanMeta);
           if (metaKeys.length > 0) {
-            msg += ` ${JSON.stringify(meta)}`;
+            msg += ` ${JSON.stringify(cleanMeta)}`;
           }
           return msg;
         })

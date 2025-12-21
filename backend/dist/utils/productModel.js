@@ -1,28 +1,45 @@
 "use strict";
-/**
- * Product Model Utilities
- *
- * Provides functions to get Product models with the correct collection name
- * based on whether a store is a trial account.
- */
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
+var __create = Object.create;
+var __defProp = Object.defineProperty;
+var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __getProtoOf = Object.getPrototypeOf;
+var __hasOwnProp = Object.prototype.hasOwnProperty;
+var __export = (target, all) => {
+  for (var name in all)
+    __defProp(target, name, { get: all[name], enumerable: true });
 };
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.getProductModelForStore = getProductModelForStore;
-const Product_1 = __importDefault(require("../models/Product"));
-const trialAccountModels_1 = require("./trialAccountModels");
-/**
- * Get Product model with correct collection name based on trial status
- * Trial accounts use 'products_test' collection, regular accounts use 'products'
- *
- * @param storeId - The store ID to check
- * @returns Promise<Model<ProductDocument>> - The Product model with correct collection
- */
+var __copyProps = (to, from, except, desc) => {
+  if (from && typeof from === "object" || typeof from === "function") {
+    for (let key of __getOwnPropNames(from))
+      if (!__hasOwnProp.call(to, key) && key !== except)
+        __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
+  }
+  return to;
+};
+var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__getProtoOf(mod)) : {}, __copyProps(
+  // If the importer is in node compatibility mode or this is not an ESM
+  // file that has been converted to a CommonJS file using a Babel-
+  // compatible transform (i.e. "__esModule" has not been set), then set
+  // "default" to the CommonJS "module.exports" for node compatibility.
+  isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
+  mod
+));
+var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
+var productModel_exports = {};
+__export(productModel_exports, {
+  getProductModelForStore: () => getProductModelForStore
+});
+module.exports = __toCommonJS(productModel_exports);
+var import_Product = __toESM(require("../models/Product"));
+var import_trialAccountModels = require("./trialAccountModels");
 async function getProductModelForStore(storeId) {
-    if (!storeId) {
-        throw new Error('Store ID is required to access products');
-    }
-    // Get model with correct collection name based on trial status
-    return (0, trialAccountModels_1.getModelForStore)(Product_1.default, 'products', storeId);
+  if (!storeId) {
+    throw new Error("Store ID is required to access products");
+  }
+  return (0, import_trialAccountModels.getModelForStore)(import_Product.default, "products", storeId);
 }
+// Annotate the CommonJS export names for ESM import in node:
+0 && (module.exports = {
+  getProductModelForStore
+});
