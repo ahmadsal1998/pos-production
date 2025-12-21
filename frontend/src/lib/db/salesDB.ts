@@ -767,6 +767,73 @@ class SalesDB {
   }
 
   /**
+   * Get the next invoice number for a store when offline
+   * Checks IndexedDB for existing invoice numbers and generates the next unique one
+   */
+  async getNextInvoiceNumberOffline(storeId: string): Promise<string> {
+    const db = await this.ensureDB();
+    const transaction = db.transaction([STORE_NAME], 'readonly');
+    const store = transaction.objectStore(STORE_NAME);
+    const index = store.index('storeId');
+
+    return new Promise((resolve, reject) => {
+      const request = index.getAll(storeId.toLowerCase().trim());
+      request.onsuccess = () => {
+        const sales: SaleRecord[] = request.result || [];
+        
+        // Extract invoice numbers and find the highest number
+        let maxNumber = 0;
+        const invoiceNumberPattern = /^INV-(\d+)$/i;
+        
+        sales.forEach(sale => {
+          if (sale.invoiceNumber) {
+            const match = sale.invoiceNumber.match(invoiceNumberPattern);
+            if (match) {
+              const number = parseInt(match[1], 10);
+              if (!isNaN(number) && number > maxNumber) {
+                maxNumber = number;
+              }
+            }
+          }
+        });
+        
+        // Generate next invoice number
+        const nextNumber = maxNumber + 1;
+        const nextInvoiceNumber = `INV-${nextNumber}`;
+        
+        console.log(`[SalesDB] Generated offline invoice number: ${nextInvoiceNumber} (max found: ${maxNumber})`);
+        resolve(nextInvoiceNumber);
+      };
+      
+      request.onerror = () => {
+        console.error('❌ Error getting next invoice number from IndexedDB:', request.error);
+        // Fallback to INV-1 if we can't read from IndexedDB
+        reject(new Error('Failed to get next invoice number'));
+      };
+    });
+  }
+
+  /**
+   * Check if an invoice number already exists for a store
+   */
+  async invoiceNumberExists(storeId: string, invoiceNumber: string): Promise<boolean> {
+    const db = await this.ensureDB();
+    const transaction = db.transaction([STORE_NAME], 'readonly');
+    const store = transaction.objectStore(STORE_NAME);
+    const uniqueIndex = store.index('storeId_invoiceNumber');
+
+    return new Promise((resolve, reject) => {
+      const request = uniqueIndex.get([storeId.toLowerCase().trim(), invoiceNumber]);
+      request.onsuccess = () => {
+        resolve(!!request.result);
+      };
+      request.onerror = () => {
+        reject(request.error);
+      };
+    });
+  }
+
+  /**
    * Close database connection
    */
   close(): void {

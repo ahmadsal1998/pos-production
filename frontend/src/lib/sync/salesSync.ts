@@ -211,6 +211,17 @@ class SalesSyncService {
     try {
       const unsyncedSales = await salesDB.getUnsyncedSales(storeId);
       console.log(`🔄 Syncing ${unsyncedSales.length} unsynced sales...`);
+      
+      // Log all unsynced sales for debugging
+      if (unsyncedSales.length > 0) {
+        console.log('[SalesSync] Unsynced sales:', unsyncedSales.map(s => ({
+          id: s.id,
+          invoiceNumber: s.invoiceNumber,
+          storeId: s.storeId,
+          synced: s.synced,
+          syncError: s.syncError
+        })));
+      }
 
       if (unsyncedSales.length === 0) {
         this.isSyncing = false;
@@ -225,8 +236,12 @@ class SalesSyncService {
       };
 
       // Sync sales sequentially to avoid overwhelming the backend
-      for (const sale of unsyncedSales) {
+      for (let i = 0; i < unsyncedSales.length; i++) {
+        const sale = unsyncedSales[i];
         const saleStoreId = sale.storeId || storeId;
+        
+        console.log(`[SalesSync] Syncing sale ${i + 1}/${unsyncedSales.length}: ${sale.invoiceNumber} (ID: ${sale.id})`);
+        
         if (!saleStoreId) {
           console.warn('⚠️ Sale missing storeId, skipping:', sale.invoiceNumber);
           results.failed++;
@@ -241,12 +256,14 @@ class SalesSyncService {
 
         if (syncResult.success) {
           results.synced++;
+          console.log(`✅ [SalesSync] Successfully synced sale ${i + 1}/${unsyncedSales.length}: ${sale.invoiceNumber}`);
         } else {
           results.failed++;
           results.errors.push({
             saleId: sale.id || 'unknown',
             error: syncResult.error || 'Unknown error',
           });
+          console.error(`❌ [SalesSync] Failed to sync sale ${i + 1}/${unsyncedSales.length}: ${sale.invoiceNumber} - ${syncResult.error}`);
         }
 
         // Small delay between syncs to avoid rate limiting
@@ -254,6 +271,9 @@ class SalesSyncService {
       }
 
       console.log(`✅ Sync completed: ${results.synced} synced, ${results.failed} failed`);
+      if (results.failed > 0) {
+        console.warn(`⚠️ ${results.failed} sales failed to sync. Errors:`, results.errors);
+      }
       this.isSyncing = false;
       return results;
     } catch (error: any) {

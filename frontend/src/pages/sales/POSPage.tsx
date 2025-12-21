@@ -536,16 +536,32 @@ const POSPage: React.FC = () => {
     // Fetch next invoice number from API
     const fetchNextInvoiceNumber = useCallback(async (): Promise<string> => {
         try {
+            // Try to fetch from API first
             const response = await salesApi.getNextInvoiceNumber();
             const invoiceNumber = (response.data as any)?.data?.invoiceNumber || 'INV-1';
             return invoiceNumber;
         } catch (err: any) {
             const apiError = err as ApiError;
-            console.error('Error fetching next invoice number:', apiError);
-            // Fallback to INV-1 if API fails
+            console.warn('⚠️ API failed to get next invoice number, checking IndexedDB for offline invoice numbers:', apiError);
+            
+            // If offline or API fails, get next invoice number from IndexedDB
+            try {
+                const storeId = user?.storeId;
+                if (storeId) {
+                    await salesDB.init();
+                    const offlineInvoiceNumber = await salesDB.getNextInvoiceNumberOffline(storeId);
+                    console.log('✅ Generated offline invoice number:', offlineInvoiceNumber);
+                    return offlineInvoiceNumber;
+                }
+            } catch (dbError: any) {
+                console.error('❌ Failed to get invoice number from IndexedDB:', dbError);
+            }
+            
+            // Last resort: fallback to INV-1 (but this should be avoided)
+            console.warn('⚠️ Using fallback invoice number INV-1 (may cause duplicates if used multiple times offline)');
             return 'INV-1';
         }
-    }, []);
+    }, [user?.storeId]);
 
     // Fetch initial invoice number on mount
     useEffect(() => {
@@ -3436,11 +3452,33 @@ const POSPage: React.FC = () => {
                     seller: finalInvoice.cashier,
                 };
 
+                // Check if invoice number already exists in IndexedDB before saving
+                // This prevents duplicate invoice numbers when working offline
+                try {
+                    await salesDB.init();
+                    const invoiceExists = await salesDB.invoiceNumberExists(storeId, finalInvoice.id);
+                    if (invoiceExists) {
+                        console.warn(`⚠️ Invoice number ${finalInvoice.id} already exists in IndexedDB, generating new number...`);
+                        // Generate a new unique invoice number
+                        const newInvoiceNumber = await salesDB.getNextInvoiceNumberOffline(storeId);
+                        saleData.invoiceNumber = newInvoiceNumber;
+                        finalInvoice.id = newInvoiceNumber; // Update the invoice ID as well
+                        console.log(`✅ Generated new unique invoice number: ${newInvoiceNumber}`);
+                    }
+                } catch (checkError: any) {
+                    console.warn('⚠️ Could not check invoice number uniqueness, proceeding anyway:', checkError);
+                }
+
                 // Use IndexedDB sync service (saves locally and syncs with backend)
                 // CRITICAL: Ensure sale is saved to IndexedDB even if sync fails
                 let syncResult;
                 try {
                     syncResult = await salesSync.createAndSyncSale(saleData, storeId);
+                    console.log(`[POS] Sale sync result for ${saleData.invoiceNumber}:`, {
+                        success: syncResult.success,
+                        saleId: syncResult.saleId,
+                        error: syncResult.error
+                    });
                 } catch (syncError: any) {
                     // If createAndSyncSale throws an error, try to save directly to IndexedDB
                     console.error('❌ Error in createAndSyncSale, attempting direct IndexedDB save:', syncError);
