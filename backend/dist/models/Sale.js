@@ -72,6 +72,11 @@ const saleItemSchema = new mongoose_1.Schema({
         type: Number,
         default: 1,
     },
+    costPrice: {
+        type: Number,
+        default: 0,
+        min: 0,
+    },
 }, { _id: false });
 const saleSchema = new mongoose_1.Schema({
     invoiceNumber: {
