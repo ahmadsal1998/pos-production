@@ -70,6 +70,8 @@ const SaleDetailsModal: React.FC<{ sale: SaleTransaction | null, onClose: () => 
     const { formatCurrency } = useCurrency();
     const [storeAddress, setStoreAddress] = useState<string>('');
     const [businessName, setBusinessName] = useState<string>('');
+    const [netProfit, setNetProfit] = useState<number | null>(null);
+    const [isCalculatingProfit, setIsCalculatingProfit] = useState(true);
 
     // Load store address and business name when modal opens
     useEffect(() => {
@@ -143,6 +145,53 @@ const SaleDetailsModal: React.FC<{ sale: SaleTransaction | null, onClose: () => 
 
         loadStoreData();
     }, [sale]); // Reload when sale changes
+
+    // Calculate net profit for this invoice (matching the invoice list calculation)
+    useEffect(() => {
+        if (!sale) return;
+        
+        const calculateProfit = async () => {
+            setIsCalculatingProfit(true);
+            try {
+                let totalCost = 0;
+                const isReturn = sale.status === 'Returned' || sale.id.startsWith('RET-');
+                
+                if (sale.items && Array.isArray(sale.items)) {
+                    for (const item of sale.items) {
+                        const quantity = Math.abs(item.quantity || 0);
+                        
+                        // Check for costPrice first (new field), then cost (legacy)
+                        if (item.costPrice !== undefined && item.costPrice !== null) {
+                            totalCost += (item.costPrice || 0) * quantity;
+                        } else if (item.cost !== undefined && item.cost !== null) {
+                            totalCost += (item.cost || 0) * quantity;
+                        } else {
+                            // Fetch cost price from product
+                            try {
+                                const itemCost = await calculateCostPrice([item]);
+                                totalCost += itemCost;
+                            } catch (error) {
+                                console.warn(`Failed to fetch cost for product ${item.productId}:`, error);
+                            }
+                        }
+                    }
+                }
+                
+                // Calculate net profit: Sale Price - Cost Price
+                // For returns, sale.totalAmount is negative, so we use absolute value
+                const salePrice = isReturn ? Math.abs(sale.totalAmount || 0) : (sale.totalAmount || 0);
+                const profit = salePrice - totalCost;
+                setNetProfit(isReturn ? -profit : profit);
+            } catch (error) {
+                console.error('Error calculating net profit:', error);
+                setNetProfit(0);
+            } finally {
+                setIsCalculatingProfit(false);
+            }
+        };
+        
+        calculateProfit();
+    }, [sale]);
 
     // Early return AFTER all hooks are called
     if (!sale) return null;
@@ -270,6 +319,18 @@ const SaleDetailsModal: React.FC<{ sale: SaleTransaction | null, onClose: () => 
                                 <span className="font-semibold text-red-600 dark:text-red-400">
                                     {formatCurrency(isReturn ? -Math.abs(sale.remainingAmount) : sale.remainingAmount)}
                                 </span>
+                            </div>
+                        )}
+                        {netProfit !== null && (
+                            <div className="flex justify-between py-1.5 mt-2 border-t border-gray-200 dark:border-gray-700 pt-2">
+                                <span className="text-gray-600 dark:text-gray-400 font-medium">صافي الربح:</span>
+                                {isCalculatingProfit ? (
+                                    <span className="text-xs text-gray-400">...</span>
+                                ) : (
+                                    <span className={`font-semibold ${netProfit >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
+                                        {formatCurrency(netProfit)}
+                                    </span>
+                                )}
                             </div>
                         )}
                     </div>
