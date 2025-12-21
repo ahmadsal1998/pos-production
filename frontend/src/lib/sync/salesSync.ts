@@ -129,10 +129,40 @@ class SalesSyncService {
       
       // Detect 409 Conflict (invoice number already exists)
       if (statusCode === 409) {
-        const conflictMessage = `Invoice number ${sale.invoiceNumber} already exists on server. This may happen if an invoice was suspended and restored. Please create a new invoice.`;
+        // Check if the sale was already synced (maybe from another device/tab)
+        // In this case, we should mark it as synced rather than error
+        try {
+          // Try to fetch the existing sale from server to get its ID
+          const existingSalesResponse = await salesApi.getSales({
+            invoiceNumber: sale.invoiceNumber,
+            storeId: sale.storeId,
+            limit: 1,
+          });
+          
+          const existingSales = (existingSalesResponse.data as any)?.data?.sales || [];
+          if (existingSales.length > 0) {
+            const existingSale = existingSales[0];
+            const backendId = existingSale.id || existingSale._id;
+            
+            // Sale already exists on server - mark as synced
+            if (indexedDBAvailable && sale.id) {
+              await salesDB.markAsSynced(sale.id, backendId, sale.storeId, sale.invoiceNumber);
+            }
+            
+            console.log(`✅ Sale ${sale.invoiceNumber} already exists on server, marked as synced`);
+            return { success: true, backendId };
+          }
+        } catch (fetchError) {
+          // Couldn't fetch existing sale, treat as conflict
+          console.warn('Could not verify existing sale:', fetchError);
+        }
+        
+        // True conflict - invoice number exists but we can't verify it's the same sale
+        const conflictMessage = `Invoice number ${sale.invoiceNumber} already exists on server. This may happen if an invoice was suspended and restored. The sale has been saved locally and will be retried.`;
         console.error('❌ Invoice number conflict:', sale.invoiceNumber, conflictMessage);
         
         // Mark sync error in IndexedDB with specific conflict message
+        // Don't mark as permanently failed - will retry on next sync
         if (indexedDBAvailable && sale.id) {
           try {
             await salesDB.markSyncError(sale.id, conflictMessage, sale.storeId, sale.invoiceNumber);

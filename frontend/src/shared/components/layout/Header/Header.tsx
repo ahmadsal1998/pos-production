@@ -2,6 +2,7 @@ import React, { useMemo, useState, useEffect } from 'react';
 import { SunIcon, MoonIcon } from '@/shared/constants';
 import { useThemeStore, useAppStore, useAuthStore } from '@/app/store';
 import { AR_LABELS } from '@/shared/constants/ui';
+import { OfflineIndicator } from '@/shared/components/OfflineIndicator/OfflineIndicator';
 import {
   isFullscreen,
   isFullscreenSupported,
@@ -161,6 +162,9 @@ const Header: React.FC<HeaderProps> = ({ activePath, onMenuToggle, isMobileMenuO
 
           {/* Right section: Actions */}
           <div className="flex items-center gap-2 sm:gap-2.5 md:gap-3 flex-shrink-0">
+            {/* Offline Status Indicator */}
+            <OfflineIndicator className="hidden sm:flex" />
+            
             {/* Theme toggle */}
             <button
               onClick={toggleTheme}

@@ -17,6 +17,7 @@ import { productsDB } from '@/lib/db/productsDB';
 import { customerSync } from '@/lib/sync/customerSync';
 import { customersDB } from '@/lib/db/customersDB';
 import { salesSync } from '@/lib/sync/salesSync';
+import { inventorySync } from '@/lib/sync/inventorySync';
 import { ProductNotFoundModal } from '@/shared/components/ui/ProductNotFoundModal';
 // PaymentProcessingModal removed - using simple payment flow
 
@@ -2718,21 +2719,36 @@ const POSPage: React.FC = () => {
 
                 const productIdToUpdateString = String(productIdToUpdate);
                 
+                // OFFLINE-FIRST APPROACH: Update local IndexedDB first, then sync
+                const currentStock = product?.stock || 0;
+                const newStock = currentStock + stockAddition; // ADD stock for returns
+                
                 try {
-                    const currentProductResponse = await productsApi.getProduct(productIdToUpdateString);
-                    const currentProduct = (currentProductResponse.data as any)?.data?.product || (currentProductResponse.data as any)?.product;
+                    // Step 1: Update local IndexedDB immediately (already done in optimistic update above)
+                    // This ensures the UI shows correct stock even when offline
                     
-                    if (!currentProduct) {
-                        throw new Error('Product data not found');
+                    // Step 2: Queue stock change for sync (works offline)
+                    try {
+                        await inventorySync.queueStockChange(
+                            productIdToUpdateString,
+                            invoiceItemName,
+                            currentStock,
+                            newStock,
+                            'return'
+                        );
+                        console.log(`📦 Return stock change queued for ${invoiceItemName}: ${currentStock} -> ${newStock} (+${stockAddition})`);
+                    } catch (queueError) {
+                        console.warn(`⚠️ Failed to queue return stock change for ${invoiceItemName}:`, queueError);
+                        // Continue anyway - local update succeeded
                     }
-
-                    const currentStock = currentProduct.stock || 0;
-                    const newStock = currentStock + stockAddition; // ADD stock for returns
                     
-                    await productsApi.updateProduct(productIdToUpdateString, {
-                        ...currentProduct,
-                        stock: newStock,
-                    });
+                    // Step 3: Try to sync immediately if online (non-blocking)
+                    if (navigator.onLine) {
+                        // Try to sync in background, but don't wait for it
+                        inventorySync.syncUnsyncedChanges().catch((syncError) => {
+                            console.warn(`⚠️ Background sync failed for return ${invoiceItemName}, will retry later:`, syncError);
+                        });
+                    }
                     
                     console.log(`✓ Return: Stock added for "${invoiceItemName}": ${currentStock} -> ${newStock} (+${stockAddition})`);
                     stockUpdateResults.push({ 
@@ -3211,58 +3227,38 @@ const POSPage: React.FC = () => {
                     stockChange,
                 });
                 
-                // Get current product data to update stock
+                // OFFLINE-FIRST APPROACH: Update local IndexedDB first, then sync
+                const expectedName = product?.name || invoiceItemName;
+                const currentStock = product?.stock || 0;
+                const newStock = Math.max(0, currentStock - stockChange);
+                
                 try {
-                    const currentProductResponse = await productsApi.getProduct(productIdToUpdateString);
-                    const currentProduct = (currentProductResponse.data as any)?.data?.product || (currentProductResponse.data as any)?.product;
+                    // Step 1: Update local IndexedDB immediately (already done in optimistic update above)
+                    // This ensures the UI shows correct stock even when offline
                     
-                    if (!currentProduct) {
-                        throw new Error('Product data not found in response');
+                    // Step 2: Queue stock change for sync (works offline)
+                    try {
+                        await inventorySync.queueStockChange(
+                            productIdToUpdateString,
+                            expectedName,
+                            currentStock,
+                            newStock,
+                            'sale'
+                        );
+                        console.log(`📦 Stock change queued for ${expectedName}: ${currentStock} -> ${newStock} (reduced by ${stockChange})`);
+                    } catch (queueError) {
+                        console.warn(`⚠️ Failed to queue stock change for ${expectedName}:`, queueError);
+                        // Continue anyway - local update succeeded
                     }
-
-                    // CRITICAL VALIDATION: Verify we got the correct product from the API
-                    const responseProductId = String(currentProduct.id || currentProduct._id);
-                    if (responseProductId !== productIdToUpdateString) {
-                        const errorMsg = `Product ID mismatch in API response: expected ${productIdToUpdateString}, got ${responseProductId}. Aborting update to prevent wrong product update.`;
-                        console.error(errorMsg, { 
-                            productIdToUpdate: productIdToUpdateString, 
-                            responseProductId, 
-                            currentProduct,
-                            invoiceItemProductId,
-                            invoiceItemName
+                    
+                    // Step 3: Try to sync immediately if online (non-blocking)
+                    if (navigator.onLine) {
+                        // Try to sync in background, but don't wait for it
+                        inventorySync.syncUnsyncedChanges().catch((syncError) => {
+                            console.warn(`⚠️ Background sync failed for ${expectedName}, will retry later:`, syncError);
                         });
-                        throw new Error(errorMsg);
                     }
-
-                    // Additional validation: verify product name matches
-                    const expectedName = product?.name || invoiceItemName;
-                    if (currentProduct.name !== expectedName) {
-                        console.warn(`Product name mismatch in API response: expected "${expectedName}", got "${currentProduct.name}". Continuing with update.`);
-                    }
-
-                    const currentStock = currentProduct.stock || 0;
-                    // For sales, subtract stock
-                    const newStock = Math.max(0, currentStock - stockChange);
                     
-                    // CRITICAL FIX: Update ONLY the specific product using its productId
-                    // Ensure we're passing the correct productId in the URL
-                    // Double-check productIdToUpdate before making the API call
-                    console.log(`[Stock Update] Calling API: PUT /products/${productIdToUpdateString}`, {
-                        productIdToUpdate: productIdToUpdateString,
-                        invoiceItemProductId,
-                        productName: expectedName,
-                        currentStock,
-                        newStock,
-                        stockChange: `-${stockChange}`,
-                        operation: 'SALE (subtracting stock)',
-                    });
-                    
-                    await productsApi.updateProduct(productIdToUpdateString, {
-                        ...currentProduct,
-                        stock: newStock,
-                    });
-                    
-                    console.log(`✓ Stock updated for product "${expectedName}" (Frontend ID: ${invoiceItemProductId}, Backend ID: ${productIdToUpdateString}): ${currentStock} -> ${newStock} (reduced by ${stockChange})`);
                     stockUpdateResults.push({ 
                         success: true, 
                         productName: expectedName,
