@@ -982,45 +982,84 @@ const SalesPage: React.FC<SalesPageProps> = ({ setActivePath }) => {
                     hasData: !!backendResponse?.data
                 });
                 
-                // Debug: If no sales found with filters, try fetching without date filters to see if there are any sales
+                // FIX: If no sales found with date filters, try fetching without date filters
+                // The backend's business date filtering might be too strict and excluding valid sales
                 if ((!backendResponse?.data?.sales || backendResponse.data.sales.length === 0) && (filters.dateRange.start || filters.dateRange.end)) {
-                    console.warn('[SalesPage] ⚠️ No sales found with date filters, testing without date filters to debug...');
+                    console.warn('[SalesPage] ⚠️ No sales found with date filters, fetching all sales and filtering client-side...');
                     try {
                         const testParams = { ...params };
                         delete testParams.startDate;
                         delete testParams.endDate;
+                        // Fetch more sales to ensure we get all that might match
+                        testParams.limit = 1000; // Get more sales for client-side filtering
                         const testResponse = await salesApi.getSales(testParams);
                         const testBackendResponse = testResponse.data as any;
                         if (testBackendResponse?.data?.sales && testBackendResponse.data.sales.length > 0) {
                             console.log('[SalesPage] ✅ Found', testBackendResponse.data.sales.length, 'sales without date filters');
-                            // Log sample sale dates to debug
-                            const sampleSales = testBackendResponse.data.sales.slice(0, 10);
-                            console.log('[SalesPage] Sample sale dates (no filter):', sampleSales.map((s: any) => ({
-                                invoiceNumber: s.invoiceNumber,
-                                date: s.date,
-                                dateType: typeof s.date,
-                                dateObj: s.date ? new Date(s.date).toISOString() : null,
-                                dateOnly: s.date ? new Date(s.date).toISOString().split('T')[0] : null,
-                                dateLocal: s.date ? new Date(s.date).toLocaleString() : null
-                            })));
                             
-                            // Check if any of these sales match our date range
+                            // Transform and filter client-side by date range
                             const filterStart = filters.dateRange.start;
                             const filterEnd = filters.dateRange.end;
-                            const matchingSales = sampleSales.filter((s: any) => {
-                                if (!s.date) return false;
-                                const saleDateOnly = new Date(s.date).toISOString().split('T')[0];
+                            
+                            const allTestSales = testBackendResponse.data.sales.map((sale: any) => ({
+                                id: sale.id || sale._id || sale.invoiceNumber,
+                                invoiceNumber: sale.invoiceNumber || sale.id || sale._id,
+                                date: sale.date || sale.createdAt || new Date().toISOString(),
+                                customerName: sale.customerName || 'عميل نقدي',
+                                customerId: sale.customerId || 'walk-in-customer',
+                                totalAmount: sale.total || sale.totalAmount || 0,
+                                paidAmount: sale.paidAmount || 0,
+                                remainingAmount: sale.remainingAmount || (sale.total - (sale.paidAmount || 0)),
+                                paymentMethod: (sale.paymentMethod?.charAt(0).toUpperCase() + sale.paymentMethod?.slice(1).toLowerCase()) as SalePaymentMethod || 'Cash',
+                                status: sale.status === 'completed' ? 'Paid' : sale.status === 'partial_payment' ? 'Partial' : sale.status === 'pending' ? 'Due' : sale.status === 'refunded' || sale.status === 'partial_refund' ? 'Returned' : (sale.status as SaleStatus) || 'Paid',
+                                seller: sale.seller || sale.cashier || currentUserName,
+                                items: Array.isArray(sale.items) ? sale.items.map((item: any) => ({
+                                    productId: typeof item.productId === 'string' ? parseInt(item.productId) || 0 : item.productId || 0,
+                                    name: item.productName || item.name || '',
+                                    unit: item.unit || 'قطعة',
+                                    quantity: item.quantity || 0,
+                                    unitPrice: item.unitPrice || 0,
+                                    total: item.totalPrice || item.total || 0,
+                                    discount: item.discount || 0,
+                                    conversionFactor: item.conversionFactor,
+                                })) : [],
+                                subtotal: sale.subtotal || 0,
+                                totalItemDiscount: sale.totalItemDiscount || 0,
+                                invoiceDiscount: sale.invoiceDiscount || sale.discount || 0,
+                                tax: sale.tax || 0,
+                            }));
+                            
+                            // Filter by date range client-side
+                            const matchingSales = allTestSales.filter((sale: SaleTransaction) => {
+                                if (!sale.date) return false;
+                                const saleDateOnly = new Date(sale.date).toISOString().split('T')[0];
                                 const matchesStart = !filterStart || saleDateOnly >= filterStart;
                                 const matchesEnd = !filterEnd || saleDateOnly <= filterEnd;
                                 return matchesStart && matchesEnd;
                             });
                             
-                            console.log('[SalesPage] Sales matching date range:', {
+                            console.log('[SalesPage] Client-side filtered sales:', {
                                 filterStart,
                                 filterEnd,
+                                totalSales: allTestSales.length,
                                 matchingCount: matchingSales.length,
-                                matchingInvoices: matchingSales.map((s: any) => s.invoiceNumber)
+                                matchingInvoices: matchingSales.map(s => s.invoiceNumber)
                             });
+                            
+                            // Use the client-side filtered sales instead of empty API response
+                            if (matchingSales.length > 0) {
+                                console.log('[SalesPage] Using client-side filtered sales due to backend business date filtering exclusion');
+                                apiSales = matchingSales;
+                                // Update pagination info
+                                pagination = {
+                                    totalSales: matchingSales.length,
+                                    totalPages: Math.ceil(matchingSales.length / pageSize),
+                                    currentPage: page,
+                                    limit: pageSize,
+                                    hasNextPage: page * pageSize < matchingSales.length,
+                                    hasPreviousPage: page > 1,
+                                };
+                            }
                         } else {
                             console.log('[SalesPage] No sales found even without date filters - database may be empty');
                         }
@@ -1029,7 +1068,8 @@ const SalesPage: React.FC<SalesPageProps> = ({ setActivePath }) => {
                     }
                 }
                 
-                if (backendResponse?.success && Array.isArray(backendResponse.data?.sales)) {
+                // Only transform API sales if we haven't already populated apiSales from the fallback query
+                if (apiSales.length === 0 && backendResponse?.success && Array.isArray(backendResponse.data?.sales)) {
                     // Transform API sales to SaleTransaction format
                     apiSales = backendResponse.data.sales.map((sale: any) => ({
                         id: sale.id || sale._id || sale.invoiceNumber,
