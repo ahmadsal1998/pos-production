@@ -138,15 +138,18 @@ class InventorySyncService {
     return new Promise((resolve, reject) => {
       const transaction = db.transaction([this.STORE_NAME], 'readonly');
       const store = transaction.objectStore(this.STORE_NAME);
-      const index = store.index('synced');
-      const request = index.openCursor(IDBKeyRange.only(false));
+      const request = store.openCursor();
 
       const changes: StockChange[] = [];
 
       request.onsuccess = (event) => {
         const cursor = (event.target as IDBRequest<IDBCursorWithValue>).result;
         if (cursor) {
-          changes.push(cursor.value as StockChange);
+          const change = cursor.value as StockChange;
+          // Filter for unsynced changes (synced === false or undefined)
+          if (change.synced === false || change.synced === undefined) {
+            changes.push(change);
+          }
           cursor.continue();
         } else {
           // Sort by timestamp (oldest first)
