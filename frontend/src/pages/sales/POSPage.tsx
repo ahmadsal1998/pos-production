@@ -3751,8 +3751,11 @@ const POSPage: React.FC = () => {
     }
 
     const renderQRReceipt = (invoice: SaleTransaction | POSInvoice, title: string) => {
-        // Generate the invoice URL for the QR code
-        const invoiceUrl = `${window.location.origin}/invoice/${invoice.id}`;
+        // Generate the invoice URL for the QR code (include storeId if available)
+        const storeId = user?.storeId || '';
+        const invoiceUrl = storeId 
+            ? `${window.location.origin}/invoice/${storeId}/${invoice.id}`
+            : `${window.location.origin}/invoice/${invoice.id}`;
         
         return (
             <div id="printable-qr-receipt" className="w-full max-w-md bg-white dark:bg-gray-800 p-6 sm:p-8 rounded-lg shadow-lg text-center">

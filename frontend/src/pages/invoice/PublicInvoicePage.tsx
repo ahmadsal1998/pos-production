@@ -2,11 +2,10 @@ import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { AR_LABELS } from '@/shared/constants';
 import { useCurrency } from '@/shared/contexts/CurrencyContext';
-import { salesApi } from '@/lib/api/client';
 import { SaleTransaction } from '@/shared/types';
 
 const PublicInvoicePage: React.FC = () => {
-  const { invoiceNumber } = useParams<{ invoiceNumber: string }>();
+  const { invoiceNumber, storeId } = useParams<{ invoiceNumber: string; storeId?: string }>();
   const navigate = useNavigate();
   const { formatCurrency } = useCurrency();
   const [invoice, setInvoice] = useState<SaleTransaction | null>(null);
@@ -23,12 +22,29 @@ const PublicInvoicePage: React.FC = () => {
 
       try {
         setLoading(true);
-        // Try to find the sale by invoice number
-        // First, we'll need to search for it in the sales list
-        const response = await salesApi.getSales({ invoiceNumber, limit: 1 });
+        // Use the public invoice endpoint (no authentication required)
+        const params = new URLSearchParams({ invoiceNumber });
+        if (storeId) {
+          params.append('storeId', storeId);
+        }
         
-        if (response.data && response.data.length > 0) {
-          setInvoice(response.data[0]);
+        // Use fetch directly for public endpoint (no auth required)
+        const apiBaseUrl = (import.meta.env.VITE_API_URL as string) || '/api';
+        const response = await fetch(`${apiBaseUrl}/sales/public/invoice?${params.toString()}`, {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        });
+        
+        const data = await response.json();
+        
+        if (!response.ok) {
+          throw new Error(data.message || 'Failed to fetch invoice');
+        }
+        
+        if (data.success && data.data && data.data.sale) {
+          setInvoice(data.data.sale);
         } else {
           setError('الفاتورة غير موجودة');
         }
@@ -41,7 +57,7 @@ const PublicInvoicePage: React.FC = () => {
     };
 
     fetchInvoice();
-  }, [invoiceNumber]);
+  }, [invoiceNumber, storeId]);
 
   if (loading) {
     return (

@@ -1,4 +1,4 @@
-import { Response } from 'express';
+import { Response, Request } from 'express';
 import { ISale } from '../models/Sale';
 import { AuthenticatedRequest } from '../middleware/auth.middleware';
 import { asyncHandler } from '../middleware/error.middleware';
@@ -1327,4 +1327,90 @@ export const processReturn = asyncHandler(async (req: AuthenticatedRequest, res:
       stockUpdates,
     },
   });
+});
+
+/**
+ * Public endpoint to get invoice by invoice number (no authentication required)
+ * Used for QR code invoice viewing
+ */
+export const getPublicInvoice = asyncHandler(async (req: Request, res: Response) => {
+  const { invoiceNumber, storeId } = req.query;
+
+  if (!invoiceNumber || typeof invoiceNumber !== 'string') {
+    return res.status(400).json({
+      success: false,
+      message: 'Invoice number is required',
+    });
+  }
+
+  try {
+    let Sale: any;
+    
+    // If storeId is provided, use it to get the model
+    if (storeId && typeof storeId === 'string') {
+      Sale = await getSaleModelForStore(storeId.toLowerCase().trim());
+    } else {
+      // Otherwise, get model from first available store
+      const Store = (await import('../models/Store')).default;
+      const firstStore = await Store.findOne().lean();
+      if (!firstStore) {
+        return res.status(400).json({
+          success: false,
+          message: 'No stores available',
+        });
+      }
+      const modelStoreId = firstStore.storeId || firstStore.prefix;
+      Sale = await getSaleModelForStore(modelStoreId);
+    }
+
+    // Build query
+    const query: any = { invoiceNumber };
+    if (storeId && typeof storeId === 'string') {
+      query.storeId = storeId.toLowerCase().trim();
+    }
+
+    // Find invoice by invoice number
+    const sale = await Sale.findOne(query).lean();
+
+    if (!sale) {
+      return res.status(404).json({
+        success: false,
+        message: 'Invoice not found',
+      });
+    }
+
+    // Return invoice data
+    res.status(200).json({
+      success: true,
+      data: {
+        sale: {
+          id: sale._id,
+          invoiceNumber: sale.invoiceNumber,
+          date: sale.date,
+          customerName: sale.customerName,
+          customerId: sale.customerId,
+          items: sale.items,
+          subtotal: sale.subtotal,
+          totalItemDiscount: sale.totalItemDiscount,
+          invoiceDiscount: sale.invoiceDiscount,
+          tax: sale.tax,
+          total: sale.total,
+          totalAmount: sale.total,
+          paidAmount: sale.paidAmount,
+          remainingAmount: sale.remainingAmount,
+          paymentMethod: sale.paymentMethod,
+          status: sale.status,
+          seller: sale.seller,
+          originalInvoiceId: sale.originalInvoiceId,
+          isReturn: sale.isReturn,
+        },
+      },
+    });
+  } catch (error: any) {
+    log.error('Error fetching public invoice:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching invoice',
+    });
+  }
 });

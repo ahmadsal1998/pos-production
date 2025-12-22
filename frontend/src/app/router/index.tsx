@@ -74,6 +74,10 @@ export const router = createBrowserRouter([
     element: <ExpiredSubscriptionPage />,
   },
   {
+    path: '/invoice/:storeId/:invoiceNumber',
+    element: <PublicInvoicePage />,
+  },
+  {
     path: '/invoice/:invoiceNumber',
     element: <PublicInvoicePage />,
   },
