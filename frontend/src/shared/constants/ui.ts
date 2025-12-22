@@ -278,6 +278,7 @@ export const AR_LABELS = {
   confirmPayment: 'تأكيد الدفع',
   saleCompleted: 'اكتملت عملية البيع بنجاح!',
   startNewSale: 'بدء عملية بيع جديدة',
+  printQRInvoice: 'طباعة إيصال QR',
   heldInvoices: 'الفواتير المعلقة',
   restore: 'استعادة',
   noItemsInCart: 'لا توجد أصناف في السلة.',

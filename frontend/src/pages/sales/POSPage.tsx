@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { Product, Customer, POSInvoice, POSCartItem, SaleTransaction, SaleStatus, SalePaymentMethod } from '@/shared/types';
+import QRCode from 'react-qr-code';
 
 import { AR_LABELS, UUID, SearchIcon, DeleteIcon, PlusIcon, HandIcon, CancelIcon, PrintIcon, CheckCircleIcon } from '@/shared/constants';
 import { ToggleSwitch } from '@/shared/components/ui/ToggleSwitch';
@@ -332,6 +333,7 @@ const POSPage: React.FC = () => {
     });
     const [searchTerm, setSearchTerm] = useState('');
     const [saleCompleted, setSaleCompleted] = useState(false);
+    const [showQRReceipt, setShowQRReceipt] = useState(false);
     const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<string>('Cash');
     const [creditPaidAmount, setCreditPaidAmount] = useState(0);
     const [creditPaidAmountError, setCreditPaidAmountError] = useState<string | null>(null);
@@ -3747,6 +3749,54 @@ const POSPage: React.FC = () => {
             </div>
         );
     }
+
+    const renderQRReceipt = (invoice: SaleTransaction | POSInvoice, title: string) => {
+        // Generate the invoice URL for the QR code
+        const invoiceUrl = `${window.location.origin}/invoice/${invoice.id}`;
+        
+        return (
+            <div id="printable-qr-receipt" className="w-full max-w-md bg-white dark:bg-gray-800 p-6 sm:p-8 rounded-lg shadow-lg text-center">
+                {/* Invoice Number */}
+                <div className="mb-6">
+                    <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">{AR_LABELS.invoiceNumber}</p>
+                    <p className="text-xl font-bold text-gray-900 dark:text-gray-100">{invoice.id}</p>
+                </div>
+
+                {/* Date */}
+                <div className="mb-8">
+                    <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">{AR_LABELS.date}</p>
+                    <p className="text-base text-gray-900 dark:text-gray-100">{new Date(invoice.date).toLocaleString('ar-SA')}</p>
+                </div>
+
+                {/* QR Code Section */}
+                <div className="qr-section">
+                    <p className="text-xs text-gray-600 dark:text-gray-400 mb-4">امسح رمز QR لعرض الفاتورة الرقمية</p>
+                    <div className="flex justify-center mb-4">
+                        <div className="bg-white p-4 rounded-lg border-2 border-gray-300 dark:border-gray-600" style={{ display: 'inline-block' }}>
+                            <QRCode
+                                value={invoiceUrl}
+                                size={200}
+                                level="M"
+                                style={{ height: "auto", maxWidth: "100%", width: "100%" }}
+                            />
+                        </div>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    const handlePrintQRInvoice = async () => {
+        // Show QR receipt temporarily for printing
+        setShowQRReceipt(true);
+        // Wait for the component to render
+        setTimeout(() => {
+            printReceipt('printable-qr-receipt').finally(() => {
+                // Hide QR receipt after printing
+                setShowQRReceipt(false);
+            });
+        }, 300);
+    };
     
     if (saleCompleted) {
         const isReturnInvoice = currentInvoice.id.startsWith('RET-') || currentInvoice.originalInvoiceId !== undefined;
@@ -3760,16 +3810,46 @@ const POSPage: React.FC = () => {
                     : '';
         return (
             <div className="flex flex-col items-center justify-center min-h-screen bg-gray-100 dark:bg-gray-900 p-4 sm:p-6">
-                {saleCompleted && renderReceipt(currentInvoice, receiptTitle)}
-                <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 sm:space-x-4 sm:space-x-reverse mt-4 sm:mt-6 print-hidden w-full max-w-md">
-                    <button onClick={startNewSale} className="inline-flex items-center justify-center px-4 sm:px-6 py-2.5 sm:py-3 border border-transparent text-sm sm:text-base font-medium rounded-md shadow-sm text-white bg-orange-500 hover:bg-orange-600 transition-colors">
-                        <PlusIcon className="h-4 w-4 sm:h-5 sm:w-5 ml-2" />
-                        <span>{AR_LABELS.startNewSale}</span>
-                    </button>
-                    <button onClick={() => printReceipt('printable-receipt')} className="inline-flex items-center justify-center px-4 sm:px-6 py-2.5 sm:py-3 border border-gray-300 dark:border-gray-600 text-sm sm:text-base font-medium rounded-md text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 transition-colors">
-                        <span className="h-4 w-4 sm:h-5 sm:w-5"><PrintIcon /></span>
-                        <span className="mr-2">{AR_LABELS.printReceipt}</span>
-                    </button>
+                {/* Container for buttons and invoice to ensure alignment */}
+                <div className="w-full max-w-md flex flex-col items-center">
+                    {/* Buttons above invoice */}
+                    <div className="flex flex-row gap-2 sm:gap-3 mb-4 sm:mb-6 print-hidden w-full justify-center">
+                        <button 
+                            onClick={startNewSale} 
+                            className="inline-flex items-center justify-center px-3 sm:px-4 py-2 text-xs sm:text-sm font-medium rounded-md shadow-sm text-white bg-orange-500 hover:bg-orange-600 transition-colors"
+                        >
+                            <PlusIcon className="h-4 w-4 ml-1.5" />
+                            <span>{AR_LABELS.startNewSale}</span>
+                        </button>
+                        <button 
+                            onClick={() => printReceipt('printable-receipt')} 
+                            className="inline-flex items-center justify-center px-3 sm:px-4 py-2 text-xs sm:text-sm font-medium rounded-md text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 transition-colors border border-gray-300 dark:border-gray-600"
+                        >
+                            <PrintIcon className="h-4 w-4 ml-1.5" />
+                            <span>{AR_LABELS.printReceipt}</span>
+                        </button>
+                        <button 
+                            onClick={handlePrintQRInvoice} 
+                            className="inline-flex items-center justify-center px-3 sm:px-4 py-2 text-xs sm:text-sm font-medium rounded-md text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 transition-colors border border-gray-300 dark:border-gray-600"
+                        >
+                            <svg className="h-4 w-4 ml-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1zm12 0h2a1 1 0 001-1V5a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1zM5 20h2a1 1 0 001-1v-2a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z" />
+                            </svg>
+                            <span>{AR_LABELS.printQRInvoice}</span>
+                        </button>
+                    </div>
+
+                    {/* Invoice display */}
+                    {saleCompleted && (
+                        <>
+                            <div className={showQRReceipt ? 'hidden' : 'w-full'}>
+                                {renderReceipt(currentInvoice, receiptTitle)}
+                            </div>
+                            <div className={showQRReceipt ? 'w-full' : 'hidden'}>
+                                {renderQRReceipt(currentInvoice, receiptTitle)}
+                            </div>
+                        </>
+                    )}
                 </div>
             </div>
         );

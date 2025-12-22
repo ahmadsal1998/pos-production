@@ -33,6 +33,9 @@ import RefundsPage from '@/pages/sales/RefundsPage';
 import SalesHistoryPage from '@/pages/sales/SalesHistoryPage';
 import SalesTodayPage from '@/pages/sales/SalesTodayPage';
 
+// Invoice Pages
+import PublicInvoicePage from '@/pages/invoice/PublicInvoicePage';
+
 // Financial Pages
 import PurchasesPage from '@/pages/financial/PurchasesPage';
 import ExpensesPage from '@/pages/financial/ExpensesPage';
@@ -69,6 +72,10 @@ export const router = createBrowserRouter([
   {
     path: '/subscription-expired',
     element: <ExpiredSubscriptionPage />,
+  },
+  {
+    path: '/invoice/:invoiceNumber',
+    element: <PublicInvoicePage />,
   },
   
   // Main Application Routes (Protected)

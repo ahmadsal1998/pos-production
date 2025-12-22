@@ -18,6 +18,7 @@ import { productsDB } from '@/lib/db/productsDB';
 import { loadSettings, saveSettings } from '@/shared/utils/settingsStorage';
 import { getBusinessDateFilterRange, getBusinessDayStartTime, getBusinessDayTimezone } from '@/shared/utils/businessDate';
 import { useResponsiveViewMode } from '@/shared/hooks';
+import { useConfirmDialog } from '@/shared/contexts/ConfirmDialogContext';
 
 // Filter icon component
 const FilterIcon = () => (
@@ -322,7 +323,7 @@ const SaleDetailsModal: React.FC<{ sale: SaleTransaction | null, onClose: () => 
                             </div>
                         )}
                         {netProfit !== null && (
-                            <div className="flex justify-between py-1.5 mt-2 border-t border-gray-200 dark:border-gray-700 pt-2">
+                            <div className="flex justify-between py-1.5 mt-2 border-t border-gray-200 dark:border-gray-700 pt-2 print-hidden">
                                 <span className="text-gray-600 dark:text-gray-400 font-medium">صافي الربح:</span>
                                 {isCalculatingProfit ? (
                                     <span className="text-xs text-gray-400">...</span>
@@ -3527,6 +3528,7 @@ const CustomerAccountsView: React.FC<{
     const { formatCurrency } = useCurrency();
     const { user } = useAuthStore();
     const currentUserName = user?.fullName || user?.username || 'Unknown';
+    const confirmDialog = useConfirmDialog();
     const [searchTerm, setSearchTerm] = useState('');
     const [balanceFilter, setBalanceFilter] = useState('all'); // 'all', 'has_balance', 'no_balance'
     const [paymentModalTarget, setPaymentModalTarget] = useState<CustomerAccountSummary | null>(null);
@@ -3536,6 +3538,17 @@ const CustomerAccountsView: React.FC<{
     const [sortField, setSortField] = useState<'name' | 'phone' | 'balance' | 'totalSales'>('name');
     const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
     const { viewMode, setViewMode } = useResponsiveViewMode('customerAccounts', 'table', 'grid');
+    const [toastMessage, setToastMessage] = useState<string | null>(null);
+    const [toastType, setToastType] = useState<'info' | 'error' | 'success'>('info');
+
+    // Show toast notification
+    const showToast = useCallback((message: string, type: 'info' | 'error' | 'success' = 'info') => {
+        setToastMessage(message);
+        setToastType(type);
+        setTimeout(() => {
+            setToastMessage(null);
+        }, 3000); // Auto-hide after 3 seconds
+    }, []);
     
     // State for all sales (for accurate balance calculations)
     const [allSales, setAllSales] = useState<SaleTransaction[]>([]);
@@ -3868,7 +3881,13 @@ const CustomerAccountsView: React.FC<{
     };
 
     const handleDeleteCustomer = async (customerId: string) => {
-        if (!window.confirm('هل أنت متأكد من حذف هذا العميل؟')) {
+        const confirmed = await confirmDialog({
+            message: 'هل أنت متأكد من حذف هذا العميل؟',
+            confirmLabel: AR_LABELS.delete,
+            cancelLabel: AR_LABELS.cancel,
+        });
+
+        if (!confirmed) {
             return;
         }
 
@@ -3888,8 +3907,9 @@ const CustomerAccountsView: React.FC<{
                 
                 // Remove customer from local state
                 setCustomers((prev) => prev.filter((c) => c.id !== customerId));
+                showToast('تم حذف العميل بنجاح', 'success');
             } else {
-                alert('فشل حذف العميل. يرجى المحاولة مرة أخرى.');
+                showToast('فشل حذف العميل. يرجى المحاولة مرة أخرى.', 'error');
             }
         } catch (err: any) {
             const apiError = err as ApiError;
@@ -3903,10 +3923,11 @@ const CustomerAccountsView: React.FC<{
                     // Remove from local state since it doesn't exist on server
                     setCustomers((prev) => prev.filter((c) => c.id !== customerId));
                     console.log('[CustomerAccountsView] Successfully synced IndexedDB after 404');
+                    showToast('تم حذف العميل بنجاح', 'success');
                 } catch (syncError) {
                     console.error('[CustomerAccountsView] Error syncing IndexedDB after 404:', syncError);
                 }
-                // Don't show error alert for 404 - customer is already deleted
+                // Don't show error toast for 404 - customer is already deleted
                 return;
             }
             
@@ -3915,7 +3936,7 @@ const CustomerAccountsView: React.FC<{
                 console.error('Authentication error:', apiError);
             }
             const errorMessage = apiError.message || 'فشل حذف العميل. يرجى المحاولة مرة أخرى.';
-            alert(errorMessage);
+            showToast(errorMessage, 'error');
         }
     };
 
@@ -4436,6 +4457,27 @@ const CustomerAccountsView: React.FC<{
                     onClose={() => setEditingCustomer(null)} 
                     onSave={handleUpdateCustomer} 
                 />
+            )}
+            
+            {/* Toast Notification */}
+            {toastMessage && (
+                <div className={`fixed top-4 left-1/2 transform -translate-x-1/2 z-[100] px-4 py-3 rounded-lg shadow-lg backdrop-blur-sm border transition-all duration-300 ${
+                    toastType === 'error' 
+                        ? 'bg-red-50 dark:bg-red-900/30 border-red-200 dark:border-red-800 text-red-800 dark:text-red-200' 
+                        : toastType === 'success'
+                        ? 'bg-green-50 dark:bg-green-900/30 border-green-200 dark:border-green-800 text-green-800 dark:text-green-200'
+                        : 'bg-blue-50 dark:bg-blue-900/30 border-blue-200 dark:border-blue-800 text-blue-800 dark:text-blue-200'
+                }`}>
+                    <div className="flex items-center gap-2">
+                        <span className="font-medium text-sm">{toastMessage}</span>
+                        <button
+                            onClick={() => setToastMessage(null)}
+                            className="text-current opacity-70 hover:opacity-100"
+                        >
+                            <span className="text-lg">×</span>
+                        </button>
+                    </div>
+                </div>
             )}
         </div>
     );

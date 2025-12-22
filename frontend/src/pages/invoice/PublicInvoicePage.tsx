@@ -1,0 +1,175 @@
+import React, { useEffect, useState } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
+import { AR_LABELS } from '@/shared/constants';
+import { useCurrency } from '@/shared/contexts/CurrencyContext';
+import { salesApi } from '@/lib/api/client';
+import { SaleTransaction } from '@/shared/types';
+
+const PublicInvoicePage: React.FC = () => {
+  const { invoiceNumber } = useParams<{ invoiceNumber: string }>();
+  const navigate = useNavigate();
+  const { formatCurrency } = useCurrency();
+  const [invoice, setInvoice] = useState<SaleTransaction | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const fetchInvoice = async () => {
+      if (!invoiceNumber) {
+        setError('رقم الفاتورة غير موجود');
+        setLoading(false);
+        return;
+      }
+
+      try {
+        setLoading(true);
+        // Try to find the sale by invoice number
+        // First, we'll need to search for it in the sales list
+        const response = await salesApi.getSales({ invoiceNumber, limit: 1 });
+        
+        if (response.data && response.data.length > 0) {
+          setInvoice(response.data[0]);
+        } else {
+          setError('الفاتورة غير موجودة');
+        }
+      } catch (err: any) {
+        console.error('Error fetching invoice:', err);
+        setError(err.response?.data?.message || 'حدث خطأ أثناء جلب الفاتورة');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchInvoice();
+  }, [invoiceNumber]);
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gray-100 dark:bg-gray-900 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-orange-500 mx-auto mb-4"></div>
+          <p className="text-gray-600 dark:text-gray-400">جاري تحميل الفاتورة...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (error || !invoice) {
+    return (
+      <div className="min-h-screen bg-gray-100 dark:bg-gray-900 flex items-center justify-center p-4">
+        <div className="text-center bg-white dark:bg-gray-800 p-8 rounded-lg shadow-lg max-w-md">
+          <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100 mb-4">خطأ</h2>
+          <p className="text-gray-600 dark:text-gray-400 mb-6">{error || 'الفاتورة غير موجودة'}</p>
+          <button
+            onClick={() => navigate('/login')}
+            className="px-6 py-2 bg-orange-500 text-white rounded-md hover:bg-orange-600 transition-colors"
+          >
+            العودة إلى الصفحة الرئيسية
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  const isReturn = invoice.status === 'Returned' || invoice.id?.startsWith('RET-');
+
+  return (
+    <div className="min-h-screen bg-gray-100 dark:bg-gray-900 py-8 px-4">
+      <div className="max-w-2xl mx-auto">
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow-lg p-6 sm:p-8">
+          {/* Header */}
+          <div className="text-center mb-6">
+            <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 dark:text-gray-100 mb-2">
+              {isReturn ? AR_LABELS.returnInvoice : 'فاتورة'}
+            </h1>
+          </div>
+
+          {/* Invoice Info */}
+          <div className="invoice-info text-sm mb-6 space-y-2 border-b border-gray-200 dark:border-gray-700 pb-4">
+            <p><strong>{AR_LABELS.invoiceNumber}:</strong> {invoice.invoiceNumber || invoice.id}</p>
+            <p><strong>{AR_LABELS.date}:</strong> {new Date(invoice.date).toLocaleString('ar-SA')}</p>
+            <p><strong>البائع:</strong> {invoice.seller || 'N/A'}</p>
+            <p><strong>{AR_LABELS.customerName}:</strong> {invoice.customerName || 'عميل نقدي'}</p>
+          </div>
+
+          {/* Items Table */}
+          <div className="overflow-x-auto mb-6">
+            <table className="w-full text-sm border-collapse">
+              <thead>
+                <tr className="bg-gray-100 dark:bg-gray-700">
+                  <th className="py-3 px-4 text-right font-bold border border-gray-300 dark:border-gray-600">اسم المنتج</th>
+                  <th className="py-3 px-4 text-center font-bold border border-gray-300 dark:border-gray-600">الكمية</th>
+                  <th className="py-3 px-4 text-center font-bold border border-gray-300 dark:border-gray-600">سعر الوحدة</th>
+                  <th className="py-3 px-4 text-center font-bold border border-gray-300 dark:border-gray-600">الإجمالي</th>
+                </tr>
+              </thead>
+              <tbody>
+                {invoice.items?.map((item, idx) => {
+                  const itemUnitPrice = isReturn ? -Math.abs(item.unitPrice || 0) : (item.unitPrice || 0);
+                  const itemTotal = isReturn 
+                    ? -Math.abs((item.totalPrice || 0) - (item.discount || 0) * (item.quantity || 0))
+                    : (item.totalPrice || 0) - (item.discount || 0) * (item.quantity || 0);
+                  
+                  return (
+                    <tr key={idx} className="border-b border-gray-200 dark:border-gray-700">
+                      <td className="py-3 px-4 text-right font-medium">{item.productName || item.name}</td>
+                      <td className="py-3 px-4 text-center">{Math.abs(item.quantity || 0)}</td>
+                      <td className={`py-3 px-4 text-center ${isReturn ? 'text-red-600 dark:text-red-400' : ''}`}>
+                        {formatCurrency(itemUnitPrice)}
+                      </td>
+                      <td className={`py-3 px-4 text-center font-semibold ${isReturn ? 'text-red-600 dark:text-red-400' : ''}`}>
+                        {formatCurrency(itemTotal)}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Summary */}
+          <div className="receipt-summary mt-6 space-y-2 border-t border-gray-200 dark:border-gray-700 pt-4">
+            <div className="flex justify-between">
+              <span className="text-gray-600 dark:text-gray-400 font-medium">{AR_LABELS.subtotal}:</span>
+              <span className={`font-semibold ${isReturn ? 'text-red-600 dark:text-red-400' : 'text-gray-900 dark:text-gray-100'}`}>
+                {formatCurrency(isReturn ? -Math.abs(invoice.subtotal || 0) : (invoice.subtotal || 0))}
+              </span>
+            </div>
+            {invoice.totalDiscount && invoice.totalDiscount !== 0 && (
+              <div className="flex justify-between">
+                <span className="text-gray-600 dark:text-gray-400 font-medium">{AR_LABELS.totalDiscount}:</span>
+                <span className="font-semibold text-gray-900 dark:text-gray-100">
+                  {formatCurrency(isReturn ? -Math.abs(invoice.totalDiscount) : -invoice.totalDiscount)}
+                </span>
+              </div>
+            )}
+            {invoice.tax && invoice.tax !== 0 && (
+              <div className="flex justify-between">
+                <span className="text-gray-600 dark:text-gray-400 font-medium">{AR_LABELS.tax}:</span>
+                <span className="font-semibold text-gray-900 dark:text-gray-100">
+                  {formatCurrency(isReturn ? -Math.abs(invoice.tax) : invoice.tax)}
+                </span>
+              </div>
+            )}
+            <div className="grand-total flex justify-between pt-4 border-t-2 border-gray-300 dark:border-gray-600">
+              <span className="text-gray-900 dark:text-gray-100 font-bold text-lg">
+                {isReturn ? 'إجمالي قيمة الإرجاع' : AR_LABELS.grandTotal}:
+              </span>
+              <span className={`font-bold text-xl ${isReturn ? 'text-red-600 dark:text-red-400' : 'text-orange-600 dark:text-orange-400'}`}>
+                {formatCurrency(isReturn ? -Math.abs(invoice.totalAmount || 0) : (invoice.totalAmount || 0))}
+              </span>
+            </div>
+          </div>
+
+          {/* Footer */}
+          <p className="receipt-footer text-center text-sm mt-8 text-gray-500 dark:text-gray-400">
+            شكراً لتعاملكم معنا!
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default PublicInvoicePage;
+
