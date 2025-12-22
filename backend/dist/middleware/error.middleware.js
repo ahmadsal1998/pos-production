@@ -1,57 +1,78 @@
 "use strict";
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
+var __create = Object.create;
+var __defProp = Object.defineProperty;
+var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __getProtoOf = Object.getPrototypeOf;
+var __hasOwnProp = Object.prototype.hasOwnProperty;
+var __export = (target, all) => {
+  for (var name in all)
+    __defProp(target, name, { get: all[name], enumerable: true });
 };
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.asyncHandler = exports.errorHandler = void 0;
-const mongoose_1 = __importDefault(require("mongoose"));
-const logger_1 = require("../utils/logger");
+var __copyProps = (to, from, except, desc) => {
+  if (from && typeof from === "object" || typeof from === "function") {
+    for (let key of __getOwnPropNames(from))
+      if (!__hasOwnProp.call(to, key) && key !== except)
+        __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
+  }
+  return to;
+};
+var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__getProtoOf(mod)) : {}, __copyProps(
+  // If the importer is in node compatibility mode or this is not an ESM
+  // file that has been converted to a CommonJS file using a Babel-
+  // compatible transform (i.e. "__esModule" has not been set), then set
+  // "default" to the CommonJS "module.exports" for node compatibility.
+  isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
+  mod
+));
+var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
+var error_middleware_exports = {};
+__export(error_middleware_exports, {
+  asyncHandler: () => asyncHandler,
+  errorHandler: () => errorHandler
+});
+module.exports = __toCommonJS(error_middleware_exports);
+var import_mongoose = __toESM(require("mongoose"));
+var import_logger = require("../utils/logger");
 const errorHandler = (err, req, res, next) => {
-    let statusCode = err.statusCode || 500;
-    let message = err.message || 'Internal Server Error';
-    // Mongoose validation error
-    if (err instanceof mongoose_1.default.Error.ValidationError) {
-        const errorMessages = Object.values(err.errors).map((e) => e.message);
-        message = errorMessages.join(', ');
-        statusCode = 400;
+  let statusCode = err.statusCode || 500;
+  let message = err.message || "Internal Server Error";
+  if (err instanceof import_mongoose.default.Error.ValidationError) {
+    const errorMessages = Object.values(err.errors).map((e) => e.message);
+    message = errorMessages.join(", ");
+    statusCode = 400;
+  }
+  if (err.code === 11e3) {
+    const keyPattern = err.keyPattern || {};
+    const keyValue = err.keyValue || {};
+    if (keyPattern.invoiceNumber !== void 0 && keyPattern.storeId !== void 0) {
+      const invoiceNumber = keyValue.invoiceNumber || "unknown";
+      message = `Invoice number ${invoiceNumber} already exists for this store`;
+      statusCode = 409;
+    } else {
+      const field = Object.keys(keyPattern)[0];
+      message = `${field} already exists`;
+      statusCode = 400;
     }
-    // Mongoose duplicate key error
-    if (err.code === 11000) {
-        const keyPattern = err.keyPattern || {};
-        const keyValue = err.keyValue || {};
-        // Check if this is a sales collection duplicate with invoiceNumber
-        // The index is { storeId: 1, invoiceNumber: 1 }, so we need to check for invoiceNumber in the pattern
-        if (keyPattern.invoiceNumber !== undefined && keyPattern.storeId !== undefined) {
-            // This is a duplicate invoice number for the same store
-            const invoiceNumber = keyValue.invoiceNumber || 'unknown';
-            message = `Invoice number ${invoiceNumber} already exists for this store`;
-            statusCode = 409; // Conflict status code is more appropriate
-        }
-        else {
-            // Generic duplicate key error - use first field
-            const field = Object.keys(keyPattern)[0];
-            message = `${field} already exists`;
-            statusCode = 400;
-        }
-    }
-    // Mongoose cast error (invalid ObjectId)
-    if (err instanceof mongoose_1.default.Error.CastError) {
-        message = 'Invalid ID format';
-        statusCode = 400;
-    }
-    // Log error (warn and error levels are always logged in production)
-    logger_1.log.error('API Error', err, { statusCode, message });
-    res.status(statusCode).json({
-        success: false,
-        message,
-        ...(process.env.NODE_ENV === 'development' && { stack: err.stack }),
-    });
+  }
+  if (err instanceof import_mongoose.default.Error.CastError) {
+    message = "Invalid ID format";
+    statusCode = 400;
+  }
+  import_logger.log.error("API Error", err, { statusCode, message });
+  res.status(statusCode).json({
+    success: false,
+    message,
+    ...process.env.NODE_ENV === "development" && { stack: err.stack }
+  });
 };
-exports.errorHandler = errorHandler;
-// Async handler wrapper to catch errors
 const asyncHandler = (fn) => {
-    return (req, res, next) => {
-        Promise.resolve(fn(req, res, next)).catch(next);
-    };
+  return (req, res, next) => {
+    Promise.resolve(fn(req, res, next)).catch(next);
+  };
 };
-exports.asyncHandler = asyncHandler;
+// Annotate the CommonJS export names for ESM import in node:
+0 && (module.exports = {
+  asyncHandler,
+  errorHandler
+});

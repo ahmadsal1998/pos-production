@@ -1,95 +1,91 @@
 "use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.validateStoreAccess = exports.sanitizeStoreId = exports.requireStoreAccess = void 0;
-const logger_1 = require("../utils/logger");
-/**
- * Middleware to enforce store-level isolation for non-admin users
- *
- * This middleware ensures that:
- * - Non-admin users must have a storeId
- * - Non-admin users can only access their own store's data
- * - Admin users bypass store restrictions
- *
- * Usage: Add this middleware to routes that need store-level isolation
- */
+var __defProp = Object.defineProperty;
+var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __hasOwnProp = Object.prototype.hasOwnProperty;
+var __export = (target, all) => {
+  for (var name in all)
+    __defProp(target, name, { get: all[name], enumerable: true });
+};
+var __copyProps = (to, from, except, desc) => {
+  if (from && typeof from === "object" || typeof from === "function") {
+    for (let key of __getOwnPropNames(from))
+      if (!__hasOwnProp.call(to, key) && key !== except)
+        __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
+  }
+  return to;
+};
+var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
+var storeIsolation_middleware_exports = {};
+__export(storeIsolation_middleware_exports, {
+  requireStoreAccess: () => requireStoreAccess,
+  sanitizeStoreId: () => sanitizeStoreId,
+  validateStoreAccess: () => validateStoreAccess
+});
+module.exports = __toCommonJS(storeIsolation_middleware_exports);
+var import_logger = require("../utils/logger");
 const requireStoreAccess = (req, res, next) => {
-    const isBarcodeRoute = req.path.includes('/barcode') || req.originalUrl.includes('/barcode');
+  const isBarcodeRoute = req.path.includes("/barcode") || req.originalUrl.includes("/barcode");
+  if (isBarcodeRoute) {
+    import_logger.log.debug("[Store Isolation] BARCODE ROUTE - Store access check", {
+      path: req.path,
+      role: req.user?.role,
+      storeId: req.user?.storeId
+    });
+  }
+  const requesterRole = req.user?.role;
+  const requesterStoreId = req.user?.storeId;
+  if (requesterRole === "Admin") {
     if (isBarcodeRoute) {
-        logger_1.log.debug('[Store Isolation] BARCODE ROUTE - Store access check', {
-            path: req.path,
-            role: req.user?.role,
-            storeId: req.user?.storeId,
-        });
+      import_logger.log.debug("[Store Isolation] BARCODE ROUTE - Admin user, bypassing store restrictions");
     }
+    return next();
+  }
+  if (!requesterStoreId) {
+    if (isBarcodeRoute) {
+      import_logger.log.warn("[Store Isolation] BARCODE ROUTE - Missing storeId");
+    }
+    res.status(403).json({
+      success: false,
+      message: "Access denied. Store ID is required. Please ensure your account is associated with a store."
+    });
+    return;
+  }
+  req.user = {
+    ...req.user,
+    storeId: requesterStoreId.toLowerCase()
+  };
+  if (isBarcodeRoute) {
+    import_logger.log.debug("[Store Isolation] BARCODE ROUTE - Store access granted, calling next()");
+  }
+  next();
+};
+const sanitizeStoreId = (field = "storeId", location = "body") => {
+  return (req, res, next) => {
     const requesterRole = req.user?.role;
     const requesterStoreId = req.user?.storeId;
-    // Admin users bypass store restrictions
-    if (requesterRole === 'Admin') {
-        if (isBarcodeRoute) {
-            logger_1.log.debug('[Store Isolation] BARCODE ROUTE - Admin user, bypassing store restrictions');
-        }
-        return next();
+    if (requesterRole === "Admin") {
+      return next();
     }
-    // Non-admin users must have a storeId
     if (!requesterStoreId) {
-        if (isBarcodeRoute) {
-            logger_1.log.warn('[Store Isolation] BARCODE ROUTE - Missing storeId');
-        }
-        res.status(403).json({
-            success: false,
-            message: 'Access denied. Store ID is required. Please ensure your account is associated with a store.',
-        });
-        return;
+      res.status(403).json({
+        success: false,
+        message: "Access denied. Store ID is required for non-admin users."
+      });
+      return;
     }
-    // Store the requester's storeId in the request for use in controllers
-    req.user = {
-        ...req.user,
-        storeId: requesterStoreId.toLowerCase(),
-    };
-    if (isBarcodeRoute) {
-        logger_1.log.debug('[Store Isolation] BARCODE ROUTE - Store access granted, calling next()');
+    const source = location === "body" ? req.body : location === "params" ? req.params : req.query;
+    if (source && source[field]) {
+      import_logger.log.warn(`[SECURITY] storeId provided in ${location}.${field} - removing for user ${req.user?.userId}`);
+      delete source[field];
     }
     next();
+  };
 };
-exports.requireStoreAccess = requireStoreAccess;
-/**
- * Middleware to STRICTLY enforce JWT-only storeId extraction
- *
- * CRITICAL SECURITY: This middleware REMOVES any storeId from request body/params/query
- * and ensures storeId ONLY comes from JWT token. This prevents storeId manipulation attacks.
- *
- * @param field - The field name to sanitize (default: 'storeId')
- * @param location - Where to sanitize ('body', 'params', or 'query')
- */
-const sanitizeStoreId = (field = 'storeId', location = 'body') => {
-    return (req, res, next) => {
-        const requesterRole = req.user?.role;
-        const requesterStoreId = req.user?.storeId;
-        // Admin users bypass sanitization (they can access all stores)
-        if (requesterRole === 'Admin') {
-            return next();
-        }
-        // Non-admin users must have a storeId from JWT
-        if (!requesterStoreId) {
-            res.status(403).json({
-                success: false,
-                message: 'Access denied. Store ID is required for non-admin users.',
-            });
-            return;
-        }
-        // CRITICAL: Remove storeId from request to prevent manipulation
-        const source = location === 'body' ? req.body : location === 'params' ? req.params : req.query;
-        if (source && source[field]) {
-            // Log security warning if storeId was provided in request
-            logger_1.log.warn(`[SECURITY] storeId provided in ${location}.${field} - removing for user ${req.user?.userId}`);
-            delete source[field];
-        }
-        next();
-    };
-};
-exports.sanitizeStoreId = sanitizeStoreId;
-/**
- * Legacy middleware - kept for backward compatibility
- * @deprecated Use sanitizeStoreId instead
- */
-exports.validateStoreAccess = exports.sanitizeStoreId;
+const validateStoreAccess = sanitizeStoreId;
+// Annotate the CommonJS export names for ESM import in node:
+0 && (module.exports = {
+  requireStoreAccess,
+  sanitizeStoreId,
+  validateStoreAccess
+});

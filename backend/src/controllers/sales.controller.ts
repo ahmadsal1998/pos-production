@@ -8,17 +8,17 @@ import { invalidateAllProductBarcodeCaches } from '../utils/productCache';
 import Settings from '../models/Settings';
 import { getBusinessDateFilterRange } from '../utils/businessDate';
 import { log } from '../utils/logger';
+import Sequence from '../models/Sequence';
 
 /**
- * Helper function to generate the next invoice number for a store
- * Uses efficient aggregation query to find max invoice number
+ * Helper function to get the current max invoice number from existing sales
+ * Used to initialize or sync the sequence counter
  */
-async function generateNextInvoiceNumber(Sale: any, storeId: string): Promise<string> {
+async function getMaxInvoiceNumberFromSales(Sale: any, storeId: string): Promise<number> {
   const normalizedStoreId = storeId.toLowerCase().trim();
   
   try {
-    // Use aggregation to efficiently find the maximum invoice number
-    // Get all invoice numbers for this store, then process in memory for compatibility
+    // Get all invoice numbers for this store
     const sales = await Sale.find({ storeId: normalizedStoreId })
       .select('invoiceNumber')
       .lean()
@@ -39,14 +39,97 @@ async function generateNextInvoiceNumber(Sale: any, storeId: string): Promise<st
       }
     }
     
-    // Next invoice number is maxNumber + 1
-    const nextNumber = maxNumber + 1;
-    return `INV-${nextNumber}`;
+    return maxNumber;
   } catch (error) {
-    log.error('[Sales Controller] Error generating invoice number, using fallback', error);
-    // Fallback: return a timestamp-based invoice number if query fails
-    const timestamp = Date.now();
-    return `INV-${timestamp}`;
+    log.error('[Sales Controller] Error getting max invoice number from sales', error);
+    return 0;
+  }
+}
+
+/**
+ * Helper function to generate the next invoice number atomically
+ * Uses MongoDB's atomic findOneAndUpdate to prevent race conditions
+ */
+async function generateNextInvoiceNumber(Sale: any, storeId: string): Promise<string> {
+  const normalizedStoreId = storeId.toLowerCase().trim();
+  const sequenceType = 'invoiceNumber';
+  
+  try {
+    // Try to increment existing sequence (most common case - fastest path)
+    let sequence = await Sequence.findOneAndUpdate(
+      { storeId: normalizedStoreId, sequenceType },
+      { $inc: { value: 1 } },
+      { new: true }
+    );
+
+    if (!sequence) {
+      // Sequence doesn't exist - initialize it from existing sales
+      const maxExistingNumber = await getMaxInvoiceNumberFromSales(Sale, storeId);
+      const initialValue = maxExistingNumber; // Start from max, will be incremented
+      
+      // Use findOneAndUpdate with upsert to atomically create or get sequence
+      // If another request creates it between our check and this update, upsert handles it
+      sequence = await Sequence.findOneAndUpdate(
+        { storeId: normalizedStoreId, sequenceType },
+        { 
+          $setOnInsert: { value: initialValue } // Set initial value only on insert
+        },
+        { 
+          upsert: true,
+          new: true,
+          setDefaultsOnInsert: true
+        }
+      );
+      
+      // Now increment to get the next number (atomic operation)
+      sequence = await Sequence.findOneAndUpdate(
+        { storeId: normalizedStoreId, sequenceType },
+        { $inc: { value: 1 } },
+        { new: true }
+      );
+      
+      // Safety check: ensure sequence value is not behind existing sales
+      // (handles case where sequence was created with wrong initial value due to race)
+      if (sequence.value <= maxExistingNumber) {
+        // Update to correct value and increment again
+        sequence = await Sequence.findOneAndUpdate(
+          { storeId: normalizedStoreId, sequenceType },
+          { $set: { value: maxExistingNumber + 1 } },
+          { new: true }
+        );
+        // Value is now maxExistingNumber + 1, which is the correct next number
+      }
+    }
+
+    if (!sequence) {
+      throw new Error('Failed to generate sequence');
+    }
+
+    return `INV-${sequence.value}`;
+  } catch (error: any) {
+    log.error('[Sales Controller] Error generating invoice number atomically, falling back to max-based generation', error);
+    
+    // Fallback: use max-based generation if sequence fails
+    try {
+      const maxNumber = await getMaxInvoiceNumberFromSales(Sale, storeId);
+      const nextNumber = maxNumber + 1;
+      
+      // Try to update sequence for next time (don't wait for it)
+      Sequence.findOneAndUpdate(
+        { storeId: normalizedStoreId, sequenceType },
+        { $set: { value: nextNumber } },
+        { upsert: true }
+      ).catch(() => {
+        // Ignore errors in fallback sequence update
+      });
+      
+      return `INV-${nextNumber}`;
+    } catch (fallbackError) {
+      log.error('[Sales Controller] Fallback invoice number generation also failed', fallbackError);
+      // Last resort: timestamp-based (should rarely happen)
+      const timestamp = Date.now();
+      return `INV-${timestamp}`;
+    }
   }
 }
 

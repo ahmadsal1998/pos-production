@@ -1,79 +1,89 @@
 "use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-const express_1 = require("express");
-const products_controller_1 = require("../controllers/products.controller");
-const auth_middleware_1 = require("../middleware/auth.middleware");
-const storeIsolation_middleware_1 = require("../middleware/storeIsolation.middleware");
-const logger_1 = require("../utils/logger");
-const router = (0, express_1.Router)();
-// Debug middleware to log all requests to products router (development only)
-router.use((req, res, next) => {
-    if (req.path.includes('barcode') || req.originalUrl.includes('barcode')) {
-        logger_1.log.debug('[Products Router] Incoming request', {
-            method: req.method,
-            path: req.path,
-            originalUrl: req.originalUrl,
-            baseUrl: req.baseUrl,
-            url: req.url,
-        });
-    }
-    next();
+var __defProp = Object.defineProperty;
+var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __hasOwnProp = Object.prototype.hasOwnProperty;
+var __export = (target, all) => {
+  for (var name in all)
+    __defProp(target, name, { get: all[name], enumerable: true });
+};
+var __copyProps = (to, from, except, desc) => {
+  if (from && typeof from === "object" || typeof from === "function") {
+    for (let key of __getOwnPropNames(from))
+      if (!__hasOwnProp.call(to, key) && key !== except)
+        __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
+  }
+  return to;
+};
+var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
+var products_routes_exports = {};
+__export(products_routes_exports, {
+  default: () => products_routes_default
 });
-// All product routes require authentication and store access
-router.use(auth_middleware_1.authenticate);
-router.use(storeIsolation_middleware_1.requireStoreAccess);
-// IMPORTANT: Order matters! More specific routes must come before parameterized routes
-router.get('/', products_controller_1.getProducts);
-router.get('/metrics', products_controller_1.getProductMetrics);
-// Barcode route must come before /:id route to avoid conflicts
-// Using explicit route pattern to ensure it matches correctly
-// CRITICAL: This route must be registered before /:id to prevent route conflicts
-// Using regex pattern to ensure exact match and prevent /:id from matching
+module.exports = __toCommonJS(products_routes_exports);
+var import_express = require("express");
+var import_products = require("../controllers/products.controller");
+var import_auth = require("../middleware/auth.middleware");
+var import_storeIsolation = require("../middleware/storeIsolation.middleware");
+var import_logger = require("../utils/logger");
+const router = (0, import_express.Router)();
+router.use((req, res, next) => {
+  if (req.path.includes("barcode") || req.originalUrl.includes("barcode")) {
+    import_logger.log.debug("[Products Router] Incoming request", {
+      method: req.method,
+      path: req.path,
+      originalUrl: req.originalUrl,
+      baseUrl: req.baseUrl,
+      url: req.url
+    });
+  }
+  next();
+});
+router.use(import_auth.authenticate);
+router.use(import_storeIsolation.requireStoreAccess);
+router.get("/", import_products.getProducts);
+router.get("/metrics", import_products.getProductMetrics);
 router.get(/^\/barcode\/(.+)$/, async (req, res, next) => {
-    // Extract barcode from the matched groups
-    const match = req.path.match(/^\/barcode\/(.+)$/);
-    if (match) {
-        req.params.barcode = match[1];
-    }
-    logger_1.log.debug('[Products Router] BARCODE ROUTE MATCHED (REGEX)', {
-        method: req.method,
-        path: req.path,
-        originalUrl: req.originalUrl,
-        baseUrl: req.baseUrl,
-        url: req.url,
-        barcode: req.params.barcode,
-        params: req.params,
+  const match = req.path.match(/^\/barcode\/(.+)$/);
+  if (match) {
+    req.params.barcode = match[1];
+  }
+  import_logger.log.debug("[Products Router] BARCODE ROUTE MATCHED (REGEX)", {
+    method: req.method,
+    path: req.path,
+    originalUrl: req.originalUrl,
+    baseUrl: req.baseUrl,
+    url: req.url,
+    barcode: req.params.barcode,
+    params: req.params
+  });
+  next();
+}, import_products.getProductByBarcode);
+router.get("/barcode/:barcode", async (req, res, next) => {
+  import_logger.log.debug("[Products Router] Barcode route MATCHED (STRING)", {
+    method: req.method,
+    path: req.path,
+    originalUrl: req.originalUrl,
+    baseUrl: req.baseUrl,
+    url: req.url,
+    barcode: req.params.barcode,
+    params: req.params
+  });
+  next();
+}, import_products.getProductByBarcode);
+router.post("/", import_products.validateCreateProduct, import_products.createProduct);
+router.post("/import", import_products.upload.single("file"), import_products.importProducts);
+router.get("/:id", (req, res, next) => {
+  if (req.params.id && req.params.id.includes("barcode") || req.path.includes("barcode")) {
+    import_logger.log.error("[Products Router] WARNING: /:id route matched a barcode request!", {
+      message: "This means /barcode/:barcode route was NOT matched first",
+      idParam: req.params.id,
+      path: req.path,
+      originalUrl: req.originalUrl
     });
-    next();
-}, products_controller_1.getProductByBarcode);
-// Also keep the string route as fallback
-router.get('/barcode/:barcode', async (req, res, next) => {
-    logger_1.log.debug('[Products Router] Barcode route MATCHED (STRING)', {
-        method: req.method,
-        path: req.path,
-        originalUrl: req.originalUrl,
-        baseUrl: req.baseUrl,
-        url: req.url,
-        barcode: req.params.barcode,
-        params: req.params,
-    });
-    next();
-}, products_controller_1.getProductByBarcode);
-router.post('/', products_controller_1.validateCreateProduct, products_controller_1.createProduct);
-router.post('/import', products_controller_1.upload.single('file'), products_controller_1.importProducts);
-// Parameterized routes must come last
-router.get('/:id', (req, res, next) => {
-    // Log if /:id route is matching a barcode request (this should NOT happen)
-    if (req.params.id && req.params.id.includes('barcode') || req.path.includes('barcode')) {
-        logger_1.log.error('[Products Router] WARNING: /:id route matched a barcode request!', {
-            message: 'This means /barcode/:barcode route was NOT matched first',
-            idParam: req.params.id,
-            path: req.path,
-            originalUrl: req.originalUrl,
-        });
-    }
-    next();
-}, products_controller_1.getProduct);
-router.put('/:id', products_controller_1.updateProduct);
-router.delete('/:id', products_controller_1.deleteProduct);
-exports.default = router;
+  }
+  next();
+}, import_products.getProduct);
+router.put("/:id", import_products.updateProduct);
+router.delete("/:id", import_products.deleteProduct);
+var products_routes_default = router;

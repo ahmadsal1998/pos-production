@@ -1,346 +1,306 @@
 "use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.cache = void 0;
-exports.initRedis = initRedis;
-exports.getRedisClient = getRedisClient;
-exports.getRedisClientSync = getRedisClientSync;
-exports.closeRedis = closeRedis;
-exports.isRedisAvailable = isRedisAvailable;
-exports.getRedisStatus = getRedisStatus;
-const redis_1 = require("redis");
-const logger_1 = require("./logger");
+var __defProp = Object.defineProperty;
+var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __hasOwnProp = Object.prototype.hasOwnProperty;
+var __export = (target, all) => {
+  for (var name in all)
+    __defProp(target, name, { get: all[name], enumerable: true });
+};
+var __copyProps = (to, from, except, desc) => {
+  if (from && typeof from === "object" || typeof from === "function") {
+    for (let key of __getOwnPropNames(from))
+      if (!__hasOwnProp.call(to, key) && key !== except)
+        __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
+  }
+  return to;
+};
+var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
+var redis_exports = {};
+__export(redis_exports, {
+  cache: () => cache,
+  closeRedis: () => closeRedis,
+  getRedisClient: () => getRedisClient,
+  getRedisClientSync: () => getRedisClientSync,
+  getRedisStatus: () => getRedisStatus,
+  initRedis: () => initRedis,
+  isRedisAvailable: () => isRedisAvailable
+});
+module.exports = __toCommonJS(redis_exports);
+var import_redis = require("redis");
+var import_logger = require("./logger");
 let redisClient = null;
 let redisConnectionAttempted = false;
 let redisConnectionFailed = false;
 let redisReconnectAttempts = 0;
 const MAX_RECONNECT_ATTEMPTS = 10;
-const RECONNECT_DELAY_MS = 2000;
-/**
- * Initialize Redis client with production-ready configuration
- * Connects to Redis server using REDIS_URL or default localhost
- * Fails gracefully if Redis is not available, but keeps retrying in production
- */
+const RECONNECT_DELAY_MS = 2e3;
 async function initRedis() {
-    // If we have a working client, return it
-    if (redisClient && redisClient.isOpen) {
-        return redisClient;
-    }
-    // In production, allow retries even after initial failure
-    const isProduction = process.env.NODE_ENV === 'production';
-    if (redisConnectionFailed && !isProduction) {
-        return null; // In dev, don't retry after failure
-    }
-    if (redisConnectionAttempted && !redisClient && !isProduction) {
-        return null; // In dev, don't retry if already attempted
-    }
-    redisConnectionAttempted = true;
-    const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
-    // Only log connection attempt in production or if REDIS_URL is explicitly set
-    if (isProduction || process.env.REDIS_URL) {
-        logger_1.log.info(`Redis: Attempting to connect to ${redisUrl.replace(/:[^:@]+@/, ':****@')}...`);
-    }
-    redisClient = (0, redis_1.createClient)({
-        url: redisUrl,
-        socket: {
-            reconnectStrategy: (retries) => {
-                redisReconnectAttempts = retries;
-                // In production, keep retrying with exponential backoff
-                if (isProduction) {
-                    if (retries > MAX_RECONNECT_ATTEMPTS) {
-                        logger_1.log.warn(`Redis: Max reconnection attempts (${MAX_RECONNECT_ATTEMPTS}) reached. Will retry on next operation.`);
-                        redisConnectionFailed = true;
-                        return false; // Stop automatic reconnection, but allow manual retry
-                    }
-                    const delay = Math.min(retries * 500, 5000);
-                    if (retries % 5 === 0) {
-                        logger_1.log.debug(`Redis: Reconnection attempt ${retries}/${MAX_RECONNECT_ATTEMPTS} (delay: ${delay}ms)`);
-                    }
-                    return delay;
-                }
-                // In development, stop after 3 attempts
-                if (retries > 3) {
-                    redisConnectionFailed = true;
-                    return false;
-                }
-                return Math.min(retries * 500, 2000);
-            },
-            connectTimeout: 10000, // 10 second timeout for production
-            keepAlive: 30000, // Keep connection alive
-        },
-        // Production-ready settings
-        pingInterval: 30000, // Ping every 30 seconds to keep connection alive
-    });
-    // Error handling with better logging
-    let errorLogged = false;
-    redisClient.on('error', (err) => {
-        if (!errorLogged || redisReconnectAttempts % 10 === 0) {
-            if (err.code === 'ECONNREFUSED' || err.message?.includes('ECONNREFUSED')) {
-                if (!errorLogged) {
-                    // In development, only log if REDIS_URL is explicitly set (user expects Redis)
-                    // Otherwise, Redis is optional and we don't want to spam logs
-                    if (isProduction || process.env.REDIS_URL) {
-                        logger_1.log.warn('Redis: Not available (connection refused). Caching will be disabled.');
-                        if (!isProduction) {
-                            logger_1.log.info('To enable caching, start Redis: redis-server');
-                        }
-                        else {
-                            logger_1.log.warn('Check REDIS_URL environment variable and ensure Redis server is running.');
-                        }
-                    }
-                    errorLogged = true;
-                }
-                redisConnectionFailed = true;
-            }
-            else {
-                // Only log non-connection errors in production or when REDIS_URL is set
-                if (isProduction || process.env.REDIS_URL) {
-                    logger_1.log.error(`Redis error: ${err.message}`, err);
-                }
-                // Don't mark as failed for transient errors in production
-                if (!isProduction) {
-                    redisConnectionFailed = true;
-                }
-            }
-        }
-    });
-    redisClient.on('ready', () => {
-        // Only log success in production or if REDIS_URL is explicitly set
-        if (isProduction || process.env.REDIS_URL) {
-            logger_1.log.info('Redis: Connected and ready for caching');
-        }
-        redisConnectionFailed = false;
-        redisReconnectAttempts = 0;
-        errorLogged = false;
-    });
-    redisClient.on('reconnecting', () => {
-        // Only log reconnection attempts in production or if REDIS_URL is explicitly set
-        // In development without REDIS_URL, Redis is optional so we don't spam logs
-        if (isProduction || process.env.REDIS_URL) {
-            // Throttle: only log every 5th reconnection attempt to avoid spam
-            if (redisReconnectAttempts % 5 === 0) {
-                logger_1.log.debug('Redis: Reconnecting...');
-            }
-        }
-    });
-    redisClient.on('connect', () => {
-        // Only log connection in production or if REDIS_URL is explicitly set
-        if (isProduction || process.env.REDIS_URL) {
-            logger_1.log.debug('Redis: Connection established');
-        }
-        redisConnectionFailed = false;
-    });
-    try {
-        await redisClient.connect();
-        // Verify connection with a ping
-        await redisClient.ping();
-        // Only log success in production or if REDIS_URL is explicitly set
-        if (isProduction || process.env.REDIS_URL) {
-            logger_1.log.info('Redis: Connection verified and ready');
-        }
-        return redisClient;
-    }
-    catch (error) {
-        if (!errorLogged) {
-            // In development, only log if REDIS_URL is explicitly set (user expects Redis)
-            if (isProduction || process.env.REDIS_URL) {
-                if (isProduction) {
-                    logger_1.log.error('Redis: Initial connection failed. Will retry on operations.', error);
-                    logger_1.log.warn('The system will continue without caching until Redis is available.');
-                }
-                else {
-                    logger_1.log.warn('Redis: Connection failed. Caching will be disabled.');
-                    logger_1.log.info('To enable caching, start Redis: redis-server');
-                }
-            }
-            errorLogged = true;
-        }
-        // In production, don't mark as permanently failed - allow retries
-        if (!isProduction) {
+  if (redisClient && redisClient.isOpen) {
+    return redisClient;
+  }
+  const isProduction = process.env.NODE_ENV === "production";
+  if (redisConnectionFailed && !isProduction) {
+    return null;
+  }
+  if (redisConnectionAttempted && !redisClient && !isProduction) {
+    return null;
+  }
+  redisConnectionAttempted = true;
+  const redisUrl = process.env.REDIS_URL || "redis://localhost:6379";
+  if (isProduction || process.env.REDIS_URL) {
+    import_logger.log.info(`Redis: Attempting to connect to ${redisUrl.replace(/:[^:@]+@/, ":****@")}...`);
+  }
+  redisClient = (0, import_redis.createClient)({
+    url: redisUrl,
+    socket: {
+      reconnectStrategy: (retries) => {
+        redisReconnectAttempts = retries;
+        if (isProduction) {
+          if (retries > MAX_RECONNECT_ATTEMPTS) {
+            import_logger.log.warn(`Redis: Max reconnection attempts (${MAX_RECONNECT_ATTEMPTS}) reached. Will retry on next operation.`);
             redisConnectionFailed = true;
-            redisClient = null;
+            return false;
+          }
+          const delay = Math.min(retries * 500, 5e3);
+          if (retries % 5 === 0) {
+            import_logger.log.debug(`Redis: Reconnection attempt ${retries}/${MAX_RECONNECT_ATTEMPTS} (delay: ${delay}ms)`);
+          }
+          return delay;
         }
-        return null;
+        if (retries > 3) {
+          redisConnectionFailed = true;
+          return false;
+        }
+        return Math.min(retries * 500, 2e3);
+      },
+      connectTimeout: 1e4,
+      // 10 second timeout for production
+      keepAlive: 3e4
+      // Keep connection alive
+    },
+    // Production-ready settings
+    pingInterval: 3e4
+    // Ping every 30 seconds to keep connection alive
+  });
+  let errorLogged = false;
+  redisClient.on("error", (err) => {
+    if (!errorLogged || redisReconnectAttempts % 10 === 0) {
+      if (err.code === "ECONNREFUSED" || err.message?.includes("ECONNREFUSED")) {
+        if (!errorLogged) {
+          if (isProduction || process.env.REDIS_URL) {
+            import_logger.log.warn("Redis: Not available (connection refused). Caching will be disabled.");
+            if (!isProduction) {
+              import_logger.log.info("To enable caching, start Redis: redis-server");
+            } else {
+              import_logger.log.warn("Check REDIS_URL environment variable and ensure Redis server is running.");
+            }
+          }
+          errorLogged = true;
+        }
+        redisConnectionFailed = true;
+      } else {
+        if (isProduction || process.env.REDIS_URL) {
+          import_logger.log.error(`Redis error: ${err.message}`, err);
+        }
+        if (!isProduction) {
+          redisConnectionFailed = true;
+        }
+      }
     }
-}
-/**
- * Get Redis client instance
- * Returns null if Redis is not available
- * In production, will attempt to reconnect if connection was lost
- */
-async function getRedisClient() {
-    // If we have a working client, return it
-    if (redisClient && redisClient.isOpen) {
-        return redisClient;
+  });
+  redisClient.on("ready", () => {
+    if (isProduction || process.env.REDIS_URL) {
+      import_logger.log.info("Redis: Connected and ready for caching");
     }
-    // In production, try to reconnect if connection was lost
-    const isProduction = process.env.NODE_ENV === 'production';
-    if (isProduction && redisClient && !redisClient.isOpen) {
-        try {
-            await redisClient.connect();
-            return redisClient;
+    redisConnectionFailed = false;
+    redisReconnectAttempts = 0;
+    errorLogged = false;
+  });
+  redisClient.on("reconnecting", () => {
+    if (isProduction || process.env.REDIS_URL) {
+      if (redisReconnectAttempts % 5 === 0) {
+        import_logger.log.debug("Redis: Reconnecting...");
+      }
+    }
+  });
+  redisClient.on("connect", () => {
+    if (isProduction || process.env.REDIS_URL) {
+      import_logger.log.debug("Redis: Connection established");
+    }
+    redisConnectionFailed = false;
+  });
+  try {
+    await redisClient.connect();
+    await redisClient.ping();
+    if (isProduction || process.env.REDIS_URL) {
+      import_logger.log.info("Redis: Connection verified and ready");
+    }
+    return redisClient;
+  } catch (error) {
+    if (!errorLogged) {
+      if (isProduction || process.env.REDIS_URL) {
+        if (isProduction) {
+          import_logger.log.error("Redis: Initial connection failed. Will retry on operations.", error);
+          import_logger.log.warn("The system will continue without caching until Redis is available.");
+        } else {
+          import_logger.log.warn("Redis: Connection failed. Caching will be disabled.");
+          import_logger.log.info("To enable caching, start Redis: redis-server");
         }
-        catch (error) {
-            // Connection failed, will retry on next call
-            return null;
-        }
+      }
+      errorLogged = true;
+    }
+    if (!isProduction) {
+      redisConnectionFailed = true;
+      redisClient = null;
     }
     return null;
+  }
 }
-/**
- * Synchronous version for backward compatibility
- * Use getRedisClient() async version in new code
- */
-function getRedisClientSync() {
-    return redisClient && redisClient.isOpen ? redisClient : null;
-}
-/**
- * Close Redis connection
- */
-async function closeRedis() {
-    if (redisClient && redisClient.isOpen) {
-        await redisClient.quit();
-        redisClient = null;
-    }
-}
-/**
- * Check if Redis is available and healthy
- */
-async function isRedisAvailable() {
-    const client = await getRedisClient();
-    if (!client)
-        return false;
+async function getRedisClient() {
+  if (redisClient && redisClient.isOpen) {
+    return redisClient;
+  }
+  const isProduction = process.env.NODE_ENV === "production";
+  if (isProduction && redisClient && !redisClient.isOpen) {
     try {
-        await client.ping();
-        return true;
+      await redisClient.connect();
+      return redisClient;
+    } catch (error) {
+      return null;
     }
-    catch (error) {
-        return false;
-    }
+  }
+  return null;
 }
-/**
- * Get Redis connection status
- */
+function getRedisClientSync() {
+  return redisClient && redisClient.isOpen ? redisClient : null;
+}
+async function closeRedis() {
+  if (redisClient && redisClient.isOpen) {
+    await redisClient.quit();
+    redisClient = null;
+  }
+}
+async function isRedisAvailable() {
+  const client = await getRedisClient();
+  if (!client) return false;
+  try {
+    await client.ping();
+    return true;
+  } catch (error) {
+    return false;
+  }
+}
 function getRedisStatus() {
-    const isConnected = redisClient !== null && redisClient.isOpen;
-    return {
-        connected: isConnected,
-        available: !redisConnectionFailed,
-        url: process.env.REDIS_URL || 'redis://localhost:6379',
-    };
+  const isConnected = redisClient !== null && redisClient.isOpen;
+  return {
+    connected: isConnected,
+    available: !redisConnectionFailed,
+    url: process.env.REDIS_URL || "redis://localhost:6379"
+  };
 }
-/**
- * Cache utility functions with production-ready error handling
- */
-exports.cache = {
-    /**
-     * Get value from cache
-     */
-    async get(key) {
-        const client = await getRedisClient();
-        if (!client)
-            return null;
-        try {
-            const value = await client.get(key);
-            return value ? JSON.parse(value) : null;
+const cache = {
+  /**
+   * Get value from cache
+   */
+  async get(key) {
+    const client = await getRedisClient();
+    if (!client) return null;
+    try {
+      const value = await client.get(key);
+      return value ? JSON.parse(value) : null;
+    } catch (error) {
+      if (process.env.NODE_ENV === "development" || !error.message?.includes("Connection")) {
+        console.error(`Redis GET error for key ${key}:`, error.message);
+      }
+      return null;
+    }
+  },
+  /**
+   * Set value in cache with TTL
+   * @param key - Cache key
+   * @param value - Value to cache
+   * @param ttlSeconds - Time to live in seconds (default: 3600 = 1 hour)
+   */
+  async set(key, value, ttlSeconds = 3600) {
+    const client = await getRedisClient();
+    if (!client) return false;
+    try {
+      await client.setEx(key, ttlSeconds, JSON.stringify(value));
+      return true;
+    } catch (error) {
+      if (process.env.NODE_ENV === "development" || !error.message?.includes("Connection")) {
+        console.error(`Redis SET error for key ${key}:`, error.message);
+      }
+      return false;
+    }
+  },
+  /**
+   * Delete value from cache
+   */
+  async del(key) {
+    const client = await getRedisClient();
+    if (!client) return false;
+    try {
+      await client.del(key);
+      return true;
+    } catch (error) {
+      if (process.env.NODE_ENV === "development" || !error.message?.includes("Connection")) {
+        console.error(`Redis DEL error for key ${key}:`, error.message);
+      }
+      return false;
+    }
+  },
+  /**
+   * Delete multiple keys matching a pattern
+   * Note: SCAN is preferred over KEYS in production for large datasets
+   */
+  async delPattern(pattern) {
+    const client = await getRedisClient();
+    if (!client) return 0;
+    try {
+      const isProduction = process.env.NODE_ENV === "production";
+      let deletedCount = 0;
+      if (isProduction) {
+        const iterator = client.scanIterator({
+          MATCH: pattern,
+          COUNT: 100
+        });
+        const keysToDelete = [];
+        for await (const key of iterator) {
+          keysToDelete.push(key);
+          if (keysToDelete.length >= 100) {
+            const count = await client.del(keysToDelete);
+            deletedCount += count;
+            keysToDelete.length = 0;
+          }
         }
-        catch (error) {
-            // Only log errors in development or if it's not a connection issue
-            if (process.env.NODE_ENV === 'development' || !error.message?.includes('Connection')) {
-                console.error(`Redis GET error for key ${key}:`, error.message);
-            }
-            return null;
+        if (keysToDelete.length > 0) {
+          const count = await client.del(keysToDelete);
+          deletedCount += count;
         }
-    },
-    /**
-     * Set value in cache with TTL
-     * @param key - Cache key
-     * @param value - Value to cache
-     * @param ttlSeconds - Time to live in seconds (default: 3600 = 1 hour)
-     */
-    async set(key, value, ttlSeconds = 3600) {
-        const client = await getRedisClient();
-        if (!client)
-            return false;
-        try {
-            await client.setEx(key, ttlSeconds, JSON.stringify(value));
-            return true;
+      } else {
+        const keys = await client.keys(pattern);
+        if (keys.length > 0) {
+          deletedCount = await client.del(keys);
         }
-        catch (error) {
-            // Only log errors in development or if it's not a connection issue
-            if (process.env.NODE_ENV === 'development' || !error.message?.includes('Connection')) {
-                console.error(`Redis SET error for key ${key}:`, error.message);
-            }
-            return false;
-        }
-    },
-    /**
-     * Delete value from cache
-     */
-    async del(key) {
-        const client = await getRedisClient();
-        if (!client)
-            return false;
-        try {
-            await client.del(key);
-            return true;
-        }
-        catch (error) {
-            // Only log errors in development or if it's not a connection issue
-            if (process.env.NODE_ENV === 'development' || !error.message?.includes('Connection')) {
-                console.error(`Redis DEL error for key ${key}:`, error.message);
-            }
-            return false;
-        }
-    },
-    /**
-     * Delete multiple keys matching a pattern
-     * Note: SCAN is preferred over KEYS in production for large datasets
-     */
-    async delPattern(pattern) {
-        const client = await getRedisClient();
-        if (!client)
-            return 0;
-        try {
-            // Use SCAN instead of KEYS for production (non-blocking)
-            const isProduction = process.env.NODE_ENV === 'production';
-            let deletedCount = 0;
-            if (isProduction) {
-                // Use SCAN for production (safer for large datasets)
-                const iterator = client.scanIterator({
-                    MATCH: pattern,
-                    COUNT: 100,
-                });
-                const keysToDelete = [];
-                for await (const key of iterator) {
-                    keysToDelete.push(key);
-                    // Delete in batches of 100
-                    if (keysToDelete.length >= 100) {
-                        const count = await client.del(keysToDelete);
-                        deletedCount += count;
-                        keysToDelete.length = 0;
-                    }
-                }
-                // Delete remaining keys
-                if (keysToDelete.length > 0) {
-                    const count = await client.del(keysToDelete);
-                    deletedCount += count;
-                }
-            }
-            else {
-                // Use KEYS for development (simpler)
-                const keys = await client.keys(pattern);
-                if (keys.length > 0) {
-                    deletedCount = await client.del(keys);
-                }
-            }
-            return deletedCount;
-        }
-        catch (error) {
-            // Only log errors in development or if it's not a connection issue
-            if (process.env.NODE_ENV === 'development' || !error.message?.includes('Connection')) {
-                console.error(`Redis DEL pattern error for ${pattern}:`, error.message);
-            }
-            return 0;
-        }
-    },
+      }
+      return deletedCount;
+    } catch (error) {
+      if (process.env.NODE_ENV === "development" || !error.message?.includes("Connection")) {
+        console.error(`Redis DEL pattern error for ${pattern}:`, error.message);
+      }
+      return 0;
+    }
+  }
 };
+// Annotate the CommonJS export names for ESM import in node:
+0 && (module.exports = {
+  cache,
+  closeRedis,
+  getRedisClient,
+  getRedisClientSync,
+  getRedisStatus,
+  initRedis,
+  isRedisAvailable
+});

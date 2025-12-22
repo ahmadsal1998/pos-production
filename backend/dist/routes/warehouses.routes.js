@@ -1,23 +1,50 @@
 "use strict";
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
+var __create = Object.create;
+var __defProp = Object.defineProperty;
+var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __getProtoOf = Object.getPrototypeOf;
+var __hasOwnProp = Object.prototype.hasOwnProperty;
+var __export = (target, all) => {
+  for (var name in all)
+    __defProp(target, name, { get: all[name], enumerable: true });
 };
-Object.defineProperty(exports, "__esModule", { value: true });
-const express_1 = require("express");
-const multer_1 = __importDefault(require("multer"));
-const warehouses_controller_1 = require("../controllers/warehouses.controller");
-const auth_middleware_1 = require("../middleware/auth.middleware");
-const storeIsolation_middleware_1 = require("../middleware/storeIsolation.middleware");
-const router = (0, express_1.Router)();
-const upload = (0, multer_1.default)({ storage: multer_1.default.memoryStorage() });
-// All warehouse routes require authentication and store access
-router.use(auth_middleware_1.authenticate);
-router.use(storeIsolation_middleware_1.requireStoreAccess);
-router.get('/', warehouses_controller_1.getWarehouses);
-router.get('/export', warehouses_controller_1.exportWarehouses);
-router.get('/:id', warehouses_controller_1.getWarehouseById);
-router.post('/', warehouses_controller_1.validateCreateWarehouse, warehouses_controller_1.createWarehouse);
-router.put('/:id', warehouses_controller_1.validateUpdateWarehouse, warehouses_controller_1.updateWarehouse);
-router.delete('/:id', warehouses_controller_1.deleteWarehouse);
-router.post('/import', upload.single('file'), warehouses_controller_1.importWarehouses);
-exports.default = router;
+var __copyProps = (to, from, except, desc) => {
+  if (from && typeof from === "object" || typeof from === "function") {
+    for (let key of __getOwnPropNames(from))
+      if (!__hasOwnProp.call(to, key) && key !== except)
+        __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
+  }
+  return to;
+};
+var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__getProtoOf(mod)) : {}, __copyProps(
+  // If the importer is in node compatibility mode or this is not an ESM
+  // file that has been converted to a CommonJS file using a Babel-
+  // compatible transform (i.e. "__esModule" has not been set), then set
+  // "default" to the CommonJS "module.exports" for node compatibility.
+  isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
+  mod
+));
+var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
+var warehouses_routes_exports = {};
+__export(warehouses_routes_exports, {
+  default: () => warehouses_routes_default
+});
+module.exports = __toCommonJS(warehouses_routes_exports);
+var import_express = require("express");
+var import_multer = __toESM(require("multer"));
+var import_warehouses = require("../controllers/warehouses.controller");
+var import_auth = require("../middleware/auth.middleware");
+var import_storeIsolation = require("../middleware/storeIsolation.middleware");
+const router = (0, import_express.Router)();
+const upload = (0, import_multer.default)({ storage: import_multer.default.memoryStorage() });
+router.use(import_auth.authenticate);
+router.use(import_storeIsolation.requireStoreAccess);
+router.get("/", import_warehouses.getWarehouses);
+router.get("/export", import_warehouses.exportWarehouses);
+router.get("/:id", import_warehouses.getWarehouseById);
+router.post("/", import_warehouses.validateCreateWarehouse, import_warehouses.createWarehouse);
+router.put("/:id", import_warehouses.validateUpdateWarehouse, import_warehouses.updateWarehouse);
+router.delete("/:id", import_warehouses.deleteWarehouse);
+router.post("/import", upload.single("file"), import_warehouses.importWarehouses);
+var warehouses_routes_default = router;
