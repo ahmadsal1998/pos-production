@@ -36,7 +36,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.processReturn = exports.deleteSale = exports.updateSale = exports.getSale = exports.getSalesSummary = exports.getSales = exports.createSale = exports.getNextInvoiceNumber = void 0;
+exports.getPublicInvoice = exports.processReturn = exports.deleteSale = exports.updateSale = exports.getSale = exports.getSalesSummary = exports.getSales = exports.createSale = exports.getNextInvoiceNumber = void 0;
 const error_middleware_1 = require("../middleware/error.middleware");
 const saleModel_1 = require("../utils/saleModel");
 const productModel_1 = require("../utils/productModel");
@@ -1187,4 +1187,84 @@ exports.processReturn = (0, error_middleware_1.asyncHandler)(async (req, res) =>
             stockUpdates,
         },
     });
+});
+/**
+ * Public endpoint to get invoice by invoice number (no authentication required)
+ * Used for QR code invoice viewing
+ */
+exports.getPublicInvoice = (0, error_middleware_1.asyncHandler)(async (req, res) => {
+    const { invoiceNumber, storeId } = req.query;
+    if (!invoiceNumber || typeof invoiceNumber !== 'string') {
+        return res.status(400).json({
+            success: false,
+            message: 'Invoice number is required',
+        });
+    }
+    try {
+        let Sale;
+        // If storeId is provided, use it to get the model
+        if (storeId && typeof storeId === 'string') {
+            Sale = await (0, saleModel_1.getSaleModelForStore)(storeId.toLowerCase().trim());
+        }
+        else {
+            // Otherwise, get model from first available store
+            const Store = (await Promise.resolve().then(() => __importStar(require('../models/Store')))).default;
+            const firstStore = await Store.findOne().lean();
+            if (!firstStore) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'No stores available',
+                });
+            }
+            const modelStoreId = firstStore.storeId || firstStore.prefix;
+            Sale = await (0, saleModel_1.getSaleModelForStore)(modelStoreId);
+        }
+        // Build query
+        const query = { invoiceNumber };
+        if (storeId && typeof storeId === 'string') {
+            query.storeId = storeId.toLowerCase().trim();
+        }
+        // Find invoice by invoice number
+        const sale = await Sale.findOne(query).lean();
+        if (!sale) {
+            return res.status(404).json({
+                success: false,
+                message: 'Invoice not found',
+            });
+        }
+        // Return invoice data
+        res.status(200).json({
+            success: true,
+            data: {
+                sale: {
+                    id: sale._id,
+                    invoiceNumber: sale.invoiceNumber,
+                    date: sale.date,
+                    customerName: sale.customerName,
+                    customerId: sale.customerId,
+                    items: sale.items,
+                    subtotal: sale.subtotal,
+                    totalItemDiscount: sale.totalItemDiscount,
+                    invoiceDiscount: sale.invoiceDiscount,
+                    tax: sale.tax,
+                    total: sale.total,
+                    totalAmount: sale.total,
+                    paidAmount: sale.paidAmount,
+                    remainingAmount: sale.remainingAmount,
+                    paymentMethod: sale.paymentMethod,
+                    status: sale.status,
+                    seller: sale.seller,
+                    originalInvoiceId: sale.originalInvoiceId,
+                    isReturn: sale.isReturn,
+                },
+            },
+        });
+    }
+    catch (error) {
+        logger_1.log.error('Error fetching public invoice:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error fetching invoice',
+        });
+    }
 });
