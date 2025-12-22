@@ -20,6 +20,7 @@ import { salesSync } from '@/lib/sync/salesSync';
 import { salesDB } from '@/lib/db/salesDB';
 import { inventorySync } from '@/lib/sync/inventorySync';
 import { ProductNotFoundModal } from '@/shared/components/ui/ProductNotFoundModal';
+import { useConfirmDialog } from '@/shared/contexts/ConfirmDialogContext';
 // PaymentProcessingModal removed - using simple payment flow
 
 // Local POS product type with optional units
@@ -210,6 +211,7 @@ const transformAndFilterCustomers = (customers: any[]): Customer[] => {
 const POSPage: React.FC = () => {
     const { formatCurrency } = useCurrency();
     const { user } = useAuthStore();
+    const confirmDialog = useConfirmDialog();
     const currentUserName = user?.fullName || user?.username || 'Unknown';
     const [products, setProducts] = useState<POSProduct[]>([]); // Keep for backward compatibility, but IndexedDB is primary
     const [quickProducts, setQuickProducts] = useState<POSProduct[]>([]);
@@ -238,6 +240,17 @@ const POSPage: React.FC = () => {
     const [storeAddress, setStoreAddress] = useState<string>(''); // Store address for receipts
     const [businessName, setBusinessName] = useState<string>(''); // Store business name for receipts
     const [showCostPrice, setShowCostPrice] = useState<boolean>(false); // Toggle for cost price column visibility
+    const [toastMessage, setToastMessage] = useState<string | null>(null); // Toast notification message
+    const [toastType, setToastType] = useState<'info' | 'error' | 'success'>('info'); // Toast type
+
+    // Show toast notification
+    const showToast = useCallback((message: string, type: 'info' | 'error' | 'success' = 'info') => {
+        setToastMessage(message);
+        setToastType(type);
+        setTimeout(() => {
+            setToastMessage(null);
+        }, 3000); // Auto-hide after 3 seconds
+    }, []);
 
     const QUANTITY_STEP = 0.5;
     const MIN_QUANTITY = 0.5;
@@ -340,6 +353,15 @@ const POSPage: React.FC = () => {
     const [isAddCustomerModalOpen, setIsAddCustomerModalOpen] = useState(false);
     const [isProductNotFoundModalOpen, setIsProductNotFoundModalOpen] = useState(false);
     const [notFoundBarcode, setNotFoundBarcode] = useState<string>('');
+    // Optimistic UI: Track pending server searches and their results
+    const [pendingServerSearch, setPendingServerSearch] = useState<{
+        barcode: string;
+        product?: POSProduct;
+        unitName?: string;
+        unitPrice?: number;
+        conversionFactor?: number;
+        piecesPerUnit?: number;
+    } | null>(null);
     
     // Helper function to get tax rate from settings (synchronous for initial state)
     // This is a regular function (not useCallback) so it can be used in useState initializer
@@ -2041,8 +2063,9 @@ const POSPage: React.FC = () => {
         return { unitName, unitPrice, conversionFactor, piecesPerUnit };
     }, [getPiecesPerMainUnit]);
 
-    // Barcode search function - OPTIMIZED: checks IndexedDB first for instant results
-    // Then validates with server in background to ensure data accuracy
+    // Barcode search function - OPTIMISTIC UI: checks IndexedDB first for instant results
+    // If not found in IndexedDB, immediately returns false and opens Add Product screen
+    // Server search continues in background, shows notification if product found
     const searchProductByBarcode = useCallback(async (barcode: string): Promise<{ success: boolean; product?: POSProduct; unitName?: string; unitPrice?: number; conversionFactor?: number; piecesPerUnit?: number }> => {
         const trimmed = barcode.trim();
         if (!trimmed) {
@@ -2139,82 +2162,125 @@ const POSPage: React.FC = () => {
             }
         } catch (error) {
             console.error('[POS] Error searching IndexedDB for barcode:', error);
-            // Continue to server search fallback
+            // Continue to optimistic UI flow
         }
         
-        // STEP 3: Fallback to server search if not found in IndexedDB
-        try {
-            setIsSearchingServer(true);
-            console.log(`[POS] Product not in IndexedDB, searching server: "${trimmed}"`);
-            
-            const response = await productsApi.getProductByBarcode(trimmed);
-
-            if (response.data?.success && response.data?.data?.product) {
-                const productData = response.data.data.product;
-                const matchedUnit = response.data.data.matchedUnit;
+        // STEP 2: OPTIMISTIC UI - Product not found in IndexedDB
+        // Immediately return false to open Add Product screen
+        // Start background server search in parallel
+        console.log(`[POS] Product not in IndexedDB, opening Add Product screen immediately (Optimistic UI)`);
+        
+        // Start background server search (non-blocking)
+        (async () => {
+            try {
+                setIsSearchingServer(true);
+                console.log(`[POS] Searching server in background for barcode: "${trimmed}"`);
                 
-                // Normalize the product
-                const normalizedProduct = normalizeProduct(productData);
-                const { unitName, unitPrice, conversionFactor, piecesPerUnit } = extractUnitInfo(normalizedProduct, matchedUnit);
+                const response = await productsApi.getProductByBarcode(trimmed);
 
-                console.log(`[POS] Product found on server: ${normalizedProduct.name}`);
-                
-                // Store product in IndexedDB for future instant lookups
-                try {
-                    await productsDB.storeProduct(productData);
-                    productsDB.notifyOtherTabs();
-                    console.log(`[POS] Stored product in IndexedDB for future instant lookups: ${normalizedProduct.name}`);
+                if (response.data?.success && response.data?.data?.product) {
+                    const productData = response.data.data.product;
+                    const matchedUnit = response.data.data.matchedUnit;
                     
-                    // Update products state
-                    setProducts(prevProducts => {
-                        const updated = prevProducts.filter(p => {
-                            const matchesById = String(p.id) === String(normalizedProduct.id);
-                            const matchesByOriginalId = normalizedProduct.originalId && 
-                                String(p.originalId) === String(normalizedProduct.originalId);
-                            return !matchesById && !matchesByOriginalId;
+                    // Normalize the product
+                    const normalizedProduct = normalizeProduct(productData);
+                    const { unitName, unitPrice, conversionFactor, piecesPerUnit } = extractUnitInfo(normalizedProduct, matchedUnit);
+
+                    console.log(`[POS] Product found on server (background search): ${normalizedProduct.name}`);
+                    
+                    // Store product in IndexedDB for future instant lookups
+                    try {
+                        await productsDB.storeProduct(productData);
+                        productsDB.notifyOtherTabs();
+                        console.log(`[POS] Stored product in IndexedDB: ${normalizedProduct.name}`);
+                        
+                        // Update products state
+                        setProducts(prevProducts => {
+                            const updated = prevProducts.filter(p => {
+                                const matchesById = String(p.id) === String(normalizedProduct.id);
+                                const matchesByOriginalId = normalizedProduct.originalId && 
+                                    String(p.originalId) === String(normalizedProduct.originalId);
+                                return !matchesById && !matchesByOriginalId;
+                            });
+                            updated.push(normalizedProduct);
+                            return updated;
                         });
-                        updated.push(normalizedProduct);
-                        return updated;
+                    } catch (error) {
+                        console.error('[POS] Error storing product in IndexedDB:', error);
+                    }
+                    
+                    // Show notification that product was found on server
+                    setPendingServerSearch({
+                        barcode: trimmed,
+                        product: normalizedProduct,
+                        unitName,
+                        unitPrice,
+                        conversionFactor,
+                        piecesPerUnit,
                     });
-                } catch (error) {
-                    console.error('[POS] Error storing product in IndexedDB:', error);
-                    // Continue anyway - we still have the product from API
+                } else {
+                    console.log(`[POS] Product not found on server for barcode: "${trimmed}"`);
                 }
-                
-                return {
-                    success: true,
-                    product: normalizedProduct,
-                    unitName,
-                    unitPrice,
-                    conversionFactor,
-                    piecesPerUnit,
-                };
-            } else {
-                console.log(`[POS] Product not found on server for barcode: "${trimmed}"`);
-                return { success: false };
+            } catch (err: any) {
+                console.error('[POS] Error searching product by barcode on server (background):', err);
+                // If it's a 404, the product simply doesn't exist
+                if (err?.status === 404) {
+                    console.log(`[POS] Product not found (404) for barcode: "${trimmed}"`);
+                } else {
+                    console.error('[POS] Unexpected error during background server barcode search:', {
+                        status: err?.status,
+                        message: err?.message,
+                        details: err?.details
+                    });
+                }
+            } finally {
+                setIsSearchingServer(false);
             }
-        } catch (err: any) {
-            console.error('[POS] Error searching product by barcode on server:', err);
-            // If it's a 404, the product simply doesn't exist
-            if (err?.status === 404) {
-                console.log(`[POS] Product not found (404) for barcode: "${trimmed}"`);
-            } else {
-                console.error('[POS] Unexpected error during server barcode search:', {
-                    status: err?.status,
-                    message: err?.message,
-                    details: err?.details
-                });
-            }
-            return { success: false };
-        } finally {
-            setIsSearchingServer(false);
-        }
+        })();
+        
+        // Return false immediately to open Add Product screen
+        return { success: false };
     }, [normalizeProduct, extractUnitInfo]);
+
+    // Handler to load product from server search notification
+    const handleLoadProductFromNotification = useCallback(async () => {
+        if (!pendingServerSearch?.product) {
+            return;
+        }
+
+        const { product, unitName, unitPrice, conversionFactor, piecesPerUnit } = pendingServerSearch;
+        
+        try {
+            // Close the Add Product modal if it's open
+            setIsProductNotFoundModalOpen(false);
+            setNotFoundBarcode('');
+            
+            // Clear the notification
+            setPendingServerSearch(null);
+            
+            // Add product to cart
+            await handleAddProduct(
+                product,
+                unitName || 'قطعة',
+                unitPrice,
+                conversionFactor,
+                piecesPerUnit
+            );
+            
+            console.log('[POS] Product loaded from server search notification:', product.name);
+        } catch (error) {
+            console.error('[POS] Error loading product from notification:', error);
+            showToast('فشل تحميل المنتج', 'error');
+        }
+    }, [pendingServerSearch, handleAddProduct, showToast]);
 
     // Handler for Quick Add product from ProductNotFoundModal
     const handleQuickAddProduct = useCallback(async (barcode: string, costPrice: number, sellingPrice: number, productName?: string) => {
         try {
             console.log('[POS] Quick adding product:', { barcode, costPrice, sellingPrice, productName });
+
+            // Clear pending server search since user is manually adding the product
+            setPendingServerSearch(null);
 
             // Create product permanently in store database
             const productData = {
@@ -2368,7 +2434,7 @@ const POSPage: React.FC = () => {
             console.log('[POS] Using server-side search (client-side products not loaded)');
             const matches = await searchProductsOnServer(trimmedSearchTerm);
             if (matches.length === 0) {
-                alert('المنتج غير موجود');
+                showToast('المنتج غير موجود', 'info');
                 return;
             }
             // Store the matches for the suggestions dropdown
@@ -2389,7 +2455,7 @@ const POSPage: React.FC = () => {
         if (productsLoaded && products.length > 0) {
             const matches = await resolveSearchMatches(trimmedSearchTerm);
             if (matches.length === 0) {
-                alert('المنتج غير موجود');
+                showToast('المنتج غير موجود', 'info');
                 return;
             }
             if (matches.length === 1) {
@@ -2568,9 +2634,15 @@ const POSPage: React.FC = () => {
         }
     };
 
-    const handleDeleteHeldInvoice = (heldKey: string, e: React.MouseEvent) => {
+    const handleDeleteHeldInvoice = async (heldKey: string, e: React.MouseEvent) => {
         e.stopPropagation(); // Prevent triggering restore when clicking delete
-        if (window.confirm('هل أنت متأكد من حذف هذه الفاتورة المعلقة؟')) {
+        const confirmed = await confirmDialog({
+            message: 'هل أنت متأكد من حذف هذه الفاتورة المعلقة؟',
+            title: 'تأكيد الحذف',
+            confirmLabel: 'حذف',
+            cancelLabel: 'إلغاء'
+        });
+        if (confirmed) {
             setHeldInvoices(prev => {
                 const updated = prev.filter(inv => inv.heldKey !== heldKey);
                 saveHeldInvoicesToStorage(updated);
@@ -2592,7 +2664,12 @@ const POSPage: React.FC = () => {
     const handleCancelSale = async () => {
         // Only confirm if there are items that will be removed from the cart
         if (currentInvoice.items.length > 0) {
-            const confirmed = window.confirm('هل أنت متأكد أنك تريد إزالة المنتجات المحددة من السلة؟');
+            const confirmed = await confirmDialog({
+                message: 'هل أنت متأكد أنك تريد إزالة المنتجات المحددة من السلة؟',
+                title: 'تأكيد الإلغاء',
+                confirmLabel: 'إلغاء البيع',
+                cancelLabel: 'الرجوع'
+            });
             if (!confirmed) return;
         }
         await startNewSale();
@@ -2600,7 +2677,7 @@ const POSPage: React.FC = () => {
     
     const handleReturn = async () => {
         if (currentInvoice.items.length === 0) {
-            alert('يرجى إضافة منتجات للإرجاع');
+            showToast('يرجى إضافة منتجات للإرجاع', 'info');
             return;
         }
         
@@ -2975,12 +3052,12 @@ const POSPage: React.FC = () => {
         if (currentInvoice.items.length === 0) return;
 
         if (selectedPaymentMethod === 'Credit' && !currentInvoice.customer) {
-            alert(AR_LABELS.selectRegisteredCustomerForCredit);
+            showToast(AR_LABELS.selectRegisteredCustomerForCredit, 'error');
             return;
         }
 
         if (selectedPaymentMethod === 'Credit' && creditPaidAmount < 0) {
-            alert('المبلغ المدفوع لا يمكن أن يكون سالباً.');
+            showToast('المبلغ المدفوع لا يمكن أن يكون سالباً.', 'error');
             return;
         }
 
@@ -3980,11 +4057,17 @@ const POSPage: React.FC = () => {
                                             <td className="px-2 sm:px-3 py-3 sm:py-4 text-xs sm:text-sm font-semibold text-orange-600 whitespace-nowrap text-center align-middle">{formatCurrency(item.total - (item.discount * item.quantity))}</td>
                                             <td className="px-2 sm:px-3 py-3 sm:py-4 text-center align-middle">
                                                 <button 
-                                                    onClick={() => {
+                                                    onClick={async () => {
                                                         if (item.cartItemId) {
-                                                            const confirmed = window.confirm('هل أنت متأكد أنك تريد إزالة هذا المنتج من السلة؟');
+                                                            const confirmed = await confirmDialog({
+                                                                message: 'هل أنت متأكد أنك تريد إزالة هذا المنتج من السلة؟',
+                                                                title: 'تأكيد الحذف',
+                                                                confirmLabel: 'حذف',
+                                                                cancelLabel: 'إلغاء'
+                                                            });
                                                             if (!confirmed) return;
                                                             handleRemoveItem(item.cartItemId);
+                                                            showToast('تم حذف المنتج من السلة', 'success');
                                                         }
                                                     }} 
                                                     className="text-red-600 hover:text-red-900 dark:text-red-400 dark:hover:text-red-300 p-1.5 sm:p-2 rounded-lg hover:bg-red-50 dark:hover:bg-gray-700 transition-colors mx-auto"
@@ -4417,7 +4500,7 @@ const POSPage: React.FC = () => {
                             console.error('Authentication error:', apiError);
                         }
                         const errorMessage = apiError.message || 'فشل حفظ العميل. يرجى المحاولة مرة أخرى.';
-                        alert(errorMessage);
+                        showToast(errorMessage, 'error');
                         throw err; // Re-throw to let modal handle it
                     }
                 }}
@@ -4428,9 +4511,74 @@ const POSPage: React.FC = () => {
                 onClose={() => {
                     setIsProductNotFoundModalOpen(false);
                     setNotFoundBarcode('');
+                    // Clear pending server search when modal is closed
+                    setPendingServerSearch(null);
                 }}
                 onQuickAdd={handleQuickAddProduct}
             />
+            
+            {/* Product Found Notification (Optimistic UI) */}
+            {pendingServerSearch && pendingServerSearch.product && (
+                <div className="fixed top-4 right-4 z-[100] max-w-md bg-white dark:bg-gray-800 rounded-lg shadow-xl border border-green-200 dark:border-green-800 p-4 transition-all duration-300 animate-in slide-in-from-top">
+                    <div className="flex items-start gap-3">
+                        <div className="flex-shrink-0">
+                            <div className="w-10 h-10 bg-green-100 dark:bg-green-900/30 rounded-full flex items-center justify-center">
+                                <CheckCircleIcon className="w-6 h-6 text-green-600 dark:text-green-400" />
+                            </div>
+                        </div>
+                        <div className="flex-1 min-w-0">
+                            <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-1">
+                                تم العثور على المنتج في قاعدة البيانات
+                            </h3>
+                            <p className="text-sm text-gray-600 dark:text-gray-400 mb-3">
+                                {pendingServerSearch.product.name || `المنتج ${pendingServerSearch.barcode}`}
+                            </p>
+                            <div className="flex gap-2">
+                                <button
+                                    onClick={handleLoadProductFromNotification}
+                                    className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white text-sm font-medium rounded-lg transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 dark:focus:ring-offset-gray-800"
+                                >
+                                    تحميل المنتج
+                                </button>
+                                <button
+                                    onClick={() => setPendingServerSearch(null)}
+                                    className="px-4 py-2 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-800 dark:text-gray-200 text-sm font-medium rounded-lg transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-gray-500 focus:ring-offset-2 dark:focus:ring-offset-gray-800"
+                                >
+                                    إلغاء
+                                </button>
+                            </div>
+                        </div>
+                        <button
+                            onClick={() => setPendingServerSearch(null)}
+                            className="flex-shrink-0 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+                            aria-label="إغلاق"
+                        >
+                            <span className="text-xl">×</span>
+                        </button>
+                    </div>
+                </div>
+            )}
+            
+            {/* Toast Notification */}
+            {toastMessage && (
+                <div className={`fixed top-4 left-1/2 transform -translate-x-1/2 z-[100] px-4 py-3 rounded-lg shadow-lg backdrop-blur-sm border transition-all duration-300 ${
+                    toastType === 'error' 
+                        ? 'bg-red-50 dark:bg-red-900/30 border-red-200 dark:border-red-800 text-red-800 dark:text-red-200' 
+                        : toastType === 'success'
+                        ? 'bg-green-50 dark:bg-green-900/30 border-green-200 dark:border-green-800 text-green-800 dark:text-green-200'
+                        : 'bg-blue-50 dark:bg-blue-900/30 border-blue-200 dark:border-blue-800 text-blue-800 dark:text-blue-200'
+                }`}>
+                    <div className="flex items-center gap-2">
+                        <span className="font-medium text-sm">{toastMessage}</span>
+                        <button
+                            onClick={() => setToastMessage(null)}
+                            className="text-current opacity-70 hover:opacity-100"
+                        >
+                            <span className="text-lg">×</span>
+                        </button>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };
@@ -4469,12 +4617,12 @@ const AddCustomerModal: React.FC<{
 
     const handleBalanceStepSave = async () => {
         if (initialBalanceType === null) {
-            alert('يرجى اختيار نوع الرصيد الأولي.');
+            setErrors({ phone: 'يرجى اختيار نوع الرصيد الأولي.' });
             return;
         }
 
         if (initialAmount <= 0) {
-            alert('المبلغ يجب أن يكون أكبر من صفر.');
+            setErrors({ phone: 'المبلغ يجب أن يكون أكبر من صفر.' });
             return;
         }
 
