@@ -8,7 +8,7 @@ import { invalidateAllProductBarcodeCaches } from '../utils/productCache';
 import Settings from '../models/Settings';
 import { getBusinessDateFilterRange } from '../utils/businessDate';
 import { log } from '../utils/logger';
-import Sequence from '../models/Sequence';
+import Sequence, { ISequence } from '../models/Sequence';
 
 /**
  * Helper function to get the current max invoice number from existing sales
@@ -56,7 +56,7 @@ async function generateNextInvoiceNumber(Sale: any, storeId: string): Promise<st
   
   try {
     // Try to increment existing sequence (most common case - fastest path)
-    let sequence = await Sequence.findOneAndUpdate(
+    let sequence: ISequence | null = await Sequence.findOneAndUpdate(
       { storeId: normalizedStoreId, sequenceType },
       { $inc: { value: 1 } },
       { new: true }
@@ -81,12 +81,20 @@ async function generateNextInvoiceNumber(Sale: any, storeId: string): Promise<st
         }
       );
       
+      if (!sequence) {
+        throw new Error('Failed to create sequence');
+      }
+      
       // Now increment to get the next number (atomic operation)
       sequence = await Sequence.findOneAndUpdate(
         { storeId: normalizedStoreId, sequenceType },
         { $inc: { value: 1 } },
         { new: true }
       );
+      
+      if (!sequence) {
+        throw new Error('Failed to increment sequence');
+      }
       
       // Safety check: ensure sequence value is not behind existing sales
       // (handles case where sequence was created with wrong initial value due to race)
@@ -98,9 +106,13 @@ async function generateNextInvoiceNumber(Sale: any, storeId: string): Promise<st
           { new: true }
         );
         // Value is now maxExistingNumber + 1, which is the correct next number
+        if (!sequence) {
+          throw new Error('Failed to update sequence');
+        }
       }
     }
 
+    // At this point, sequence is guaranteed to be non-null
     if (!sequence) {
       throw new Error('Failed to generate sequence');
     }

@@ -80,38 +80,37 @@ async function generateNextInvoiceNumber(Sale, storeId) {
     if (!sequence) {
       const maxExistingNumber = await getMaxInvoiceNumberFromSales(Sale, storeId);
       const initialValue = maxExistingNumber;
-      try {
-        sequence = await import_Sequence.default.create({
-          storeId: normalizedStoreId,
-          sequenceType,
-          value: initialValue
-        });
+      sequence = await import_Sequence.default.findOneAndUpdate(
+        { storeId: normalizedStoreId, sequenceType },
+        {
+          $setOnInsert: { value: initialValue }
+          // Set initial value only on insert
+        },
+        {
+          upsert: true,
+          new: true,
+          setDefaultsOnInsert: true
+        }
+      );
+      if (!sequence) {
+        throw new Error("Failed to create sequence");
+      }
+      sequence = await import_Sequence.default.findOneAndUpdate(
+        { storeId: normalizedStoreId, sequenceType },
+        { $inc: { value: 1 } },
+        { new: true }
+      );
+      if (!sequence) {
+        throw new Error("Failed to increment sequence");
+      }
+      if (sequence.value <= maxExistingNumber) {
         sequence = await import_Sequence.default.findOneAndUpdate(
           { storeId: normalizedStoreId, sequenceType },
-          { $inc: { value: 1 } },
+          { $set: { value: maxExistingNumber + 1 } },
           { new: true }
         );
-      } catch (createError) {
-        if (createError.code === 11e3) {
-          sequence = await import_Sequence.default.findOneAndUpdate(
-            { storeId: normalizedStoreId, sequenceType },
-            { $inc: { value: 1 } },
-            { new: true }
-          );
-          if (sequence && sequence.value <= maxExistingNumber) {
-            sequence = await import_Sequence.default.findOneAndUpdate(
-              { storeId: normalizedStoreId, sequenceType },
-              { $set: { value: maxExistingNumber } },
-              { new: true }
-            );
-            sequence = await import_Sequence.default.findOneAndUpdate(
-              { storeId: normalizedStoreId, sequenceType },
-              { $inc: { value: 1 } },
-              { new: true }
-            );
-          }
-        } else {
-          throw createError;
+        if (!sequence) {
+          throw new Error("Failed to update sequence");
         }
       }
     }
