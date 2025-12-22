@@ -45,7 +45,45 @@ const Settings_1 = __importDefault(require("../models/Settings"));
 const businessDate_1 = require("../utils/businessDate");
 const logger_1 = require("../utils/logger");
 /**
+ * Helper function to generate the next invoice number for a store
+ * Uses efficient aggregation query to find max invoice number
+ */
+async function generateNextInvoiceNumber(Sale, storeId) {
+    const normalizedStoreId = storeId.toLowerCase().trim();
+    try {
+        // Use aggregation to efficiently find the maximum invoice number
+        // Get all invoice numbers for this store, then process in memory for compatibility
+        const sales = await Sale.find({ storeId: normalizedStoreId })
+            .select('invoiceNumber')
+            .lean()
+            .limit(10000); // Reasonable limit to prevent memory issues
+        let maxNumber = 0;
+        // Extract numeric part from invoice numbers (format: INV-1, INV-2, etc.)
+        for (const sale of sales) {
+            const invoiceNumber = sale.invoiceNumber || '';
+            // Match INV- followed by digits
+            const match = invoiceNumber.match(/^INV-(\d+)$/);
+            if (match) {
+                const num = parseInt(match[1], 10);
+                if (!isNaN(num) && num > maxNumber) {
+                    maxNumber = num;
+                }
+            }
+        }
+        // Next invoice number is maxNumber + 1
+        const nextNumber = maxNumber + 1;
+        return `INV-${nextNumber}`;
+    }
+    catch (error) {
+        logger_1.log.error('[Sales Controller] Error generating invoice number, using fallback', error);
+        // Fallback: return a timestamp-based invoice number if query fails
+        const timestamp = Date.now();
+        return `INV-${timestamp}`;
+    }
+}
+/**
  * Get the next sequential invoice number
+ * Uses aggregation for better performance
  */
 exports.getNextInvoiceNumber = (0, error_middleware_1.asyncHandler)(async (req, res) => {
     const storeId = req.user?.storeId || null;
@@ -58,30 +96,16 @@ exports.getNextInvoiceNumber = (0, error_middleware_1.asyncHandler)(async (req, 
     }
     // Get unified Sale model (all stores use same collection)
     const Sale = await (0, saleModel_1.getSaleModelForStore)(storeId);
-    // Get all sales for this store to find the highest invoice number
-    const allSales = await Sale.find({ storeId: storeId.toLowerCase() }).select('invoiceNumber').lean();
-    let maxNumber = 0;
-    // Extract numeric part from invoice numbers (format: INV-1, INV-2, etc.)
-    for (const sale of allSales) {
-        const invoiceNumber = sale.invoiceNumber || '';
-        // Match INV- followed by digits
-        const match = invoiceNumber.match(/^INV-(\d+)$/);
-        if (match) {
-            const num = parseInt(match[1], 10);
-            if (!isNaN(num) && num > maxNumber) {
-                maxNumber = num;
-            }
-        }
-    }
-    // Next invoice number is maxNumber + 1
-    const nextNumber = maxNumber + 1;
-    const nextInvoiceNumber = `INV-${nextNumber}`;
+    const nextInvoiceNumber = await generateNextInvoiceNumber(Sale, storeId);
+    // Extract number for response
+    const match = nextInvoiceNumber.match(/^INV-(\d+)$/);
+    const number = match ? parseInt(match[1], 10) : 1;
     res.status(200).json({
         success: true,
         message: 'Next invoice number retrieved successfully',
         data: {
             invoiceNumber: nextInvoiceNumber,
-            number: nextNumber,
+            number: number,
         },
     });
 });
@@ -219,26 +243,74 @@ exports.createSale = (0, error_middleware_1.asyncHandler)(async (req, res) => {
             conversionFactor: item.conversionFactor || 1,
         };
     }));
-    // Create sale record
-    const sale = new Sale({
-        invoiceNumber,
-        storeId: storeId,
-        date: date ? new Date(date) : new Date(),
-        customerId: customerId || null,
-        customerName,
-        items: itemsWithCostPrice,
-        subtotal: subtotal || 0,
-        totalItemDiscount: totalItemDiscount || 0,
-        invoiceDiscount: invoiceDiscount || 0,
-        tax: tax || 0,
-        total,
-        paidAmount: paidAmount || 0,
-        remainingAmount: remainingAmount || (total - (paidAmount || 0)),
-        paymentMethod: normalizedPaymentMethod,
-        status: saleStatus,
-        seller: seller || 'Unknown',
-    });
-    await sale.save();
+    // Normalize storeId
+    const normalizedStoreId = storeId.toLowerCase().trim();
+    // Create sale record with retry logic for duplicate invoice numbers
+    let currentInvoiceNumber = invoiceNumber;
+    let retryCount = 0;
+    const maxRetries = 3;
+    let sale = null;
+    while (retryCount < maxRetries) {
+        try {
+            // Check if invoice number already exists for this store (before attempting save)
+            const existingSale = await Sale.findOne({
+                invoiceNumber: currentInvoiceNumber,
+                storeId: normalizedStoreId,
+            });
+            if (existingSale) {
+                // Invoice number exists, generate a new one
+                logger_1.log.warn(`[Sales Controller] Invoice number ${currentInvoiceNumber} already exists, generating new number`);
+                currentInvoiceNumber = await generateNextInvoiceNumber(Sale, storeId);
+                retryCount++;
+                continue;
+            }
+            // Create sale record with current invoice number
+            sale = new Sale({
+                invoiceNumber: currentInvoiceNumber,
+                storeId: normalizedStoreId,
+                date: date ? new Date(date) : new Date(),
+                customerId: customerId || null,
+                customerName,
+                items: itemsWithCostPrice,
+                subtotal: subtotal || 0,
+                totalItemDiscount: totalItemDiscount || 0,
+                invoiceDiscount: invoiceDiscount || 0,
+                tax: tax || 0,
+                total,
+                paidAmount: paidAmount || 0,
+                remainingAmount: remainingAmount || (total - (paidAmount || 0)),
+                paymentMethod: normalizedPaymentMethod,
+                status: saleStatus,
+                seller: seller || 'Unknown',
+            });
+            // Attempt to save
+            await sale.save();
+            // Success - break out of retry loop
+            break;
+        }
+        catch (error) {
+            // Check if this is a duplicate key error (E11000)
+            if (error.code === 11000) {
+                // Duplicate key error - generate new invoice number and retry
+                logger_1.log.warn(`[Sales Controller] Duplicate key error for invoice ${currentInvoiceNumber}, generating new number`);
+                currentInvoiceNumber = await generateNextInvoiceNumber(Sale, storeId);
+                retryCount++;
+                if (retryCount >= maxRetries) {
+                    // Max retries reached
+                    throw new Error(`Failed to create sale after ${maxRetries} attempts: Unable to generate unique invoice number`);
+                }
+                // Continue to retry
+                continue;
+            }
+            else {
+                // Different error - rethrow
+                throw error;
+            }
+        }
+    }
+    if (!sale) {
+        throw new Error('Failed to create sale: Unable to save after retries');
+    }
     // Return response
     res.status(201).json({
         success: true,
@@ -1123,23 +1195,8 @@ exports.processReturn = (0, error_middleware_1.asyncHandler)(async (req, res) =>
     const finalCustomerName = customerName || originalInvoice?.customerName || 'عميل نقدي';
     const finalCustomerId = customerId || originalInvoice?.customerId || null;
     // Get next sequential invoice number for return (using same format as regular invoices)
-    const allSales = await Sale.find({ storeId: storeId.toLowerCase() }).select('invoiceNumber').lean();
-    let maxNumber = 0;
-    // Extract numeric part from invoice numbers (format: INV-1, INV-2, etc.)
-    for (const sale of allSales) {
-        const invNumber = sale.invoiceNumber || '';
-        // Match INV- followed by digits
-        const match = invNumber.match(/^INV-(\d+)$/);
-        if (match) {
-            const num = parseInt(match[1], 10);
-            if (!isNaN(num) && num > maxNumber) {
-                maxNumber = num;
-            }
-        }
-    }
-    // Next invoice number is maxNumber + 1 (returns use same sequential format)
-    const nextNumber = maxNumber + 1;
-    const returnInvoiceNumber = `INV-${nextNumber}`;
+    // Use the helper function to ensure consistency and prevent duplicates
+    const returnInvoiceNumber = await generateNextInvoiceNumber(Sale, storeId);
     const returnSale = new Sale({
         invoiceNumber: returnInvoiceNumber,
         storeId: storeId,

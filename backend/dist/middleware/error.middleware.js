@@ -17,9 +17,22 @@ const errorHandler = (err, req, res, next) => {
     }
     // Mongoose duplicate key error
     if (err.code === 11000) {
-        const field = Object.keys(err.keyPattern)[0];
-        message = `${field} already exists`;
-        statusCode = 400;
+        const keyPattern = err.keyPattern || {};
+        const keyValue = err.keyValue || {};
+        // Check if this is a sales collection duplicate with invoiceNumber
+        // The index is { storeId: 1, invoiceNumber: 1 }, so we need to check for invoiceNumber in the pattern
+        if (keyPattern.invoiceNumber !== undefined && keyPattern.storeId !== undefined) {
+            // This is a duplicate invoice number for the same store
+            const invoiceNumber = keyValue.invoiceNumber || 'unknown';
+            message = `Invoice number ${invoiceNumber} already exists for this store`;
+            statusCode = 409; // Conflict status code is more appropriate
+        }
+        else {
+            // Generic duplicate key error - use first field
+            const field = Object.keys(keyPattern)[0];
+            message = `${field} already exists`;
+            statusCode = 400;
+        }
     }
     // Mongoose cast error (invalid ObjectId)
     if (err instanceof mongoose_1.default.Error.CastError) {
