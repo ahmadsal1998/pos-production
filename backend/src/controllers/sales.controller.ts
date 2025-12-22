@@ -1344,6 +1344,9 @@ export const getPublicInvoice = asyncHandler(async (req: Request, res: Response)
   }
 
   try {
+    // Normalize invoice number (trim whitespace)
+    const normalizedInvoiceNumber = invoiceNumber.trim();
+    
     let Sale: any;
     
     // If storeId is provided, use it to get the model
@@ -1363,21 +1366,26 @@ export const getPublicInvoice = asyncHandler(async (req: Request, res: Response)
       Sale = await getSaleModelForStore(modelStoreId);
     }
 
-    // Build query
-    const query: any = { invoiceNumber };
+    // Build query with normalized invoice number
+    const query: any = { invoiceNumber: normalizedInvoiceNumber };
     if (storeId && typeof storeId === 'string') {
       query.storeId = storeId.toLowerCase().trim();
     }
+
+    log.debug('[getPublicInvoice] Searching for invoice:', { invoiceNumber: normalizedInvoiceNumber, storeId: query.storeId });
 
     // Find invoice by invoice number
     const sale = await Sale.findOne(query).lean();
 
     if (!sale) {
+      log.warn('[getPublicInvoice] Invoice not found:', { invoiceNumber: normalizedInvoiceNumber, storeId: query.storeId });
       return res.status(404).json({
         success: false,
         message: 'Invoice not found',
       });
     }
+
+    log.debug('[getPublicInvoice] Invoice found:', { invoiceNumber: sale.invoiceNumber, saleId: sale._id });
 
     // Return invoice data
     res.status(200).json({

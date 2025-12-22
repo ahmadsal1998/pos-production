@@ -3547,6 +3547,8 @@ const POSPage: React.FC = () => {
                         const newInvoiceNumber = await salesDB.getNextInvoiceNumberOffline(storeId);
                         saleData.invoiceNumber = newInvoiceNumber;
                         finalInvoice.id = newInvoiceNumber; // Update the invoice ID as well
+                        // Update currentInvoice to ensure QR code uses correct invoice number
+                        setCurrentInvoice({ ...finalInvoice });
                         console.log(`✅ Generated new unique invoice number: ${newInvoiceNumber}`);
                     }
                 } catch (checkError: any) {
@@ -3570,8 +3572,11 @@ const POSPage: React.FC = () => {
                         await salesDB.init();
                         saleData.synced = false;
                         await salesDB.saveSale(saleData);
-                        console.log('✅ Sale saved directly to IndexedDB after sync error:', finalInvoice.id);
-                        syncResult = { success: true, saleId: saleData.id || finalInvoice.id, error: syncError?.message };
+                        console.log('✅ Sale saved directly to IndexedDB after sync error:', saleData.invoiceNumber);
+                        syncResult = { success: true, saleId: saleData.id || saleData.invoiceNumber, error: syncError?.message };
+                        // Update invoice ID to match saved invoice number
+                        finalInvoice.id = saleData.invoiceNumber;
+                        setCurrentInvoice(finalInvoice);
                     } catch (dbError: any) {
                         console.error('❌ Failed to save sale to IndexedDB:', dbError);
                         // Still try to save to localStorage as last resort
@@ -3579,11 +3584,16 @@ const POSPage: React.FC = () => {
                     }
                 }
                 
+                // Update finalInvoice.id with the actual invoice number from saleData (in case it was changed due to duplicates)
+                // This ensures the QR code uses the correct invoice number
+                finalInvoice.id = saleData.invoiceNumber;
+                setCurrentInvoice(finalInvoice);
+                
                 // Always save to localStorage as backup, even if IndexedDB save failed
                 try {
                     // Convert POSInvoice to SaleTransaction for localStorage backup
                     let saleTransaction: SaleTransaction = {
-                        id: syncResult?.saleId || finalInvoice.id,
+                        id: saleData.invoiceNumber,
                         date: finalInvoice.date instanceof Date 
                             ? finalInvoice.date.toISOString() 
                             : new Date().toISOString(),
@@ -3619,7 +3629,7 @@ const POSPage: React.FC = () => {
                 }
                 
                 if (syncResult?.success) {
-                    console.log('✅ Sale saved to IndexedDB and synced:', finalInvoice.id);
+                    console.log('✅ Sale saved to IndexedDB and synced:', saleData.invoiceNumber);
                     
                     // Show warning if sync had errors but sale was saved locally
                     if (syncResult.error) {
@@ -3752,17 +3762,19 @@ const POSPage: React.FC = () => {
 
     const renderQRReceipt = (invoice: SaleTransaction | POSInvoice, title: string) => {
         // Generate the invoice URL for the QR code (include storeId if available)
+        // Use invoiceNumber if available (for SaleTransaction), otherwise use id (for POSInvoice)
+        const invoiceNumber = ('invoiceNumber' in invoice && invoice.invoiceNumber) ? invoice.invoiceNumber : invoice.id;
         const storeId = user?.storeId || '';
         const invoiceUrl = storeId 
-            ? `${window.location.origin}/invoice/${storeId}/${invoice.id}`
-            : `${window.location.origin}/invoice/${invoice.id}`;
+            ? `${window.location.origin}/invoice/${storeId}/${invoiceNumber}`
+            : `${window.location.origin}/invoice/${invoiceNumber}`;
         
         return (
             <div id="printable-qr-receipt" className="w-full max-w-md bg-white dark:bg-gray-800 p-6 sm:p-8 rounded-lg shadow-lg text-center">
                 {/* Invoice Number */}
                 <div className="mb-6">
                     <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">{AR_LABELS.invoiceNumber}</p>
-                    <p className="text-xl font-bold text-gray-900 dark:text-gray-100">{invoice.id}</p>
+                    <p className="text-xl font-bold text-gray-900 dark:text-gray-100">{('invoiceNumber' in invoice && invoice.invoiceNumber) ? invoice.invoiceNumber : invoice.id}</p>
                 </div>
 
                 {/* Date */}

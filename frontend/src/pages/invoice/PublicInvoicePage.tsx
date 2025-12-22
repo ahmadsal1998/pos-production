@@ -23,14 +23,19 @@ const PublicInvoicePage: React.FC = () => {
       try {
         setLoading(true);
         // Use the public invoice endpoint (no authentication required)
-        const params = new URLSearchParams({ invoiceNumber });
+        const params = new URLSearchParams({ invoiceNumber: invoiceNumber.trim() });
         if (storeId) {
-          params.append('storeId', storeId);
+          params.append('storeId', storeId.trim());
         }
+        
+        console.log('[PublicInvoicePage] Fetching invoice:', { invoiceNumber, storeId });
         
         // Use fetch directly for public endpoint (no auth required)
         const apiBaseUrl = (import.meta.env.VITE_API_URL as string) || '/api';
-        const response = await fetch(`${apiBaseUrl}/sales/public/invoice?${params.toString()}`, {
+        const url = `${apiBaseUrl}/sales/public/invoice?${params.toString()}`;
+        console.log('[PublicInvoicePage] API URL:', url);
+        
+        const response = await fetch(url, {
           method: 'GET',
           headers: {
             'Content-Type': 'application/json',
@@ -38,12 +43,14 @@ const PublicInvoicePage: React.FC = () => {
         });
         
         const data = await response.json();
+        console.log('[PublicInvoicePage] API response:', { status: response.status, data });
         
         if (!response.ok) {
           throw new Error(data.message || 'Failed to fetch invoice');
         }
         
         if (data.success && data.data && data.data.sale) {
+          console.log('[PublicInvoicePage] Invoice found:', data.data.sale.invoiceNumber);
           setInvoice(data.data.sale);
         } else {
           setError('الفاتورة غير موجودة');
