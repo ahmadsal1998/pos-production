@@ -1201,6 +1201,8 @@ exports.getPublicInvoice = (0, error_middleware_1.asyncHandler)(async (req, res)
         });
     }
     try {
+        // Normalize invoice number (trim whitespace)
+        const normalizedInvoiceNumber = invoiceNumber.trim();
         let Sale;
         // If storeId is provided, use it to get the model
         if (storeId && typeof storeId === 'string') {
@@ -1219,19 +1221,22 @@ exports.getPublicInvoice = (0, error_middleware_1.asyncHandler)(async (req, res)
             const modelStoreId = firstStore.storeId || firstStore.prefix;
             Sale = await (0, saleModel_1.getSaleModelForStore)(modelStoreId);
         }
-        // Build query
-        const query = { invoiceNumber };
+        // Build query with normalized invoice number
+        const query = { invoiceNumber: normalizedInvoiceNumber };
         if (storeId && typeof storeId === 'string') {
             query.storeId = storeId.toLowerCase().trim();
         }
+        logger_1.log.debug('[getPublicInvoice] Searching for invoice:', { invoiceNumber: normalizedInvoiceNumber, storeId: query.storeId });
         // Find invoice by invoice number
         const sale = await Sale.findOne(query).lean();
         if (!sale) {
+            logger_1.log.warn('[getPublicInvoice] Invoice not found:', { invoiceNumber: normalizedInvoiceNumber, storeId: query.storeId });
             return res.status(404).json({
                 success: false,
                 message: 'Invoice not found',
             });
         }
+        logger_1.log.debug('[getPublicInvoice] Invoice found:', { invoiceNumber: sale.invoiceNumber, saleId: sale._id });
         // Return invoice data
         res.status(200).json({
             success: true,
