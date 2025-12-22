@@ -34,31 +34,31 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
 const mongoose_1 = __importStar(require("mongoose"));
-// OTP Schema
-const otpSchema = new mongoose_1.Schema({
-    email: {
+const sequenceSchema = new mongoose_1.Schema({
+    storeId: {
         type: String,
-        required: [true, 'Email is required'],
-        trim: true,
+        required: true,
+        index: true,
         lowercase: true,
+        trim: true,
+    },
+    sequenceType: {
+        type: String,
+        required: true,
+        default: 'invoiceNumber',
         index: true,
     },
-    code: {
-        type: String,
-        required: [true, 'OTP code is required'],
-        length: 6,
-    },
-    expiresAt: {
-        type: Date,
+    value: {
+        type: Number,
         required: true,
-        index: { expireAfterSeconds: 0 }, // MongoDB TTL index to auto-delete expired documents
+        default: 0,
+        min: 0,
     },
 }, {
     timestamps: true,
-    autoCreate: false, // Prevent automatic collection creation - only create when data is inserted
 });
-// Index to ensure one active OTP per email
-otpSchema.index({ email: 1, expiresAt: 1 });
-// Create model
-const OTP = mongoose_1.default.model('OTP', otpSchema);
-exports.default = OTP;
+// Compound unique index: one sequence per store per type
+sequenceSchema.index({ storeId: 1, sequenceType: 1 }, { unique: true });
+// Export the model (using unified collection, no prefix needed)
+const Sequence = mongoose_1.default.models.Sequence || mongoose_1.default.model('Sequence', sequenceSchema);
+exports.default = Sequence;

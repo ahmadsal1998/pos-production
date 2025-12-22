@@ -1,391 +1,421 @@
 "use strict";
-var __create = Object.create;
-var __defProp = Object.defineProperty;
-var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
-var __getOwnPropNames = Object.getOwnPropertyNames;
-var __getProtoOf = Object.getPrototypeOf;
-var __hasOwnProp = Object.prototype.hasOwnProperty;
-var __export = (target, all) => {
-  for (var name in all)
-    __defProp(target, name, { get: all[name], enumerable: true });
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
 };
-var __copyProps = (to, from, except, desc) => {
-  if (from && typeof from === "object" || typeof from === "function") {
-    for (let key of __getOwnPropNames(from))
-      if (!__hasOwnProp.call(to, key) && key !== except)
-        __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
-  }
-  return to;
-};
-var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__getProtoOf(mod)) : {}, __copyProps(
-  // If the importer is in node compatibility mode or this is not an ESM
-  // file that has been converted to a CommonJS file using a Babel-
-  // compatible transform (i.e. "__esModule" has not been set), then set
-  // "default" to the CommonJS "module.exports" for node compatibility.
-  isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
-  mod
-));
-var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
-var auth_controller_exports = {};
-__export(auth_controller_exports, {
-  forgotPassword: () => forgotPassword,
-  getContactNumber: () => getContactNumber,
-  getMe: () => getMe,
-  login: () => login,
-  logout: () => logout,
-  resetPassword: () => resetPassword,
-  validateForgotPassword: () => validateForgotPassword,
-  validateLogin: () => validateLogin,
-  validateResetPassword: () => validateResetPassword,
-  validateVerifyOTP: () => validateVerifyOTP,
-  verifyOTP: () => verifyOTP
-});
-module.exports = __toCommonJS(auth_controller_exports);
-var import_express_validator = require("express-validator");
-var import_OTP = __toESM(require("../models/OTP"));
-var import_Settings = __toESM(require("../models/Settings"));
-var import_jwt = require("../utils/jwt");
-var import_error = require("../middleware/error.middleware");
-var import_otp = require("../utils/otp");
-var import_email = require("../utils/email");
-var import_User = __toESM(require("../models/User"));
-var import_subscriptionManager = require("../utils/subscriptionManager");
-const login = (0, import_error.asyncHandler)(
-  async (req, res, next) => {
-    const errors = (0, import_express_validator.validationResult)(req);
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.validateResetPassword = exports.validateVerifyOTP = exports.validateForgotPassword = exports.validateLogin = exports.resetPassword = exports.verifyOTP = exports.forgotPassword = exports.getContactNumber = exports.logout = exports.getMe = exports.login = void 0;
+const express_validator_1 = require("express-validator");
+const OTP_1 = __importDefault(require("../models/OTP"));
+const Settings_1 = __importDefault(require("../models/Settings"));
+const jwt_1 = require("../utils/jwt");
+const error_middleware_1 = require("../middleware/error.middleware");
+const otp_1 = require("../utils/otp");
+const email_1 = require("../utils/email");
+const User_1 = __importDefault(require("../models/User"));
+const subscriptionManager_1 = require("../utils/subscriptionManager");
+// Login controller
+exports.login = (0, error_middleware_1.asyncHandler)(async (req, res, next) => {
+    // Check for validation errors
+    const errors = (0, express_validator_1.validationResult)(req);
     if (!errors.isEmpty()) {
-      return res.status(400).json({
-        success: false,
-        message: "Validation failed",
-        errors: errors.array()
-      });
+        return res.status(400).json({
+            success: false,
+            message: 'Validation failed',
+            errors: errors.array(),
+        });
     }
     const { emailOrUsername, password, storeId } = req.body;
+    // Check admin credentials first (from .env)
     const adminUsername = process.env.ADMIN_USERNAME;
     const adminPassword = process.env.ADMIN_PASSWORD;
     if (adminUsername && adminPassword) {
-      if (emailOrUsername.toLowerCase() === adminUsername.toLowerCase() && password === adminPassword) {
-        const tokenPayload2 = {
-          userId: "admin",
-          email: adminUsername,
-          role: "Admin",
-          storeId: null
-          // Admin users don't have a store
-        };
-        const token2 = (0, import_jwt.generateToken)(tokenPayload2);
-        const refreshToken2 = (0, import_jwt.generateRefreshToken)(tokenPayload2);
-        return res.status(200).json({
-          success: true,
-          message: "Admin login successful",
-          data: {
-            user: {
-              id: "admin",
-              fullName: "System Admin",
-              username: adminUsername,
-              email: adminUsername,
-              role: "Admin",
-              permissions: [],
-              isAdmin: true
-            },
-            token: token2,
-            refreshToken: refreshToken2
-          }
-        });
-      }
+        if (emailOrUsername.toLowerCase() === adminUsername.toLowerCase() &&
+            password === adminPassword) {
+            // Admin login successful
+            const tokenPayload = {
+                userId: 'admin',
+                email: adminUsername,
+                role: 'Admin',
+                storeId: null, // Admin users don't have a store
+            };
+            const token = (0, jwt_1.generateToken)(tokenPayload);
+            const refreshToken = (0, jwt_1.generateRefreshToken)(tokenPayload);
+            return res.status(200).json({
+                success: true,
+                message: 'Admin login successful',
+                data: {
+                    user: {
+                        id: 'admin',
+                        fullName: 'System Admin',
+                        username: adminUsername,
+                        email: adminUsername,
+                        role: 'Admin',
+                        permissions: [],
+                        isAdmin: true,
+                    },
+                    token,
+                    refreshToken,
+                },
+            });
+        }
     }
-    const user = await import_User.default.findOne({
-      $or: [
-        { email: emailOrUsername.toLowerCase() },
-        { username: emailOrUsername.toLowerCase() }
-      ]
-    }).select("+password");
+    // Continue with regular store user login
+    // Use unified User model - email is globally unique, username is per-store
+    // Find user by email or username in unified collection
+    const user = await User_1.default.findOne({
+        $or: [
+            { email: emailOrUsername.toLowerCase() },
+            { username: emailOrUsername.toLowerCase() },
+        ],
+    }).select('+password');
     if (!user) {
-      return res.status(401).json({
-        success: false,
-        message: "Invalid email or password"
-      });
+        return res.status(401).json({
+            success: false,
+            message: 'Invalid email or password',
+        });
     }
-    if (user.status !== "Active") {
-      return res.status(401).json({
-        success: false,
-        message: "Your account has been deactivated. Please contact admin."
-      });
+    // Check if user is active
+    if (user.status !== 'Active') {
+        return res.status(401).json({
+            success: false,
+            message: 'Your account has been deactivated. Please contact admin.',
+        });
     }
+    // Check store subscription status if user belongs to a store
+    // Note: We allow login even if subscription expired, but include status in response
     let subscriptionStatus = null;
     if (user.storeId) {
-      try {
-        subscriptionStatus = await (0, import_subscriptionManager.checkAndUpdateStoreSubscription)(user.storeId);
-      } catch (error) {
-        console.error(`Error checking subscription for store ${user.storeId}:`, error.message);
-      }
+        try {
+            subscriptionStatus = await (0, subscriptionManager_1.checkAndUpdateStoreSubscription)(user.storeId);
+        }
+        catch (error) {
+            // If store not found, log but continue (shouldn't happen in normal flow)
+            console.error(`Error checking subscription for store ${user.storeId}:`, error.message);
+        }
     }
+    // Verify password
     const isPasswordValid = await user.comparePassword(password);
     if (!isPasswordValid) {
-      return res.status(401).json({
-        success: false,
-        message: "Invalid email or password"
-      });
+        return res.status(401).json({
+            success: false,
+            message: 'Invalid email or password',
+        });
     }
-    user.lastLogin = /* @__PURE__ */ new Date();
+    // Update last login
+    user.lastLogin = new Date();
     await user.save({ validateBeforeSave: false });
+    // Generate tokens
     const tokenPayload = {
-      userId: user._id.toString(),
-      email: user.email,
-      role: user.role,
-      storeId: user.storeId || null
+        userId: user._id.toString(),
+        email: user.email,
+        role: user.role,
+        storeId: user.storeId || null,
     };
-    const token = (0, import_jwt.generateToken)(tokenPayload);
-    const refreshToken = (0, import_jwt.generateRefreshToken)(tokenPayload);
+    const token = (0, jwt_1.generateToken)(tokenPayload);
+    const refreshToken = (0, jwt_1.generateRefreshToken)(tokenPayload);
+    // Send response
     res.status(200).json({
-      success: true,
-      message: "Login successful",
-      data: {
-        user: {
-          id: user._id.toString(),
-          fullName: user.fullName,
-          username: user.username,
-          email: user.email,
-          role: user.role,
-          permissions: user.permissions,
-          storeId: user.storeId || null
+        success: true,
+        message: 'Login successful',
+        data: {
+            user: {
+                id: user._id.toString(),
+                fullName: user.fullName,
+                username: user.username,
+                email: user.email,
+                role: user.role,
+                permissions: user.permissions,
+                storeId: user.storeId || null,
+            },
+            token,
+            refreshToken,
+            subscriptionStatus: subscriptionStatus ? {
+                isActive: subscriptionStatus.isActive,
+                subscriptionExpired: subscriptionStatus.subscriptionExpired,
+                subscriptionEndDate: subscriptionStatus.subscriptionEndDate,
+            } : null,
         },
-        token,
-        refreshToken,
-        subscriptionStatus: subscriptionStatus ? {
-          isActive: subscriptionStatus.isActive,
-          subscriptionExpired: subscriptionStatus.subscriptionExpired,
-          subscriptionEndDate: subscriptionStatus.subscriptionEndDate
-        } : null
-      }
     });
-  }
-);
-const getMe = (0, import_error.asyncHandler)(
-  async (req, res, next) => {
+});
+// Get current user
+exports.getMe = (0, error_middleware_1.asyncHandler)(async (req, res, next) => {
     const userId = req.user?.userId;
     const storeId = req.user?.storeId;
     if (!userId) {
-      return res.status(401).json({
-        success: false,
-        message: "User ID not found in token"
-      });
+        return res.status(401).json({
+            success: false,
+            message: 'User ID not found in token',
+        });
     }
-    const user = await import_User.default.findById(userId);
+    // Find user in unified collection
+    const user = await User_1.default.findById(userId);
     if (!user) {
-      return res.status(404).json({
-        success: false,
-        message: "User not found"
-      });
+        return res.status(404).json({
+            success: false,
+            message: 'User not found',
+        });
     }
+    // Check store subscription status if user belongs to a store
     let subscriptionStatus = null;
     if (user.storeId) {
-      try {
-        subscriptionStatus = await (0, import_subscriptionManager.checkAndUpdateStoreSubscription)(user.storeId);
-      } catch (error) {
-        console.error(`Error checking subscription for store ${user.storeId}:`, error.message);
-      }
+        try {
+            subscriptionStatus = await (0, subscriptionManager_1.checkAndUpdateStoreSubscription)(user.storeId);
+        }
+        catch (error) {
+            // If store not found, log but continue (shouldn't happen in normal flow)
+            console.error(`Error checking subscription for store ${user.storeId}:`, error.message);
+        }
     }
     res.status(200).json({
-      success: true,
-      data: {
-        user: {
-          id: user._id.toString(),
-          fullName: user.fullName,
-          username: user.username,
-          email: user.email,
-          role: user.role,
-          permissions: user.permissions,
-          status: user.status,
-          lastLogin: user.lastLogin
+        success: true,
+        data: {
+            user: {
+                id: user._id.toString(),
+                fullName: user.fullName,
+                username: user.username,
+                email: user.email,
+                role: user.role,
+                permissions: user.permissions,
+                status: user.status,
+                lastLogin: user.lastLogin,
+            },
+            subscriptionStatus: subscriptionStatus ? {
+                isActive: subscriptionStatus.isActive,
+                subscriptionExpired: subscriptionStatus.subscriptionExpired,
+                subscriptionEndDate: subscriptionStatus.subscriptionEndDate,
+            } : null,
         },
-        subscriptionStatus: subscriptionStatus ? {
-          isActive: subscriptionStatus.isActive,
-          subscriptionExpired: subscriptionStatus.subscriptionExpired,
-          subscriptionEndDate: subscriptionStatus.subscriptionEndDate
-        } : null
-      }
     });
-  }
-);
-const logout = (0, import_error.asyncHandler)(
-  async (req, res, next) => {
+});
+// Logout controller (mostly client-side, but can be used for refresh token invalidation)
+exports.logout = (0, error_middleware_1.asyncHandler)(async (req, res, next) => {
     res.status(200).json({
-      success: true,
-      message: "Logged out successfully"
+        success: true,
+        message: 'Logged out successfully',
     });
-  }
-);
-const getContactNumber = (0, import_error.asyncHandler)(
-  async (req, res, next) => {
-    const setting = await import_Settings.default.findOne({ key: "subscription_contact_number" });
-    const contactNumber = setting?.value || "0593202029";
+});
+// Get contact number for expired subscription page (public endpoint)
+exports.getContactNumber = (0, error_middleware_1.asyncHandler)(async (req, res, next) => {
+    const setting = await Settings_1.default.findOne({ key: 'subscription_contact_number' });
+    // Default contact number if not set
+    const contactNumber = setting?.value || '0593202029';
     res.status(200).json({
-      success: true,
-      data: {
-        contactNumber
-      }
+        success: true,
+        data: {
+            contactNumber,
+        },
     });
-  }
-);
-const forgotPassword = (0, import_error.asyncHandler)(
-  async (req, res, next) => {
-    const errors = (0, import_express_validator.validationResult)(req);
+});
+// Forgot Password controller (Send OTP)
+exports.forgotPassword = (0, error_middleware_1.asyncHandler)(async (req, res, next) => {
+    // Check for validation errors
+    const errors = (0, express_validator_1.validationResult)(req);
     if (!errors.isEmpty()) {
-      return res.status(400).json({
-        success: false,
-        message: "Validation failed",
-        errors: errors.array()
-      });
+        return res.status(400).json({
+            success: false,
+            message: 'Validation failed',
+            errors: errors.array(),
+        });
     }
     const { email } = req.body;
-    const user = await import_User.default.findOne({
-      email: email.toLowerCase()
+    // Find user by email in unified collection (email is globally unique)
+    const user = await User_1.default.findOne({
+        email: email.toLowerCase(),
     });
     if (!user) {
-      return res.status(200).json({
-        success: true,
-        message: "OTP sent successfully"
-      });
+        // For security, don't reveal if email exists or not
+        return res.status(200).json({
+            success: true,
+            message: 'OTP sent successfully',
+        });
     }
-    if (user.status !== "Active") {
-      return res.status(403).json({
-        success: false,
-        message: "Your account has been deactivated. Please contact admin."
-      });
+    // Check if user is active
+    if (user.status !== 'Active') {
+        return res.status(403).json({
+            success: false,
+            message: 'Your account has been deactivated. Please contact admin.',
+        });
     }
-    await import_OTP.default.deleteMany({ email: email.toLowerCase() });
-    const code = (0, import_otp.generateOTP)();
-    const expiresAt = (0, import_otp.getOTPExpiration)();
-    await import_OTP.default.create({
-      email: email.toLowerCase(),
-      code,
-      expiresAt
+    // Delete any existing OTP for this email
+    await OTP_1.default.deleteMany({ email: email.toLowerCase() });
+    // Generate new OTP
+    const code = (0, otp_1.generateOTP)();
+    const expiresAt = (0, otp_1.getOTPExpiration)();
+    // Save OTP to database
+    await OTP_1.default.create({
+        email: email.toLowerCase(),
+        code,
+        expiresAt,
     });
-    console.log(`\u{1F4E8} Sending OTP email to: ${email}`);
-    const emailResult = await (0, import_email.sendOTPEmail)(email, code);
+    // Send OTP via email
+    console.log(`📨 Sending OTP email to: ${email}`);
+    const emailResult = await (0, email_1.sendOTPEmail)(email, code);
     if (!emailResult.success) {
-      console.error("\u274C Failed to send OTP email:", {
-        email,
-        error: emailResult.error,
-        message: emailResult.message,
-        hasApiKey: !!process.env.RESEND_API_KEY,
-        apiKeyLength: process.env.RESEND_API_KEY?.length || 0
-      });
-    } else {
-      console.log(`\u2705 OTP email sent successfully to: ${email}`);
+        // If email fails, still return success for security
+        // Log error for debugging
+        console.error('❌ Failed to send OTP email:', {
+            email,
+            error: emailResult.error,
+            message: emailResult.message,
+            hasApiKey: !!process.env.RESEND_API_KEY,
+            apiKeyLength: process.env.RESEND_API_KEY?.length || 0,
+        });
+        // Optionally, you could delete the OTP here if email fails
+        // await OTP.deleteMany({ email: email.toLowerCase() });
     }
+    else {
+        console.log(`✅ OTP email sent successfully to: ${email}`);
+    }
+    // Return success response
     res.status(200).json({
-      success: true,
-      message: "OTP sent successfully"
+        success: true,
+        message: 'OTP sent successfully',
     });
-  }
-);
-const verifyOTP = (0, import_error.asyncHandler)(
-  async (req, res, next) => {
-    const errors = (0, import_express_validator.validationResult)(req);
+});
+// Verify OTP controller
+exports.verifyOTP = (0, error_middleware_1.asyncHandler)(async (req, res, next) => {
+    // Check for validation errors
+    const errors = (0, express_validator_1.validationResult)(req);
     if (!errors.isEmpty()) {
-      return res.status(400).json({
-        success: false,
-        message: "Validation failed",
-        errors: errors.array()
-      });
+        return res.status(400).json({
+            success: false,
+            message: 'Validation failed',
+            errors: errors.array(),
+        });
     }
     const { email, code } = req.body;
-    const otpRecord = await import_OTP.default.findOne({
-      email: email.toLowerCase(),
-      code
+    // Find OTP record
+    const otpRecord = await OTP_1.default.findOne({
+        email: email.toLowerCase(),
+        code,
     });
     if (!otpRecord) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid or expired OTP code"
-      });
+        return res.status(400).json({
+            success: false,
+            message: 'Invalid or expired OTP code',
+        });
     }
-    if (otpRecord.expiresAt < /* @__PURE__ */ new Date()) {
-      await import_OTP.default.deleteOne({ _id: otpRecord._id });
-      return res.status(400).json({
-        success: false,
-        message: "OTP code has expired"
-      });
+    // Check if OTP has expired
+    if (otpRecord.expiresAt < new Date()) {
+        await OTP_1.default.deleteOne({ _id: otpRecord._id });
+        return res.status(400).json({
+            success: false,
+            message: 'OTP code has expired',
+        });
     }
+    // OTP is valid
     res.status(200).json({
-      success: true,
-      message: "OTP verified successfully"
+        success: true,
+        message: 'OTP verified successfully',
     });
-  }
-);
-const resetPassword = (0, import_error.asyncHandler)(
-  async (req, res, next) => {
-    const errors = (0, import_express_validator.validationResult)(req);
+});
+// Reset Password controller
+exports.resetPassword = (0, error_middleware_1.asyncHandler)(async (req, res, next) => {
+    // Check for validation errors
+    const errors = (0, express_validator_1.validationResult)(req);
     if (!errors.isEmpty()) {
-      return res.status(400).json({
-        success: false,
-        message: "Validation failed",
-        errors: errors.array()
-      });
+        return res.status(400).json({
+            success: false,
+            message: 'Validation failed',
+            errors: errors.array(),
+        });
     }
     const { email, newPassword } = req.body;
-    const user = await import_User.default.findOne({
-      email: email.toLowerCase()
+    // Find user by email in unified collection (email is globally unique)
+    const user = await User_1.default.findOne({
+        email: email.toLowerCase(),
     });
     if (!user) {
-      return res.status(404).json({
-        success: false,
-        message: "User not found"
-      });
+        return res.status(404).json({
+            success: false,
+            message: 'User not found',
+        });
     }
-    const otpRecord = await import_OTP.default.findOne({
-      email: email.toLowerCase()
+    // Verify that a valid OTP exists for this email
+    // User should have verified OTP using /verify-otp endpoint first
+    const otpRecord = await OTP_1.default.findOne({
+        email: email.toLowerCase(),
     });
     if (!otpRecord) {
-      return res.status(400).json({
-        success: false,
-        message: "OTP verification required. Please verify OTP first."
-      });
+        return res.status(400).json({
+            success: false,
+            message: 'OTP verification required. Please verify OTP first.',
+        });
     }
-    if (otpRecord.expiresAt < /* @__PURE__ */ new Date()) {
-      await import_OTP.default.deleteOne({ _id: otpRecord._id });
-      return res.status(400).json({
-        success: false,
-        message: "OTP has expired. Please request a new one."
-      });
+    // Check if OTP has expired
+    if (otpRecord.expiresAt < new Date()) {
+        await OTP_1.default.deleteOne({ _id: otpRecord._id });
+        return res.status(400).json({
+            success: false,
+            message: 'OTP has expired. Please request a new one.',
+        });
     }
+    // Update user password directly (the pre-save hook will hash it)
+    // We set the plain password so the pre-save hook can hash it properly
     user.password = newPassword;
-    user.markModified("password");
+    // Mark password as modified so pre-save hook runs
+    user.markModified('password');
+    // Save user (pre-save hook will hash the password)
     await user.save({ validateBeforeSave: false });
-    await import_OTP.default.deleteMany({ email: email.toLowerCase() });
+    // Delete all OTP records for this email (used or expired)
+    await OTP_1.default.deleteMany({ email: email.toLowerCase() });
+    // Return success response
     res.status(200).json({
-      success: true,
-      message: "Password reset successfully"
+        success: true,
+        message: 'Password reset successfully',
     });
-  }
-);
-const validateLogin = [
-  (0, import_express_validator.body)("emailOrUsername").notEmpty().withMessage("Email or username is required").trim(),
-  (0, import_express_validator.body)("password").notEmpty().withMessage("Password is required").isLength({ min: 6 }).withMessage("Password must be at least 6 characters")
-];
-const validateForgotPassword = [
-  (0, import_express_validator.body)("email").notEmpty().withMessage("Email is required").isEmail().withMessage("Please provide a valid email").normalizeEmail().trim()
-];
-const validateVerifyOTP = [
-  (0, import_express_validator.body)("email").notEmpty().withMessage("Email is required").isEmail().withMessage("Please provide a valid email").normalizeEmail().trim(),
-  (0, import_express_validator.body)("code").notEmpty().withMessage("OTP code is required").isLength({ min: 6, max: 6 }).withMessage("OTP code must be 6 digits").matches(/^\d+$/).withMessage("OTP code must contain only numbers")
-];
-const validateResetPassword = [
-  (0, import_express_validator.body)("email").notEmpty().withMessage("Email is required").isEmail().withMessage("Please provide a valid email").normalizeEmail().trim(),
-  (0, import_express_validator.body)("newPassword").notEmpty().withMessage("New password is required").isLength({ min: 6 }).withMessage("Password must be at least 6 characters")
-];
-// Annotate the CommonJS export names for ESM import in node:
-0 && (module.exports = {
-  forgotPassword,
-  getContactNumber,
-  getMe,
-  login,
-  logout,
-  resetPassword,
-  validateForgotPassword,
-  validateLogin,
-  validateResetPassword,
-  validateVerifyOTP,
-  verifyOTP
 });
+// Validation middleware
+exports.validateLogin = [
+    (0, express_validator_1.body)('emailOrUsername')
+        .notEmpty()
+        .withMessage('Email or username is required')
+        .trim(),
+    (0, express_validator_1.body)('password')
+        .notEmpty()
+        .withMessage('Password is required')
+        .isLength({ min: 6 })
+        .withMessage('Password must be at least 6 characters'),
+];
+// Validation middleware for forgot password
+exports.validateForgotPassword = [
+    (0, express_validator_1.body)('email')
+        .notEmpty()
+        .withMessage('Email is required')
+        .isEmail()
+        .withMessage('Please provide a valid email')
+        .normalizeEmail()
+        .trim(),
+];
+// Validation middleware for verify OTP
+exports.validateVerifyOTP = [
+    (0, express_validator_1.body)('email')
+        .notEmpty()
+        .withMessage('Email is required')
+        .isEmail()
+        .withMessage('Please provide a valid email')
+        .normalizeEmail()
+        .trim(),
+    (0, express_validator_1.body)('code')
+        .notEmpty()
+        .withMessage('OTP code is required')
+        .isLength({ min: 6, max: 6 })
+        .withMessage('OTP code must be 6 digits')
+        .matches(/^\d+$/)
+        .withMessage('OTP code must contain only numbers'),
+];
+// Validation middleware for reset password
+exports.validateResetPassword = [
+    (0, express_validator_1.body)('email')
+        .notEmpty()
+        .withMessage('Email is required')
+        .isEmail()
+        .withMessage('Please provide a valid email')
+        .normalizeEmail()
+        .trim(),
+    (0, express_validator_1.body)('newPassword')
+        .notEmpty()
+        .withMessage('New password is required')
+        .isLength({ min: 6 })
+        .withMessage('Password must be at least 6 characters'),
+];

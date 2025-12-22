@@ -1,169 +1,212 @@
 "use strict";
-var __create = Object.create;
-var __defProp = Object.defineProperty;
-var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
-var __getOwnPropNames = Object.getOwnPropertyNames;
-var __getProtoOf = Object.getPrototypeOf;
-var __hasOwnProp = Object.prototype.hasOwnProperty;
-var __export = (target, all) => {
-  for (var name in all)
-    __defProp(target, name, { get: all[name], enumerable: true });
-};
-var __copyProps = (to, from, except, desc) => {
-  if (from && typeof from === "object" || typeof from === "function") {
-    for (let key of __getOwnPropNames(from))
-      if (!__hasOwnProp.call(to, key) && key !== except)
-        __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
-  }
-  return to;
-};
-var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__getProtoOf(mod)) : {}, __copyProps(
-  // If the importer is in node compatibility mode or this is not an ESM
-  // file that has been converted to a CommonJS file using a Babel-
-  // compatible transform (i.e. "__esModule" has not been set), then set
-  // "default" to the CommonJS "module.exports" for node compatibility.
-  isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
-  mod
-));
-var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
-var migrateTerminalsToStores_exports = {};
-__export(migrateTerminalsToStores_exports, {
-  migrateTerminalsToStores: () => migrateTerminalsToStores
-});
-module.exports = __toCommonJS(migrateTerminalsToStores_exports);
-var import_mongoose = __toESM(require("mongoose"));
-var import_Store = __toESM(require("../models/Store"));
-var import_Terminal = require("../models/Terminal");
-var import_database = require("../config/database");
-async function migrateTerminalsToStores(dryRun = true) {
-  console.log("\u{1F680} Starting terminal migration to stores...");
-  console.log(`Mode: ${dryRun ? "DRY RUN (no changes will be saved)" : "LIVE (changes will be saved)"}
-`);
-  try {
-    const terminals = await import_Terminal.Terminal.find({});
-    console.log(`Found ${terminals.length} terminal(s) to migrate
-`);
-    if (terminals.length === 0) {
-      console.log("\u2705 No terminals to migrate. Exiting.");
-      return;
+/**
+ * Migration script to move terminals from Terminal collection to Store.terminals arrays
+ *
+ * This script:
+ * 1. Finds all terminals in the Terminal collection
+ * 2. For each terminal, determines its store based on storeId field
+ * 3. Adds the terminal to the store's terminals array
+ * 4. Removes the terminal from the Terminal collection (optional - commented out by default)
+ *
+ * Usage:
+ * Run this script manually or import and call migrateTerminalsToStores()
+ */
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
     }
-    const migrationResults = {
-      success: 0,
-      failed: 0,
-      skipped: 0,
-      errors: []
-    };
-    for (const terminal of terminals) {
-      try {
-        let storeId = null;
-        if (terminal.storeId) {
-          storeId = terminal.storeId.toLowerCase();
-        } else if (terminal.merchantId) {
-          const { Merchant } = await import("../models/Merchant");
-          const merchant = await Merchant.findById(terminal.merchantId);
-          if (merchant && merchant.storeId) {
-            storeId = merchant.storeId.toLowerCase();
-          }
-        }
-        if (!storeId) {
-          console.log(`\u26A0\uFE0F  Skipping terminal ${terminal.terminalId} (ID: ${terminal._id}): No store ID found`);
-          migrationResults.skipped++;
-          continue;
-        }
-        const store = await import_Store.default.findOne({ storeId });
-        if (!store) {
-          console.log(`\u26A0\uFE0F  Skipping terminal ${terminal.terminalId} (ID: ${terminal._id}): Store '${storeId}' not found`);
-          migrationResults.skipped++;
-          migrationResults.errors.push({
-            terminalId: terminal.terminalId,
-            error: `Store '${storeId}' not found`
-          });
-          continue;
-        }
-        if (store.terminals && store.terminals.length > 0) {
-          const existing = store.terminals.find(
-            (t) => t.terminalId.toUpperCase() === terminal.terminalId.toUpperCase()
-          );
-          if (existing) {
-            console.log(`\u26A0\uFE0F  Skipping terminal ${terminal.terminalId} (ID: ${terminal._id}): Already exists in store '${storeId}'`);
-            migrationResults.skipped++;
-            continue;
-          }
-        }
-        const storeTerminal = {
-          terminalId: terminal.terminalId,
-          merchantIdMid: terminal.merchantIdMid || terminal.terminalId,
-          // Use terminalId as fallback if no MID
-          name: terminal.name,
-          host: terminal.host,
-          port: terminal.port,
-          connectionType: terminal.connectionType,
-          status: terminal.status,
-          testMode: terminal.testMode,
-          timeout: terminal.timeout,
-          description: terminal.description,
-          lastConnected: terminal.lastConnected,
-          lastError: terminal.lastError,
-          createdAt: terminal.createdAt,
-          updatedAt: terminal.updatedAt
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
         };
-        if (!store.terminals) {
-          store.terminals = [];
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.migrateTerminalsToStores = migrateTerminalsToStores;
+const mongoose_1 = __importDefault(require("mongoose"));
+const Store_1 = __importDefault(require("../models/Store"));
+const Terminal_1 = require("../models/Terminal");
+const database_1 = require("../config/database");
+async function migrateTerminalsToStores(dryRun = true) {
+    console.log('🚀 Starting terminal migration to stores...');
+    console.log(`Mode: ${dryRun ? 'DRY RUN (no changes will be saved)' : 'LIVE (changes will be saved)'}\n`);
+    try {
+        // Find all terminals
+        const terminals = await Terminal_1.Terminal.find({});
+        console.log(`Found ${terminals.length} terminal(s) to migrate\n`);
+        if (terminals.length === 0) {
+            console.log('✅ No terminals to migrate. Exiting.');
+            return;
         }
-        store.terminals.push(storeTerminal);
-        if (!dryRun) {
-          await store.save();
-          console.log(`\u2705 Migrated terminal ${terminal.terminalId} (ID: ${terminal._id}) to store '${storeId}'`);
-        } else {
-          console.log(`[DRY RUN] Would migrate terminal ${terminal.terminalId} (ID: ${terminal._id}) to store '${storeId}'`);
+        const migrationResults = {
+            success: 0,
+            failed: 0,
+            skipped: 0,
+            errors: [],
+        };
+        for (const terminal of terminals) {
+            try {
+                // Determine storeId
+                let storeId = null;
+                if (terminal.storeId) {
+                    // Store-based terminal
+                    storeId = terminal.storeId.toLowerCase();
+                }
+                else if (terminal.merchantId) {
+                    // Merchant-based terminal - need to find merchant's store
+                    const { Merchant } = await Promise.resolve().then(() => __importStar(require('../models/Merchant')));
+                    const merchant = await Merchant.findById(terminal.merchantId);
+                    if (merchant && merchant.storeId) {
+                        storeId = merchant.storeId.toLowerCase();
+                    }
+                }
+                if (!storeId) {
+                    console.log(`⚠️  Skipping terminal ${terminal.terminalId} (ID: ${terminal._id}): No store ID found`);
+                    migrationResults.skipped++;
+                    continue;
+                }
+                // Find store
+                const store = await Store_1.default.findOne({ storeId });
+                if (!store) {
+                    console.log(`⚠️  Skipping terminal ${terminal.terminalId} (ID: ${terminal._id}): Store '${storeId}' not found`);
+                    migrationResults.skipped++;
+                    migrationResults.errors.push({
+                        terminalId: terminal.terminalId,
+                        error: `Store '${storeId}' not found`,
+                    });
+                    continue;
+                }
+                // Check if terminal already exists in store
+                if (store.terminals && store.terminals.length > 0) {
+                    const existing = store.terminals.find((t) => t.terminalId.toUpperCase() === terminal.terminalId.toUpperCase());
+                    if (existing) {
+                        console.log(`⚠️  Skipping terminal ${terminal.terminalId} (ID: ${terminal._id}): Already exists in store '${storeId}'`);
+                        migrationResults.skipped++;
+                        continue;
+                    }
+                }
+                // Create terminal object for store
+                const storeTerminal = {
+                    terminalId: terminal.terminalId,
+                    merchantIdMid: terminal.merchantIdMid || terminal.terminalId, // Use terminalId as fallback if no MID
+                    name: terminal.name,
+                    host: terminal.host,
+                    port: terminal.port,
+                    connectionType: terminal.connectionType,
+                    status: terminal.status,
+                    testMode: terminal.testMode,
+                    timeout: terminal.timeout,
+                    description: terminal.description,
+                    lastConnected: terminal.lastConnected,
+                    lastError: terminal.lastError,
+                    createdAt: terminal.createdAt,
+                    updatedAt: terminal.updatedAt,
+                };
+                // Add terminal to store
+                if (!store.terminals) {
+                    store.terminals = [];
+                }
+                store.terminals.push(storeTerminal);
+                if (!dryRun) {
+                    await store.save();
+                    console.log(`✅ Migrated terminal ${terminal.terminalId} (ID: ${terminal._id}) to store '${storeId}'`);
+                }
+                else {
+                    console.log(`[DRY RUN] Would migrate terminal ${terminal.terminalId} (ID: ${terminal._id}) to store '${storeId}'`);
+                }
+                migrationResults.success++;
+            }
+            catch (error) {
+                console.error(`❌ Error migrating terminal ${terminal.terminalId} (ID: ${terminal._id}):`, error.message);
+                migrationResults.failed++;
+                migrationResults.errors.push({
+                    terminalId: terminal.terminalId,
+                    error: error.message,
+                });
+            }
         }
-        migrationResults.success++;
-      } catch (error) {
-        console.error(`\u274C Error migrating terminal ${terminal.terminalId} (ID: ${terminal._id}):`, error.message);
-        migrationResults.failed++;
-        migrationResults.errors.push({
-          terminalId: terminal.terminalId,
-          error: error.message
-        });
-      }
+        console.log('\n📊 Migration Summary:');
+        console.log(`  ✅ Success: ${migrationResults.success}`);
+        console.log(`  ⚠️  Skipped: ${migrationResults.skipped}`);
+        console.log(`  ❌ Failed: ${migrationResults.failed}`);
+        if (migrationResults.errors.length > 0) {
+            console.log('\n❌ Errors:');
+            migrationResults.errors.forEach((err) => {
+                console.log(`  - Terminal ${err.terminalId}: ${err.error}`);
+            });
+        }
+        if (dryRun) {
+            console.log('\n⚠️  This was a DRY RUN. No changes were saved.');
+            console.log('   Run with dryRun=false to apply changes.');
+        }
+        else {
+            console.log('\n✅ Migration completed!');
+            // Optionally delete terminals from Terminal collection
+            // Uncomment the following lines if you want to remove terminals from the old collection:
+            /*
+            console.log('\n🗑️  Removing terminals from Terminal collection...');
+            for (const terminal of terminals) {
+              try {
+                await terminal.deleteOne();
+                console.log(`✅ Removed terminal ${terminal.terminalId} from Terminal collection`);
+              } catch (error: any) {
+                console.error(`❌ Error removing terminal ${terminal.terminalId}:`, error.message);
+              }
+            }
+            */
+        }
     }
-    console.log("\n\u{1F4CA} Migration Summary:");
-    console.log(`  \u2705 Success: ${migrationResults.success}`);
-    console.log(`  \u26A0\uFE0F  Skipped: ${migrationResults.skipped}`);
-    console.log(`  \u274C Failed: ${migrationResults.failed}`);
-    if (migrationResults.errors.length > 0) {
-      console.log("\n\u274C Errors:");
-      migrationResults.errors.forEach((err) => {
-        console.log(`  - Terminal ${err.terminalId}: ${err.error}`);
-      });
+    catch (error) {
+        console.error('❌ Migration failed:', error);
+        throw error;
     }
-    if (dryRun) {
-      console.log("\n\u26A0\uFE0F  This was a DRY RUN. No changes were saved.");
-      console.log("   Run with dryRun=false to apply changes.");
-    } else {
-      console.log("\n\u2705 Migration completed!");
-    }
-  } catch (error) {
-    console.error("\u274C Migration failed:", error);
-    throw error;
-  }
 }
+// If running this file directly
 if (require.main === module) {
-  const mongoUri = process.env.MONGODB_URI || "mongodb://localhost:27017/pos-production";
-  const sanitizedUri = (0, import_database.sanitizeMongoUri)(mongoUri);
-  import_mongoose.default.connect(sanitizedUri).then(() => {
-    console.log("\u2705 Connected to MongoDB");
-    const dryRun = process.env.DRY_RUN !== "false";
-    return migrateTerminalsToStores(dryRun);
-  }).then(() => {
-    console.log("\n\u2705 Migration script completed");
-    process.exit(0);
-  }).catch((error) => {
-    console.error("\u274C Migration script failed:", error);
-    process.exit(1);
-  });
+    // Connect to MongoDB
+    const mongoUri = process.env.MONGODB_URI || 'mongodb://localhost:27017/pos-production';
+    // Sanitize URI to remove any X.509 parameters
+    const sanitizedUri = (0, database_1.sanitizeMongoUri)(mongoUri);
+    mongoose_1.default
+        .connect(sanitizedUri)
+        .then(() => {
+        console.log('✅ Connected to MongoDB');
+        // Run migration in dry-run mode by default
+        const dryRun = process.env.DRY_RUN !== 'false';
+        return migrateTerminalsToStores(dryRun);
+    })
+        .then(() => {
+        console.log('\n✅ Migration script completed');
+        process.exit(0);
+    })
+        .catch((error) => {
+        console.error('❌ Migration script failed:', error);
+        process.exit(1);
+    });
 }
-// Annotate the CommonJS export names for ESM import in node:
-0 && (module.exports = {
-  migrateTerminalsToStores
-});
