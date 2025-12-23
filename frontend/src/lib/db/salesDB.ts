@@ -423,7 +423,7 @@ class SalesDB {
             );
           }
 
-          // Sort by date descending
+          // Sort by date descending (most recent first)
           sales.sort((a, b) => {
             const dateA = new Date(a.date).getTime();
             const dateB = new Date(b.date).getTime();
@@ -438,7 +438,7 @@ class SalesDB {
             sales = sales.slice(0, filters.limit);
           }
         } else {
-          // Default sort by date descending
+          // Default sort by date descending (most recent first)
           sales.sort((a, b) => {
             const dateA = new Date(a.date).getTime();
             const dateB = new Date(b.date).getTime();

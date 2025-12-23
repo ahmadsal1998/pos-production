@@ -672,9 +672,10 @@ export const getSales = asyncHandler(async (req: AuthenticatedRequest, res: Resp
   const skip = (pageNum - 1) * limitNum;
   
   // Execute query with business date filtering
+  // Sort by date descending (most recent first)
   let [sales, total] = await Promise.all([
     Sale.find(query)
-      .sort({ date: -1 })
+      .sort({ date: -1 }) // Sort by date descending (most recent first)
       .skip(skip)
       .limit(limitNum)
       .lean(),
@@ -710,7 +711,7 @@ export const getSales = asyncHandler(async (req: AuthenticatedRequest, res: Resp
     // Retry query with calendar date filtering
     const [calendarSales, calendarTotal] = await Promise.all([
       Sale.find(calendarQuery)
-        .sort({ date: -1 })
+        .sort({ date: -1 }) // Sort by date descending (most recent first)
         .skip(skip)
         .limit(limitNum)
         .lean(),
