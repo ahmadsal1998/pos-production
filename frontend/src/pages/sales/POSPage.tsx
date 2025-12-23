@@ -253,6 +253,7 @@ const POSPage: React.FC = () => {
     const submittedInvoiceFingerprintsRef = useRef<Set<string>>(new Set()); // Track submitted invoice fingerprints to prevent duplicates
     const conflictInvoiceNumbersRef = useRef<Set<string>>(new Set()); // Track invoice numbers that have conflicts to prevent infinite loops
     const [currentInvoice, setCurrentInvoice] = useState<POSInvoice>(() => generateNewInvoice(currentUserName, 'INV-1'));
+    const [completedInvoice, setCompletedInvoice] = useState<POSInvoice | null>(null); // Store completed invoice for receipt display
     const [quantityDrafts, setQuantityDrafts] = useState<Record<string, string>>({});
     const [storeAddress, setStoreAddress] = useState<string>(''); // Store address for receipts
     const [businessName, setBusinessName] = useState<string>(''); // Store business name for receipts
@@ -2723,6 +2724,14 @@ const POSPage: React.FC = () => {
     };
 
     const handleRestoreSale = async (heldKey: string) => {
+        // CRITICAL FIX: Don't restore if a sale is currently completed
+        // This prevents items from reappearing in the cart after sale completion
+        if (saleCompleted) {
+            console.warn('[POS] Cannot restore held invoice while sale is completed. Please start a new sale first.');
+            showToast('لا يمكن استعادة الفاتورة المعلقة أثناء عرض إيصال البيع. يرجى بدء عملية بيع جديدة أولاً.', 'info');
+            return;
+        }
+        
         // Reset submission flag when restoring sale
         isSubmittingInvoiceRef.current = false;
         
@@ -2756,6 +2765,7 @@ const POSPage: React.FC = () => {
             // Set the restored invoice as current with the new invoice number
             setCurrentInvoice(restoredInvoice);
             setSaleCompleted(false); // Reset sale completed state
+            setCompletedInvoice(null); // Clear any completed invoice when restoring
             
             console.log(`[POS] Held invoice restored: ${heldKey} -> new invoice ${newInvoiceNumber}.`);
         }
@@ -2789,6 +2799,7 @@ const POSPage: React.FC = () => {
             submittedInvoiceFingerprintsRef.current = new Set(fingerprintsArray.slice(-50));
         }
         setSaleCompleted(false);
+        setCompletedInvoice(null); // Clear completed invoice when starting new sale
         const nextInvoiceNumber = await fetchNextInvoiceNumber();
         setCurrentInvoice(generateNewInvoice(currentUserName, nextInvoiceNumber));
         setSelectedPaymentMethod('Cash');
@@ -2884,9 +2895,16 @@ const POSPage: React.FC = () => {
         // CRITICAL: Mark return as completed IMMEDIATELY to enable instant navigation
         // This happens before any blocking operations
         console.log('Return Finalized:', finalInvoice);
-        setCurrentInvoice(finalInvoice);
+        
+        // Store completed invoice for receipt display
+        setCompletedInvoice(finalInvoice);
         setSaleCompleted(true);
         setIsProcessingPayment(false); // Clear loading state immediately
+        
+        // CRITICAL FIX: Clear cart immediately after return completion to prevent items from reappearing
+        const nextInvoiceNumber = await fetchNextInvoiceNumber();
+        const newEmptyInvoice = generateNewInvoice(currentUserName, nextInvoiceNumber);
+        setCurrentInvoice(newEmptyInvoice);
         
         // PERFORMANCE FIX: Move all heavy operations to background (non-blocking)
         // Stock updates, sale sync, and product sync all run in background
@@ -3591,8 +3609,17 @@ const POSPage: React.FC = () => {
         // CRITICAL: Mark sale as completed IMMEDIATELY to enable instant navigation
         // This happens before any blocking operations
         console.log('Sale Finalized:', finalInvoice);
-        setCurrentInvoice(finalInvoice);
+        
+        // Store completed invoice for receipt display
+        setCompletedInvoice(finalInvoice);
         setSaleCompleted(true);
+        
+        // CRITICAL FIX: Clear cart immediately after sale completion to prevent items from reappearing
+        // Generate a new empty invoice to replace current invoice
+        const nextInvoiceNumber = await fetchNextInvoiceNumber();
+        const newEmptyInvoice = generateNewInvoice(currentUserName, nextInvoiceNumber);
+        setCurrentInvoice(newEmptyInvoice);
+        
         // NOTE: Keep isProcessingPayment true until sale sync completes to prevent duplicate submissions
         
         // PERFORMANCE FIX: Move all heavy operations to background (non-blocking)
@@ -4338,6 +4365,17 @@ const POSPage: React.FC = () => {
                         conflictInvoiceNumbersRef.current.delete(invoiceNumberToUse);
                     }
                     
+                    // CRITICAL FIX: Ensure cart is still cleared after successful save
+                    // Defensive check - if cart has items, clear it (shouldn't happen, but safety check)
+                    setCurrentInvoice(prev => {
+                        if (prev.items && prev.items.length > 0) {
+                            console.warn('⚠️ Cart still has items after sale completion, clearing now');
+                            // Return a new empty invoice with the same invoice number if it exists
+                            return generateNewInvoice(currentUserName, prev.id || 'INV-1');
+                        }
+                        return prev; // Cart is already clear, no need to change
+                    });
+                    
                     // Show warning if sync had errors but sale was saved locally
                     if (syncResult.error) {
                         console.warn('⚠️ Sale saved locally, will sync later:', syncResult.error);
@@ -4345,6 +4383,15 @@ const POSPage: React.FC = () => {
                 } else {
                     // Sale was saved to localStorage at least, log warning
                     console.warn('⚠️ Sale saved to localStorage only, IndexedDB save may have failed:', syncResult?.error);
+                    
+                    // Defensive check - ensure cart is cleared even if sync failed
+                    setCurrentInvoice(prev => {
+                        if (prev.items && prev.items.length > 0) {
+                            console.warn('⚠️ Cart still has items after sale completion (sync failed), clearing now');
+                            return generateNewInvoice(currentUserName, prev.id || 'INV-1');
+                        }
+                        return prev;
+                    });
                 }
             } catch (error: any) {
                 // On error, remove fingerprint so invoice can be retried
@@ -4555,8 +4602,8 @@ const POSPage: React.FC = () => {
         }, 300);
     };
     
-    if (saleCompleted) {
-        const isReturnInvoice = currentInvoice.id.startsWith('RET-') || currentInvoice.originalInvoiceId !== undefined;
+    if (saleCompleted && completedInvoice) {
+        const isReturnInvoice = completedInvoice.id.startsWith('RET-') || completedInvoice.originalInvoiceId !== undefined;
         const businessName = loadSettings(null)?.businessName;
         const legacyDefaultBusinessName = String.fromCharCode(80, 111, 115, 104, 80, 111, 105, 110, 116, 72, 117, 98);
         const receiptTitle =
@@ -4598,14 +4645,14 @@ const POSPage: React.FC = () => {
                     </div>
 
                     {/* Invoice display */}
-                    {saleCompleted && (
+                    {saleCompleted && completedInvoice && (
                         <>
                             <div className={showQRReceipt ? 'hidden' : 'w-full'}>
-                                {renderReceipt(currentInvoice, receiptTitle)}
+                                {renderReceipt(completedInvoice, receiptTitle)}
                                 {/* Add Points Button - Only show if customer exists and not a return */}
-                                {currentInvoice.customer && 
-                                 !currentInvoice.id.startsWith('RET-') && 
-                                 !currentInvoice.originalInvoiceId && (
+                                {completedInvoice.customer && 
+                                 !completedInvoice.id.startsWith('RET-') && 
+                                 !completedInvoice.originalInvoiceId && (
                                     <div className="mt-4 p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800 print-hidden">
                                         <div className="flex items-center justify-between mb-2">
                                             <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
@@ -4613,10 +4660,10 @@ const POSPage: React.FC = () => {
                                             </span>
                                         </div>
                                         <AddPointsButton
-                                            invoiceNumber={currentInvoice.id}
-                                            customerId={currentInvoice.customer.id}
-                                            customerPhone={currentInvoice.customer.phone}
-                                            purchaseAmount={currentInvoice.grandTotal}
+                                            invoiceNumber={completedInvoice.id}
+                                            customerId={completedInvoice.customer.id}
+                                            customerPhone={completedInvoice.customer.phone}
+                                            purchaseAmount={completedInvoice.grandTotal}
                                             onSuccess={(points, newBalance) => {
                                                 console.log(`✅ Points added: ${points}, New balance: ${newBalance}`);
                                             }}
@@ -4629,7 +4676,7 @@ const POSPage: React.FC = () => {
                                 )}
                             </div>
                             <div className={showQRReceipt ? 'w-full' : 'hidden'}>
-                                {renderQRReceipt(currentInvoice, receiptTitle)}
+                                {completedInvoice && renderQRReceipt(completedInvoice, receiptTitle)}
                             </div>
                         </>
                     )}
