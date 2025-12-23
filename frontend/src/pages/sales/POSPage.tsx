@@ -4421,13 +4421,16 @@ const POSPage: React.FC = () => {
                     
                     // CRITICAL FIX: Ensure cart is still cleared after successful save
                     // Defensive check - if cart has items, clear it (shouldn't happen, but safety check)
+                    // Only clear the cart if it's still showing the invoice we just synced.
+                    // This prevents wiping items from a new sale that started while the previous sale was under review.
                     setCurrentInvoice(prev => {
-                        if (prev.items && prev.items.length > 0) {
+                        const isSameInvoice = prev.id === invoiceNumberToUse;
+                        if (isSameInvoice && prev.items && prev.items.length > 0) {
                             console.warn('⚠️ Cart still has items after sale completion, clearing now');
                             // Return a new empty invoice with the same invoice number if it exists
                             return generateNewInvoice(currentUserName, prev.id || 'INV-1');
                         }
-                        return prev; // Cart is already clear, no need to change
+                        return prev; // Cart is already clear or belongs to a new sale
                     });
                     
                     // Show warning if sync had errors but sale was saved locally
@@ -4439,8 +4442,10 @@ const POSPage: React.FC = () => {
                     console.warn('⚠️ Sale saved to localStorage only, IndexedDB save may have failed:', syncResult?.error);
                     
                     // Defensive check - ensure cart is cleared even if sync failed
+                    // Only clear if the cart still belongs to the invoice we attempted to sync.
                     setCurrentInvoice(prev => {
-                        if (prev.items && prev.items.length > 0) {
+                        const isSameInvoice = prev.id === invoiceNumberToUse;
+                        if (isSameInvoice && prev.items && prev.items.length > 0) {
                             console.warn('⚠️ Cart still has items after sale completion (sync failed), clearing now');
                             return generateNewInvoice(currentUserName, prev.id || 'INV-1');
                         }
