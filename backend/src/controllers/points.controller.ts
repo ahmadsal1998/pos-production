@@ -57,7 +57,7 @@ export const addPointsAfterSale = asyncHandler(async (req: AuthenticatedRequest,
     // Get or create global customer
     const globalCustomer = await GlobalCustomer.getOrCreateGlobalCustomer(
       earningStoreId,
-      customer._id.toString(),
+      String(customer._id),
       customer.name,
       customer.phone,
       undefined // email not available in Customer model
@@ -274,7 +274,7 @@ export const getCustomerPoints = asyncHandler(async (req: AuthenticatedRequest, 
       // Get or create global customer
       const globalCustomer = await GlobalCustomer.getOrCreateGlobalCustomer(
         customerStoreId,
-        customer._id.toString(),
+        String(customer._id),
         customer.name,
         customer.phone
       );
@@ -412,7 +412,7 @@ export const getCustomerPointsHistory = asyncHandler(async (req: AuthenticatedRe
       
       const globalCustomer = await GlobalCustomer.getOrCreateGlobalCustomer(
         customerStoreId,
-        customer._id.toString(),
+        String(customer._id),
         customer.name,
         customer.phone
       );
@@ -512,7 +512,7 @@ export const payWithPoints = asyncHandler(async (req: AuthenticatedRequest, res:
 
       const globalCustomer = await GlobalCustomer.getOrCreateGlobalCustomer(
         redeemingStoreId,
-        customer._id.toString(),
+        String(customer._id),
         customer.name,
         customer.phone
       );

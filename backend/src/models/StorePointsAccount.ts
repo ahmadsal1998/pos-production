@@ -27,6 +27,9 @@ export interface IStorePointsAccount extends Document {
   lastUpdated: Date; // Last time account was updated
   createdAt: Date;
   updatedAt: Date;
+  
+  // Methods
+  recalculate(): void;
 }
 
 const storePointsAccountSchema = new Schema<IStorePointsAccount>(
