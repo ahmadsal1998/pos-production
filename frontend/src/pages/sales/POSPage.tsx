@@ -243,6 +243,7 @@ const POSPage: React.FC = () => {
     const posContainerRef = useRef<HTMLDivElement>(null); // Ref for the main POS container
     const confirmPaymentButtonRef = useRef<HTMLButtonElement | null>(null); // Main checkout button (F1)
     const startNewSaleButtonRef = useRef<HTMLButtonElement | null>(null); // Start new sale button (F2)
+    const startNewSaleRef = useRef<(() => Promise<void>) | null>(null); // Ref to store startNewSale function
     // Barcode processing queue to prevent concurrent searches
     const barcodeQueueRef = useRef<string[]>([]); // Queue of barcodes waiting to be processed
     const isProcessingBarcodeRef = useRef(false); // Track if a barcode is currently being processed
@@ -1800,6 +1801,13 @@ const POSPage: React.FC = () => {
     }, []);
 
     const handleAddProduct = async (product: POSProduct, unit = 'قطعة', unitPriceOverride?: number, conversionFactorOverride?: number, piecesPerUnitOverride?: number, useServerStockCheck = false) => {
+        // CRITICAL FIX: If sale is completed, start a new sale first to ensure the product is added to a fresh cart
+        // This prevents products scanned immediately after sale confirmation from being lost
+        if (saleCompleted && startNewSaleRef.current) {
+            console.log('[POS] Sale completed detected, starting new sale before adding product');
+            await startNewSaleRef.current();
+        }
+        
         // Use the passed product directly to ensure we use the correct price (avoids hash collision issues)
         // Only use productFromState for additional properties like units if needed
         const productFromState = products.find(prod => prod.id === product.id);
@@ -2468,6 +2476,8 @@ const POSPage: React.FC = () => {
     }, [normalizeProduct, extractUnitInfo, handleAddProduct]);
 
     // Queue processor for barcodes - ensures sequential processing
+    // Note: handleAddProduct already checks saleCompleted and starts a new sale if needed,
+    // so we don't need to duplicate that check here
     const processBarcodeQueue = useCallback(async () => {
         // If already processing, don't start another process
         if (isProcessingBarcodeRef.current) {
@@ -2493,6 +2503,7 @@ const POSPage: React.FC = () => {
                 
                 if (barcodeResult.success && barcodeResult.product) {
                     // Product found - add to cart automatically
+                    // handleAddProduct will check saleCompleted and start a new sale if needed
                     handleAddProduct(
                         barcodeResult.product,
                         barcodeResult.unitName || 'قطعة',
@@ -2806,6 +2817,9 @@ const POSPage: React.FC = () => {
         setCreditPaidAmount(0);
         setCreditPaidAmountError(null);
     }
+    
+    // Store startNewSale in ref so it can be accessed by handleAddProduct (which is defined earlier)
+    startNewSaleRef.current = startNewSale;
 
     const handleCancelSale = async () => {
         // Only confirm if there are items that will be removed from the cart
