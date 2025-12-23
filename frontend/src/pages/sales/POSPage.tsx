@@ -356,6 +356,7 @@ const POSPage: React.FC = () => {
     const [creditPaidAmount, setCreditPaidAmount] = useState(0);
     const [creditPaidAmountError, setCreditPaidAmountError] = useState<string | null>(null);
     const [isProcessingPayment, setIsProcessingPayment] = useState(false); // Track payment processing state
+    const [hasUnsyncedSales, setHasUnsyncedSales] = useState(false); // Track if there are unsynced sales (sales under review)
     // Points redemption state
     const [pointsToRedeem, setPointsToRedeem] = useState(0);
     const [customerPointsBalance, setCustomerPointsBalance] = useState<number | null>(null);
@@ -723,6 +724,45 @@ const POSPage: React.FC = () => {
         };
         initializeSalesSync();
     }, []);
+
+    // Function to check for unsynced sales (sales under review)
+    const checkUnsyncedSales = useCallback(async () => {
+        try {
+            const storeId = user?.storeId;
+            if (!storeId) {
+                setHasUnsyncedSales(false);
+                return;
+            }
+
+            await salesDB.init();
+            const unsyncedSales = await salesDB.getUnsyncedSales(storeId);
+            const hasUnsynced = unsyncedSales.length > 0;
+            setHasUnsyncedSales(hasUnsynced);
+            
+            if (hasUnsynced) {
+                console.log(`[POS] Found ${unsyncedSales.length} unsynced sale(s) - Confirm Payment disabled`);
+            }
+        } catch (error) {
+            console.error('[POS] Error checking for unsynced sales:', error);
+            // On error, don't block payment - assume no unsynced sales
+            setHasUnsyncedSales(false);
+        }
+    }, [user?.storeId]);
+
+    // Check for unsynced sales on mount and periodically
+    useEffect(() => {
+        // Initial check
+        checkUnsyncedSales();
+
+        // Check every 2 seconds for unsynced sales
+        const interval = setInterval(() => {
+            checkUnsyncedSales();
+        }, 2000);
+
+        return () => {
+            clearInterval(interval);
+        };
+    }, [checkUnsyncedSales]);
 
     // Preload beep sound on mount for instant playback
     useEffect(() => {
@@ -3315,7 +3355,7 @@ const POSPage: React.FC = () => {
                     confirmButton.click();
                     return;
                 }
-                if (!saleCompleted && currentInvoice.items.length > 0 && !isProcessingPayment && !isSubmittingInvoiceRef.current) {
+                if (!saleCompleted && currentInvoice.items.length > 0 && !isProcessingPayment && !isSubmittingInvoiceRef.current && !hasUnsyncedSales) {
                     handleFinalizePayment();
                 }
                 return;
@@ -4418,6 +4458,8 @@ const POSPage: React.FC = () => {
                 // Clear processing state after sale sync completes (success or failure)
                 isSubmittingInvoiceRef.current = false;
                 setIsProcessingPayment(false);
+                // Check for unsynced sales after sync completes
+                checkUnsyncedSales();
                 // Clear locked invoice number after a delay (allow time for UI updates)
                 setTimeout(() => {
                     lockedInvoiceNumberRef.current = null;
@@ -5480,10 +5522,11 @@ const POSPage: React.FC = () => {
                                     <button 
                                         ref={confirmPaymentButtonRef}
                                         onClick={handleFinalizePayment} 
-                                        disabled={currentInvoice.items.length === 0 || isProcessingPayment} 
+                                        disabled={currentInvoice.items.length === 0 || isProcessingPayment || hasUnsyncedSales} 
                                         className="w-full px-8 py-5 text-lg sm:text-xl font-bold text-white bg-gradient-to-r from-green-500 via-emerald-500 to-green-600 rounded-xl hover:from-green-600 hover:via-emerald-600 hover:to-green-700 disabled:from-gray-400 disabled:via-gray-400 disabled:to-gray-500 dark:disabled:from-gray-600 dark:disabled:via-gray-600 dark:disabled:to-gray-700 shadow-2xl hover:shadow-3xl hover:scale-[1.02] transition-all duration-200 disabled:cursor-not-allowed disabled:scale-100"
+                                        title={hasUnsyncedSales ? 'لا يمكن تأكيد الدفع: يوجد فواتير قيد المراجعة' : ''}
                                     >
-                                        {isProcessingPayment ? 'جاري المعالجة...' : AR_LABELS.confirmPayment}
+                                        {isProcessingPayment ? 'جاري المعالجة...' : hasUnsyncedSales ? 'قيد المراجعة...' : AR_LABELS.confirmPayment}
                                     </button>
                                 </div>
                             </div>
