@@ -86,6 +86,8 @@ const userSchema = new mongoose_1.Schema({
             'refunds',
             'preferences',
             'users',
+            'storePointsAccount',
+            'pointsHistory',
         ],
         default: [],
     },

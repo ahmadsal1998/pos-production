@@ -34,6 +34,9 @@ router.patch('/stores/:id/status', admin_controller_1.toggleStoreStatus);
 router.get('/settings', admin_controller_1.getSettings);
 router.get('/settings/:key', admin_controller_1.getSetting);
 router.put('/settings/:key', admin_controller_1.validateUpdateSetting, admin_controller_1.updateSetting);
+// Points settings management routes
+router.get('/points-settings', admin_controller_1.getPointsSettings);
+router.put('/points-settings', admin_controller_1.validatePointsSettings, admin_controller_1.updatePointsSettings);
 // Trial account purge routes
 router.get('/trial-accounts/purge-report', admin_controller_1.getTrialAccountsPurgeReport);
 router.post('/trial-accounts/purge', admin_controller_1.purgeAllTrialAccounts);

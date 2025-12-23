@@ -187,6 +187,8 @@ exports.createSale = (0, error_middleware_1.asyncHandler)(async (req, res) => {
     }
     const { invoiceNumber, date, customerId, customerName, items, subtotal, totalItemDiscount = 0, invoiceDiscount = 0, tax = 0, total, paidAmount, remainingAmount, paymentMethod, status, seller, isReturn = false, // Flag to indicate if this is a return invoice
      } = req.body;
+    // Track the invoice number requested by the client so we can report if it was auto-adjusted
+    const requestedInvoiceNumber = invoiceNumber;
     // Validate required fields
     if (!invoiceNumber || !customerName || !items || !Array.isArray(items) || items.length === 0) {
         return res.status(400).json({
@@ -237,18 +239,9 @@ exports.createSale = (0, error_middleware_1.asyncHandler)(async (req, res) => {
     }
     // Get unified Sale model (all stores use same collection)
     const Sale = await (0, saleModel_1.getSaleModelForStore)(storeId);
-    // Check if invoice number already exists for this store
-    // Invoice numbers must be unique per store
-    const existingSale = await Sale.findOne({
-        invoiceNumber,
-        storeId: storeId.toLowerCase().trim(),
-    });
-    if (existingSale) {
-        return res.status(409).json({
-            success: false,
-            message: `Invoice number ${invoiceNumber} already exists`,
-        });
-    }
+    // Note: Invoice number conflict checking is handled inside the retry loop below
+    // This allows proper differentiation between duplicate content vs different content
+    // and prevents infinite error loops by providing clear error responses
     // Fetch cost prices for items if not provided
     // This ensures accurate net profit calculation
     const Product = await (0, productModel_1.getProductModelForStore)(storeId);
@@ -309,6 +302,52 @@ exports.createSale = (0, error_middleware_1.asyncHandler)(async (req, res) => {
     }));
     // Normalize storeId
     const normalizedStoreId = storeId.toLowerCase().trim();
+    // CRITICAL: Check for duplicate invoice by content (not just invoice number)
+    // This prevents the same invoice from being saved multiple times with different invoice numbers
+    try {
+        // Look for recent sales (within last 30 seconds) with same content
+        const recentTimeWindow = new Date(Date.now() - 30000); // 30 seconds ago
+        // Create a content hash for comparison
+        const itemsHash = items
+            .map((item) => `${item.productId || ''}-${item.productName || ''}-${item.quantity || 0}-${item.unitPrice || 0}`)
+            .sort()
+            .join('|');
+        const totalsHash = `${subtotal || 0}-${totalItemDiscount || 0}-${invoiceDiscount || 0}-${tax || 0}-${total || 0}`;
+        const customerHash = customerId || 'walk-in';
+        // Check for duplicate invoices with same content within time window
+        const recentSales = await Sale.find({
+            storeId: normalizedStoreId,
+            date: { $gte: recentTimeWindow },
+            total: total, // Same total
+        }).limit(10); // Check up to 10 recent sales
+        for (const recentSale of recentSales) {
+            // Compare item counts and totals
+            if (recentSale.items.length === items.length) {
+                const recentItemsHash = recentSale.items
+                    .map((item) => `${item.productId || ''}-${item.productName || ''}-${item.quantity || 0}-${item.unitPrice || 0}`)
+                    .sort()
+                    .join('|');
+                // If items match and totals match, it's likely a duplicate
+                if (recentItemsHash === itemsHash &&
+                    Math.abs((recentSale.total || 0) - (total || 0)) < 0.01 &&
+                    (recentSale.customerId || 'walk-in') === customerHash) {
+                    logger_1.log.warn(`[Sales Controller] DUPLICATE INVOICE DETECTED: Invoice ${invoiceNumber} has same content as existing invoice ${recentSale.invoiceNumber} (created ${Math.round((Date.now() - new Date(recentSale.date).getTime()) / 1000)}s ago)`);
+                    return res.status(409).json({
+                        success: false,
+                        message: `Duplicate invoice detected: An invoice with the same content already exists (Invoice ${recentSale.invoiceNumber}). Please check your recent invoices.`,
+                        data: {
+                            duplicateInvoiceNumber: recentSale.invoiceNumber,
+                            duplicateInvoiceId: recentSale.id,
+                        },
+                    });
+                }
+            }
+        }
+    }
+    catch (duplicateCheckError) {
+        // Log error but don't block the sale - duplicate check is best effort
+        logger_1.log.warn('[Sales Controller] Error checking for duplicate invoices, proceeding anyway:', duplicateCheckError);
+    }
     // Create sale record with retry logic for duplicate invoice numbers
     let currentInvoiceNumber = invoiceNumber;
     let retryCount = 0;
@@ -322,10 +361,47 @@ exports.createSale = (0, error_middleware_1.asyncHandler)(async (req, res) => {
                 storeId: normalizedStoreId,
             });
             if (existingSale) {
-                // Invoice number exists, generate a new one
-                logger_1.log.warn(`[Sales Controller] Invoice number ${currentInvoiceNumber} already exists, generating new number`);
+                // CRITICAL: If invoice number exists, check if it's the same content (duplicate)
+                // If same content, reject instead of generating new number
+                if (existingSale.items.length === items.length) {
+                    const existingItemsHash = existingSale.items
+                        .map((item) => `${item.productId || ''}-${item.productName || ''}-${item.quantity || 0}-${item.unitPrice || 0}`)
+                        .sort()
+                        .join('|');
+                    const incomingItemsHash = items
+                        .map((item) => `${item.productId || ''}-${item.productName || ''}-${item.quantity || 0}-${item.unitPrice || 0}`)
+                        .sort()
+                        .join('|');
+                    if (existingItemsHash === incomingItemsHash &&
+                        Math.abs((existingSale.total || 0) - (total || 0)) < 0.01) {
+                        logger_1.log.warn(`[Sales Controller] DUPLICATE INVOICE: Invoice ${currentInvoiceNumber} already exists with identical content`);
+                        return res.status(409).json({
+                            success: false,
+                            message: `Duplicate invoice detected: Invoice ${currentInvoiceNumber} already exists with the same content.`,
+                            data: {
+                                duplicateInvoiceNumber: currentInvoiceNumber,
+                                duplicateInvoiceId: existingSale.id,
+                                errorType: 'duplicate_content',
+                            },
+                        });
+                    }
+                }
+                // Invoice number exists but content is different.
+                // To avoid blocking the POS when an old/manual invoice occupies the number, auto-generate a fresh number and retry.
+                logger_1.log.warn(`[Sales Controller] Invoice number ${currentInvoiceNumber} already exists with different content. Generating new invoice number to avoid blocking.`);
                 currentInvoiceNumber = await generateNextInvoiceNumber(Sale, storeId);
                 retryCount++;
+                if (retryCount >= maxRetries) {
+                    return res.status(409).json({
+                        success: false,
+                        message: `Invoice number conflict persists after ${maxRetries} attempts. Please try again.`,
+                        data: {
+                            duplicateInvoiceNumber: existingSale.invoiceNumber,
+                            duplicateInvoiceId: existingSale.id,
+                            errorType: 'different_content',
+                        },
+                    });
+                }
                 continue;
             }
             // Create sale record with current invoice number
@@ -397,6 +473,11 @@ exports.createSale = (0, error_middleware_1.asyncHandler)(async (req, res) => {
                 totalItemDiscount: sale.totalItemDiscount,
                 invoiceDiscount: sale.invoiceDiscount,
                 tax: sale.tax,
+            },
+            meta: {
+                requestedInvoiceNumber,
+                finalInvoiceNumber: sale.invoiceNumber,
+                invoiceAutoAdjusted: sale.invoiceNumber !== requestedInvoiceNumber,
             },
         },
     });

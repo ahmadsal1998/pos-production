@@ -57,6 +57,9 @@ const merchants_routes_1 = __importDefault(require("./routes/merchants.routes"))
 const settings_routes_1 = __importDefault(require("./routes/settings.routes"));
 const customers_routes_1 = __importDefault(require("./routes/customers.routes"));
 const sales_routes_1 = __importDefault(require("./routes/sales.routes"));
+const points_routes_1 = __importDefault(require("./routes/points.routes"));
+const storeAccount_routes_1 = __importDefault(require("./routes/storeAccount.routes"));
+const storePointsAccount_routes_1 = __importDefault(require("./routes/storePointsAccount.routes"));
 // Load environment variables
 dotenv_1.default.config();
 // Create Express app
@@ -277,6 +280,9 @@ app.use('/api/merchants', merchants_routes_1.default);
 app.use('/api/settings', settings_routes_1.default);
 app.use('/api/customers', customers_routes_1.default);
 app.use('/api/sales', sales_routes_1.default);
+app.use('/api/points', points_routes_1.default);
+app.use('/api/store-accounts', storeAccount_routes_1.default);
+app.use('/api/store-points-accounts', storePointsAccount_routes_1.default);
 // 404 handler - log all unmatched routes for debugging
 app.use((req, res) => {
     const isBarcodeRoute = req.path.includes('/barcode') || req.originalUrl.includes('/barcode');

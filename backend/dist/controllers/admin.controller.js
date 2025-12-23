@@ -3,10 +3,11 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.purgeSpecificTrialAccountEndpoint = exports.purgeAllTrialAccounts = exports.getTrialAccountsPurgeReport = exports.validateUpdateSetting = exports.updateSetting = exports.getSetting = exports.getSettings = exports.validateRenewSubscription = exports.validateUpdateStore = exports.validateCreateStore = exports.deleteStore = exports.toggleStoreStatus = exports.renewSubscription = exports.updateStore = exports.createStore = exports.getStore = exports.getStores = void 0;
+exports.validatePointsSettings = exports.updatePointsSettings = exports.getPointsSettings = exports.purgeSpecificTrialAccountEndpoint = exports.purgeAllTrialAccounts = exports.getTrialAccountsPurgeReport = exports.validateUpdateSetting = exports.updateSetting = exports.getSetting = exports.getSettings = exports.validateRenewSubscription = exports.validateUpdateStore = exports.validateCreateStore = exports.deleteStore = exports.toggleStoreStatus = exports.renewSubscription = exports.updateStore = exports.createStore = exports.getStore = exports.getStores = void 0;
 const express_validator_1 = require("express-validator");
 const Store_1 = __importDefault(require("../models/Store"));
 const Settings_1 = __importDefault(require("../models/Settings"));
+const PointsSettings_1 = __importDefault(require("../models/PointsSettings"));
 const error_middleware_1 = require("../middleware/error.middleware");
 const databaseManager_1 = require("../utils/databaseManager");
 const User_1 = __importDefault(require("../models/User"));
@@ -691,3 +692,129 @@ exports.purgeSpecificTrialAccountEndpoint = (0, error_middleware_1.asyncHandler)
         }
     }
 });
+// Get points settings (Admin only)
+exports.getPointsSettings = (0, error_middleware_1.asyncHandler)(async (req, res, next) => {
+    const userRole = req.user?.role;
+    if (userRole !== 'Admin') {
+        return res.status(403).json({
+            success: false,
+            message: 'Access denied. Admin role required.',
+        });
+    }
+    const { storeId } = req.query;
+    try {
+        // Get store-specific settings or global settings
+        let settings = null;
+        if (storeId && typeof storeId === 'string') {
+            settings = await PointsSettings_1.default.findOne({ storeId: storeId.toLowerCase() });
+        }
+        // If no store-specific settings, get global settings
+        if (!settings) {
+            settings = await PointsSettings_1.default.findOne({ storeId: 'global' });
+            // If no global settings exist, create default
+            if (!settings) {
+                settings = await PointsSettings_1.default.create({
+                    storeId: 'global',
+                    userPointsPercentage: 5,
+                    companyProfitPercentage: 2,
+                    defaultThreshold: 10000,
+                });
+            }
+        }
+        res.status(200).json({
+            success: true,
+            data: {
+                settings,
+            },
+        });
+    }
+    catch (error) {
+        logger_1.log.error('Error getting points settings', error);
+        return res.status(500).json({
+            success: false,
+            message: error.message || 'Failed to get points settings',
+        });
+    }
+});
+// Update points settings (Admin only)
+exports.updatePointsSettings = (0, error_middleware_1.asyncHandler)(async (req, res, next) => {
+    const errors = (0, express_validator_1.validationResult)(req);
+    if (!errors.isEmpty()) {
+        return res.status(400).json({
+            success: false,
+            message: 'Validation failed',
+            errors: errors.array(),
+        });
+    }
+    const userRole = req.user?.role;
+    if (userRole !== 'Admin') {
+        return res.status(403).json({
+            success: false,
+            message: 'Access denied. Admin role required.',
+        });
+    }
+    const { storeId, userPointsPercentage, companyProfitPercentage, defaultThreshold, pointsExpirationDays, minPurchaseAmount, maxPointsPerTransaction, pointsValuePerPoint, } = req.body;
+    try {
+        const targetStoreId = storeId ? storeId.toLowerCase() : 'global';
+        // Update or create settings
+        const settings = await PointsSettings_1.default.findOneAndUpdate({ storeId: targetStoreId }, {
+            userPointsPercentage,
+            companyProfitPercentage,
+            defaultThreshold,
+            pointsExpirationDays: pointsExpirationDays || undefined,
+            minPurchaseAmount: minPurchaseAmount || undefined,
+            maxPointsPerTransaction: maxPointsPerTransaction || undefined,
+            pointsValuePerPoint: pointsValuePerPoint || undefined,
+        }, {
+            new: true,
+            upsert: true,
+            runValidators: true,
+        });
+        res.status(200).json({
+            success: true,
+            message: 'Points settings updated successfully',
+            data: {
+                settings,
+            },
+        });
+    }
+    catch (error) {
+        logger_1.log.error('Error updating points settings', error);
+        return res.status(500).json({
+            success: false,
+            message: error.message || 'Failed to update points settings',
+        });
+    }
+});
+// Validation middleware for points settings
+exports.validatePointsSettings = [
+    (0, express_validator_1.body)('storeId').optional().trim().toLowerCase(),
+    (0, express_validator_1.body)('userPointsPercentage')
+        .optional()
+        .isFloat({ min: 0, max: 100 })
+        .withMessage('User points percentage must be between 0 and 100'),
+    (0, express_validator_1.body)('companyProfitPercentage')
+        .optional()
+        .isFloat({ min: 0, max: 100 })
+        .withMessage('Company profit percentage must be between 0 and 100'),
+    (0, express_validator_1.body)('defaultThreshold')
+        .optional()
+        .isFloat({ min: 0 })
+        .withMessage('Default threshold must be a non-negative number'),
+    (0, express_validator_1.body)('pointsExpirationDays')
+        .optional()
+        .isInt({ min: 1 })
+        .withMessage('Points expiration days must be a positive integer'),
+    (0, express_validator_1.body)('minPurchaseAmount')
+        .optional()
+        .isFloat({ min: 0 })
+        .withMessage('Minimum purchase amount must be a non-negative number'),
+    (0, express_validator_1.body)('maxPointsPerTransaction')
+        .optional()
+        .isInt({ min: 1 })
+        .withMessage('Maximum points per transaction must be a positive integer'),
+    (0, express_validator_1.body)('pointsValuePerPoint')
+        .optional()
+        .isFloat({ min: 0 })
+        .withMessage('Points value per point must be a non-negative number'),
+];

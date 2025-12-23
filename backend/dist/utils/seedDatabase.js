@@ -22,7 +22,7 @@ const seedDatabase = async () => {
         console.log('✅ Connected to MongoDB');
         // Check if admin user already exists
         const existingAdmin = await User_1.default.findOne({
-            $or: [{ email: 'admin@pos.com' }, { username: 'admin' }],
+            $or: [{ email: 'adminn@pos.com' }, { username: 'admin' }],
         });
         if (existingAdmin) {
             console.log('ℹ️  Admin user already exists. Skipping seed...');
@@ -34,7 +34,7 @@ const seedDatabase = async () => {
         const adminUser = await User_1.default.create({
             fullName: 'Admin User',
             username: 'admin',
-            email: 'admin@pos.com',
+            email: 'adminn@pos.com',
             password: 'password123',
             role: 'Admin',
             permissions: [
@@ -55,7 +55,7 @@ const seedDatabase = async () => {
             status: 'Active',
         });
         console.log('✅ Admin user created successfully!');
-        console.log('📧 Email: admin@pos.com');
+        console.log('📧 Email: adminn@pos.com');
         console.log('🔑 Password: password123');
         console.log('👤 Username: admin');
         await mongoose_1.default.disconnect();
