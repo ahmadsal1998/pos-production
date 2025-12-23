@@ -27,7 +27,7 @@ const LoginForm = ({ onLoginSuccess, onForgotPassword }: LoginFormProps) => {
     setTimeout(() => {
       if (
         (emailOrUsername.toLowerCase() === 'admin' ||
-          emailOrUsername.toLowerCase() === 'admin@pos.com') &&
+          emailOrUsername.toLowerCase() === 'adminn@pos.com') &&
         password === 'password123'
       ) {
         onLoginSuccess();

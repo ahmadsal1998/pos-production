@@ -22,6 +22,7 @@ class SalesSyncService {
    */
   async init(): Promise<void> {
     // Try to initialize IndexedDB (may fail on some mobile browsers)
+    let savedInvoiceNumber: string | undefined;
     try {
       await salesDB.init();
       console.log('✅ Sales sync service initialized with IndexedDB');
@@ -79,8 +80,16 @@ class SalesSyncService {
    * Sync a single sale to backend
    */
   async syncSale(sale: SaleRecord, storeId: string, indexedDBAvailable: boolean = true): Promise<{ success: boolean; backendId?: string; error?: string }> {
+    let savedInvoiceNumber: string | undefined;
     try {
       // Prepare sale data for backend (remove local-only fields)
+      // Normalize payment method to lowercase (backend expects: cash, card, credit)
+      const normalizedPaymentMethod = sale.paymentMethod?.toLowerCase() || 'cash';
+      const validPaymentMethods = ['cash', 'card', 'credit'];
+      const finalPaymentMethod = validPaymentMethods.includes(normalizedPaymentMethod) 
+        ? normalizedPaymentMethod 
+        : 'cash'; // Default to cash if invalid
+      
       const saleData = {
         invoiceNumber: sale.invoiceNumber,
         date: sale.date,
@@ -94,7 +103,7 @@ class SalesSyncService {
         total: sale.total,
         paidAmount: sale.paidAmount,
         remainingAmount: sale.remainingAmount,
-        paymentMethod: sale.paymentMethod,
+        paymentMethod: finalPaymentMethod,
         status: sale.status,
         seller: sale.seller,
         isReturn: sale.isReturn || false,
@@ -106,12 +115,23 @@ class SalesSyncService {
 
       if (response.data && (response.data as any).success) {
         const savedSale = (response.data as any).data?.sale;
+        savedInvoiceNumber = savedSale?.invoiceNumber;
         const backendId = savedSale?.id || savedSale?._id;
 
         // Mark as synced in IndexedDB (only if available)
         if (indexedDBAvailable && sale.id) {
           try {
-            await salesDB.markAsSynced(sale.id, backendId, sale.storeId, sale.invoiceNumber);
+            await salesDB.markAsSynced(
+              sale.id,
+              backendId,
+              sale.storeId,
+              sale.invoiceNumber,
+              savedInvoiceNumber && savedInvoiceNumber !== sale.invoiceNumber ? savedInvoiceNumber : undefined
+            );
+            // Keep local sale object aligned with backend-assigned invoice number to avoid future conflicts
+            if (savedInvoiceNumber && savedInvoiceNumber !== sale.invoiceNumber) {
+              sale.invoiceNumber = savedInvoiceNumber;
+            }
           } catch (dbError) {
             console.warn('⚠️ Failed to mark sale as synced in IndexedDB:', dbError);
             // Continue anyway - backend sync succeeded
@@ -127,8 +147,76 @@ class SalesSyncService {
       const errorMessage = error?.message || 'Unknown sync error';
       const statusCode = error?.response?.status || error?.status;
       
-      // Detect 409 Conflict (invoice number already exists)
+      // Detect 409 Conflict (invoice number already exists or duplicate content detected)
       if (statusCode === 409) {
+        const errorData = error?.response?.data?.data;
+        const errorMessage = error?.response?.data?.message || error?.message || 'Unknown error';
+        const errorType = errorData?.errorType;
+        
+        // Check if this is a duplicate content error (same content)
+        if (errorType === 'duplicate_content' || errorMessage.includes('Duplicate invoice detected') || errorMessage.includes('same content')) {
+          const duplicateInvoiceNumber = errorData?.duplicateInvoiceNumber;
+          console.error(`❌ DUPLICATE INVOICE DETECTED BY BACKEND: ${errorMessage}`);
+          if (duplicateInvoiceNumber) {
+            console.error(`   Duplicate invoice number: ${duplicateInvoiceNumber}`);
+          }
+          
+          // This is a true duplicate - don't mark as synced, mark as error
+          if (indexedDBAvailable && sale.id) {
+            try {
+              await salesDB.markSyncError(sale.id, `Duplicate invoice: ${errorMessage}`, sale.storeId, sale.invoiceNumber);
+            } catch (dbError) {
+              console.warn('Could not mark duplicate error in IndexedDB:', dbError);
+            }
+          }
+          
+          const duplicateResult: any = { 
+            success: false, 
+            error: `Duplicate invoice detected: ${errorMessage}. Please check invoice ${duplicateInvoiceNumber || sale.invoiceNumber}.`,
+            errorType: 'duplicate_content',
+          };
+          
+          // Include duplicateInvoiceNumber for frontend tracking
+          if (duplicateInvoiceNumber) {
+            duplicateResult.duplicateInvoiceNumber = duplicateInvoiceNumber;
+          }
+          
+          return duplicateResult;
+        }
+        
+        // Check if this is a different content error (invoice number exists but content differs)
+        if (errorType === 'different_content' || (errorMessage.includes('already exists with different content') && !errorMessage.includes('same content'))) {
+          const duplicateInvoiceNumber = errorData?.duplicateInvoiceNumber;
+          const existingInvoice = errorData?.existingInvoice;
+          console.error(`❌ INVOICE NUMBER CONFLICT BY BACKEND: ${errorMessage}`);
+          if (duplicateInvoiceNumber) {
+            console.error(`   Conflicting invoice number: ${duplicateInvoiceNumber}`);
+          }
+          
+          // This is a conflict - don't mark as synced, mark as error
+          if (indexedDBAvailable && sale.id) {
+            try {
+              await salesDB.markSyncError(sale.id, `Invoice number conflict: ${errorMessage}`, sale.storeId, sale.invoiceNumber);
+            } catch (dbError) {
+              console.warn('Could not mark conflict error in IndexedDB:', dbError);
+            }
+          }
+          
+          const conflictResult: any = { 
+            success: false, 
+            error: `Invoice number conflict: ${errorMessage}. Please use a different invoice number.`,
+            existingInvoice: existingInvoice || null,
+            errorType: 'different_content',
+          };
+          
+          // Also include duplicateInvoiceNumber for frontend tracking
+          if (duplicateInvoiceNumber) {
+            conflictResult.duplicateInvoiceNumber = duplicateInvoiceNumber;
+          }
+          
+          return conflictResult;
+        }
+        
         // Check if the sale was already synced (maybe from another device/tab)
         // In this case, we should mark it as synced rather than error
         try {
@@ -146,7 +234,16 @@ class SalesSyncService {
             
             // Sale already exists on server - mark as synced
             if (indexedDBAvailable && sale.id) {
-              await salesDB.markAsSynced(sale.id, backendId, sale.storeId, sale.invoiceNumber);
+            await salesDB.markAsSynced(
+              sale.id,
+              backendId,
+              sale.storeId,
+              sale.invoiceNumber,
+              savedInvoiceNumber && savedInvoiceNumber !== sale.invoiceNumber ? savedInvoiceNumber : undefined
+            );
+            if (savedInvoiceNumber && savedInvoiceNumber !== sale.invoiceNumber) {
+              sale.invoiceNumber = savedInvoiceNumber;
+            }
             }
             
             console.log(`✅ Sale ${sale.invoiceNumber} already exists on server, marked as synced`);
@@ -299,6 +396,17 @@ class SalesSyncService {
     try {
       // Ensure storeId is set and normalized
       sale.storeId = storeId.toLowerCase().trim();
+
+      // Normalize payment method to lowercase (backend expects: cash, card, credit)
+      if (sale.paymentMethod) {
+        const normalizedPaymentMethod = sale.paymentMethod.toLowerCase();
+        const validPaymentMethods = ['cash', 'card', 'credit'];
+        sale.paymentMethod = validPaymentMethods.includes(normalizedPaymentMethod) 
+          ? normalizedPaymentMethod 
+          : 'cash'; // Default to cash if invalid
+      } else {
+        sale.paymentMethod = 'cash'; // Default if not provided
+      }
 
       // Generate temporary ID if not provided
       // Use a combination of storeId, invoiceNumber, and timestamp to ensure uniqueness

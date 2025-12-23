@@ -42,6 +42,10 @@ export const routePermissions: Record<string, ScreenPermission | ScreenPermissio
   '/user-management/users': 'users',
   '/preferences': 'preferences',
   '/user-management/preferences': 'preferences',
+  
+  // Points Routes
+  '/my-store-points-account': 'storePointsAccount',
+  '/points/history': 'pointsHistory',
 };
 
 /**

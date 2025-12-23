@@ -25,7 +25,7 @@ const ForgotPasswordForm = ({ onCodeSent, onBackToLogin }: ForgotPasswordFormPro
 
     // Simulate API call
     setTimeout(() => {
-      if (email.toLowerCase() === 'admin@pos.com') {
+      if (email.toLowerCase() === 'adminn@pos.com') {
         onCodeSent(email);
       } else {
         setError(AR_LABELS.emailNotRegistered);

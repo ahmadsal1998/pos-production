@@ -29,14 +29,31 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
 
   // Filter navigation items based on user permissions
   const filteredNavItems = useMemo(() => {
-    // Admin users see all items
-    if (user?.role === 'Admin') {
-      return NAV_ITEMS;
+    const isSystemAdmin = user && user.id === 'admin';
+    const isStoreOwner = user && user.storeId && !isSystemAdmin;
+    
+    // Filter items based on store owner only flag
+    let itemsToFilter = NAV_ITEMS.filter(item => {
+      // If item is store owner only, only show to store owners
+      if (item.isStoreOwnerOnly) {
+        return isStoreOwner;
+      }
+      // System admins see all non-store-owner-only items
+      if (isSystemAdmin) {
+        return true;
+      }
+      // For other items, check permissions
+      return true;
+    });
+
+    // Admin users see all items (after filtering store owner only)
+    if (user?.role === 'Admin' && isSystemAdmin) {
+      return itemsToFilter;
     }
 
     const userPermissions = user?.permissions || [];
     
-    return NAV_ITEMS.filter(item => {
+    return itemsToFilter.filter(item => {
       // Filter dropdown items
       if (item.isDropdown && item.dropdownItems) {
         const filteredDropdownItems = item.dropdownItems.filter(subItem => 

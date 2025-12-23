@@ -47,9 +47,15 @@ import PaymentMethodsPage from '@/pages/financial/PaymentMethodsPage';
 import PreferencesPage from '@/pages/user-management/PreferencesPage';
 import UserManagementPage from '@/pages/user-management/UserManagementPage';
 
+// Points Pages
+import PointsHistoryPage from '@/pages/points/PointsHistoryPage';
+import MyStorePointsAccountPage from '@/pages/points/MyStorePointsAccountPage';
+
 // Admin Pages
 import { AdminDashboard } from '@/pages/admin';
 import TrialAccountsPage from '@/pages/admin/TrialAccountsPage';
+import PointsSettingsPage from '@/pages/admin/PointsSettingsPage';
+import StoreAccountsPage from '@/pages/admin/StoreAccountsPage';
 
 export const router = createBrowserRouter([
   // Auth Routes
@@ -371,6 +377,31 @@ export const router = createBrowserRouter([
           </PermissionProtectedRoute>
         ),
       },
+      
+      // Points Routes
+      {
+        path: 'points',
+        children: [
+          {
+            path: 'history',
+            element: (
+              <PermissionProtectedRoute>
+                <PointsHistoryPage />
+              </PermissionProtectedRoute>
+            ),
+          },
+        ],
+      },
+      
+      // Store Points Account Route (for store owners)
+      {
+        path: 'my-store-points-account',
+        element: (
+          <PermissionProtectedRoute>
+            <MyStorePointsAccountPage />
+          </PermissionProtectedRoute>
+        ),
+      },
     ],
   },
   
@@ -390,6 +421,14 @@ export const router = createBrowserRouter([
       {
         path: 'settings',
         element: <AdminDashboard />, // Placeholder for settings page
+      },
+      {
+        path: 'points-settings',
+        element: <PointsSettingsPage />,
+      },
+      {
+        path: 'store-accounts',
+        element: <StoreAccountsPage />,
       },
       {
         path: 'users',

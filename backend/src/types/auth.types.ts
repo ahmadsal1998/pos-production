@@ -30,7 +30,9 @@ export type ScreenPermission =
   | 'posWholesale'
   | 'refunds'
   | 'preferences'
-  | 'users';
+  | 'users'
+  | 'storePointsAccount'
+  | 'pointsHistory';
 
 export interface LoginRequest extends Request {
   body: {

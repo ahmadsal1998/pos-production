@@ -1429,6 +1429,62 @@ const SalesPage: React.FC<SalesPageProps> = ({ setActivePath }) => {
         }
     }, []);
 
+    // Delete sale handler with confirmation
+    const confirmDialog = useConfirmDialog();
+    const handleDeleteSale = useCallback(async (sale: SaleTransaction) => {
+        const confirmed = await confirmDialog({
+            title: 'تأكيد حذف الفاتورة',
+            message: (
+                <div className="space-y-2">
+                    <p className="font-semibold text-gray-900 dark:text-gray-100">
+                        هل أنت متأكد من حذف هذه الفاتورة؟
+                    </p>
+                    <div className="text-sm text-gray-600 dark:text-gray-400 space-y-1">
+                        <p><span className="font-medium">رقم الفاتورة:</span> {sale.invoiceNumber || sale.id}</p>
+                        <p><span className="font-medium">العميل:</span> {sale.customerName}</p>
+                        <p><span className="font-medium">المبلغ:</span> {formatCurrency(sale.totalAmount)}</p>
+                    </div>
+                    <p className="text-red-600 dark:text-red-400 font-medium mt-3">
+                        ⚠️ هذا الإجراء لا يمكن التراجع عنه
+                    </p>
+                </div>
+            ),
+            confirmLabel: 'حذف',
+            cancelLabel: 'إلغاء',
+        });
+
+        if (!confirmed) return;
+
+        try {
+            setIsLoadingSales(true);
+            await salesApi.deleteSale(sale.id);
+            
+            // Refresh the sales list
+            await fetchSales(currentPage);
+            
+            // Also refresh statistics
+            const statsResponse = await salesApi.getSalesSummary({
+                startDate: filters.dateRange.start,
+                endDate: filters.dateRange.end,
+            });
+            if (statsResponse.data?.success) {
+                setStatistics(statsResponse.data.data);
+            }
+        } catch (error: any) {
+            const apiError = error as ApiError;
+            console.error('Error deleting sale:', apiError);
+            
+            if (apiError.status === 401 || apiError.status === 403) {
+                navigate('/login', { replace: true });
+                return;
+            }
+            
+            setSalesError(apiError.message || 'فشل حذف الفاتورة');
+        } finally {
+            setIsLoadingSales(false);
+        }
+    }, [confirmDialog, fetchSales, currentPage, filters.dateRange, formatCurrency, navigate]);
+
     // Load customers from IndexedDB on mount
     useEffect(() => {
         // Load customers from IndexedDB (fast, handles large datasets)
@@ -2152,6 +2208,7 @@ const SalesPage: React.FC<SalesPageProps> = ({ setActivePath }) => {
                             error={salesError} 
                             setActivePath={setActivePath || (() => {})} 
                             onViewSale={setViewingSale}
+                            onDeleteSale={handleDeleteSale}
                             onOpenFilters={() => setIsFilterModalOpen(true)}
                             currentPage={currentPage}
                             totalPages={totalPages}
@@ -2353,6 +2410,7 @@ const SalesTableView: React.FC<{
     error?: string | null,
     setActivePath: (p: string) => void, 
     onViewSale: (s: SaleTransaction) => void,
+    onDeleteSale: (s: SaleTransaction) => void,
     onOpenFilters: () => void,
     currentPage: number,
     totalPages: number,
@@ -2369,7 +2427,7 @@ const SalesTableView: React.FC<{
         seller: string;
     },
     customers?: Customer[],
-}> = ({ sales, isLoading = false, error = null, setActivePath, onViewSale, onOpenFilters, currentPage, totalPages, totalSales, onPageChange, pageSize, onPageSizeChange, filters, customers = [] }) => {
+}> = ({ sales, isLoading = false, error = null, setActivePath, onViewSale, onDeleteSale, onOpenFilters, currentPage, totalPages, totalSales, onPageChange, pageSize, onPageSizeChange, filters, customers = [] }) => {
     const { viewMode, setViewMode } = useResponsiveViewMode('sales', 'table', 'grid');
     const { formatCurrency } = useCurrency();
     
@@ -2542,7 +2600,7 @@ const SalesTableView: React.FC<{
                                 </tr>
                             </thead>
                             <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
-                                {sales.map(s => <SalesTableRow key={s.id} sale={s} onView={onViewSale} />)}
+                                {sales.map(s => <SalesTableRow key={s.id} sale={s} onView={onViewSale} onDelete={onDeleteSale} />)}
                             </tbody>
                         </table>
                     </div>
@@ -2765,7 +2823,7 @@ const SalesGridCard: React.FC<{sale: SaleTransaction, onView: (s: SaleTransactio
     );
 };
 
-const SalesTableRow: React.FC<{sale: SaleTransaction, onView: (s: SaleTransaction) => void}> = ({sale, onView}) => {
+const SalesTableRow: React.FC<{sale: SaleTransaction, onView: (s: SaleTransaction) => void, onDelete: (s: SaleTransaction) => void}> = ({sale, onView, onDelete}) => {
     const { formatCurrency } = useCurrency();
     const [netProfit, setNetProfit] = useState<number | null>(null);
     const [isCalculatingProfit, setIsCalculatingProfit] = useState(true);
@@ -2875,13 +2933,22 @@ const SalesTableRow: React.FC<{sale: SaleTransaction, onView: (s: SaleTransactio
                 </span>
             </td>
             <td className="px-6 py-4 whitespace-nowrap text-center text-sm">
-                <button 
-                    onClick={() => onView(sale)} 
-                    title={AR_LABELS.viewDetails} 
-                    className="p-2 text-blue-600 hover:text-blue-900 dark:text-blue-400 dark:hover:text-blue-300 rounded-lg hover:bg-blue-50 dark:hover:bg-gray-700 transition-colors"
-                >
-                    <ViewIcon/>
-                </button>
+                <div className="flex items-center justify-center gap-2">
+                    <button 
+                        onClick={() => onView(sale)} 
+                        title={AR_LABELS.viewDetails} 
+                        className="p-2 text-blue-600 hover:text-blue-900 dark:text-blue-400 dark:hover:text-blue-300 rounded-lg hover:bg-blue-50 dark:hover:bg-gray-700 transition-colors"
+                    >
+                        <ViewIcon/>
+                    </button>
+                    <button 
+                        onClick={() => onDelete(sale)} 
+                        title="حذف الفاتورة" 
+                        className="p-2 text-red-600 hover:text-red-900 dark:text-red-400 dark:hover:text-red-300 rounded-lg hover:bg-red-50 dark:hover:bg-gray-700 transition-colors"
+                    >
+                        <DeleteIcon/>
+                    </button>
+                </div>
             </td>
         </tr>
     )

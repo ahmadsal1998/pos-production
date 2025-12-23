@@ -509,6 +509,116 @@ export const salesApi = {
     apiClient.post('/sales/return', returnData),
 };
 
+// Points API endpoints
+export const pointsApi = {
+  // Add points after sale
+  addPoints: (data: {
+    invoiceNumber: string;
+    customerId: string;
+    purchaseAmount: number;
+    pointsPercentage?: number;
+  }) =>
+    apiClient.post<{
+      success: boolean;
+      message: string;
+      data: {
+        transaction: {
+          id: string;
+          points: number;
+          purchaseAmount: number;
+          pointsPercentage: number;
+          pointsValue: number;
+        };
+        balance: {
+          totalPoints: number;
+          availablePoints: number;
+        };
+      };
+    }>('/points/add', data),
+
+  // Get customer points balance
+  getCustomerPoints: (params: {
+    customerId?: string;
+    globalCustomerId?: string;
+    phone?: string;
+    email?: string;
+  }) =>
+    apiClient.get<{
+      success: boolean;
+      data: {
+        balance: {
+          id: string;
+          globalCustomerId: string;
+          customerName: string;
+          totalPoints: number;
+          availablePoints: number;
+          lifetimeEarned: number;
+          lifetimeSpent: number;
+          lastTransactionDate?: string;
+        };
+      };
+    }>('/points/customer', params),
+
+  // Get customer points history
+  getCustomerPointsHistory: (params: {
+    customerId?: string;
+    globalCustomerId?: string;
+    phone?: string;
+    email?: string;
+    page?: number;
+    limit?: number;
+  }) =>
+    apiClient.get<{
+      success: boolean;
+      data: {
+        transactions: Array<{
+          id: string;
+          globalCustomerId: string;
+          earningStoreId?: string;
+          redeemingStoreId?: string;
+          transactionType: 'earned' | 'spent' | 'expired' | 'adjusted';
+          points: number;
+          pointsValue?: number;
+          invoiceNumber?: string;
+          description?: string;
+          createdAt: string;
+        }>;
+        pagination: {
+          page: number;
+          limit: number;
+          total: number;
+          pages: number;
+        };
+      };
+    }>('/points/customer/history', params),
+
+  // Pay with points
+  payWithPoints: (data: {
+    customerId?: string;
+    globalCustomerId?: string;
+    phone?: string;
+    email?: string;
+    points: number;
+    invoiceNumber?: string;
+    description?: string;
+  }) =>
+    apiClient.post<{
+      success: boolean;
+      message: string;
+      data: {
+        transaction: {
+          id: string;
+          points: number;
+          pointsValue: number;
+        };
+        balance: {
+          totalPoints: number;
+          availablePoints: number;
+        };
+      };
+    }>('/points/pay', data),
+};
+
 // Dashboard API endpoints
 export const dashboardApi = {
   getMetrics: () =>
@@ -764,6 +874,115 @@ export const adminApi = {
         message?: string;
       };
     }>(`/admin/trial-accounts/${storeId}/purge`, { confirm }),
+  
+  // Points settings management (admin only)
+  getPointsSettings: (storeId?: string) =>
+    apiClient.get<{
+      success: boolean;
+      data: {
+        settings: {
+          id: string;
+          storeId?: string;
+          userPointsPercentage: number;
+          companyProfitPercentage: number;
+          defaultThreshold: number;
+          pointsExpirationDays?: number;
+          minPurchaseAmount?: number;
+          maxPointsPerTransaction?: number;
+          pointsValuePerPoint?: number;
+        };
+      };
+    }>('/admin/points-settings', storeId ? { storeId } : undefined),
+  
+  updatePointsSettings: (data: {
+    storeId?: string;
+    userPointsPercentage?: number;
+    companyProfitPercentage?: number;
+    defaultThreshold?: number;
+    pointsExpirationDays?: number;
+    minPurchaseAmount?: number;
+    maxPointsPerTransaction?: number;
+    pointsValuePerPoint?: number;
+  }) =>
+    apiClient.put<{
+      success: boolean;
+      message: string;
+      data: {
+        settings: any;
+      };
+    }>('/admin/points-settings', data),
+  
+  // Store points accounts (admin only)
+  getStorePointsAccounts: () =>
+    apiClient.get<{
+      success: boolean;
+      data: {
+        accounts: Array<{
+          id: string;
+          storeId: string;
+          storeName: string;
+          totalPointsIssued: number;
+          totalPointsRedeemed: number;
+          netPointsBalance: number;
+          pointsValuePerPoint: number;
+          totalPointsValueIssued: number;
+          totalPointsValueRedeemed: number;
+          netFinancialBalance: number;
+          amountOwed: number;
+          lastUpdated: string;
+        }>;
+      };
+    }>('/store-points-accounts'),
+  
+  getStorePointsAccount: (storeId: string) =>
+    apiClient.get<{
+      success: boolean;
+      data: {
+        account: {
+          id: string;
+          storeId: string;
+          storeName: string;
+          totalPointsIssued: number;
+          totalPointsRedeemed: number;
+          netPointsBalance: number;
+          pointsValuePerPoint: number;
+          totalPointsValueIssued: number;
+          totalPointsValueRedeemed: number;
+          netFinancialBalance: number;
+          amountOwed: number;
+          lastUpdated: string;
+        };
+      };
+    }>(`/store-points-accounts/${storeId}`),
+  
+  getStorePointsTransactions: (storeId: string, params?: {
+    page?: number;
+    limit?: number;
+    transactionType?: string;
+    startDate?: string;
+    endDate?: string;
+  }) =>
+    apiClient.get<{
+      success: boolean;
+      data: {
+        transactions: any[];
+        summary: {
+          totalIssued: number;
+          totalRedeemed: number;
+          netPointsBalance: number;
+          totalIssuedValue: number;
+          totalRedeemedValue: number;
+          netFinancialBalance: number;
+          amountOwed: number;
+        };
+        pagination: {
+          page: number;
+          limit: number;
+          total: number;
+          pages: number;
+        };
+      };
+    }>(`/store-points-accounts/${storeId}/transactions`, params),
 };
 
 // Store Settings API endpoints (for store users)

@@ -1,11 +1,12 @@
 import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Product, Customer, POSInvoice, POSCartItem, SaleTransaction, SaleStatus, SalePaymentMethod } from '@/shared/types';
 import QRCode from 'react-qr-code';
 
 import { AR_LABELS, UUID, SearchIcon, DeleteIcon, PlusIcon, HandIcon, CancelIcon, PrintIcon, CheckCircleIcon } from '@/shared/constants';
 import { ToggleSwitch } from '@/shared/components/ui/ToggleSwitch';
 import CustomDropdown from '@/shared/components/ui/CustomDropdown/CustomDropdown';
-import { customersApi, productsApi, salesApi, ApiError, storeSettingsApi } from '@/lib/api/client';
+import { customersApi, productsApi, salesApi, ApiError, storeSettingsApi, pointsApi } from '@/lib/api/client';
 import { useCurrency } from '@/shared/contexts/CurrencyContext';
 import { saveSale } from '@/shared/utils/salesStorage';
 import { loadSettings, saveSettings } from '@/shared/utils/settingsStorage';
@@ -21,7 +22,11 @@ import { salesSync } from '@/lib/sync/salesSync';
 import { salesDB } from '@/lib/db/salesDB';
 import { inventorySync } from '@/lib/sync/inventorySync';
 import { ProductNotFoundModal } from '@/shared/components/ui/ProductNotFoundModal';
+import { ReSaleModal } from '@/shared/components/ui/ReSaleModal';
 import { useConfirmDialog } from '@/shared/contexts/ConfirmDialogContext';
+import { AddPointsButton } from '@/shared/components/AddPointsButton';
+import { CustomerPointsDisplay } from '@/shared/components/CustomerPointsDisplay';
+import { Link } from 'react-router-dom';
 // PaymentProcessingModal removed - using simple payment flow
 
 // Local POS product type with optional units
@@ -210,10 +215,13 @@ const transformAndFilterCustomers = (customers: any[]): Customer[] => {
 
 // --- MAIN POS COMPONENT ---
 const POSPage: React.FC = () => {
+    const navigate = useNavigate();
     const { formatCurrency } = useCurrency();
     const { user } = useAuthStore();
     const confirmDialog = useConfirmDialog();
     const currentUserName = user?.fullName || user?.username || 'Unknown';
+    const isSystemAdmin = user && user.id === 'admin';
+    const isStoreOwner = user && user.storeId && !isSystemAdmin;
     const [products, setProducts] = useState<POSProduct[]>([]); // Keep for backward compatibility, but IndexedDB is primary
     const [quickProducts, setQuickProducts] = useState<POSProduct[]>([]);
     const [isLoadingQuickProducts, setIsLoadingQuickProducts] = useState(false);
@@ -233,9 +241,17 @@ const POSPage: React.FC = () => {
     const isProductSyncInProgressRef = useRef(false); // Prevent multiple simultaneous product syncs
     const lastProductSyncAttemptRef = useRef<number>(0); // Track last sync attempt time
     const posContainerRef = useRef<HTMLDivElement>(null); // Ref for the main POS container
+    const confirmPaymentButtonRef = useRef<HTMLButtonElement | null>(null); // Main checkout button (F1)
+    const startNewSaleButtonRef = useRef<HTMLButtonElement | null>(null); // Start new sale button (F2)
     // Barcode processing queue to prevent concurrent searches
     const barcodeQueueRef = useRef<string[]>([]); // Queue of barcodes waiting to be processed
     const isProcessingBarcodeRef = useRef(false); // Track if a barcode is currently being processed
+    // Prevent duplicate invoice submissions
+    const isSubmittingInvoiceRef = useRef(false); // Ref to track if invoice is being submitted (prevents race conditions)
+    const invoiceNumberInitializedRef = useRef(false); // Track if invoice number has been initialized
+    const lockedInvoiceNumberRef = useRef<string | null>(null); // Lock invoice number once submission starts
+    const submittedInvoiceFingerprintsRef = useRef<Set<string>>(new Set()); // Track submitted invoice fingerprints to prevent duplicates
+    const conflictInvoiceNumbersRef = useRef<Set<string>>(new Set()); // Track invoice numbers that have conflicts to prevent infinite loops
     const [currentInvoice, setCurrentInvoice] = useState<POSInvoice>(() => generateNewInvoice(currentUserName, 'INV-1'));
     const [quantityDrafts, setQuantityDrafts] = useState<Record<string, string>>({});
     const [storeAddress, setStoreAddress] = useState<string>(''); // Store address for receipts
@@ -338,6 +354,11 @@ const POSPage: React.FC = () => {
     const [creditPaidAmount, setCreditPaidAmount] = useState(0);
     const [creditPaidAmountError, setCreditPaidAmountError] = useState<string | null>(null);
     const [isProcessingPayment, setIsProcessingPayment] = useState(false); // Track payment processing state
+    // Points redemption state
+    const [pointsToRedeem, setPointsToRedeem] = useState(0);
+    const [customerPointsBalance, setCustomerPointsBalance] = useState<number | null>(null);
+    const [pointsValuePerPoint, setPointsValuePerPoint] = useState(0.01); // Default 1 point = 0.01 SAR
+    const [isLoadingPointsBalance, setIsLoadingPointsBalance] = useState(false);
     // Load autoPrintInvoice setting from preferences, default to false
     const getAutoPrintSetting = (): boolean => {
         try {
@@ -354,6 +375,8 @@ const POSPage: React.FC = () => {
     const [autoPrintEnabled, setAutoPrintEnabled] = useState(() => getAutoPrintSetting());
     const [isAddCustomerModalOpen, setIsAddCustomerModalOpen] = useState(false);
     const [isProductNotFoundModalOpen, setIsProductNotFoundModalOpen] = useState(false);
+    const [isReSaleModalOpen, setIsReSaleModalOpen] = useState(false);
+    const [conflictingInvoiceData, setConflictingInvoiceData] = useState<any>(null);
     const [notFoundBarcode, setNotFoundBarcode] = useState<string>('');
     // Optimistic UI: Track pending server searches and their results
     const [pendingServerSearch, setPendingServerSearch] = useState<{
@@ -466,6 +489,50 @@ const POSPage: React.FC = () => {
         setCreditPaidAmount(nextAmount);
         setCreditPaidAmountError(null);
     };
+
+    // Fetch customer points balance
+    const fetchCustomerPointsBalance = useCallback(async (customerId: string, customerPhone?: string) => {
+        if (!customerId || customerId === 'walk-in-customer') {
+            setCustomerPointsBalance(null);
+            setPointsToRedeem(0);
+            return;
+        }
+
+        setIsLoadingPointsBalance(true);
+        try {
+            const response = await pointsApi.getCustomerPoints({
+                customerId,
+                phone: customerPhone,
+            });
+
+            if (response.data.success && response.data.data.balance) {
+                const balance = response.data.data.balance.availablePoints || 0;
+                setCustomerPointsBalance(balance);
+                
+                // Note: pointsValuePerPoint is not included in the customer points balance response
+                // It should be fetched from points settings if needed
+                // For now, use default value
+                setPointsValuePerPoint(0.01);
+            } else {
+                setCustomerPointsBalance(0);
+            }
+        } catch (error: any) {
+            console.error('Failed to fetch customer points:', error);
+            setCustomerPointsBalance(null);
+        } finally {
+            setIsLoadingPointsBalance(false);
+        }
+    }, []);
+
+    // Effect to fetch points when customer changes
+    useEffect(() => {
+        if (currentInvoice.customer && currentInvoice.customer.id && currentInvoice.customer.id !== 'walk-in-customer') {
+            fetchCustomerPointsBalance(currentInvoice.customer.id, currentInvoice.customer.phone);
+        } else {
+            setCustomerPointsBalance(null);
+            setPointsToRedeem(0);
+        }
+    }, [currentInvoice.customer, fetchCustomerPointsBalance]);
 
     // Convert Arabic numerals to English in the POS interface
     useEffect(() => {
@@ -588,14 +655,59 @@ const POSPage: React.FC = () => {
         }
     }, [user?.storeId]);
 
-    // Fetch initial invoice number on mount
+    // Generate a fingerprint/hash for invoice content to detect duplicates
+    // Defined early so it can be used in finalizeSaleWithoutTerminal
+    const generateInvoiceFingerprint = useCallback((invoice: POSInvoice, paymentMethod: string, paidAmount: number): string => {
+        // Create a unique hash based on invoice content (items, totals, customer, timestamp within 5 seconds)
+        const itemsHash = invoice.items
+            .map(item => `${item.productId}-${item.name}-${item.quantity}-${item.unitPrice}`)
+            .sort()
+            .join('|');
+        const totalsHash = `${invoice.subtotal}-${invoice.totalItemDiscount}-${invoice.invoiceDiscount}-${invoice.tax}-${invoice.grandTotal}`;
+        const customerHash = invoice.customer?.id || 'walk-in';
+        const paymentHash = `${paymentMethod}-${paidAmount}`;
+        // Round timestamp to nearest 5 seconds to catch duplicates submitted within a short time window
+        const timeWindow = Math.floor(Date.now() / 5000);
+        const fingerprint = `${itemsHash}|${totalsHash}|${customerHash}|${paymentHash}|${timeWindow}`;
+        
+        // Create a simple hash (for quick comparison)
+        let hash = 0;
+        for (let i = 0; i < fingerprint.length; i++) {
+            const char = fingerprint.charCodeAt(i);
+            hash = ((hash << 5) - hash) + char;
+            hash = hash & hash; // Convert to 32-bit integer
+        }
+        return `inv_${Math.abs(hash).toString(36)}`;
+    }, []);
+
+    // Fetch initial invoice number on mount (only once)
     useEffect(() => {
+        // Prevent re-initialization if already initialized or if component is unmounting
+        if (invoiceNumberInitializedRef.current || !isMountedRef.current) {
+            return;
+        }
+        
         const initializeInvoiceNumber = async () => {
-            const nextInvoiceNumber = await fetchNextInvoiceNumber();
-            setCurrentInvoice(inv => ({ ...inv, id: nextInvoiceNumber }));
+            // Double-check to prevent race conditions
+            if (invoiceNumberInitializedRef.current) {
+                return;
+            }
+            
+            try {
+                const nextInvoiceNumber = await fetchNextInvoiceNumber();
+                // Only update if component is still mounted and not already initialized
+                if (isMountedRef.current && !invoiceNumberInitializedRef.current) {
+                    invoiceNumberInitializedRef.current = true;
+                    setCurrentInvoice(inv => ({ ...inv, id: nextInvoiceNumber }));
+                }
+            } catch (error) {
+                console.error('Failed to initialize invoice number:', error);
+                // Mark as initialized even on error to prevent retry loops
+                invoiceNumberInitializedRef.current = true;
+            }
         };
         initializeInvoiceNumber();
-    }, [fetchNextInvoiceNumber]);
+    }, []); // Empty dependency array - only run once on mount
 
     // Initialize sales sync service on mount
     useEffect(() => {
@@ -1771,7 +1883,14 @@ const POSPage: React.FC = () => {
             }
         }
 
+        // CRITICAL: Use functional update with proper guards to prevent race conditions
         setCurrentInvoice(inv => {
+            // Guard: Ensure invoice state is valid
+            if (!inv || !inv.items) {
+                console.warn('⚠️ Invalid invoice state in handleAddProduct, using fallback');
+                return generateNewInvoice(currentUserName, inv?.id || 'INV-1');
+            }
+            
             // Check for existing item using productId AND name AND unit to avoid hash collision issues
             // Only update quantity if it's truly the same product (same ID, name, and unit)
             const existingItem = inv.items.find(item => 
@@ -2570,6 +2689,9 @@ const POSPage: React.FC = () => {
     const handleHoldSale = async () => {
         if (currentInvoice.items.length === 0) return;
         
+        // Reset submission flag when holding sale
+        isSubmittingInvoiceRef.current = false;
+        
         // Create a deep copy of the current invoice to prevent reference issues
         const invoiceToHold: HeldInvoice = {
             ...currentInvoice,
@@ -2601,6 +2723,9 @@ const POSPage: React.FC = () => {
     };
 
     const handleRestoreSale = async (heldKey: string) => {
+        // Reset submission flag when restoring sale
+        isSubmittingInvoiceRef.current = false;
+        
         const invoiceToRestore = heldInvoices.find(inv => inv.heldKey === heldKey);
         if (invoiceToRestore) {
             // CRITICAL FIX: Fetch a new invoice number when restoring a suspended invoice
@@ -2655,6 +2780,14 @@ const POSPage: React.FC = () => {
     };
     
     const startNewSale = async () => {
+        // Reset submission flag when starting new sale
+        isSubmittingInvoiceRef.current = false;
+        lockedInvoiceNumberRef.current = null;
+        // Clear old fingerprints (keep only last 100 to prevent memory issues)
+        if (submittedInvoiceFingerprintsRef.current.size > 100) {
+            const fingerprintsArray = Array.from(submittedInvoiceFingerprintsRef.current);
+            submittedInvoiceFingerprintsRef.current = new Set(fingerprintsArray.slice(-50));
+        }
         setSaleCompleted(false);
         const nextInvoiceNumber = await fetchNextInvoiceNumber();
         setCurrentInvoice(generateNewInvoice(currentUserName, nextInvoiceNumber));
@@ -3050,7 +3183,13 @@ const POSPage: React.FC = () => {
         });
     }
     
-    const handleFinalizePayment = () => {
+    const handleFinalizePayment = async () => {
+        // Prevent duplicate submissions
+        if (isSubmittingInvoiceRef.current || isProcessingPayment) {
+            console.warn('⚠️ Invoice submission already in progress, ignoring duplicate request');
+            return;
+        }
+        
         if (currentInvoice.items.length === 0) return;
 
         if (selectedPaymentMethod === 'Credit' && !currentInvoice.customer) {
@@ -3068,23 +3207,304 @@ const POSPage: React.FC = () => {
             return;
         }
 
-        // For all payment methods (Cash, Credit, Card), proceed directly
+        if (selectedPaymentMethod === 'Points' && !currentInvoice.customer) {
+            showToast('يرجى اختيار عميل مسجل لاستخدام النقاط', 'error');
+            return;
+        }
+
+        if (selectedPaymentMethod === 'Points') {
+            // Fetch balance directly from API to ensure we have the latest value
+            let currentBalance = customerPointsBalance;
+            if (currentInvoice.customer && currentInvoice.customer.id !== 'walk-in-customer') {
+                try {
+                    const response = await pointsApi.getCustomerPoints({
+                        customerId: currentInvoice.customer.id,
+                        phone: currentInvoice.customer.phone,
+                    });
+                    if (response.data.success && response.data.data.balance) {
+                        currentBalance = response.data.data.balance.availablePoints || 0;
+                        // Update state for UI
+                        setCustomerPointsBalance(currentBalance);
+                    } else {
+                        currentBalance = 0;
+                        setCustomerPointsBalance(0);
+                    }
+                } catch (error: any) {
+                    console.error('Failed to fetch customer points:', error);
+                    // If we can't fetch, use the current state value
+                    currentBalance = customerPointsBalance;
+                }
+            }
+            
+            // Check balance (only disable if we know for sure it's 0 or less)
+            if (currentBalance !== null && currentBalance <= 0) {
+                showToast('العميل لا يمتلك نقاط كافية', 'error');
+                return;
+            }
+            
+            if (pointsToRedeem <= 0) {
+                showToast('يرجى إدخال عدد النقاط المراد استخدامها', 'error');
+                return;
+            }
+            
+            // Validate that points to redeem don't exceed available balance
+            if (currentBalance !== null && pointsToRedeem > currentBalance) {
+                showToast(`عدد النقاط المراد استخدامها (${pointsToRedeem}) يتجاوز النقاط المتاحة (${currentBalance})`, 'error');
+                return;
+            }
+        }
+
+        // For all payment methods (Cash, Credit, Card, Points), proceed directly
         // Card payments are handled without terminal integration
         finalizeSaleWithoutTerminal();
     };
 
+    // Keyboard shortcuts: F1 to trigger confirm payment, F2 to start new sale
+    useEffect(() => {
+        const handleKeyDown = (e: KeyboardEvent) => {
+            // Ignore keyboard shortcuts if user is typing in an input field, textarea, or contenteditable element
+            const target = e.target as HTMLElement;
+            const isInputField = 
+                target.tagName === 'INPUT' || 
+                target.tagName === 'TEXTAREA' || 
+                target.isContentEditable ||
+                target.closest('input') !== null ||
+                target.closest('textarea') !== null;
+
+            if (isInputField) {
+                return; // Don't handle shortcuts when typing in input fields
+            }
+
+            // F1 key: Trigger the confirm payment button (only when on main POS screen and cart has items)
+            if (e.key === 'F1') {
+                e.preventDefault();
+                const confirmButton = confirmPaymentButtonRef.current;
+                if (confirmButton && !confirmButton.disabled) {
+                    confirmButton.click();
+                    return;
+                }
+                if (!saleCompleted && currentInvoice.items.length > 0 && !isProcessingPayment && !isSubmittingInvoiceRef.current) {
+                    handleFinalizePayment();
+                }
+                return;
+            }
+
+            // F2 key: Trigger the "start new sale" button (only when on sale completed/receipt screen)
+            if (e.key === 'F2') {
+                e.preventDefault();
+                const newSaleButton = startNewSaleButtonRef.current;
+                if (newSaleButton && !newSaleButton.disabled) {
+                    newSaleButton.click();
+                    return;
+                }
+                if (saleCompleted) {
+                    startNewSale();
+                }
+                return;
+            }
+        };
+
+        window.addEventListener('keydown', handleKeyDown);
+
+        return () => {
+            window.removeEventListener('keydown', handleKeyDown);
+        };
+    }, [saleCompleted, currentInvoice.items.length, isProcessingPayment, handleFinalizePayment, startNewSale]);
+
+    // Handle Re-Sale: Copy items from conflicting invoice to cart with new invoice number
+    const handleReSale = useCallback(async () => {
+        if (!conflictingInvoiceData) {
+            console.error('No conflicting invoice data available');
+            return;
+        }
+
+        try {
+            // Generate a new invoice number
+            const nextInvoiceNumber = await fetchNextInvoiceNumber();
+            
+            // Prepare cart items from the conflicting invoice
+            const cartItems: POSCartItem[] = [];
+            const missingProducts: string[] = [];
+            
+            for (const item of conflictingInvoiceData.items) {
+                try {
+                    // Try to find product in local products array first
+                    let product: POSProduct | undefined = products.find(p => {
+                        // Match by originalId (backend ID) or by productId
+                        return (p.originalId && String(p.originalId) === String(item.productId)) ||
+                               (String(p.id) === String(item.productId));
+                    });
+                    
+                    // If product not found locally, try to fetch from API
+                    if (!product && item.productId) {
+                        try {
+                            const response = await productsApi.getProduct(item.productId);
+                            const fetchedProduct = (response.data as any)?.data?.product || (response.data as any)?.product;
+                            if (fetchedProduct) {
+                                const normalizedProduct = normalizeProduct(fetchedProduct);
+                                // Update products state
+                                setProducts(prevProducts => {
+                                    const updated = prevProducts.filter(p => {
+                                        const matchesById = String(p.id) === String(normalizedProduct.id);
+                                        const matchesByOriginalId = normalizedProduct.originalId && 
+                                            String(p.originalId) === String(normalizedProduct.originalId);
+                                        return !matchesById && !matchesByOriginalId;
+                                    });
+                                    updated.push(normalizedProduct);
+                                    return updated;
+                                });
+                                product = normalizedProduct;
+                            }
+                        } catch (fetchError) {
+                            console.error(`Failed to fetch product ${item.productId}:`, fetchError);
+                            missingProducts.push(item.productName);
+                            continue;
+                        }
+                    }
+                    
+                    // If we have a product, create a cart item with the exact quantity from the invoice
+                    if (product) {
+                        const unit = item.unit || 'قطعة';
+                        const quantity = item.quantity || 0;
+                        const unitPrice = item.unitPrice || 0;
+                        const discount = item.discount || 0;
+                        const total = item.totalPrice || (quantity * unitPrice);
+                        
+                        // Get conversion factor from product if available
+                        const piecesPerMainUnit = getPiecesPerMainUnit(product);
+                        const conversionFactor = getUnitConversionFactor(product, unit);
+                        
+                        const cartItem: POSCartItem = {
+                            cartItemId: `${product.id}-${item.productName}-${unit}-${Date.now()}-${Math.random()}`,
+                            productId: product.id,
+                            originalId: product.originalId,
+                            name: item.productName,
+                            unit: unit,
+                            quantity: quantity,
+                            unitPrice: unitPrice,
+                            total: total,
+                            discount: discount,
+                            conversionFactor: conversionFactor || piecesPerMainUnit,
+                            costPrice: product.costPrice || product.cost || 0,
+                        };
+                        
+                        cartItems.push(cartItem);
+                    } else {
+                        console.warn(`Product not found for item: ${item.productName} (ID: ${item.productId})`);
+                        missingProducts.push(item.productName);
+                    }
+                } catch (itemError) {
+                    console.error(`Error processing item ${item.productName}:`, itemError);
+                    missingProducts.push(item.productName);
+                }
+            }
+            
+            // Show warning for missing products
+            if (missingProducts.length > 0) {
+                showToast(`تعذر العثور على ${missingProducts.length} منتج: ${missingProducts.slice(0, 3).join(', ')}${missingProducts.length > 3 ? '...' : ''}`, 'info');
+            }
+            
+            // Find customer if available
+            let customer: Customer | null = null;
+            if (conflictingInvoiceData.customerName) {
+                const foundCustomer = customers.find(c => c.name === conflictingInvoiceData.customerName);
+                if (foundCustomer) {
+                    customer = foundCustomer;
+                }
+            }
+            
+            // Create new invoice with items and calculate totals
+            const totals = calculateTotals(cartItems, conflictingInvoiceData.invoiceDiscount || 0);
+            const updatedInvoice: POSInvoice = {
+                ...generateNewInvoice(currentUserName, nextInvoiceNumber),
+                customer: customer,
+                items: cartItems,
+                invoiceDiscount: conflictingInvoiceData.invoiceDiscount || 0,
+                ...totals,
+            };
+            
+            setCurrentInvoice(updatedInvoice);
+            
+            // Generate a new invoice number for the re-sale
+            try {
+                const newInvoiceNumber = await fetchNextInvoiceNumber();
+                updatedInvoice.id = newInvoiceNumber;
+                setCurrentInvoice(updatedInvoice);
+                
+                // Clear conflict tracking for the old invoice number if it was tracked
+                if (conflictingInvoiceData?.invoiceNumber) {
+                    conflictInvoiceNumbersRef.current.delete(conflictingInvoiceData.invoiceNumber);
+                }
+            } catch (error) {
+                console.error('Failed to generate new invoice number for re-sale:', error);
+            }
+            
+            // Close the modal
+            setIsReSaleModalOpen(false);
+            setConflictingInvoiceData(null);
+            
+            // Show success message
+            showToast('تم نسخ عناصر الفاتورة إلى السلة بنجاح', 'success');
+        } catch (error) {
+            console.error('Error in handleReSale:', error);
+            showToast('حدث خطأ أثناء إعادة البيع. يرجى المحاولة مرة أخرى.', 'error');
+        }
+    }, [conflictingInvoiceData, currentUserName, fetchNextInvoiceNumber, customers, products, normalizeProduct, showToast, getPiecesPerMainUnit, getUnitConversionFactor, calculateTotals]);
+
     const finalizeSaleWithoutTerminal = async () => {
-        // Show immediate feedback
-        setIsProcessingPayment(true);
+        // CRITICAL: Prevent duplicate submissions using ref (more reliable than state for race conditions)
+        if (isSubmittingInvoiceRef.current) {
+            console.warn('⚠️ Invoice submission already in progress (ref check), ignoring duplicate request');
+            return;
+        }
+        
+        // Also check state as additional safeguard
+        if (isProcessingPayment) {
+            console.warn('⚠️ Invoice submission already in progress (state check), ignoring duplicate request');
+            return;
+        }
         
         const finalInvoice = { ...currentInvoice, paymentMethod: selectedPaymentMethod };
+        
+        // Validate invoice has items
+        if (!finalInvoice.items || finalInvoice.items.length === 0) {
+            console.warn('⚠️ Attempted to finalize invoice with no items');
+            return;
+        }
         
         // Check if this is a return (should not happen here, but safety check)
         if (finalInvoice.originalInvoiceId) {
             console.warn('Attempted to finalize a return invoice through sale flow. Use processReturnInvoice instead.');
-            setIsProcessingPayment(false);
             return;
         }
+        
+        // CRITICAL: Calculate invoice fingerprint BEFORE locking to detect duplicate content
+        const paidAmount = selectedPaymentMethod === 'Credit' ? creditPaidAmount : 
+                          (selectedPaymentMethod === 'Points' ? 0 : finalInvoice.grandTotal);
+        const invoiceFingerprint = generateInvoiceFingerprint(finalInvoice, selectedPaymentMethod, paidAmount);
+        let currentInvoiceFingerprint = invoiceFingerprint;
+        
+        // Check if this exact invoice content was already submitted
+        if (submittedInvoiceFingerprintsRef.current.has(invoiceFingerprint)) {
+            console.error('❌ DUPLICATE INVOICE DETECTED: Same invoice content already submitted (fingerprint:', invoiceFingerprint, ')');
+            showToast('تم حفظ هذه الفاتورة مسبقاً. يرجى التحقق من الفواتير المحفوظة.', 'error');
+            return;
+        }
+        
+        // CRITICAL: Lock invoice number NOW - it must not change during save process
+        const lockedInvoiceNumber = finalInvoice.id;
+        lockedInvoiceNumberRef.current = lockedInvoiceNumber;
+        
+        // Mark fingerprint as submitted immediately to prevent duplicate submissions
+        submittedInvoiceFingerprintsRef.current.add(currentInvoiceFingerprint);
+        
+        // Mark as submitting immediately to prevent race conditions
+        isSubmittingInvoiceRef.current = true;
+        
+        // Show immediate feedback
+        setIsProcessingPayment(true);
+        
+        console.log(`[POS] Starting invoice submission with locked invoice number: ${lockedInvoiceNumber}, fingerprint: ${currentInvoiceFingerprint}`);
         
         // CRITICAL: Only update stock for products in the invoice items
         // Ensure we're iterating ONLY over currentInvoice.items, not all products
@@ -3100,6 +3520,17 @@ const POSPage: React.FC = () => {
         // PERFORMANCE FIX: Do optimistic local state updates immediately (non-blocking)
         // This ensures the UI updates instantly while background operations run
         const invoiceItemsForStateUpdate = currentInvoice.items || [];
+        
+        // Store original stock values BEFORE optimistic update for use in background task
+        const originalStockValues = new Map<string | number, number>();
+        invoiceItemsForStateUpdate.forEach(item => {
+            if (item && item.productId) {
+                const product = products.find(p => String(p.id) === String(item.productId));
+                if (product) {
+                    originalStockValues.set(item.productId, product.stock || 0);
+                }
+            }
+        });
         
         // Update local state optimistically (immediate, non-blocking)
         setProducts(prevProducts => {
@@ -3330,8 +3761,10 @@ const POSPage: React.FC = () => {
                 
                 // OFFLINE-FIRST APPROACH: Update local IndexedDB first, then sync
                 const expectedName = product?.name || invoiceItemName;
-                const currentStock = product?.stock || 0;
-                const newStock = Math.max(0, currentStock - stockChange);
+                // Use original stock value BEFORE optimistic update, not the already-reduced stock
+                const originalStock = originalStockValues.get(invoiceItemProductId) ?? (product?.stock ?? 0);
+                const currentStock = originalStock; // Use original stock for sync calculation
+                const newStock = Math.max(0, originalStock - stockChange);
                 
                 try {
                     // Step 1: Update local IndexedDB immediately (already done in optimistic update above)
@@ -3469,6 +3902,41 @@ const POSPage: React.FC = () => {
                 const customerName = finalInvoice.customer?.name || 'عميل نقدي';
                 const customerId = finalInvoice.customer?.id || 'walk-in-customer';
                 
+                // Handle points redemption if Points payment method is selected
+                let pointsRedeemed = 0;
+                let pointsRedemptionValue = 0;
+                
+                if (selectedPaymentMethod === 'Points' && pointsToRedeem > 0 && finalInvoice.customer && finalInvoice.customer.id !== 'walk-in-customer') {
+                    try {
+                        // Redeem points before saving sale
+                        const pointsResponse = await pointsApi.payWithPoints({
+                            customerId: finalInvoice.customer.id,
+                            phone: finalInvoice.customer.phone,
+                            points: pointsToRedeem,
+                            invoiceNumber: finalInvoice.id,
+                            description: `Points redeemed for invoice ${finalInvoice.id}`,
+                        });
+                        
+                        if (pointsResponse.data.success) {
+                            pointsRedeemed = pointsToRedeem;
+                            pointsRedemptionValue = pointsResponse.data.data.transaction.pointsValue;
+                            // Update customer points balance
+                            const newBalance = pointsResponse.data.data.balance.availablePoints;
+                            setCustomerPointsBalance(newBalance);
+                            console.log(`✅ Points redeemed: ${pointsRedeemed}, Value: ${pointsRedemptionValue}, New balance: ${newBalance}`);
+                        } else {
+                            throw new Error(pointsResponse.data.message || 'Failed to redeem points');
+                        }
+                    } catch (pointsError: any) {
+                        console.error('❌ Failed to redeem points:', pointsError);
+                        // Don't block the sale, but log the error
+                        // In production, you might want to show an error and prevent sale completion
+                        showToast(`فشل استبدال النقاط: ${pointsError?.response?.data?.message || pointsError?.message || 'خطأ غير معروف'}`, 'error');
+                        // Reset payment method to Cash as fallback
+                        // Or you could throw error to prevent sale
+                    }
+                }
+                
                 // Calculate paid and remaining amounts based on payment method
                 let paidAmount = 0;
                 let remainingAmount = 0;
@@ -3492,11 +3960,36 @@ const POSPage: React.FC = () => {
                     } else {
                         status = 'Due';
                     }
+                } else if (selectedPaymentMethod === 'Points') {
+                    // Points payment - calculate based on redeemed points value
+                    paidAmount = pointsRedemptionValue;
+                    remainingAmount = Math.max(0, finalInvoice.grandTotal - pointsRedemptionValue);
+                    
+                    if (remainingAmount <= 0) {
+                        status = 'Paid';
+                        remainingAmount = 0;
+                        // If points covered full amount, payment is complete
+                    } else {
+                        // Points covered partial amount - remaining should be paid by another method
+                        // For now, mark as partial if points don't cover full amount
+                        // In a real scenario, you might want to combine payment methods
+                        status = 'Partial';
+                        showToast(`تم استخدام النقاط. المبلغ المتبقي: ${formatCurrency(remainingAmount)}`, 'info');
+                    }
                 }
 
+                // CRITICAL: Use locked invoice number - DO NOT allow it to change
+                // If invoice number conflicts, we should fail rather than generate a new number
+                // This prevents the same invoice from being saved multiple times with different numbers
+                let invoiceNumberToUse = lockedInvoiceNumberRef.current || finalInvoice.id;
+                
+                if (invoiceNumberToUse !== finalInvoice.id) {
+                    console.warn(`⚠️ Invoice number mismatch: locked=${invoiceNumberToUse}, current=${finalInvoice.id}. Using locked number.`);
+                }
+                
                 // Prepare sale data for IndexedDB and backend
                 const saleData = {
-                    invoiceNumber: finalInvoice.id,
+                    invoiceNumber: invoiceNumberToUse, // Use locked invoice number
                     storeId: storeId,
                     date: finalInvoice.date instanceof Date 
                         ? finalInvoice.date.toISOString() 
@@ -3536,20 +4029,166 @@ const POSPage: React.FC = () => {
                     seller: finalInvoice.cashier,
                 };
 
-                // Check if invoice number already exists in IndexedDB before saving
-                // This prevents duplicate invoice numbers when working offline
+                // CRITICAL: Check if invoice number already exists - but DO NOT regenerate it
+                // If the invoice number exists, this means we're trying to save a duplicate
+                // We should fail rather than generate a new number (which would cause the same invoice to be saved twice)
                 try {
                     await salesDB.init();
-                    const invoiceExists = await salesDB.invoiceNumberExists(storeId, finalInvoice.id);
-                    if (invoiceExists) {
-                        console.warn(`⚠️ Invoice number ${finalInvoice.id} already exists in IndexedDB, generating new number...`);
-                        // Generate a new unique invoice number
-                        const newInvoiceNumber = await salesDB.getNextInvoiceNumberOffline(storeId);
-                        saleData.invoiceNumber = newInvoiceNumber;
-                        finalInvoice.id = newInvoiceNumber; // Update the invoice ID as well
-                        // Update currentInvoice to ensure QR code uses correct invoice number
-                        setCurrentInvoice({ ...finalInvoice });
-                        console.log(`✅ Generated new unique invoice number: ${newInvoiceNumber}`);
+                    const invoiceExistsInDB = await salesDB.invoiceNumberExists(storeId, invoiceNumberToUse);
+                    
+                    // If online, also check backend to ensure no duplicates
+                    let invoiceExistsOnBackend = false;
+                    if (navigator.onLine) {
+                        try {
+                            const existingSalesResponse = await salesApi.getSales({
+                                invoiceNumber: invoiceNumberToUse,
+                                storeId: storeId,
+                                limit: 1,
+                            });
+                            const existingSales = (existingSalesResponse.data as any)?.data?.sales || [];
+                            invoiceExistsOnBackend = existingSales.length > 0;
+                            
+                            // If invoice exists on backend, check if it's the same content (duplicate) or different content
+                            if (invoiceExistsOnBackend && existingSales.length > 0) {
+                                const existingSale = existingSales[0];
+                                
+                                // Use hash-based comparison to match backend logic
+                                const compareInvoiceContent = (existing: any, incoming: any): { isSame: boolean; isDifferent: boolean } => {
+                                    if (existing.items.length !== incoming.items.length) {
+                                        return { isSame: false, isDifferent: true };
+                                    }
+                                    
+                                    const existingItemsHash = existing.items
+                                        .map((item: any) => `${item.productId || ''}-${item.productName || ''}-${item.quantity || 0}-${item.unitPrice || 0}`)
+                                        .sort()
+                                        .join('|');
+                                    const incomingItemsHash = incoming.items
+                                        .map((item: any) => `${item.productId || ''}-${item.productName || ''}-${item.quantity || 0}-${item.unitPrice || 0}`)
+                                        .sort()
+                                        .join('|');
+                                    
+                                    const itemsMatch = existingItemsHash === incomingItemsHash;
+                                    const totalMatch = Math.abs((existing.total || 0) - (incoming.total || 0)) < 0.01;
+                                    
+                                    return {
+                                        isSame: itemsMatch && totalMatch,
+                                        isDifferent: !itemsMatch || !totalMatch,
+                                    };
+                                };
+                                
+                                const comparison = compareInvoiceContent(existingSale, saleData);
+                                
+                                if (comparison.isSame) {
+                                    // Same content - duplicate invoice
+                                    console.error(`❌ DUPLICATE INVOICE DETECTED: Invoice ${invoiceNumberToUse} already exists with same content`);
+                                    submittedInvoiceFingerprintsRef.current.delete(currentInvoiceFingerprint);
+                                    isSubmittingInvoiceRef.current = false;
+                                    setIsProcessingPayment(false);
+                                    lockedInvoiceNumberRef.current = null;
+                                    showToast(`فاتورة ${invoiceNumberToUse} موجودة مسبقاً. يرجى التحقق من الفواتير المحفوظة.`, 'error');
+                                    return; // Exit early - don't save duplicate
+                                } else if (comparison.isDifferent) {
+                                    // Different content - auto-generate a fresh invoice number and continue without blocking
+                                    const conflictedNumber = invoiceNumberToUse;
+                                    conflictInvoiceNumbersRef.current.add(conflictedNumber);
+                                    console.warn(`⚠️ Invoice number ${conflictedNumber} already exists with different content. Auto-generating a new number to continue.`);
+                                    try {
+                                        const newInvoiceNumber = await fetchNextInvoiceNumber();
+                                        finalInvoice.id = newInvoiceNumber;
+                                        saleData.invoiceNumber = newInvoiceNumber;
+                                        invoiceNumberToUse = newInvoiceNumber;
+                                        setCurrentInvoice({ ...finalInvoice });
+                                        lockedInvoiceNumberRef.current = newInvoiceNumber;
+                                        showToast(`رقم الفاتورة ${conflictedNumber} مستخدم. تم تعيين رقم جديد ${newInvoiceNumber} والمتابعة تلقائياً.`, 'info');
+                                        // Continue with the new invoice number (don't return)
+                                    } catch (error) {
+                                        console.error('❌ Failed to generate new invoice number:', error);
+                                            submittedInvoiceFingerprintsRef.current.delete(currentInvoiceFingerprint);
+                                        isSubmittingInvoiceRef.current = false;
+                                        setIsProcessingPayment(false);
+                                        lockedInvoiceNumberRef.current = null;
+                                        showToast('فشل في إنشاء رقم فاتورة جديد. يرجى المحاولة مرة أخرى.', 'error');
+                                        return;
+                                    }
+                                }
+                            }
+                        } catch (backendCheckError) {
+                            console.warn('⚠️ Could not check invoice number on backend:', backendCheckError);
+                            // Continue with IndexedDB check only
+                        }
+                    }
+                    
+                    // If invoice number exists in IndexedDB, check if it's a duplicate or different content
+                    if (invoiceExistsInDB) {
+                        try {
+                            // Get all sales and filter by invoice number to compare content
+                            const allSales = await salesDB.getSalesByStore(storeId);
+                            const existingSale = allSales.find(s => s.invoiceNumber === invoiceNumberToUse);
+                            
+                            if (existingSale) {
+                                // Use hash-based comparison to match backend logic
+                                const compareInvoiceContent = (existing: any, incoming: any): { isSame: boolean; isDifferent: boolean } => {
+                                    if (existing.items.length !== incoming.items.length) {
+                                        return { isSame: false, isDifferent: true };
+                                    }
+                                    
+                                    const existingItemsHash = existing.items
+                                        .map((item: any) => `${item.productId || ''}-${item.productName || ''}-${item.quantity || 0}-${item.unitPrice || 0}`)
+                                        .sort()
+                                        .join('|');
+                                    const incomingItemsHash = incoming.items
+                                        .map((item: any) => `${item.productId || ''}-${item.productName || ''}-${item.quantity || 0}-${item.unitPrice || 0}`)
+                                        .sort()
+                                        .join('|');
+                                    
+                                    const itemsMatch = existingItemsHash === incomingItemsHash;
+                                    const totalMatch = Math.abs((existing.total || 0) - (incoming.total || 0)) < 0.01;
+                                    
+                                    return {
+                                        isSame: itemsMatch && totalMatch,
+                                        isDifferent: !itemsMatch || !totalMatch,
+                                    };
+                                };
+                                
+                                const comparison = compareInvoiceContent(existingSale, saleData);
+                                
+                                if (comparison.isSame) {
+                                    // Same content - duplicate invoice
+                                    console.error(`❌ DUPLICATE INVOICE DETECTED in IndexedDB: Invoice ${invoiceNumberToUse} already exists with same content`);
+                                    submittedInvoiceFingerprintsRef.current.delete(currentInvoiceFingerprint);
+                                    isSubmittingInvoiceRef.current = false;
+                                    setIsProcessingPayment(false);
+                                    lockedInvoiceNumberRef.current = null;
+                                    showToast(`فاتورة ${invoiceNumberToUse} موجودة مسبقاً في قاعدة البيانات المحلية.`, 'error');
+                                    return; // Exit early - don't save duplicate
+                                } else if (comparison.isDifferent) {
+                                    // Different content - auto-generate a fresh invoice number and continue without blocking
+                                    const conflictedNumber = invoiceNumberToUse;
+                                    conflictInvoiceNumbersRef.current.add(conflictedNumber);
+                                    console.warn(`⚠️ Invoice number ${conflictedNumber} already exists in IndexedDB with different content. Auto-generating a new number to continue.`);
+                                    try {
+                                        const newInvoiceNumber = await fetchNextInvoiceNumber();
+                                        finalInvoice.id = newInvoiceNumber;
+                                        saleData.invoiceNumber = newInvoiceNumber;
+                                        invoiceNumberToUse = newInvoiceNumber;
+                                        setCurrentInvoice({ ...finalInvoice });
+                                        lockedInvoiceNumberRef.current = newInvoiceNumber;
+                                        showToast(`رقم الفاتورة ${conflictedNumber} مستخدم. تم تعيين رقم جديد ${newInvoiceNumber} والمتابعة تلقائياً.`, 'info');
+                                        // Continue with the new invoice number (don't return)
+                                    } catch (error) {
+                                        console.error('❌ Failed to generate new invoice number:', error);
+                                            submittedInvoiceFingerprintsRef.current.delete(currentInvoiceFingerprint);
+                                        isSubmittingInvoiceRef.current = false;
+                                        setIsProcessingPayment(false);
+                                        lockedInvoiceNumberRef.current = null;
+                                        showToast('فشل في إنشاء رقم فاتورة جديد. يرجى المحاولة مرة أخرى.', 'error');
+                                        return;
+                                    }
+                                }
+                            }
+                        } catch (compareError) {
+                            console.warn('⚠️ Could not compare invoice content, proceeding with save:', compareError);
+                        }
                     }
                 } catch (checkError: any) {
                     console.warn('⚠️ Could not check invoice number uniqueness, proceeding anyway:', checkError);
@@ -3558,35 +4197,98 @@ const POSPage: React.FC = () => {
                 // Use IndexedDB sync service (saves locally and syncs with backend)
                 // CRITICAL: Ensure sale is saved to IndexedDB even if sync fails
                 let syncResult;
-                try {
-                    syncResult = await salesSync.createAndSyncSale(saleData, storeId);
-                    console.log(`[POS] Sale sync result for ${saleData.invoiceNumber}:`, {
-                        success: syncResult.success,
-                        saleId: syncResult.saleId,
-                        error: syncResult.error
-                    });
-                } catch (syncError: any) {
-                    // If createAndSyncSale throws an error, try to save directly to IndexedDB
-                    console.error('❌ Error in createAndSyncSale, attempting direct IndexedDB save:', syncError);
+                const maxInvoiceRetries = 2;
+                let syncAttempt = 0;
+                while (syncAttempt <= maxInvoiceRetries) {
                     try {
-                        await salesDB.init();
-                        saleData.synced = false;
-                        await salesDB.saveSale(saleData);
-                        console.log('✅ Sale saved directly to IndexedDB after sync error:', saleData.invoiceNumber);
-                        syncResult = { success: true, saleId: saleData.id || saleData.invoiceNumber, error: syncError?.message };
-                        // Update invoice ID to match saved invoice number
-                        finalInvoice.id = saleData.invoiceNumber;
-                        setCurrentInvoice(finalInvoice);
-                    } catch (dbError: any) {
-                        console.error('❌ Failed to save sale to IndexedDB:', dbError);
-                        // Still try to save to localStorage as last resort
-                        syncResult = { success: false, error: dbError?.message || 'Failed to save sale' };
+                        syncResult = await salesSync.createAndSyncSale(saleData, storeId);
+                        console.log(`[POS] Sale sync result for ${saleData.invoiceNumber}:`, {
+                            success: syncResult.success,
+                            saleId: syncResult.saleId,
+                            error: syncResult.error
+                        });
+                        
+                        // Break out if success or no error
+                        if (!syncResult || syncResult.success || !syncResult.error) {
+                            break;
+                        }
+
+                        const errorText = (syncResult.error || '').toLowerCase();
+                        const errorType = (syncResult as any).errorType;
+                        const isDuplicateContent = errorType === 'duplicate_content' || errorText.includes('duplicate invoice');
+                        const isNumberConflict = errorType === 'different_content' || errorText.includes('invoice number conflict') || errorText.includes('already exists');
+
+                        if (isDuplicateContent) {
+                            const duplicateInvoiceNumber = (syncResult as any).duplicateInvoiceNumber || invoiceNumberToUse;
+                            if (!conflictInvoiceNumbersRef.current.has(duplicateInvoiceNumber)) {
+                                conflictInvoiceNumbersRef.current.add(duplicateInvoiceNumber);
+                                showToast(syncResult.error || 'تم اكتشاف فاتورة مكررة. يرجى التحقق من الفواتير المحفوظة.', 'error');
+                            }
+                            // Cleanup and abort
+                            submittedInvoiceFingerprintsRef.current.delete(currentInvoiceFingerprint);
+                            isSubmittingInvoiceRef.current = false;
+                            setIsProcessingPayment(false);
+                            lockedInvoiceNumberRef.current = null;
+                            return; // Exit early - duplicate content should not be saved
+                        }
+
+                        if (isNumberConflict) {
+                            const conflictedNumber = (syncResult as any).duplicateInvoiceNumber || invoiceNumberToUse;
+                            conflictInvoiceNumbersRef.current.add(conflictedNumber);
+                            console.warn(`⚠️ Invoice number ${conflictedNumber} conflicted during sync. Auto-generating a new number and retrying...`);
+                            try {
+                                const newInvoiceNumber = await fetchNextInvoiceNumber();
+                                finalInvoice.id = newInvoiceNumber;
+                                saleData.invoiceNumber = newInvoiceNumber;
+                                invoiceNumberToUse = newInvoiceNumber;
+                                setCurrentInvoice({ ...finalInvoice });
+                                lockedInvoiceNumberRef.current = newInvoiceNumber;
+                                // Refresh fingerprint tracking for the new invoice number
+                                submittedInvoiceFingerprintsRef.current.delete(currentInvoiceFingerprint);
+                                currentInvoiceFingerprint = generateInvoiceFingerprint(finalInvoice, selectedPaymentMethod, paidAmount);
+                                submittedInvoiceFingerprintsRef.current.add(currentInvoiceFingerprint);
+                                showToast(`رقم الفاتورة ${conflictedNumber} مستخدم. تم تعيين رقم جديد ${newInvoiceNumber} وسيتم المحاولة تلقائياً.`, 'info');
+                                syncAttempt++;
+                                continue; // Retry with new number
+                            } catch (error) {
+                                console.error('❌ Failed to generate new invoice number during sync retry:', error);
+                                submittedInvoiceFingerprintsRef.current.delete(currentInvoiceFingerprint);
+                                isSubmittingInvoiceRef.current = false;
+                                setIsProcessingPayment(false);
+                                lockedInvoiceNumberRef.current = null;
+                                showToast('فشل في إنشاء رقم فاتورة جديد أثناء إعادة المحاولة. يرجى المحاولة مرة أخرى.', 'error');
+                                return;
+                            }
+                        }
+
+                        // Non-conflict error - break and let existing error handling continue
+                        break;
+                    } catch (syncError: any) {
+                        // If createAndSyncSale throws an error, try to save directly to IndexedDB
+                        console.error('❌ Error in createAndSyncSale, attempting direct IndexedDB save:', syncError);
+                        try {
+                            await salesDB.init();
+                            // Create a new object with synced property for IndexedDB
+                            const saleDataWithSynced = { ...saleData, synced: false } as any;
+                            await salesDB.saveSale(saleDataWithSynced);
+                            console.log('✅ Sale saved directly to IndexedDB after sync error:', saleData.invoiceNumber);
+                            syncResult = { success: true, saleId: saleData.invoiceNumber, error: syncError?.message };
+                            // Update invoice ID to match saved invoice number
+                            finalInvoice.id = saleData.invoiceNumber;
+                            setCurrentInvoice(finalInvoice);
+                        } catch (dbError: any) {
+                            console.error('❌ Failed to save sale to IndexedDB:', dbError);
+                            // Still try to save to localStorage as last resort
+                            syncResult = { success: false, error: dbError?.message || 'Failed to save sale' };
+                        }
+                        break; // Exit retry loop after fallback
                     }
                 }
                 
-                // Update finalInvoice.id with the actual invoice number from saleData (in case it was changed due to duplicates)
-                // This ensures the QR code uses the correct invoice number
-                finalInvoice.id = saleData.invoiceNumber;
+                // CRITICAL: Use locked invoice number - don't change it
+                // This ensures the invoice number remains consistent throughout the save process
+                finalInvoice.id = invoiceNumberToUse;
+                saleData.invoiceNumber = invoiceNumberToUse; // Ensure saleData uses locked number
                 setCurrentInvoice(finalInvoice);
                 
                 // Always save to localStorage as backup, even if IndexedDB save failed
@@ -3631,6 +4333,11 @@ const POSPage: React.FC = () => {
                 if (syncResult?.success) {
                     console.log('✅ Sale saved to IndexedDB and synced:', saleData.invoiceNumber);
                     
+                    // Clear conflict tracking for this invoice number since it was successfully saved
+                    if (invoiceNumberToUse) {
+                        conflictInvoiceNumbersRef.current.delete(invoiceNumberToUse);
+                    }
+                    
                     // Show warning if sync had errors but sale was saved locally
                     if (syncResult.error) {
                         console.warn('⚠️ Sale saved locally, will sync later:', syncResult.error);
@@ -3640,17 +4347,30 @@ const POSPage: React.FC = () => {
                     console.warn('⚠️ Sale saved to localStorage only, IndexedDB save may have failed:', syncResult?.error);
                 }
             } catch (error: any) {
+                // On error, remove fingerprint so invoice can be retried
                 console.error('❌ Failed to save sale in background:', error);
+                console.error('❌ Error saving invoice, removing fingerprint to allow retry:', error);
+                            submittedInvoiceFingerprintsRef.current.delete(currentInvoiceFingerprint);
                 // Don't show alert - sale is already completed and user is on print page
                 // The sale will be retried by the periodic sync service
             } finally {
                 // Clear processing state after sale sync completes (success or failure)
+                isSubmittingInvoiceRef.current = false;
                 setIsProcessingPayment(false);
+                // Clear locked invoice number after a delay (allow time for UI updates)
+                setTimeout(() => {
+                    lockedInvoiceNumberRef.current = null;
+                }, 2000);
             }
         }).catch(error => {
             console.error('Background sale sync task failed:', error);
+            // Remove fingerprint on error
+                submittedInvoiceFingerprintsRef.current.delete(currentInvoiceFingerprint);
+            submittedInvoiceFingerprintsRef.current.delete(currentInvoiceFingerprint);
             // Ensure processing state is cleared even if promise chain fails
+            isSubmittingInvoiceRef.current = false;
             setIsProcessingPayment(false);
+            lockedInvoiceNumberRef.current = null;
         });
     };
 
@@ -3667,14 +4387,6 @@ const POSPage: React.FC = () => {
         const addressFromState = storeAddress || '';
         const addressFromSettings = settings?.storeAddress || '';
         const addressToDisplay = addressFromState || addressFromSettings || '';
-        
-        // Debug logging
-        console.log('[POS] renderReceipt - Address check:', {
-            storeAddressState: storeAddress,
-            addressFromSettings: addressFromSettings,
-            addressToDisplay: addressToDisplay,
-            hasSettings: !!settings
-        });
         
         const legacyDefaultBusinessName = String.fromCharCode(80, 111, 115, 104, 80, 111, 105, 110, 116, 72, 117, 98);
         const businessNameToDisplay = businessName || (settings?.businessName && settings.businessName.trim() && settings.businessName !== legacyDefaultBusinessName ? settings.businessName.trim() : '');
@@ -3759,6 +4471,36 @@ const POSPage: React.FC = () => {
             </div>
         );
     }
+    
+    // Add Points section after receipt (only for completed sales with customer)
+    const renderAddPointsSection = (invoice: POSInvoice) => {
+        if (!invoice.customer || invoice.id.startsWith('RET-') || invoice.originalInvoiceId) {
+            return null;
+        }
+        
+        return (
+            <div className="mt-4 p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800 print-hidden">
+                <div className="flex items-center justify-between mb-2">
+                    <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                        إضافة نقاط للعميل
+                    </span>
+                </div>
+                <AddPointsButton
+                    invoiceNumber={invoice.id}
+                    customerId={invoice.customer.id}
+                    customerPhone={invoice.customer.phone}
+                    purchaseAmount={invoice.grandTotal}
+                    onSuccess={(points, newBalance) => {
+                        console.log(`✅ Points added: ${points}, New balance: ${newBalance}`);
+                    }}
+                    onError={(error) => {
+                        console.error('Failed to add points:', error);
+                    }}
+                    className="w-full"
+                />
+            </div>
+        );
+    }
 
     const renderQRReceipt = (invoice: SaleTransaction | POSInvoice, title: string) => {
         // Generate the invoice URL for the QR code (include storeId if available)
@@ -3830,6 +4572,7 @@ const POSPage: React.FC = () => {
                     {/* Buttons above invoice */}
                     <div className="flex flex-row gap-2 sm:gap-3 mb-4 sm:mb-6 print-hidden w-full justify-center">
                         <button 
+                            ref={startNewSaleButtonRef}
                             onClick={startNewSale} 
                             className="inline-flex items-center justify-center px-3 sm:px-4 py-2 text-xs sm:text-sm font-medium rounded-md shadow-sm text-white bg-orange-500 hover:bg-orange-600 transition-colors"
                         >
@@ -3840,7 +4583,7 @@ const POSPage: React.FC = () => {
                             onClick={() => printReceipt('printable-receipt')} 
                             className="inline-flex items-center justify-center px-3 sm:px-4 py-2 text-xs sm:text-sm font-medium rounded-md text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 transition-colors border border-gray-300 dark:border-gray-600"
                         >
-                            <PrintIcon className="h-4 w-4 ml-1.5" />
+                            <span className="h-4 w-4 ml-1.5"><PrintIcon /></span>
                             <span>{AR_LABELS.printReceipt}</span>
                         </button>
                         <button 
@@ -3859,6 +4602,31 @@ const POSPage: React.FC = () => {
                         <>
                             <div className={showQRReceipt ? 'hidden' : 'w-full'}>
                                 {renderReceipt(currentInvoice, receiptTitle)}
+                                {/* Add Points Button - Only show if customer exists and not a return */}
+                                {currentInvoice.customer && 
+                                 !currentInvoice.id.startsWith('RET-') && 
+                                 !currentInvoice.originalInvoiceId && (
+                                    <div className="mt-4 p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800 print-hidden">
+                                        <div className="flex items-center justify-between mb-2">
+                                            <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                                                إضافة نقاط للعميل
+                                            </span>
+                                        </div>
+                                        <AddPointsButton
+                                            invoiceNumber={currentInvoice.id}
+                                            customerId={currentInvoice.customer.id}
+                                            customerPhone={currentInvoice.customer.phone}
+                                            purchaseAmount={currentInvoice.grandTotal}
+                                            onSuccess={(points, newBalance) => {
+                                                console.log(`✅ Points added: ${points}, New balance: ${newBalance}`);
+                                            }}
+                                            onError={(error) => {
+                                                console.error('Failed to add points:', error);
+                                            }}
+                                            className="w-full"
+                                        />
+                                    </div>
+                                )}
                             </div>
                             <div className={showQRReceipt ? 'w-full' : 'hidden'}>
                                 {renderQRReceipt(currentInvoice, receiptTitle)}
@@ -3960,9 +4728,11 @@ const POSPage: React.FC = () => {
                     {/* Column 2: Transaction/Cart (50% - Center, wider) */}
                     <div className="flex flex-col bg-white/95 dark:bg-gray-800/95 rounded-xl sm:rounded-2xl shadow-sm backdrop-blur-xl border border-slate-200/50 dark:border-slate-700/50 min-h-0 min-w-0 overflow-hidden h-full">
                         {/* Header */}
-                        <div className="p-3 sm:p-4 md:p-6 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 text-xs sm:text-sm text-gray-700 dark:text-gray-300 flex flex-col sm:flex-row justify-between gap-2 sm:gap-0 rounded-t-xl sm:rounded-t-2xl flex-shrink-0">
-                            <span className="font-semibold truncate">{AR_LABELS.invoiceNumber}: <span className="font-mono text-orange-600">{currentInvoice.id}</span></span>
-                            <span className="font-semibold truncate">{AR_LABELS.posCashier}: <span className="text-gray-900 dark:text-gray-100">{currentInvoice.cashier}</span></span>
+                        <div className="p-3 sm:p-4 md:p-6 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 text-xs sm:text-sm text-gray-700 dark:text-gray-300 flex flex-col sm:flex-row justify-between items-center gap-2 sm:gap-0 rounded-t-xl sm:rounded-t-2xl flex-shrink-0">
+                            <div className="flex flex-col sm:flex-row gap-2 sm:gap-4">
+                                <span className="font-semibold truncate">{AR_LABELS.invoiceNumber}: <span className="font-mono text-orange-600">{currentInvoice.id}</span></span>
+                                <span className="font-semibold truncate">{AR_LABELS.posCashier}: <span className="text-gray-900 dark:text-gray-100">{currentInvoice.cashier}</span></span>
+                            </div>
                         </div>
                         {/* Search */}
                         <form onSubmit={handleSearch} className="p-3 sm:p-4 border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
@@ -4337,6 +5107,13 @@ const POSPage: React.FC = () => {
                                                                     onClick={(e) => {
                                                                         e.stopPropagation();
                                                                         setCurrentInvoice(inv => ({...inv, customer}));
+                                                                        // Fetch customer points balance when customer is selected
+                                                                        if (customer && customer.id && customer.id !== 'walk-in-customer') {
+                                                                            fetchCustomerPointsBalance(customer.id, customer.phone);
+                                                                        } else {
+                                                                            setCustomerPointsBalance(null);
+                                                                            setPointsToRedeem(0);
+                                                                        }
                                                                         setIsCustomerDropdownOpen(false);
                                                                         setCustomerSearchTerm('');
                                                                     }}
@@ -4344,8 +5121,16 @@ const POSPage: React.FC = () => {
                                                                         currentInvoice.customer?.id === customer.id ? 'bg-orange-100 dark:bg-orange-900/30' : ''
                                                                     }`}
                                                                 >
-                                                                    <div className="flex flex-col items-end">
-                                                                        <p className="font-semibold text-sm text-gray-900 dark:text-gray-100">{customer.name}</p>
+                                                                    <div className="flex flex-col items-end w-full">
+                                                                        <div className="flex items-center justify-between w-full">
+                                                                            <p className="font-semibold text-sm text-gray-900 dark:text-gray-100">{customer.name}</p>
+                                                                            <CustomerPointsDisplay
+                                                                                customerId={customer.id}
+                                                                                customerPhone={customer.phone}
+                                                                                showLabel={false}
+                                                                                className="mr-2"
+                                                                            />
+                                                                        </div>
                                                                         <p className="text-xs text-gray-600 dark:text-gray-400 mt-1">{customer.phone}</p>
                                                                     </div>
                                                                 </button>
@@ -4372,14 +5157,47 @@ const POSPage: React.FC = () => {
                                     <div className="mb-2 p-2 bg-orange-50 dark:bg-orange-900/20 rounded-lg border border-orange-200 dark:border-orange-800">
                                         <div className="flex justify-between items-start">
                                             <button
-                                                onClick={() => setCurrentInvoice(inv => ({...inv, customer: null}))}
+                                                onClick={() => {
+                                                    setCurrentInvoice(inv => ({...inv, customer: null}));
+                                                    setCustomerPointsBalance(null);
+                                                    setPointsToRedeem(0);
+                                                    if (selectedPaymentMethod === 'Points') {
+                                                        setSelectedPaymentMethod('Cash');
+                                                    }
+                                                }}
                                                 className="text-red-500 hover:text-red-700 text-xs"
                                             >
                                                 ✕
                                             </button>
                                             <div className="flex-1 text-right">
-                                                <p className="font-semibold text-sm text-gray-900 dark:text-gray-100">{currentInvoice.customer.name}</p>
-                                                <p className="text-xs text-gray-600 dark:text-gray-400">{currentInvoice.customer.phone}</p>
+                                                <div className="flex justify-between items-center mb-1">
+                                                    <div className="flex-1">
+                                                        <p className="font-semibold text-sm text-gray-900 dark:text-gray-100">{currentInvoice.customer.name}</p>
+                                                        <p className="text-xs text-gray-600 dark:text-gray-400">{currentInvoice.customer.phone}</p>
+                                                    </div>
+                                                    {customerPointsBalance !== null && customerPointsBalance > 0 && currentInvoice.customer && (
+                                                        <Link
+                                                            to={`/points/history?customerId=${currentInvoice.customer.id}&phone=${encodeURIComponent(currentInvoice.customer.phone || '')}`}
+                                                            className="ml-2 text-xs text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 underline"
+                                                            title="عرض تاريخ النقاط"
+                                                        >
+                                                            عرض التاريخ
+                                                        </Link>
+                                                    )}
+                                                </div>
+                                                {customerPointsBalance !== null && customerPointsBalance > 0 && (
+                                                    <div className="mt-1 pt-1 border-t border-orange-200 dark:border-orange-800">
+                                                        <div className="flex items-center justify-between text-xs">
+                                                            <CustomerPointsDisplay
+                                                                customerId={currentInvoice.customer.id}
+                                                                customerPhone={currentInvoice.customer.phone}
+                                                                showLabel={true}
+                                                                showMonetaryValue={true}
+                                                                className=""
+                                                            />
+                                                        </div>
+                                                    </div>
+                                                )}
                                             </div>
                                         </div>
                                     </div>
@@ -4451,9 +5269,9 @@ const POSPage: React.FC = () => {
                             <div>
                                 <h3 className="text-xs sm:text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2 sm:mb-3 text-right">طريقة الدفع</h3>
                                 <div className="bg-white/80 dark:bg-gray-800/80 rounded-xl p-4 border border-gray-200/50 dark:border-gray-700/50 backdrop-blur-sm space-y-3">
-                                    <div className="grid grid-cols-3 gap-2">
+                                    <div className="grid grid-cols-2 gap-2">
                                         <button 
-                                            onClick={() => { setSelectedPaymentMethod('Cash'); setCreditPaidAmount(0); setCreditPaidAmountError(null); }} 
+                                            onClick={() => { setSelectedPaymentMethod('Cash'); setCreditPaidAmount(0); setCreditPaidAmountError(null); setPointsToRedeem(0); }} 
                                             className={`p-2 sm:p-3 rounded-xl border-2 text-center font-semibold text-xs sm:text-sm transition-all duration-200 ${
                                                 selectedPaymentMethod === 'Cash' 
                                                     ? 'border-orange-500 bg-gradient-to-br from-orange-50 to-orange-100 dark:from-orange-900/40 dark:to-orange-800/40 text-orange-700 dark:text-orange-300 shadow-lg scale-105' 
@@ -4463,7 +5281,7 @@ const POSPage: React.FC = () => {
                                             {AR_LABELS.cash}
                                         </button>
                                         <button 
-                                            onClick={() => { setSelectedPaymentMethod('Card'); setCreditPaidAmount(0); setCreditPaidAmountError(null); }} 
+                                            onClick={() => { setSelectedPaymentMethod('Card'); setCreditPaidAmount(0); setCreditPaidAmountError(null); setPointsToRedeem(0); }} 
                                             className={`p-2 sm:p-3 rounded-xl border-2 text-center font-semibold text-xs sm:text-sm transition-all duration-200 ${
                                                 selectedPaymentMethod === 'Card' 
                                                     ? 'border-orange-500 bg-gradient-to-br from-orange-50 to-orange-100 dark:from-orange-900/40 dark:to-orange-800/40 text-orange-700 dark:text-orange-300 shadow-lg scale-105' 
@@ -4473,7 +5291,7 @@ const POSPage: React.FC = () => {
                                             {AR_LABELS.visa}
                                         </button>
                                         <button 
-                                            onClick={() => { setSelectedPaymentMethod('Credit'); setCreditPaidAmountError(null); }} 
+                                            onClick={() => { setSelectedPaymentMethod('Credit'); setCreditPaidAmountError(null); setPointsToRedeem(0); }} 
                                             className={`p-2 sm:p-3 rounded-xl border-2 text-center font-semibold text-xs sm:text-sm transition-all duration-200 ${
                                                 selectedPaymentMethod === 'Credit' 
                                                     ? 'border-orange-500 bg-gradient-to-br from-orange-50 to-orange-100 dark:from-orange-900/40 dark:to-orange-800/40 text-orange-700 dark:text-orange-300 shadow-lg scale-105' 
@@ -4481,6 +5299,34 @@ const POSPage: React.FC = () => {
                                             }`}
                                         >
                                             {AR_LABELS.credit}
+                                        </button>
+                                        <button 
+                                            onClick={() => { 
+                                                if (!currentInvoice.customer || currentInvoice.customer.id === 'walk-in-customer') {
+                                                    showToast('يرجى اختيار عميل مسجل لاستخدام النقاط', 'error');
+                                                    return;
+                                                }
+                                                // If balance is null (loading), try to fetch it
+                                                if (customerPointsBalance === null && currentInvoice.customer) {
+                                                    fetchCustomerPointsBalance(currentInvoice.customer.id, currentInvoice.customer.phone);
+                                                }
+                                                // Only disable if we know for sure balance is 0 or less
+                                                if (customerPointsBalance !== null && customerPointsBalance <= 0) {
+                                                    showToast('العميل لا يمتلك نقاط كافية', 'error');
+                                                    return;
+                                                }
+                                                setSelectedPaymentMethod('Points'); 
+                                                setCreditPaidAmount(0); 
+                                                setCreditPaidAmountError(null); 
+                                            }} 
+                                            disabled={!currentInvoice.customer || currentInvoice.customer.id === 'walk-in-customer' || (customerPointsBalance !== null && customerPointsBalance <= 0)}
+                                            className={`p-2 sm:p-3 rounded-xl border-2 text-center font-semibold text-xs sm:text-sm transition-all duration-200 ${
+                                                selectedPaymentMethod === 'Points' 
+                                                    ? 'border-blue-500 bg-gradient-to-br from-blue-50 to-blue-100 dark:from-blue-900/40 dark:to-blue-800/40 text-blue-700 dark:text-blue-300 shadow-lg scale-105' 
+                                                    : 'border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 hover:border-blue-300 dark:hover:border-blue-700 hover:bg-blue-50/50 dark:hover:bg-blue-900/20 disabled:opacity-50 disabled:cursor-not-allowed'
+                                            }`}
+                                        >
+                                            نقاط
                                         </button>
                                     </div>
                                     {selectedPaymentMethod === 'Credit' && (
@@ -4498,6 +5344,57 @@ const POSPage: React.FC = () => {
                                                 <p className="mt-1.5 text-xs sm:text-sm text-red-600 dark:text-red-400 text-right">
                                                     {creditPaidAmountError}
                                                 </p>
+                                            )}
+                                        </div>
+                                    )}
+                                    {selectedPaymentMethod === 'Points' && currentInvoice.customer && currentInvoice.customer.id !== 'walk-in-customer' && (
+                                        <div className="space-y-2">
+                                            {customerPointsBalance !== null ? (
+                                                <>
+                                                    <div className="flex justify-between items-center text-xs">
+                                                        <span className="text-gray-600 dark:text-gray-400">النقاط المتاحة:</span>
+                                                        <div className="flex items-center gap-2">
+                                                            <span className="font-bold text-blue-600 dark:text-blue-400">{customerPointsBalance}</span>
+                                                            <span className="text-gray-500 dark:text-gray-400">
+                                                                ({formatCurrency(customerPointsBalance * pointsValuePerPoint)})
+                                                            </span>
+                                                        </div>
+                                                    </div>
+                                                    <div>
+                                                        <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 text-right mb-1.5">النقاط المراد استخدامها</label>
+                                                        <input 
+                                                            type="number" 
+                                                            value={pointsToRedeem} 
+                                                            onChange={(e) => {
+                                                                const value = parseInt(e.target.value) || 0;
+                                                                const maxPoints = customerPointsBalance || 0;
+                                                                const maxPointsForPurchase = Math.floor(currentInvoice.grandTotal / pointsValuePerPoint);
+                                                                const maxAllowed = Math.min(maxPoints, maxPointsForPurchase);
+                                                                setPointsToRedeem(Math.min(Math.max(0, value), maxAllowed));
+                                                            }} 
+                                                            className="w-full p-2 text-sm sm:text-base border-2 border-blue-300 dark:border-blue-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-lg text-center font-bold focus:ring-2 focus:ring-blue-500 focus:border-blue-500" 
+                                                            min="0" 
+                                                            max={customerPointsBalance || 0}
+                                                            step="1"
+                                                        />
+                                                    </div>
+                                                    {pointsToRedeem > 0 && (
+                                                        <div className="bg-blue-50 dark:bg-blue-900/20 p-2 rounded-lg text-xs">
+                                                            <div className="flex justify-between mb-1">
+                                                                <span className="text-gray-600 dark:text-gray-400">قيمة النقاط:</span>
+                                                                <span className="font-bold text-blue-600 dark:text-blue-400">{formatCurrency(pointsToRedeem * pointsValuePerPoint)}</span>
+                                                            </div>
+                                                            <div className="flex justify-between">
+                                                                <span className="text-gray-600 dark:text-gray-400">المبلغ المتبقي:</span>
+                                                                <span className="font-bold text-gray-900 dark:text-gray-100">{formatCurrency(Math.max(0, currentInvoice.grandTotal - (pointsToRedeem * pointsValuePerPoint)))}</span>
+                                                            </div>
+                                                        </div>
+                                                    )}
+                                                </>
+                                            ) : (
+                                                <div className="text-center py-2 text-sm text-gray-500 dark:text-gray-400">
+                                                    جاري تحميل رصيد النقاط...
+                                                </div>
                                             )}
                                         </div>
                                     )}
@@ -4520,6 +5417,7 @@ const POSPage: React.FC = () => {
                                         </button>
                                     </div>
                                     <button 
+                                        ref={confirmPaymentButtonRef}
                                         onClick={handleFinalizePayment} 
                                         disabled={currentInvoice.items.length === 0 || isProcessingPayment} 
                                         className="w-full px-8 py-5 text-lg sm:text-xl font-bold text-white bg-gradient-to-r from-green-500 via-emerald-500 to-green-600 rounded-xl hover:from-green-600 hover:via-emerald-600 hover:to-green-700 disabled:from-gray-400 disabled:via-gray-400 disabled:to-gray-500 dark:disabled:from-gray-600 dark:disabled:via-gray-600 dark:disabled:to-gray-700 shadow-2xl hover:shadow-3xl hover:scale-[1.02] transition-all duration-200 disabled:cursor-not-allowed disabled:scale-100"
@@ -4610,6 +5508,19 @@ const POSPage: React.FC = () => {
                     setPendingServerSearch(null);
                 }}
                 onQuickAdd={handleQuickAddProduct}
+            />
+            <ReSaleModal
+                isOpen={isReSaleModalOpen}
+                existingInvoice={conflictingInvoiceData}
+                onClose={() => {
+                    // Clear conflict tracking when modal is closed to allow manual invoice number changes
+                    if (conflictingInvoiceData?.invoiceNumber) {
+                        conflictInvoiceNumbersRef.current.delete(conflictingInvoiceData.invoiceNumber);
+                    }
+                    setIsReSaleModalOpen(false);
+                    setConflictingInvoiceData(null);
+                }}
+                onReSale={handleReSale}
             />
             
             {/* Product Found Notification (Optimistic UI) */}

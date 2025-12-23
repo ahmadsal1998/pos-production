@@ -156,7 +156,7 @@ Expected response:
 ```bash
 curl -X POST https://your-app.onrender.com/api/auth/login \
   -H "Content-Type: application/json" \
-  -d '{"emailOrUsername":"admin@pos.com","password":"password123"}'
+  -d '{"emailOrUsername":"adminn@pos.com","password":"password123"}'
 ```
 
 Expected response:

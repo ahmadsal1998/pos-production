@@ -209,7 +209,7 @@ MONGODB_URI="your-production-mongodb-uri" npm run seed
 5. Insert document:
 ```json
 {
-  "email": "admin@pos.com",
+  "email": "adminn@pos.com",
   "username": "admin",
   "password": "$2b$10$...", // You'll need to hash a password
   "role": "Admin",

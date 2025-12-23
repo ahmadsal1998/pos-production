@@ -20,7 +20,7 @@ const seedDatabase = async () => {
 
     // Check if admin user already exists
     const existingAdmin = await User.findOne({
-      $or: [{ email: 'admin@pos.com' }, { username: 'admin' }],
+      $or: [{ email: 'adminn@pos.com' }, { username: 'admin' }],
     });
 
     if (existingAdmin) {
@@ -34,7 +34,7 @@ const seedDatabase = async () => {
     const adminUser = await User.create({
       fullName: 'Admin User',
       username: 'admin',
-      email: 'admin@pos.com',
+      email: 'adminn@pos.com',
       password: 'password123',
       role: 'Admin',
       permissions: [
@@ -56,7 +56,7 @@ const seedDatabase = async () => {
     });
 
     console.log('✅ Admin user created successfully!');
-    console.log('📧 Email: admin@pos.com');
+    console.log('📧 Email: adminn@pos.com');
     console.log('🔑 Password: password123');
     console.log('👤 Username: admin');
 

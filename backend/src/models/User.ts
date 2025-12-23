@@ -57,6 +57,8 @@ const userSchema = new Schema(
         'refunds',
         'preferences',
         'users',
+        'storePointsAccount',
+        'pointsHistory',
       ],
       default: [],
     },

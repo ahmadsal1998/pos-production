@@ -60,8 +60,10 @@ const ProductNotFoundModal: React.FC<ProductNotFoundModalProps> = ({
     };
   }, [isOpen, onClose]);
 
-  const handleQuickAdd = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleQuickAdd = async (e?: React.FormEvent | React.MouseEvent) => {
+    if (e) {
+      e.preventDefault();
+    }
     setError('');
 
     // Validate inputs
@@ -92,6 +94,14 @@ const ProductNotFoundModal: React.FC<ProductNotFoundModalProps> = ({
       setError(err?.message || 'فشل إضافة المنتج. يرجى المحاولة مرة أخرى.');
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  // Prevent Enter key from submitting the form
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      e.stopPropagation();
     }
   };
 
@@ -149,7 +159,7 @@ const ProductNotFoundModal: React.FC<ProductNotFoundModalProps> = ({
           </div>
 
           {/* Quick Add Form */}
-          <form onSubmit={handleQuickAdd} className="space-y-4">
+          <form onSubmit={(e) => e.preventDefault()} className="space-y-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2 text-right">
                 باركود المنتج
@@ -170,6 +180,7 @@ const ProductNotFoundModal: React.FC<ProductNotFoundModalProps> = ({
                 type="text"
                 value={productName}
                 onChange={(e) => setProductName(e.target.value)}
+                onKeyDown={handleKeyDown}
                 className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 text-right focus:ring-2 focus:ring-orange-500 focus:border-transparent"
                 placeholder="اسم المنتج (اختياري)"
               />
@@ -185,6 +196,7 @@ const ProductNotFoundModal: React.FC<ProductNotFoundModalProps> = ({
                 min="0"
                 value={costPrice}
                 onChange={(e) => setCostPrice(e.target.value)}
+                onKeyDown={handleKeyDown}
                 required
                 className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 text-right focus:ring-2 focus:ring-orange-500 focus:border-transparent"
                 placeholder="0.00"
@@ -202,6 +214,7 @@ const ProductNotFoundModal: React.FC<ProductNotFoundModalProps> = ({
                 min="0"
                 value={sellingPrice}
                 onChange={(e) => setSellingPrice(e.target.value)}
+                onKeyDown={handleKeyDown}
                 required
                 className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 text-right focus:ring-2 focus:ring-orange-500 focus:border-transparent"
                 placeholder="0.00"
@@ -224,7 +237,8 @@ const ProductNotFoundModal: React.FC<ProductNotFoundModalProps> = ({
                 إلغاء
               </button>
               <button
-                type="submit"
+                type="button"
+                onClick={handleQuickAdd}
                 disabled={isSubmitting}
                 className="px-6 py-2.5 bg-orange-500 hover:bg-orange-600 text-white font-medium rounded-lg transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-offset-2 dark:focus:ring-offset-gray-900 shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
               >

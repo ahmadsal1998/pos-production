@@ -20,6 +20,9 @@ import merchantsRoutes from './routes/merchants.routes';
 import settingsRoutes from './routes/settings.routes';
 import customersRoutes from './routes/customers.routes';
 import salesRoutes from './routes/sales.routes';
+import pointsRoutes from './routes/points.routes';
+import storeAccountRoutes from './routes/storeAccount.routes';
+import storePointsAccountRoutes from './routes/storePointsAccount.routes';
 
 // Load environment variables
 dotenv.config();
@@ -257,6 +260,9 @@ app.use('/api/merchants', merchantsRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/customers', customersRoutes);
 app.use('/api/sales', salesRoutes);
+app.use('/api/points', pointsRoutes);
+app.use('/api/store-accounts', storeAccountRoutes);
+app.use('/api/store-points-accounts', storePointsAccountRoutes);
 
 // 404 handler - log all unmatched routes for debugging
 app.use((req, res) => {

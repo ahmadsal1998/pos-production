@@ -63,7 +63,7 @@ npm run seed
 ```
 
 This will create an admin user with:
-- **Email**: admin@pos.com
+- **Email**: adminn@pos.com
 - **Username**: admin
 - **Password**: password123
 - **Role**: Admin with all permissions

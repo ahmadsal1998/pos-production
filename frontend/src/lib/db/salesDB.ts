@@ -503,7 +503,7 @@ class SalesDB {
    * Mark a sale as synced
    * Can find sale by ID or by storeId + invoiceNumber combination
    */
-  async markAsSynced(saleId: string, backendId?: string, storeId?: string, invoiceNumber?: string): Promise<void> {
+  async markAsSynced(saleId: string, backendId?: string, storeId?: string, invoiceNumber?: string, updatedInvoiceNumber?: string): Promise<void> {
     const db = await this.ensureDB();
     const transaction = db.transaction([STORE_NAME], 'readwrite');
     const store = transaction.objectStore(STORE_NAME);
@@ -513,6 +513,10 @@ class SalesDB {
       function updateSaleWithSale(saleToUpdate: SaleRecord) {
         saleToUpdate.synced = true;
         saleToUpdate.syncError = undefined;
+        // If backend assigned a different invoice number (e.g., after resolving conflict), persist it locally
+        if (updatedInvoiceNumber) {
+          saleToUpdate.invoiceNumber = updatedInvoiceNumber;
+        }
         
         // Store backend ID in _id field, but keep the original id as primary key
         // This prevents creating duplicate records when the ID changes, which would violate

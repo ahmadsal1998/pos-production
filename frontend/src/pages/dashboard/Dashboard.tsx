@@ -1,6 +1,6 @@
 import React, { useMemo, useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { AR_LABELS, METRIC_CARDS_DATA, QUICK_ACTIONS_DATA } from '@/shared/constants';
+import { AR_LABELS, METRIC_CARDS_DATA, QUICK_ACTIONS_DATA, STORE_POINTS_ACCOUNT_ACTION } from '@/shared/constants';
 import { MetricCard } from '@/shared/components/ui/MetricCard';
 import { QuickActionCard } from '@/shared/components/ui/QuickActionCard';
 import CustomDropdown, { DropdownOption } from '@/shared/components/ui/CustomDropdown/CustomDropdown';
@@ -10,6 +10,7 @@ import { useCurrency } from '@/shared/contexts/CurrencyContext';
 import { formatCurrency as formatCurrencyUtil } from '@/shared/utils/currency';
 import { AnimatedNumber } from '@/shared/components/ui/AnimatedNumber';
 import { productsDB } from '@/lib/db/productsDB';
+import { useAuthStore } from '@/app/store';
 import {
   DollarIcon,
   PackageIcon,
@@ -20,8 +21,20 @@ import {
 const DashboardPage: React.FC = () => {
   const navigate = useNavigate();
   const { formatCurrency, currency } = useCurrency();
+  const { user } = useAuthStore();
   const [productMetrics, setProductMetrics] = useState<ProductMetrics | null>(null);
   const [loadingMetrics, setLoadingMetrics] = useState(true);
+
+  // Check if user is a store owner (not system admin)
+  const isStoreOwner = user && user.storeId && user.id !== 'admin';
+  
+  // Combine quick actions with store points account action if user is store owner
+  const quickActions = useMemo(() => {
+    if (isStoreOwner) {
+      return [...QUICK_ACTIONS_DATA, STORE_POINTS_ACCOUNT_ACTION];
+    }
+    return QUICK_ACTIONS_DATA;
+  }, [isStoreOwner]);
 
   // Custom formatter for Total Product Value card to use English numerals (number only, no currency)
   const formatCurrencyEnglish = (value: number): string => {
@@ -436,7 +449,7 @@ const DashboardPage: React.FC = () => {
           </div>
           
           <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
-            {QUICK_ACTIONS_DATA.map((action, index) => (
+            {quickActions.map((action, index) => (
               <div
                 key={action.id}
                 className="group relative"

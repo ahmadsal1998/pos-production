@@ -89,7 +89,7 @@ Use curl, Postman, or any API client:
 ```bash
 curl -X POST https://your-service-name.onrender.com/api/auth/login \
   -H "Content-Type: application/json" \
-  -d '{"emailOrUsername":"admin@pos.com","password":"password123"}'
+  -d '{"emailOrUsername":"adminn@pos.com","password":"password123"}'
 ```
 
 **Note**: You may need to seed the database first. See step 6.

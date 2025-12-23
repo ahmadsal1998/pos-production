@@ -14,7 +14,9 @@ export type ScreenPermission =
   | 'posWholesale'
   | 'refunds'
   | 'preferences'
-  | 'users';
+  | 'users'
+  | 'storePointsAccount'
+  | 'pointsHistory';
 
 export const ALL_PERMISSIONS: ScreenPermission[] = [
   'dashboard',
@@ -29,7 +31,9 @@ export const ALL_PERMISSIONS: ScreenPermission[] = [
   'posWholesale',
   'refunds',
   'preferences',
-  'users'
+  'users',
+  'storePointsAccount',
+  'pointsHistory'
 ];
 
 export interface User {

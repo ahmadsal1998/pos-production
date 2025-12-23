@@ -12,6 +12,8 @@ interface AdminProtectedRouteProps {
  * If user is not authenticated, redirects to /login.
  * If user is authenticated but not system admin, redirects to /.
  * If user is system admin, renders the children.
+ * 
+ * Note: Store owners should use /my-store-points-account route instead of /admin/store-accounts
  */
 export const AdminProtectedRoute: React.FC<AdminProtectedRouteProps> = ({ children }) => {
   const { isAuthenticated, user } = useAuthStore();

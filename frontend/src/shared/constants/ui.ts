@@ -522,6 +522,8 @@ export const AR_LABELS = {
   permissionUsers: 'إدارة المستخدمين',
   permissionPurchases: 'المشتريات',
   permissionExpenses: 'المصروفات',
+  permissionStorePointsAccount: 'حساب النقاط الخاص بي',
+  permissionPointsHistory: 'تاريخ النقاط',
 
   // Purchases Page Specific
   purchases: 'المشتريات',

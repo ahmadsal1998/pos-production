@@ -47,6 +47,8 @@ const PERMISSION_LABELS: Record<ScreenPermission, string> = {
   refunds: AR_LABELS.permissionRefunds,
   preferences: AR_LABELS.permissionPreferences,
   users: AR_LABELS.permissionUsers,
+  storePointsAccount: AR_LABELS.permissionStorePointsAccount,
+  pointsHistory: AR_LABELS.permissionPointsHistory,
 };
 
 export const UserFormModal = ({

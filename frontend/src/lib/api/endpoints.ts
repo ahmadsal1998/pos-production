@@ -66,4 +66,15 @@ export const API_ENDPOINTS = {
     UPDATE: '/merchants/:id',
     DELETE: '/merchants/:id',
   },
+  POINTS: {
+    ADD: '/points/add',
+    GET_BALANCE: '/points/customer',
+    GET_HISTORY: '/points/customer/history',
+    PAY: '/points/pay',
+  },
+  STORE_POINTS_ACCOUNTS: {
+    LIST: '/store-points-accounts',
+    GET: '/store-points-accounts/:id',
+    TRANSACTIONS: '/store-points-accounts/:id/transactions',
+  },
 } as const;
