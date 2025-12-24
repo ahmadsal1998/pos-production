@@ -10,6 +10,7 @@ router.get('/public/invoice', sales_controller_1.getPublicInvoice);
 // All other sales routes require authentication and store access
 router.use(auth_middleware_1.authenticate);
 router.use(storeIsolation_middleware_1.requireStoreAccess);
+router.get('/current-invoice-number', sales_controller_1.getCurrentInvoiceNumber);
 router.get('/next-invoice-number', sales_controller_1.getNextInvoiceNumber);
 router.post('/', sales_controller_1.createSale);
 router.post('/return', sales_controller_1.processReturn);

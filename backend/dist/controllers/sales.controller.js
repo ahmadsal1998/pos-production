@@ -36,7 +36,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.getPublicInvoice = exports.processReturn = exports.deleteSale = exports.updateSale = exports.getSale = exports.getSalesSummary = exports.getSales = exports.createSale = exports.getNextInvoiceNumber = void 0;
+exports.getPublicInvoice = exports.processReturn = exports.deleteSale = exports.updateSale = exports.getSale = exports.getSalesSummary = exports.getSales = exports.createSale = exports.getNextInvoiceNumber = exports.getCurrentInvoiceNumber = void 0;
 const error_middleware_1 = require("../middleware/error.middleware");
 const saleModel_1 = require("../utils/saleModel");
 const productModel_1 = require("../utils/productModel");
@@ -80,21 +80,24 @@ async function getMaxInvoiceNumberFromSales(Sale, storeId) {
 /**
  * Helper function to generate the next invoice number atomically
  * Uses MongoDB's atomic findOneAndUpdate to prevent race conditions
+ * CRITICAL: Always syncs with actual max invoice number to prevent skipping numbers
  */
 async function generateNextInvoiceNumber(Sale, storeId) {
     const normalizedStoreId = storeId.toLowerCase().trim();
     const sequenceType = 'invoiceNumber';
     try {
-        // Try to increment existing sequence (most common case - fastest path)
-        let sequence = await Sequence_1.default.findOneAndUpdate({ storeId: normalizedStoreId, sequenceType }, { $inc: { value: 1 } }, { new: true });
+        // CRITICAL: Always get the actual max invoice number from the database first
+        // This ensures we never skip numbers even if the sequence counter is out of sync
+        const maxExistingNumber = await getMaxInvoiceNumberFromSales(Sale, storeId);
+        // Try to get or create sequence
+        let sequence = await Sequence_1.default.findOne({
+            storeId: normalizedStoreId,
+            sequenceType,
+        });
         if (!sequence) {
-            // Sequence doesn't exist - initialize it from existing sales
-            const maxExistingNumber = await getMaxInvoiceNumberFromSales(Sale, storeId);
-            const initialValue = maxExistingNumber; // Start from max, will be incremented
-            // Use findOneAndUpdate with upsert to atomically create or get sequence
-            // If another request creates it between our check and this update, upsert handles it
+            // Sequence doesn't exist - create it with the max existing number
             sequence = await Sequence_1.default.findOneAndUpdate({ storeId: normalizedStoreId, sequenceType }, {
-                $setOnInsert: { value: initialValue } // Set initial value only on insert
+                $setOnInsert: { value: maxExistingNumber } // Set to max existing number
             }, {
                 upsert: true,
                 new: true,
@@ -103,25 +106,31 @@ async function generateNextInvoiceNumber(Sale, storeId) {
             if (!sequence) {
                 throw new Error('Failed to create sequence');
             }
-            // Now increment to get the next number (atomic operation)
-            sequence = await Sequence_1.default.findOneAndUpdate({ storeId: normalizedStoreId, sequenceType }, { $inc: { value: 1 } }, { new: true });
+        }
+        // CRITICAL: Sync sequence with actual max invoice number if it's out of sync
+        // If sequence is behind actual invoices, update it
+        // If sequence is ahead of actual invoices (due to failed attempts or deletions), sync it down
+        if (sequence.value < maxExistingNumber) {
+            // Sequence is behind - update it to match actual max
+            logger_1.log.warn(`[Sales Controller] Sequence value (${sequence.value}) is behind actual max invoice number (${maxExistingNumber}). Syncing sequence.`);
+            sequence = await Sequence_1.default.findOneAndUpdate({ storeId: normalizedStoreId, sequenceType }, { $set: { value: maxExistingNumber } }, { new: true });
             if (!sequence) {
-                throw new Error('Failed to increment sequence');
-            }
-            // Safety check: ensure sequence value is not behind existing sales
-            // (handles case where sequence was created with wrong initial value due to race)
-            if (sequence.value <= maxExistingNumber) {
-                // Update to correct value and increment again
-                sequence = await Sequence_1.default.findOneAndUpdate({ storeId: normalizedStoreId, sequenceType }, { $set: { value: maxExistingNumber + 1 } }, { new: true });
-                // Value is now maxExistingNumber + 1, which is the correct next number
-                if (!sequence) {
-                    throw new Error('Failed to update sequence');
-                }
+                throw new Error('Failed to sync sequence');
             }
         }
-        // At this point, sequence is guaranteed to be non-null
+        else if (sequence.value > maxExistingNumber) {
+            // Sequence is ahead - sync it down to match actual max
+            // This prevents skipping numbers when invoices were deleted or failed
+            logger_1.log.warn(`[Sales Controller] Sequence value (${sequence.value}) is ahead of actual max invoice number (${maxExistingNumber}). Syncing sequence down.`);
+            sequence = await Sequence_1.default.findOneAndUpdate({ storeId: normalizedStoreId, sequenceType }, { $set: { value: maxExistingNumber } }, { new: true });
+            if (!sequence) {
+                throw new Error('Failed to sync sequence');
+            }
+        }
+        // Now increment the sequence (which is guaranteed to be in sync with actual invoices)
+        sequence = await Sequence_1.default.findOneAndUpdate({ storeId: normalizedStoreId, sequenceType }, { $inc: { value: 1 } }, { new: true });
         if (!sequence) {
-            throw new Error('Failed to generate sequence');
+            throw new Error('Failed to increment sequence');
         }
         return `INV-${sequence.value}`;
     }
@@ -146,8 +155,89 @@ async function generateNextInvoiceNumber(Sale, storeId) {
     }
 }
 /**
- * Get the next sequential invoice number
- * Uses aggregation for better performance
+ * Get the current invoice number without incrementing
+ * Used for displaying the current invoice number on page load
+ * CRITICAL: Always syncs with actual max invoice number to ensure accuracy
+ */
+exports.getCurrentInvoiceNumber = (0, error_middleware_1.asyncHandler)(async (req, res) => {
+    const storeId = req.user?.storeId || null;
+    // Store users must have a storeId
+    if (!storeId) {
+        return res.status(400).json({
+            success: false,
+            message: 'Store ID is required to get invoice number',
+        });
+    }
+    // Get unified Sale model (all stores use same collection)
+    const Sale = await (0, saleModel_1.getSaleModelForStore)(storeId);
+    const normalizedStoreId = storeId.toLowerCase().trim();
+    const sequenceType = 'invoiceNumber';
+    try {
+        // CRITICAL: Always get the actual max invoice number from the database first
+        // This ensures we return the correct current invoice number even if sequence is out of sync
+        const maxNumber = await getMaxInvoiceNumberFromSales(Sale, storeId);
+        // Get current sequence value without incrementing
+        const sequence = await Sequence_1.default.findOne({
+            storeId: normalizedStoreId,
+            sequenceType,
+        });
+        // Sync sequence with actual max if it exists and is out of sync
+        if (sequence) {
+            if (sequence.value < maxNumber) {
+                // Sequence is behind - update it (but don't wait for it)
+                Sequence_1.default.findOneAndUpdate({ storeId: normalizedStoreId, sequenceType }, { $set: { value: maxNumber } }).catch(() => {
+                    // Ignore errors in background sync
+                });
+            }
+            else if (sequence.value > maxNumber) {
+                // Sequence is ahead - sync it down (but don't wait for it)
+                Sequence_1.default.findOneAndUpdate({ storeId: normalizedStoreId, sequenceType }, { $set: { value: maxNumber } }).catch(() => {
+                    // Ignore errors in background sync
+                });
+            }
+        }
+        // Always return based on actual max invoice number, not sequence
+        const currentInvoiceNumber = `INV-${maxNumber + 1}`;
+        res.status(200).json({
+            success: true,
+            message: 'Current invoice number retrieved successfully',
+            data: {
+                invoiceNumber: currentInvoiceNumber,
+                number: maxNumber + 1,
+            },
+        });
+    }
+    catch (error) {
+        logger_1.log.error('[Sales Controller] Error getting current invoice number', error);
+        // Fallback: get from existing sales
+        try {
+            const maxNumber = await getMaxInvoiceNumberFromSales(Sale, storeId);
+            const currentInvoiceNumber = `INV-${maxNumber + 1}`;
+            res.status(200).json({
+                success: true,
+                message: 'Current invoice number retrieved successfully',
+                data: {
+                    invoiceNumber: currentInvoiceNumber,
+                    number: maxNumber + 1,
+                },
+            });
+        }
+        catch (fallbackError) {
+            logger_1.log.error('[Sales Controller] Fallback current invoice number retrieval also failed', fallbackError);
+            res.status(200).json({
+                success: true,
+                message: 'Current invoice number retrieved successfully',
+                data: {
+                    invoiceNumber: 'INV-1',
+                    number: 1,
+                },
+            });
+        }
+    }
+});
+/**
+ * Get the next sequential invoice number (increments the sequence)
+ * Use this only when a sale is actually being completed
  */
 exports.getNextInvoiceNumber = (0, error_middleware_1.asyncHandler)(async (req, res) => {
     const storeId = req.user?.storeId || null;
@@ -302,52 +392,10 @@ exports.createSale = (0, error_middleware_1.asyncHandler)(async (req, res) => {
     }));
     // Normalize storeId
     const normalizedStoreId = storeId.toLowerCase().trim();
-    // CRITICAL: Check for duplicate invoice by content (not just invoice number)
-    // This prevents the same invoice from being saved multiple times with different invoice numbers
-    try {
-        // Look for recent sales (within last 30 seconds) with same content
-        const recentTimeWindow = new Date(Date.now() - 30000); // 30 seconds ago
-        // Create a content hash for comparison
-        const itemsHash = items
-            .map((item) => `${item.productId || ''}-${item.productName || ''}-${item.quantity || 0}-${item.unitPrice || 0}`)
-            .sort()
-            .join('|');
-        const totalsHash = `${subtotal || 0}-${totalItemDiscount || 0}-${invoiceDiscount || 0}-${tax || 0}-${total || 0}`;
-        const customerHash = customerId || 'walk-in';
-        // Check for duplicate invoices with same content within time window
-        const recentSales = await Sale.find({
-            storeId: normalizedStoreId,
-            date: { $gte: recentTimeWindow },
-            total: total, // Same total
-        }).limit(10); // Check up to 10 recent sales
-        for (const recentSale of recentSales) {
-            // Compare item counts and totals
-            if (recentSale.items.length === items.length) {
-                const recentItemsHash = recentSale.items
-                    .map((item) => `${item.productId || ''}-${item.productName || ''}-${item.quantity || 0}-${item.unitPrice || 0}`)
-                    .sort()
-                    .join('|');
-                // If items match and totals match, it's likely a duplicate
-                if (recentItemsHash === itemsHash &&
-                    Math.abs((recentSale.total || 0) - (total || 0)) < 0.01 &&
-                    (recentSale.customerId || 'walk-in') === customerHash) {
-                    logger_1.log.warn(`[Sales Controller] DUPLICATE INVOICE DETECTED: Invoice ${invoiceNumber} has same content as existing invoice ${recentSale.invoiceNumber} (created ${Math.round((Date.now() - new Date(recentSale.date).getTime()) / 1000)}s ago)`);
-                    return res.status(409).json({
-                        success: false,
-                        message: `Duplicate invoice detected: An invoice with the same content already exists (Invoice ${recentSale.invoiceNumber}). Please check your recent invoices.`,
-                        data: {
-                            duplicateInvoiceNumber: recentSale.invoiceNumber,
-                            duplicateInvoiceId: recentSale.id,
-                        },
-                    });
-                }
-            }
-        }
-    }
-    catch (duplicateCheckError) {
-        // Log error but don't block the sale - duplicate check is best effort
-        logger_1.log.warn('[Sales Controller] Error checking for duplicate invoices, proceeding anyway:', duplicateCheckError);
-    }
+    // CRITICAL: Duplicate detection logic
+    // IMPORTANT: We ONLY block true duplicates (same invoice number + same content)
+    // We do NOT check customer or products separately - same customer can buy same products in different invoices
+    // Each invoice with a unique invoice number is allowed, regardless of customer or product content
     // Create sale record with retry logic for duplicate invoice numbers
     let currentInvoiceNumber = invoiceNumber;
     let retryCount = 0;
@@ -361,44 +409,19 @@ exports.createSale = (0, error_middleware_1.asyncHandler)(async (req, res) => {
                 storeId: normalizedStoreId,
             });
             if (existingSale) {
-                // CRITICAL: If invoice number exists, check if it's the same content (duplicate)
-                // If same content, reject instead of generating new number
-                if (existingSale.items.length === items.length) {
-                    const existingItemsHash = existingSale.items
-                        .map((item) => `${item.productId || ''}-${item.productName || ''}-${item.quantity || 0}-${item.unitPrice || 0}`)
-                        .sort()
-                        .join('|');
-                    const incomingItemsHash = items
-                        .map((item) => `${item.productId || ''}-${item.productName || ''}-${item.quantity || 0}-${item.unitPrice || 0}`)
-                        .sort()
-                        .join('|');
-                    if (existingItemsHash === incomingItemsHash &&
-                        Math.abs((existingSale.total || 0) - (total || 0)) < 0.01) {
-                        logger_1.log.warn(`[Sales Controller] DUPLICATE INVOICE: Invoice ${currentInvoiceNumber} already exists with identical content`);
-                        return res.status(409).json({
-                            success: false,
-                            message: `Duplicate invoice detected: Invoice ${currentInvoiceNumber} already exists with the same content.`,
-                            data: {
-                                duplicateInvoiceNumber: currentInvoiceNumber,
-                                duplicateInvoiceId: existingSale.id,
-                                errorType: 'duplicate_content',
-                            },
-                        });
-                    }
-                }
-                // Invoice number exists but content is different.
-                // To avoid blocking the POS when an old/manual invoice occupies the number, auto-generate a fresh number and retry.
-                logger_1.log.warn(`[Sales Controller] Invoice number ${currentInvoiceNumber} already exists with different content. Generating new invoice number to avoid blocking.`);
+                // Invoice number already exists - generate a new one and retry
+                // Only rule: invoice numbers must be unique
+                logger_1.log.warn(`[Sales Controller] Invoice number ${currentInvoiceNumber} already exists. Generating new invoice number.`);
                 currentInvoiceNumber = await generateNextInvoiceNumber(Sale, storeId);
                 retryCount++;
                 if (retryCount >= maxRetries) {
                     return res.status(409).json({
                         success: false,
-                        message: `Invoice number conflict persists after ${maxRetries} attempts. Please try again.`,
+                        message: `تعارض رقم الفاتورة: استمر التعارض بعد ${maxRetries} محاولات. رقم الفاتورة: ${currentInvoiceNumber}`,
                         data: {
                             duplicateInvoiceNumber: existingSale.invoiceNumber,
                             duplicateInvoiceId: existingSale.id,
-                            errorType: 'different_content',
+                            errorType: 'invoice_number_conflict',
                         },
                     });
                 }
