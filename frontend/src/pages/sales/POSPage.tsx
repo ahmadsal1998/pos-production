@@ -247,6 +247,16 @@ const POSPage: React.FC = () => {
     // Barcode processing queue to prevent concurrent searches
     const barcodeQueueRef = useRef<string[]>([]); // Queue of barcodes waiting to be processed
     const isProcessingBarcodeRef = useRef(false); // Track if a barcode is currently being processed
+    // Queue for products scanned during payment processing
+    type QueuedProduct = {
+        product: POSProduct;
+        unit: string;
+        unitPriceOverride?: number;
+        conversionFactorOverride?: number;
+        piecesPerUnitOverride?: number;
+        useServerStockCheck?: boolean;
+    };
+    const queuedProductsRef = useRef<QueuedProduct[]>([]); // Queue of products waiting to be added after processing completes
     // Prevent duplicate invoice submissions
     const isSubmittingInvoiceRef = useRef(false); // Ref to track if invoice is being submitted (prevents race conditions)
     const invoiceNumberInitializedRef = useRef(false); // Track if invoice number has been initialized
@@ -1841,6 +1851,21 @@ const POSPage: React.FC = () => {
     }, []);
 
     const handleAddProduct = async (product: POSProduct, unit = 'قطعة', unitPriceOverride?: number, conversionFactorOverride?: number, piecesPerUnitOverride?: number, useServerStockCheck = false) => {
+        // CRITICAL FIX: If payment is being processed, queue the product to be added after processing completes
+        // This prevents products from being lost when scanned during transaction processing
+        if (isProcessingPayment) {
+            console.log('[POS] Payment processing in progress, queuing product for later:', product.name);
+            queuedProductsRef.current.push({
+                product,
+                unit,
+                unitPriceOverride,
+                conversionFactorOverride,
+                piecesPerUnitOverride,
+                useServerStockCheck,
+            });
+            return; // Exit early - product will be added when processing completes
+        }
+        
         // CRITICAL FIX: If sale is completed, start a new sale first to ensure the product is added to a fresh cart
         // This prevents products scanned immediately after sale confirmation from being lost
         if (saleCompleted && startNewSaleRef.current) {
@@ -4463,6 +4488,32 @@ const POSPage: React.FC = () => {
                 // Clear processing state after sale sync completes (success or failure)
                 isSubmittingInvoiceRef.current = false;
                 setIsProcessingPayment(false);
+                
+                // Process any products that were queued during payment processing
+                // Use setTimeout to ensure state updates have settled before processing queue
+                const queuedProducts = queuedProductsRef.current.splice(0); // Get and clear queue
+                if (queuedProducts.length > 0) {
+                    console.log(`[POS] Processing ${queuedProducts.length} queued product(s) that were scanned during payment processing`);
+                    // Process queued products after a short delay to ensure state has settled
+                    setTimeout(async () => {
+                        // Process queued products sequentially to avoid race conditions
+                        for (const queued of queuedProducts) {
+                            try {
+                                await handleAddProduct(
+                                    queued.product,
+                                    queued.unit,
+                                    queued.unitPriceOverride,
+                                    queued.conversionFactorOverride,
+                                    queued.piecesPerUnitOverride,
+                                    queued.useServerStockCheck
+                                );
+                            } catch (error) {
+                                console.error('[POS] Error processing queued product:', error);
+                            }
+                        }
+                    }, 100); // Small delay to ensure state updates have settled
+                }
+                
                 // Check for unsynced sales after sync completes
                 checkUnsyncedSales();
                 // Clear locked invoice number after a delay (allow time for UI updates)
@@ -4478,6 +4529,32 @@ const POSPage: React.FC = () => {
             // Ensure processing state is cleared even if promise chain fails
             isSubmittingInvoiceRef.current = false;
             setIsProcessingPayment(false);
+            
+            // Process any products that were queued during payment processing
+            // Use setTimeout to ensure state updates have settled before processing queue
+            const queuedProducts = queuedProductsRef.current.splice(0); // Get and clear queue
+            if (queuedProducts.length > 0) {
+                console.log(`[POS] Processing ${queuedProducts.length} queued product(s) that were scanned during payment processing (after error)`);
+                // Process queued products after a short delay to ensure state has settled
+                setTimeout(async () => {
+                    // Process queued products sequentially to avoid race conditions
+                    for (const queued of queuedProducts) {
+                        try {
+                            await handleAddProduct(
+                                queued.product,
+                                queued.unit,
+                                queued.unitPriceOverride,
+                                queued.conversionFactorOverride,
+                                queued.piecesPerUnitOverride,
+                                queued.useServerStockCheck
+                            );
+                        } catch (error) {
+                            console.error('[POS] Error processing queued product:', error);
+                        }
+                    }
+                }, 100); // Small delay to ensure state updates have settled
+            }
+            
             lockedInvoiceNumberRef.current = null;
         });
     };
