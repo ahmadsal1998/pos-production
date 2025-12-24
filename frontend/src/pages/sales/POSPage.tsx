@@ -261,7 +261,6 @@ const POSPage: React.FC = () => {
     const isSubmittingInvoiceRef = useRef(false); // Ref to track if invoice is being submitted (prevents race conditions)
     const invoiceNumberInitializedRef = useRef(false); // Track if invoice number has been initialized
     const lockedInvoiceNumberRef = useRef<string | null>(null); // Lock invoice number once submission starts
-    const submittedInvoiceFingerprintsRef = useRef<Set<string>>(new Set()); // Track submitted invoice fingerprints to prevent duplicates
     const conflictInvoiceNumbersRef = useRef<Set<string>>(new Set()); // Track invoice numbers that have conflicts to prevent infinite loops
     const [currentInvoice, setCurrentInvoice] = useState<POSInvoice>(() => generateNewInvoice(currentUserName, 'INV-1'));
     const [completedInvoice, setCompletedInvoice] = useState<POSInvoice | null>(null); // Store completed invoice for receipt display
@@ -639,9 +638,55 @@ const POSPage: React.FC = () => {
     }, []);
     
     // Fetch next invoice number from API
+    // Fetch current invoice number without incrementing (for page load)
+    const fetchCurrentInvoiceNumber = useCallback(async (): Promise<string> => {
+        try {
+            // Try to fetch from API first (non-incrementing endpoint)
+            const response = await salesApi.getCurrentInvoiceNumber();
+            const invoiceNumber = (response.data as any)?.data?.invoiceNumber || 'INV-1';
+            return invoiceNumber;
+        } catch (err: any) {
+            const apiError = err as ApiError;
+            console.warn('⚠️ API failed to get current invoice number, checking IndexedDB:', apiError);
+            
+            // If offline or API fails, get current invoice number from IndexedDB
+            try {
+                const storeId = user?.storeId;
+                if (storeId) {
+                    await salesDB.init();
+                    // Get the last invoice number from IndexedDB (without incrementing)
+                    const allSales = await salesDB.getSalesByStore(storeId);
+                    if (allSales.length > 0) {
+                        // Extract numbers and find max
+                        let maxNumber = 0;
+                        for (const sale of allSales) {
+                            const match = sale.invoiceNumber?.match(/^INV-(\d+)$/);
+                            if (match) {
+                                const num = parseInt(match[1], 10);
+                                if (!isNaN(num) && num > maxNumber) {
+                                    maxNumber = num;
+                                }
+                            }
+                        }
+                        const currentInvoiceNumber = `INV-${maxNumber + 1}`;
+                        console.log('✅ Got current invoice number from IndexedDB:', currentInvoiceNumber);
+                        return currentInvoiceNumber;
+                    }
+                }
+            } catch (dbError: any) {
+                console.error('❌ Failed to get invoice number from IndexedDB:', dbError);
+            }
+            
+            // Last resort: fallback to INV-1
+            console.warn('⚠️ Using fallback invoice number INV-1');
+            return 'INV-1';
+        }
+    }, [user?.storeId]);
+
+    // Fetch next invoice number (increments the sequence) - use only when completing a sale
     const fetchNextInvoiceNumber = useCallback(async (): Promise<string> => {
         try {
-            // Try to fetch from API first
+            // Try to fetch from API first (incrementing endpoint)
             const response = await salesApi.getNextInvoiceNumber();
             const invoiceNumber = (response.data as any)?.data?.invoiceNumber || 'INV-1';
             return invoiceNumber;
@@ -668,30 +713,6 @@ const POSPage: React.FC = () => {
         }
     }, [user?.storeId]);
 
-    // Generate a fingerprint/hash for invoice content to detect duplicates
-    // Defined early so it can be used in finalizeSaleWithoutTerminal
-    const generateInvoiceFingerprint = useCallback((invoice: POSInvoice, paymentMethod: string, paidAmount: number): string => {
-        // Create a unique hash based on invoice content (items, totals, customer, timestamp within 5 seconds)
-        const itemsHash = invoice.items
-            .map(item => `${item.productId}-${item.name}-${item.quantity}-${item.unitPrice}`)
-            .sort()
-            .join('|');
-        const totalsHash = `${invoice.subtotal}-${invoice.totalItemDiscount}-${invoice.invoiceDiscount}-${invoice.tax}-${invoice.grandTotal}`;
-        const customerHash = invoice.customer?.id || 'walk-in';
-        const paymentHash = `${paymentMethod}-${paidAmount}`;
-        // Round timestamp to nearest 5 seconds to catch duplicates submitted within a short time window
-        const timeWindow = Math.floor(Date.now() / 5000);
-        const fingerprint = `${itemsHash}|${totalsHash}|${customerHash}|${paymentHash}|${timeWindow}`;
-        
-        // Create a simple hash (for quick comparison)
-        let hash = 0;
-        for (let i = 0; i < fingerprint.length; i++) {
-            const char = fingerprint.charCodeAt(i);
-            hash = ((hash << 5) - hash) + char;
-            hash = hash & hash; // Convert to 32-bit integer
-        }
-        return `inv_${Math.abs(hash).toString(36)}`;
-    }, []);
 
     // Fetch initial invoice number on mount (only once)
     useEffect(() => {
@@ -707,11 +728,12 @@ const POSPage: React.FC = () => {
             }
             
             try {
-                const nextInvoiceNumber = await fetchNextInvoiceNumber();
+                // Use fetchCurrentInvoiceNumber (non-incrementing) for page load
+                const currentInvoiceNumber = await fetchCurrentInvoiceNumber();
                 // Only update if component is still mounted and not already initialized
                 if (isMountedRef.current && !invoiceNumberInitializedRef.current) {
                     invoiceNumberInitializedRef.current = true;
-                    setCurrentInvoice(inv => ({ ...inv, id: nextInvoiceNumber }));
+                    setCurrentInvoice(inv => ({ ...inv, id: currentInvoiceNumber }));
                 }
             } catch (error) {
                 console.error('Failed to initialize invoice number:', error);
@@ -720,7 +742,7 @@ const POSPage: React.FC = () => {
             }
         };
         initializeInvoiceNumber();
-    }, []); // Empty dependency array - only run once on mount
+    }, [fetchCurrentInvoiceNumber]); // Include fetchCurrentInvoiceNumber in dependencies
 
     // Initialize sales sync service on mount
     useEffect(() => {
@@ -736,6 +758,8 @@ const POSPage: React.FC = () => {
     }, []);
 
     // Function to check for unsynced sales (sales under review)
+    // IMPORTANT: Only disable Confirm Payment for critical errors (duplicates), not just unsynced sales
+    // Unsynced sales will sync automatically in the background without blocking new sales
     const checkUnsyncedSales = useCallback(async () => {
         try {
             const storeId = user?.storeId;
@@ -746,15 +770,15 @@ const POSPage: React.FC = () => {
 
             await salesDB.init();
             const unsyncedSales = await salesDB.getUnsyncedSales(storeId);
-            const hasUnsynced = unsyncedSales.length > 0;
-            setHasUnsyncedSales(hasUnsynced);
             
-            if (hasUnsynced) {
-                console.log(`[POS] Found ${unsyncedSales.length} unsynced sale(s) - Confirm Payment disabled`);
+            // Unsynced sales will sync in background - no need to block new sales
+            if (unsyncedSales.length > 0) {
+                console.log(`[POS] Found ${unsyncedSales.length} unsynced sale(s) - Will sync in background (not blocking)`);
             }
+            setHasUnsyncedSales(false); // Never block new sales based on unsynced sales
         } catch (error) {
             console.error('[POS] Error checking for unsynced sales:', error);
-            // On error, don't block payment - assume no unsynced sales
+            // On error, don't block payment - assume no critical errors
             setHasUnsyncedSales(false);
         }
     }, [user?.storeId]);
@@ -2869,11 +2893,6 @@ const POSPage: React.FC = () => {
         // Reset submission flag when starting new sale
         isSubmittingInvoiceRef.current = false;
         lockedInvoiceNumberRef.current = null;
-        // Clear old fingerprints (keep only last 100 to prevent memory issues)
-        if (submittedInvoiceFingerprintsRef.current.size > 100) {
-            const fingerprintsArray = Array.from(submittedInvoiceFingerprintsRef.current);
-            submittedInvoiceFingerprintsRef.current = new Set(fingerprintsArray.slice(-50));
-        }
         setSaleCompleted(false);
         setCompletedInvoice(null); // Clear completed invoice when starting new sale
         const nextInvoiceNumber = await fetchNextInvoiceNumber();
@@ -3575,25 +3594,9 @@ const POSPage: React.FC = () => {
             return;
         }
         
-        // CRITICAL: Calculate invoice fingerprint BEFORE locking to detect duplicate content
-        const paidAmount = selectedPaymentMethod === 'Credit' ? creditPaidAmount : 
-                          (selectedPaymentMethod === 'Points' ? 0 : finalInvoice.grandTotal);
-        const invoiceFingerprint = generateInvoiceFingerprint(finalInvoice, selectedPaymentMethod, paidAmount);
-        let currentInvoiceFingerprint = invoiceFingerprint;
-        
-        // Check if this exact invoice content was already submitted
-        if (submittedInvoiceFingerprintsRef.current.has(invoiceFingerprint)) {
-            console.error('❌ DUPLICATE INVOICE DETECTED: Same invoice content already submitted (fingerprint:', invoiceFingerprint, ')');
-            showToast('تم حفظ هذه الفاتورة مسبقاً. يرجى التحقق من الفواتير المحفوظة.', 'error');
-            return;
-        }
-        
         // CRITICAL: Lock invoice number NOW - it must not change during save process
         const lockedInvoiceNumber = finalInvoice.id;
         lockedInvoiceNumberRef.current = lockedInvoiceNumber;
-        
-        // Mark fingerprint as submitted immediately to prevent duplicate submissions
-        submittedInvoiceFingerprintsRef.current.add(currentInvoiceFingerprint);
         
         // Mark as submitting immediately to prevent race conditions
         isSubmittingInvoiceRef.current = true;
@@ -3601,7 +3604,7 @@ const POSPage: React.FC = () => {
         // Show immediate feedback
         setIsProcessingPayment(true);
         
-        console.log(`[POS] Starting invoice submission with locked invoice number: ${lockedInvoiceNumber}, fingerprint: ${currentInvoiceFingerprint}`);
+        console.log(`[POS] Starting invoice submission with locked invoice number: ${lockedInvoiceNumber}`);
         
         // CRITICAL: Only update stock for products in the invoice items
         // Ensure we're iterating ONLY over currentInvoice.items, not all products
@@ -3695,6 +3698,9 @@ const POSPage: React.FC = () => {
         
         // CRITICAL FIX: Clear cart immediately after sale completion to prevent items from reappearing
         // Generate a new empty invoice to replace current invoice
+        // IMPORTANT: Always fetch a new invoice number to prevent duplicate detection on next sale
+        // The fingerprint includes the invoice number, so a new invoice number will automatically
+        // generate a different fingerprint, allowing repeat sales (same product to same customer)
         const nextInvoiceNumber = await fetchNextInvoiceNumber();
         const newEmptyInvoice = generateNewInvoice(currentUserName, nextInvoiceNumber);
         setCurrentInvoice(newEmptyInvoice);
@@ -4135,14 +4141,13 @@ const POSPage: React.FC = () => {
                     seller: finalInvoice.cashier,
                 };
 
-                // CRITICAL: Check if invoice number already exists - but DO NOT regenerate it
-                // If the invoice number exists, this means we're trying to save a duplicate
-                // We should fail rather than generate a new number (which would cause the same invoice to be saved twice)
+                // Check if invoice number already exists - if so, generate a new one
+                // Only rule: invoice numbers must be unique
                 try {
                     await salesDB.init();
                     const invoiceExistsInDB = await salesDB.invoiceNumberExists(storeId, invoiceNumberToUse);
                     
-                    // If online, also check backend to ensure no duplicates
+                    // If online, also check backend
                     let invoiceExistsOnBackend = false;
                     if (navigator.onLine) {
                         try {
@@ -4153,147 +4158,31 @@ const POSPage: React.FC = () => {
                             });
                             const existingSales = (existingSalesResponse.data as any)?.data?.sales || [];
                             invoiceExistsOnBackend = existingSales.length > 0;
-                            
-                            // If invoice exists on backend, check if it's the same content (duplicate) or different content
-                            if (invoiceExistsOnBackend && existingSales.length > 0) {
-                                const existingSale = existingSales[0];
-                                
-                                // Use hash-based comparison to match backend logic
-                                const compareInvoiceContent = (existing: any, incoming: any): { isSame: boolean; isDifferent: boolean } => {
-                                    if (existing.items.length !== incoming.items.length) {
-                                        return { isSame: false, isDifferent: true };
-                                    }
-                                    
-                                    const existingItemsHash = existing.items
-                                        .map((item: any) => `${item.productId || ''}-${item.productName || ''}-${item.quantity || 0}-${item.unitPrice || 0}`)
-                                        .sort()
-                                        .join('|');
-                                    const incomingItemsHash = incoming.items
-                                        .map((item: any) => `${item.productId || ''}-${item.productName || ''}-${item.quantity || 0}-${item.unitPrice || 0}`)
-                                        .sort()
-                                        .join('|');
-                                    
-                                    const itemsMatch = existingItemsHash === incomingItemsHash;
-                                    const totalMatch = Math.abs((existing.total || 0) - (incoming.total || 0)) < 0.01;
-                                    
-                                    return {
-                                        isSame: itemsMatch && totalMatch,
-                                        isDifferent: !itemsMatch || !totalMatch,
-                                    };
-                                };
-                                
-                                const comparison = compareInvoiceContent(existingSale, saleData);
-                                
-                                if (comparison.isSame) {
-                                    // Same content - duplicate invoice
-                                    console.error(`❌ DUPLICATE INVOICE DETECTED: Invoice ${invoiceNumberToUse} already exists with same content`);
-                                    submittedInvoiceFingerprintsRef.current.delete(currentInvoiceFingerprint);
-                                    isSubmittingInvoiceRef.current = false;
-                                    setIsProcessingPayment(false);
-                                    lockedInvoiceNumberRef.current = null;
-                                    showToast(`فاتورة ${invoiceNumberToUse} موجودة مسبقاً. يرجى التحقق من الفواتير المحفوظة.`, 'error');
-                                    return; // Exit early - don't save duplicate
-                                } else if (comparison.isDifferent) {
-                                    // Different content - auto-generate a fresh invoice number and continue without blocking
-                                    const conflictedNumber = invoiceNumberToUse;
-                                    conflictInvoiceNumbersRef.current.add(conflictedNumber);
-                                    console.warn(`⚠️ Invoice number ${conflictedNumber} already exists with different content. Auto-generating a new number to continue.`);
-                                    try {
-                                        const newInvoiceNumber = await fetchNextInvoiceNumber();
-                                        finalInvoice.id = newInvoiceNumber;
-                                        saleData.invoiceNumber = newInvoiceNumber;
-                                        invoiceNumberToUse = newInvoiceNumber;
-                                        setCurrentInvoice({ ...finalInvoice });
-                                        lockedInvoiceNumberRef.current = newInvoiceNumber;
-                                        showToast(`رقم الفاتورة ${conflictedNumber} مستخدم. تم تعيين رقم جديد ${newInvoiceNumber} والمتابعة تلقائياً.`, 'info');
-                                        // Continue with the new invoice number (don't return)
-                                    } catch (error) {
-                                        console.error('❌ Failed to generate new invoice number:', error);
-                                            submittedInvoiceFingerprintsRef.current.delete(currentInvoiceFingerprint);
-                                        isSubmittingInvoiceRef.current = false;
-                                        setIsProcessingPayment(false);
-                                        lockedInvoiceNumberRef.current = null;
-                                        showToast('فشل في إنشاء رقم فاتورة جديد. يرجى المحاولة مرة أخرى.', 'error');
-                                        return;
-                                    }
-                                }
-                            }
                         } catch (backendCheckError) {
                             console.warn('⚠️ Could not check invoice number on backend:', backendCheckError);
-                            // Continue with IndexedDB check only
                         }
                     }
                     
-                    // If invoice number exists in IndexedDB, check if it's a duplicate or different content
-                    if (invoiceExistsInDB) {
+                    // If invoice number exists anywhere, generate a new one
+                    if (invoiceExistsInDB || invoiceExistsOnBackend) {
+                        const conflictedNumber = invoiceNumberToUse;
+                        conflictInvoiceNumbersRef.current.add(conflictedNumber);
+                        console.warn(`⚠️ Invoice number ${conflictedNumber} already exists. Auto-generating a new number to continue.`);
                         try {
-                            // Get all sales and filter by invoice number to compare content
-                            const allSales = await salesDB.getSalesByStore(storeId);
-                            const existingSale = allSales.find(s => s.invoiceNumber === invoiceNumberToUse);
-                            
-                            if (existingSale) {
-                                // Use hash-based comparison to match backend logic
-                                const compareInvoiceContent = (existing: any, incoming: any): { isSame: boolean; isDifferent: boolean } => {
-                                    if (existing.items.length !== incoming.items.length) {
-                                        return { isSame: false, isDifferent: true };
-                                    }
-                                    
-                                    const existingItemsHash = existing.items
-                                        .map((item: any) => `${item.productId || ''}-${item.productName || ''}-${item.quantity || 0}-${item.unitPrice || 0}`)
-                                        .sort()
-                                        .join('|');
-                                    const incomingItemsHash = incoming.items
-                                        .map((item: any) => `${item.productId || ''}-${item.productName || ''}-${item.quantity || 0}-${item.unitPrice || 0}`)
-                                        .sort()
-                                        .join('|');
-                                    
-                                    const itemsMatch = existingItemsHash === incomingItemsHash;
-                                    const totalMatch = Math.abs((existing.total || 0) - (incoming.total || 0)) < 0.01;
-                                    
-                                    return {
-                                        isSame: itemsMatch && totalMatch,
-                                        isDifferent: !itemsMatch || !totalMatch,
-                                    };
-                                };
-                                
-                                const comparison = compareInvoiceContent(existingSale, saleData);
-                                
-                                if (comparison.isSame) {
-                                    // Same content - duplicate invoice
-                                    console.error(`❌ DUPLICATE INVOICE DETECTED in IndexedDB: Invoice ${invoiceNumberToUse} already exists with same content`);
-                                    submittedInvoiceFingerprintsRef.current.delete(currentInvoiceFingerprint);
-                                    isSubmittingInvoiceRef.current = false;
-                                    setIsProcessingPayment(false);
-                                    lockedInvoiceNumberRef.current = null;
-                                    showToast(`فاتورة ${invoiceNumberToUse} موجودة مسبقاً في قاعدة البيانات المحلية.`, 'error');
-                                    return; // Exit early - don't save duplicate
-                                } else if (comparison.isDifferent) {
-                                    // Different content - auto-generate a fresh invoice number and continue without blocking
-                                    const conflictedNumber = invoiceNumberToUse;
-                                    conflictInvoiceNumbersRef.current.add(conflictedNumber);
-                                    console.warn(`⚠️ Invoice number ${conflictedNumber} already exists in IndexedDB with different content. Auto-generating a new number to continue.`);
-                                    try {
-                                        const newInvoiceNumber = await fetchNextInvoiceNumber();
-                                        finalInvoice.id = newInvoiceNumber;
-                                        saleData.invoiceNumber = newInvoiceNumber;
-                                        invoiceNumberToUse = newInvoiceNumber;
-                                        setCurrentInvoice({ ...finalInvoice });
-                                        lockedInvoiceNumberRef.current = newInvoiceNumber;
-                                        showToast(`رقم الفاتورة ${conflictedNumber} مستخدم. تم تعيين رقم جديد ${newInvoiceNumber} والمتابعة تلقائياً.`, 'info');
-                                        // Continue with the new invoice number (don't return)
-                                    } catch (error) {
-                                        console.error('❌ Failed to generate new invoice number:', error);
-                                            submittedInvoiceFingerprintsRef.current.delete(currentInvoiceFingerprint);
-                                        isSubmittingInvoiceRef.current = false;
-                                        setIsProcessingPayment(false);
-                                        lockedInvoiceNumberRef.current = null;
-                                        showToast('فشل في إنشاء رقم فاتورة جديد. يرجى المحاولة مرة أخرى.', 'error');
-                                        return;
-                                    }
-                                }
-                            }
-                        } catch (compareError) {
-                            console.warn('⚠️ Could not compare invoice content, proceeding with save:', compareError);
+                            const newInvoiceNumber = await fetchNextInvoiceNumber();
+                            finalInvoice.id = newInvoiceNumber;
+                            saleData.invoiceNumber = newInvoiceNumber;
+                            invoiceNumberToUse = newInvoiceNumber;
+                            setCurrentInvoice({ ...finalInvoice });
+                            lockedInvoiceNumberRef.current = newInvoiceNumber;
+                            showToast(`رقم الفاتورة ${conflictedNumber} مستخدم. تم تعيين رقم جديد ${newInvoiceNumber} والمتابعة تلقائياً.`, 'info');
+                        } catch (error) {
+                            console.error('❌ Failed to generate new invoice number:', error);
+                            isSubmittingInvoiceRef.current = false;
+                            setIsProcessingPayment(false);
+                            lockedInvoiceNumberRef.current = null;
+                            showToast('فشل في إنشاء رقم فاتورة جديد. يرجى المحاولة مرة أخرى.', 'error');
+                            return;
                         }
                     }
                 } catch (checkError: any) {
@@ -4321,22 +4210,7 @@ const POSPage: React.FC = () => {
 
                         const errorText = (syncResult.error || '').toLowerCase();
                         const errorType = (syncResult as any).errorType;
-                        const isDuplicateContent = errorType === 'duplicate_content' || errorText.includes('duplicate invoice');
-                        const isNumberConflict = errorType === 'different_content' || errorText.includes('invoice number conflict') || errorText.includes('already exists');
-
-                        if (isDuplicateContent) {
-                            const duplicateInvoiceNumber = (syncResult as any).duplicateInvoiceNumber || invoiceNumberToUse;
-                            if (!conflictInvoiceNumbersRef.current.has(duplicateInvoiceNumber)) {
-                                conflictInvoiceNumbersRef.current.add(duplicateInvoiceNumber);
-                                showToast(syncResult.error || 'تم اكتشاف فاتورة مكررة. يرجى التحقق من الفواتير المحفوظة.', 'error');
-                            }
-                            // Cleanup and abort
-                            submittedInvoiceFingerprintsRef.current.delete(currentInvoiceFingerprint);
-                            isSubmittingInvoiceRef.current = false;
-                            setIsProcessingPayment(false);
-                            lockedInvoiceNumberRef.current = null;
-                            return; // Exit early - duplicate content should not be saved
-                        }
+                        const isNumberConflict = errorType === 'invoice_number_conflict' || errorText.includes('invoice number conflict') || errorText.includes('already exists');
 
                         if (isNumberConflict) {
                             const conflictedNumber = (syncResult as any).duplicateInvoiceNumber || invoiceNumberToUse;
@@ -4349,16 +4223,11 @@ const POSPage: React.FC = () => {
                                 invoiceNumberToUse = newInvoiceNumber;
                                 setCurrentInvoice({ ...finalInvoice });
                                 lockedInvoiceNumberRef.current = newInvoiceNumber;
-                                // Refresh fingerprint tracking for the new invoice number
-                                submittedInvoiceFingerprintsRef.current.delete(currentInvoiceFingerprint);
-                                currentInvoiceFingerprint = generateInvoiceFingerprint(finalInvoice, selectedPaymentMethod, paidAmount);
-                                submittedInvoiceFingerprintsRef.current.add(currentInvoiceFingerprint);
                                 showToast(`رقم الفاتورة ${conflictedNumber} مستخدم. تم تعيين رقم جديد ${newInvoiceNumber} وسيتم المحاولة تلقائياً.`, 'info');
                                 syncAttempt++;
                                 continue; // Retry with new number
                             } catch (error) {
                                 console.error('❌ Failed to generate new invoice number during sync retry:', error);
-                                submittedInvoiceFingerprintsRef.current.delete(currentInvoiceFingerprint);
                                 isSubmittingInvoiceRef.current = false;
                                 setIsProcessingPayment(false);
                                 lockedInvoiceNumberRef.current = null;
@@ -4448,12 +4317,25 @@ const POSPage: React.FC = () => {
                     // Defensive check - if cart has items, clear it (shouldn't happen, but safety check)
                     // Only clear the cart if it's still showing the invoice we just synced.
                     // This prevents wiping items from a new sale that started while the previous sale was under review.
+                    // IMPORTANT: Always fetch a new invoice number to prevent duplicate detection on next sale
                     setCurrentInvoice(prev => {
                         const isSameInvoice = prev.id === invoiceNumberToUse;
                         if (isSameInvoice && prev.items && prev.items.length > 0) {
                             console.warn('⚠️ Cart still has items after sale completion, clearing now');
-                            // Return a new empty invoice with the same invoice number if it exists
-                            return generateNewInvoice(currentUserName, prev.id || 'INV-1');
+                            // Fetch a new invoice number asynchronously and update invoice
+                            // This prevents duplicate detection when the same customer buys the same product again
+                            fetchNextInvoiceNumber()
+                                .then(nextInvoiceNumber => {
+                                    setCurrentInvoice(generateNewInvoice(currentUserName, nextInvoiceNumber));
+                                })
+                                .catch(error => {
+                                    console.error('Failed to fetch new invoice number, using fallback:', error);
+                                    // Fallback: generate a timestamp-based invoice number
+                                    const fallbackNumber = `INV-${Date.now()}`;
+                                    setCurrentInvoice(generateNewInvoice(currentUserName, fallbackNumber));
+                                });
+                            // Return current state for now, will be updated asynchronously
+                            return prev;
                         }
                         return prev; // Cart is already clear or belongs to a new sale
                     });
@@ -4468,20 +4350,32 @@ const POSPage: React.FC = () => {
                     
                     // Defensive check - ensure cart is cleared even if sync failed
                     // Only clear if the cart still belongs to the invoice we attempted to sync.
+                    // IMPORTANT: Always fetch a new invoice number to prevent duplicate detection on next sale
                     setCurrentInvoice(prev => {
                         const isSameInvoice = prev.id === invoiceNumberToUse;
                         if (isSameInvoice && prev.items && prev.items.length > 0) {
                             console.warn('⚠️ Cart still has items after sale completion (sync failed), clearing now');
-                            return generateNewInvoice(currentUserName, prev.id || 'INV-1');
+                            // Fetch a new invoice number asynchronously and update invoice
+                            // This prevents duplicate detection when the same customer buys the same product again
+                            fetchNextInvoiceNumber()
+                                .then(nextInvoiceNumber => {
+                                    setCurrentInvoice(generateNewInvoice(currentUserName, nextInvoiceNumber));
+                                })
+                                .catch(error => {
+                                    console.error('Failed to fetch new invoice number, using fallback:', error);
+                                    // Fallback: generate a timestamp-based invoice number
+                                    const fallbackNumber = `INV-${Date.now()}`;
+                                    setCurrentInvoice(generateNewInvoice(currentUserName, fallbackNumber));
+                                });
+                            // Return current state for now, will be updated asynchronously
+                            return prev;
                         }
                         return prev;
                     });
                 }
             } catch (error: any) {
-                // On error, remove fingerprint so invoice can be retried
+                // On error, log it - sale will be retried by the periodic sync service
                 console.error('❌ Failed to save sale in background:', error);
-                console.error('❌ Error saving invoice, removing fingerprint to allow retry:', error);
-                            submittedInvoiceFingerprintsRef.current.delete(currentInvoiceFingerprint);
                 // Don't show alert - sale is already completed and user is on print page
                 // The sale will be retried by the periodic sync service
             } finally {
@@ -4523,9 +4417,6 @@ const POSPage: React.FC = () => {
             }
         }).catch(error => {
             console.error('Background sale sync task failed:', error);
-            // Remove fingerprint on error
-                submittedInvoiceFingerprintsRef.current.delete(currentInvoiceFingerprint);
-            submittedInvoiceFingerprintsRef.current.delete(currentInvoiceFingerprint);
             // Ensure processing state is cleared even if promise chain fails
             isSubmittingInvoiceRef.current = false;
             setIsProcessingPayment(false);
@@ -5606,9 +5497,9 @@ const POSPage: React.FC = () => {
                                         onClick={handleFinalizePayment} 
                                         disabled={currentInvoice.items.length === 0 || isProcessingPayment || hasUnsyncedSales} 
                                         className="w-full px-8 py-5 text-lg sm:text-xl font-bold text-white bg-gradient-to-r from-green-500 via-emerald-500 to-green-600 rounded-xl hover:from-green-600 hover:via-emerald-600 hover:to-green-700 disabled:from-gray-400 disabled:via-gray-400 disabled:to-gray-500 dark:disabled:from-gray-600 dark:disabled:via-gray-600 dark:disabled:to-gray-700 shadow-2xl hover:shadow-3xl hover:scale-[1.02] transition-all duration-200 disabled:cursor-not-allowed disabled:scale-100"
-                                        title={hasUnsyncedSales ? 'لا يمكن تأكيد الدفع: يوجد فواتير قيد المراجعة' : ''}
+                                        title={hasUnsyncedSales ? 'لا يمكن تأكيد الدفع: يوجد فواتير مكررة تحتاج للمراجعة. يرجى التحقق من الفواتير المحفوظة وحذف المكررة.' : ''}
                                     >
-                                        {isProcessingPayment ? 'جاري المعالجة...' : hasUnsyncedSales ? 'قيد المراجعة...' : AR_LABELS.confirmPayment}
+                                        {isProcessingPayment ? 'جاري المعالجة...' : hasUnsyncedSales ? 'فاتورة مكررة - يرجى المراجعة' : AR_LABELS.confirmPayment}
                                     </button>
                                 </div>
                             </div>

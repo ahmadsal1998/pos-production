@@ -164,7 +164,8 @@ class SalesDB {
         const existingSale = checkRequest.result;
         
         if (existingSale) {
-          // Update existing sale, preserving its ID and merging data
+          // Invoice number already exists - update existing sale, preserving its ID
+          // Only rule: invoice numbers must be unique, but we allow updating existing invoices
           const updatedSale: SaleRecord = {
             ...existingSale, // Preserve existing data
             ...saleData, // Override with new data

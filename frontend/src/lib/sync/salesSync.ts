@@ -79,9 +79,16 @@ class SalesSyncService {
   /**
    * Sync a single sale to backend
    */
-  async syncSale(sale: SaleRecord, storeId: string, indexedDBAvailable: boolean = true): Promise<{ success: boolean; backendId?: string; error?: string }> {
+  async syncSale(sale: SaleRecord, storeId: string, indexedDBAvailable: boolean = true): Promise<{ success: boolean; backendId?: string; error?: string; errorType?: string; duplicateInvoiceNumber?: string; invoiceContent?: any }> {
     let savedInvoiceNumber: string | undefined;
     try {
+      // CRITICAL: Check if this sale was already synced before attempting sync
+      // This prevents duplicate sync attempts
+      if (sale.synced && sale._id) {
+        console.log(`✅ Sale ${sale.invoiceNumber} already synced (backend ID: ${sale._id}), skipping sync`);
+        return { success: true, backendId: sale._id };
+      }
+
       // Prepare sale data for backend (remove local-only fields)
       // Normalize payment method to lowercase (backend expects: cash, card, credit)
       const normalizedPaymentMethod = sale.paymentMethod?.toLowerCase() || 'cash';
@@ -147,93 +154,55 @@ class SalesSyncService {
       const errorMessage = error?.message || 'Unknown sync error';
       const statusCode = error?.response?.status || error?.status;
       
-      // Detect 409 Conflict (invoice number already exists or duplicate content detected)
+      // Detect 409 Conflict (invoice number already exists)
       if (statusCode === 409) {
         const errorData = error?.response?.data?.data;
-        const errorMessage = error?.response?.data?.message || error?.message || 'Unknown error';
+        const backendErrorMessage = error?.response?.data?.message || error?.message || 'Unknown error';
         const errorType = errorData?.errorType;
         
-        // Check if this is a duplicate content error (same content)
-        if (errorType === 'duplicate_content' || errorMessage.includes('Duplicate invoice detected') || errorMessage.includes('same content')) {
-          const duplicateInvoiceNumber = errorData?.duplicateInvoiceNumber;
-          console.error(`❌ DUPLICATE INVOICE DETECTED BY BACKEND: ${errorMessage}`);
-          if (duplicateInvoiceNumber) {
-            console.error(`   Duplicate invoice number: ${duplicateInvoiceNumber}`);
+        // Invoice number conflict - generate new number and retry
+        const duplicateInvoiceNumber = errorData?.duplicateInvoiceNumber || sale.invoiceNumber;
+        
+        const detailedErrorMessage = `تعارض رقم الفاتورة: رقم الفاتورة ${sale.invoiceNumber} مستخدم بالفعل. سيتم إنشاء رقم فاتورة جديد تلقائياً.`;
+        
+        console.warn(`⚠️ INVOICE NUMBER CONFLICT BY BACKEND: ${detailedErrorMessage}`);
+        
+        // Mark as error but allow retry with new number
+        if (indexedDBAvailable && sale.id) {
+          try {
+            await salesDB.markSyncError(sale.id, detailedErrorMessage, sale.storeId, sale.invoiceNumber);
+          } catch (dbError) {
+            console.warn('Could not mark conflict error in IndexedDB:', dbError);
           }
-          
-          // This is a true duplicate - don't mark as synced, mark as error
-          if (indexedDBAvailable && sale.id) {
-            try {
-              await salesDB.markSyncError(sale.id, `Duplicate invoice: ${errorMessage}`, sale.storeId, sale.invoiceNumber);
-            } catch (dbError) {
-              console.warn('Could not mark duplicate error in IndexedDB:', dbError);
-            }
-          }
-          
-          const duplicateResult: any = { 
-            success: false, 
-            error: `Duplicate invoice detected: ${errorMessage}. Please check invoice ${duplicateInvoiceNumber || sale.invoiceNumber}.`,
-            errorType: 'duplicate_content',
-          };
-          
-          // Include duplicateInvoiceNumber for frontend tracking
-          if (duplicateInvoiceNumber) {
-            duplicateResult.duplicateInvoiceNumber = duplicateInvoiceNumber;
-          }
-          
-          return duplicateResult;
         }
         
-        // Check if this is a different content error (invoice number exists but content differs)
-        if (errorType === 'different_content' || (errorMessage.includes('already exists with different content') && !errorMessage.includes('same content'))) {
-          const duplicateInvoiceNumber = errorData?.duplicateInvoiceNumber;
-          const existingInvoice = errorData?.existingInvoice;
-          console.error(`❌ INVOICE NUMBER CONFLICT BY BACKEND: ${errorMessage}`);
-          if (duplicateInvoiceNumber) {
-            console.error(`   Conflicting invoice number: ${duplicateInvoiceNumber}`);
-          }
-          
-          // This is a conflict - don't mark as synced, mark as error
-          if (indexedDBAvailable && sale.id) {
-            try {
-              await salesDB.markSyncError(sale.id, `Invoice number conflict: ${errorMessage}`, sale.storeId, sale.invoiceNumber);
-            } catch (dbError) {
-              console.warn('Could not mark conflict error in IndexedDB:', dbError);
-            }
-          }
-          
-          const conflictResult: any = { 
-            success: false, 
-            error: `Invoice number conflict: ${errorMessage}. Please use a different invoice number.`,
-            existingInvoice: existingInvoice || null,
-            errorType: 'different_content',
-          };
-          
-          // Also include duplicateInvoiceNumber for frontend tracking
-          if (duplicateInvoiceNumber) {
-            conflictResult.duplicateInvoiceNumber = duplicateInvoiceNumber;
-          }
-          
-          return conflictResult;
-        }
+        const conflictResult: any = { 
+          success: false, 
+          error: detailedErrorMessage,
+          errorType: 'invoice_number_conflict',
+          duplicateInvoiceNumber: duplicateInvoiceNumber,
+        };
         
-        // Check if the sale was already synced (maybe from another device/tab)
-        // In this case, we should mark it as synced rather than error
-        try {
-          // Try to fetch the existing sale from server to get its ID
-          const existingSalesResponse = await salesApi.getSales({
-            invoiceNumber: sale.invoiceNumber,
-            storeId: sale.storeId,
-            limit: 1,
-          });
+        return conflictResult;
+      }
+      
+      // Check if the sale was already synced (maybe from another device/tab)
+      // In this case, we should mark it as synced rather than error
+      try {
+        // Try to fetch the existing sale from server to get its ID
+        const existingSalesResponse = await salesApi.getSales({
+          invoiceNumber: sale.invoiceNumber,
+          storeId: sale.storeId,
+          limit: 1,
+        });
+        
+        const existingSales = (existingSalesResponse.data as any)?.data?.sales || [];
+        if (existingSales.length > 0) {
+          const existingSale = existingSales[0];
+          const backendId = existingSale.id || existingSale._id;
           
-          const existingSales = (existingSalesResponse.data as any)?.data?.sales || [];
-          if (existingSales.length > 0) {
-            const existingSale = existingSales[0];
-            const backendId = existingSale.id || existingSale._id;
-            
-            // Sale already exists on server - mark as synced
-            if (indexedDBAvailable && sale.id) {
+          // Mark as synced since it exists on server
+          if (indexedDBAvailable && sale.id) {
             await salesDB.markAsSynced(
               sale.id,
               backendId,
@@ -244,32 +213,14 @@ class SalesSyncService {
             if (savedInvoiceNumber && savedInvoiceNumber !== sale.invoiceNumber) {
               sale.invoiceNumber = savedInvoiceNumber;
             }
-            }
-            
-            console.log(`✅ Sale ${sale.invoiceNumber} already exists on server, marked as synced`);
-            return { success: true, backendId };
           }
-        } catch (fetchError) {
-          // Couldn't fetch existing sale, treat as conflict
-          console.warn('Could not verify existing sale:', fetchError);
+          
+          console.log(`✅ Sale ${sale.invoiceNumber} already exists on server, marked as synced`);
+          return { success: true, backendId };
         }
-        
-        // True conflict - invoice number exists but we can't verify it's the same sale
-        const conflictMessage = `Invoice number ${sale.invoiceNumber} already exists on server. This may happen if an invoice was suspended and restored. The sale has been saved locally and will be retried.`;
-        console.error('❌ Invoice number conflict:', sale.invoiceNumber, conflictMessage);
-        
-        // Mark sync error in IndexedDB with specific conflict message
-        // Don't mark as permanently failed - will retry on next sync
-        if (indexedDBAvailable && sale.id) {
-          try {
-            await salesDB.markSyncError(sale.id, conflictMessage, sale.storeId, sale.invoiceNumber);
-          } catch (dbError) {
-            console.warn('⚠️ Failed to mark sync error in IndexedDB:', dbError);
-            // Continue anyway
-          }
-        }
-        
-        return { success: false, error: conflictMessage };
+      } catch (fetchError) {
+        // Couldn't fetch existing sale, continue with error handling
+        console.warn('Could not verify existing sale:', fetchError);
       }
       
       console.error('❌ Failed to sync sale:', sale.invoiceNumber, errorMessage);
@@ -349,6 +300,8 @@ class SalesSyncService {
           continue;
         }
 
+        // All sales can be retried - no duplicate content checks
+
         const syncResult = await this.syncSale(sale, saleStoreId);
 
         if (syncResult.success) {
@@ -356,11 +309,14 @@ class SalesSyncService {
           console.log(`✅ [SalesSync] Successfully synced sale ${i + 1}/${unsyncedSales.length}: ${sale.invoiceNumber}`);
         } else {
           results.failed++;
+          const errorMessage = syncResult.error || 'Unknown error';
           results.errors.push({
             saleId: sale.id || 'unknown',
-            error: syncResult.error || 'Unknown error',
+            error: errorMessage,
           });
-          console.error(`❌ [SalesSync] Failed to sync sale ${i + 1}/${unsyncedSales.length}: ${sale.invoiceNumber} - ${syncResult.error}`);
+          
+          // Log error information
+          console.error(`❌ [SalesSync] Failed to sync sale ${i + 1}/${unsyncedSales.length}: ${sale.invoiceNumber} - ${errorMessage}`);
         }
 
         // Small delay between syncs to avoid rate limiting

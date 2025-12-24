@@ -8,6 +8,7 @@ import {
   deleteSale,
   processReturn,
   getNextInvoiceNumber,
+  getCurrentInvoiceNumber,
   getPublicInvoice,
 } from '../controllers/sales.controller';
 import { authenticate } from '../middleware/auth.middleware';
@@ -22,6 +23,7 @@ router.get('/public/invoice', getPublicInvoice);
 router.use(authenticate);
 router.use(requireStoreAccess);
 
+router.get('/current-invoice-number', getCurrentInvoiceNumber);
 router.get('/next-invoice-number', getNextInvoiceNumber);
 router.post('/', createSale);
 router.post('/return', processReturn);
