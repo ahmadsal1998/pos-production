@@ -26,15 +26,29 @@ async function getMaxInvoiceNumberFromSales(Sale: any, storeId: string): Promise
     
     let maxNumber = 0;
     
-    // Extract numeric part from invoice numbers (format: INV-1, INV-2, etc.)
+    // Extract numeric part from invoice numbers
+    // Handles both sequential format (INV-123) and legacy timestamp format (INV-timestamp-random)
+    const sequentialPattern = /^INV-(\d+)$/; // Matches INV-123 format
+    const timestampPattern = /^INV-(\d+)-/; // Matches INV-timestamp-... format (legacy)
+    
     for (const sale of sales) {
       const invoiceNumber = sale.invoiceNumber || '';
-      // Match INV- followed by digits
-      const match = invoiceNumber.match(/^INV-(\d+)$/);
-      if (match) {
-        const num = parseInt(match[1], 10);
+      // First try sequential format (INV-123)
+      const sequentialMatch = invoiceNumber.match(sequentialPattern);
+      if (sequentialMatch) {
+        const num = parseInt(sequentialMatch[1], 10);
         if (!isNaN(num) && num > maxNumber) {
           maxNumber = num;
+        }
+      } else {
+        // Legacy format: use high base number to avoid conflicts with sequential numbers
+        // This ensures new sequential numbers start after legacy invoices
+        const timestampMatch = invoiceNumber.match(timestampPattern);
+        if (timestampMatch) {
+          const baseNumber = 1000000; // Start from 1M to avoid conflicts
+          if (maxNumber < baseNumber) {
+            maxNumber = baseNumber;
+          }
         }
       }
     }

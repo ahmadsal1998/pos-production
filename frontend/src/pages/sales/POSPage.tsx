@@ -658,14 +658,29 @@ const POSPage: React.FC = () => {
                     // Get the last invoice number from IndexedDB (without incrementing)
                     const allSales = await salesDB.getSalesByStore(storeId);
                     if (allSales.length > 0) {
-                        // Extract numbers and find max
+                        // Extract numbers and find max (handles both sequential and legacy timestamp format)
                         let maxNumber = 0;
+                        const sequentialPattern = /^INV-(\d+)$/; // Matches INV-123 format
+                        const timestampPattern = /^INV-(\d+)-/; // Matches INV-timestamp-... format (legacy)
+                        
                         for (const sale of allSales) {
-                            const match = sale.invoiceNumber?.match(/^INV-(\d+)$/);
-                            if (match) {
-                                const num = parseInt(match[1], 10);
-                                if (!isNaN(num) && num > maxNumber) {
-                                    maxNumber = num;
+                            if (sale.invoiceNumber) {
+                                // First try sequential format (INV-123)
+                                const sequentialMatch = sale.invoiceNumber.match(sequentialPattern);
+                                if (sequentialMatch) {
+                                    const num = parseInt(sequentialMatch[1], 10);
+                                    if (!isNaN(num) && num > maxNumber) {
+                                        maxNumber = num;
+                                    }
+                                } else {
+                                    // Legacy format: use high base number to avoid conflicts
+                                    const timestampMatch = sale.invoiceNumber.match(timestampPattern);
+                                    if (timestampMatch) {
+                                        const baseNumber = 1000000; // Start from 1M to avoid conflicts
+                                        if (maxNumber < baseNumber) {
+                                            maxNumber = baseNumber;
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -2839,14 +2854,18 @@ const POSPage: React.FC = () => {
             return updated;
         });
         
-        // CRITICAL FIX: Generate unique invoice number immediately for new invoice
-        // This ensures the held invoice is completely isolated from the new one
-        const timestamp = Date.now();
-        const random = Math.random().toString(36).substr(2, 9);
-        const nextInvoiceNumber = `INV-${timestamp}-${random}`;
-        setCurrentInvoice(generateNewInvoice(currentUserName, nextInvoiceNumber));
-        
-        console.log(`[POS] Invoice ${invoiceToHold.id} suspended. New invoice ${nextInvoiceNumber} created.`);
+        // Get sequential invoice number for new invoice (non-incrementing, for display only)
+        try {
+            const nextInvoiceNumber = await fetchCurrentInvoiceNumber();
+            setCurrentInvoice(generateNewInvoice(currentUserName, nextInvoiceNumber));
+            console.log(`[POS] Invoice ${invoiceToHold.id} suspended. New invoice ${nextInvoiceNumber} created.`);
+        } catch (error) {
+            console.error('Failed to fetch invoice number for new sale after hold, using fallback:', error);
+            // Fallback: use INV-1 if fetch fails
+            const fallbackNumber = 'INV-1';
+            setCurrentInvoice(generateNewInvoice(currentUserName, fallbackNumber));
+            console.log(`[POS] Invoice ${invoiceToHold.id} suspended. New invoice ${fallbackNumber} created (fallback).`);
+        }
     };
 
     const handleRestoreSale = async (heldKey: string) => {
@@ -2863,11 +2882,16 @@ const POSPage: React.FC = () => {
         
         const invoiceToRestore = heldInvoices.find(inv => inv.heldKey === heldKey);
         if (invoiceToRestore) {
-            // CRITICAL FIX: Generate unique invoice number immediately when restoring a suspended invoice
+            // Get sequential invoice number when restoring a suspended invoice
             // This prevents conflicts when the suspended invoice is completed and synced
-            const timestamp = Date.now();
-            const random = Math.random().toString(36).substr(2, 9);
-            const newInvoiceNumber = `INV-${timestamp}-${random}`;
+            let newInvoiceNumber: string;
+            try {
+                newInvoiceNumber = await fetchCurrentInvoiceNumber();
+            } catch (error) {
+                console.error('Failed to fetch invoice number for restored sale, using fallback:', error);
+                // Fallback: use INV-1 if fetch fails
+                newInvoiceNumber = 'INV-1';
+            }
             
             // Create a deep copy when restoring to prevent reference issues
             // IMPORTANT: Assign the new invoice number to avoid conflicts
@@ -2924,14 +2948,19 @@ const POSPage: React.FC = () => {
         setSaleCompleted(false);
         setCompletedInvoice(null); // Clear completed invoice when starting new sale
         
-        // CRITICAL FIX: Generate unique invoice number immediately (synchronous)
-        // This ensures each new sale is independent, even if previous sales are still syncing
-        const timestamp = Date.now();
-        const random = Math.random().toString(36).substr(2, 9);
-        const nextInvoiceNumber = `INV-${timestamp}-${random}`;
-        setCurrentInvoice(generateNewInvoice(currentUserName, nextInvoiceNumber));
-        
-        console.log(`[POS] Started new sale with unique invoice number: ${nextInvoiceNumber}`);
+        // Get sequential invoice number (non-incrementing, for display only)
+        // The actual increment happens when the sale is completed
+        try {
+            const nextInvoiceNumber = await fetchCurrentInvoiceNumber();
+            setCurrentInvoice(generateNewInvoice(currentUserName, nextInvoiceNumber));
+            console.log(`[POS] Started new sale with invoice number: ${nextInvoiceNumber}`);
+        } catch (error) {
+            console.error('Failed to fetch invoice number, using fallback:', error);
+            // Fallback: use INV-1 if fetch fails
+            const fallbackNumber = 'INV-1';
+            setCurrentInvoice(generateNewInvoice(currentUserName, fallbackNumber));
+            console.log(`[POS] Started new sale with fallback invoice number: ${fallbackNumber}`);
+        }
         
         setSelectedPaymentMethod('Cash');
         setCreditPaidAmount(0);
@@ -3637,19 +3666,33 @@ const POSPage: React.FC = () => {
             // Use locked number if already set (shouldn't happen, but safety check)
             lockedInvoiceNumber = lockedInvoiceNumberRef.current;
         } else {
-            // Generate unique temporary invoice number immediately (synchronous)
-            // Format: INV-{timestamp}-{random} to ensure uniqueness
-            const timestamp = Date.now();
-            const random = Math.random().toString(36).substr(2, 9);
-            lockedInvoiceNumber = `INV-${timestamp}-${random}`;
-            lockedInvoiceNumberRef.current = lockedInvoiceNumber;
-            
-            // Update the invoice with the new unique number
-            finalInvoice.id = lockedInvoiceNumber;
-            setCurrentInvoice({ ...finalInvoice });
+            // Get next sequential invoice number (incrementing) when completing sale
+            // This ensures proper sequential numbering
+            try {
+                lockedInvoiceNumber = await fetchNextInvoiceNumber();
+                lockedInvoiceNumberRef.current = lockedInvoiceNumber;
+                
+                // Update the invoice with the new sequential number
+                finalInvoice.id = lockedInvoiceNumber;
+                setCurrentInvoice({ ...finalInvoice });
+            } catch (error) {
+                console.error('Failed to fetch next invoice number, using fallback:', error);
+                // Fallback: generate sequential number from current invoice number
+                const currentMatch = finalInvoice.id?.match(/^INV-(\d+)$/);
+                if (currentMatch) {
+                    const currentNum = parseInt(currentMatch[1], 10);
+                    lockedInvoiceNumber = `INV-${currentNum + 1}`;
+                } else {
+                    // Last resort: use INV-1
+                    lockedInvoiceNumber = 'INV-1';
+                }
+                lockedInvoiceNumberRef.current = lockedInvoiceNumber;
+                finalInvoice.id = lockedInvoiceNumber;
+                setCurrentInvoice({ ...finalInvoice });
+            }
         }
         
-        console.log(`[POS] Generated unique invoice number immediately: ${lockedInvoiceNumber}`);
+        console.log(`[POS] Generated sequential invoice number: ${lockedInvoiceNumber}`);
         
         // Mark as submitting immediately to prevent race conditions
         isSubmittingInvoiceRef.current = true;
@@ -3749,16 +3792,31 @@ const POSPage: React.FC = () => {
         setCompletedInvoice(finalInvoice);
         setSaleCompleted(true);
         
-        // CRITICAL FIX: Generate new unique invoice number IMMEDIATELY for next sale
-        // This ensures the next sale is completely independent, even if previous sale hasn't synced yet
-        // Use timestamp-based unique number to prevent any conflicts
-        const timestamp = Date.now();
-        const random = Math.random().toString(36).substr(2, 9);
-        const nextInvoiceNumber = `INV-${timestamp}-${random}`;
-        const newEmptyInvoice = generateNewInvoice(currentUserName, nextInvoiceNumber);
-        setCurrentInvoice(newEmptyInvoice);
-        
-        console.log(`[POS] Generated new independent invoice number for next sale: ${nextInvoiceNumber}`);
+        // Get next sequential invoice number for the next sale
+        // This ensures proper sequential numbering
+        fetchNextInvoiceNumber()
+            .then(nextInvoiceNumber => {
+                const newEmptyInvoice = generateNewInvoice(currentUserName, nextInvoiceNumber);
+                setCurrentInvoice(newEmptyInvoice);
+                console.log(`[POS] Generated new sequential invoice number for next sale: ${nextInvoiceNumber}`);
+            })
+            .catch(error => {
+                console.error('Failed to fetch next invoice number after sale completion, using fallback:', error);
+                // Fallback: generate sequential number from locked invoice number
+                const lockedMatch = lockedInvoiceNumberRef.current?.match(/^INV-(\d+)$/);
+                if (lockedMatch) {
+                    const lockedNum = parseInt(lockedMatch[1], 10);
+                    const fallbackNumber = `INV-${lockedNum + 1}`;
+                    const newEmptyInvoice = generateNewInvoice(currentUserName, fallbackNumber);
+                    setCurrentInvoice(newEmptyInvoice);
+                    console.log(`[POS] Generated fallback sequential invoice number: ${fallbackNumber}`);
+                } else {
+                    // Last resort: use INV-1
+                    const newEmptyInvoice = generateNewInvoice(currentUserName, 'INV-1');
+                    setCurrentInvoice(newEmptyInvoice);
+                    console.log(`[POS] Generated fallback invoice number: INV-1`);
+                }
+            });
         
         // NOTE: Keep isProcessingPayment true until sale sync completes to prevent duplicate submissions
         
@@ -4333,9 +4391,16 @@ const POSPage: React.FC = () => {
                                 })
                                 .catch(error => {
                                     console.error('Failed to fetch new invoice number, using fallback:', error);
-                                    // Fallback: generate a timestamp-based invoice number
-                                    const fallbackNumber = `INV-${Date.now()}`;
-                                    setCurrentInvoice(generateNewInvoice(currentUserName, fallbackNumber));
+                                    // Fallback: generate sequential number from current invoice
+                                    const currentMatch = prev.id?.match(/^INV-(\d+)$/);
+                                    if (currentMatch) {
+                                        const currentNum = parseInt(currentMatch[1], 10);
+                                        const fallbackNumber = `INV-${currentNum + 1}`;
+                                        setCurrentInvoice(generateNewInvoice(currentUserName, fallbackNumber));
+                                    } else {
+                                        // Last resort: use INV-1
+                                        setCurrentInvoice(generateNewInvoice(currentUserName, 'INV-1'));
+                                    }
                                 });
                             // Return current state for now, will be updated asynchronously
                             return prev;
@@ -4366,9 +4431,16 @@ const POSPage: React.FC = () => {
                                 })
                                 .catch(error => {
                                     console.error('Failed to fetch new invoice number, using fallback:', error);
-                                    // Fallback: generate a timestamp-based invoice number
-                                    const fallbackNumber = `INV-${Date.now()}`;
-                                    setCurrentInvoice(generateNewInvoice(currentUserName, fallbackNumber));
+                                    // Fallback: generate sequential number from current invoice
+                                    const currentMatch = prev.id?.match(/^INV-(\d+)$/);
+                                    if (currentMatch) {
+                                        const currentNum = parseInt(currentMatch[1], 10);
+                                        const fallbackNumber = `INV-${currentNum + 1}`;
+                                        setCurrentInvoice(generateNewInvoice(currentUserName, fallbackNumber));
+                                    } else {
+                                        // Last resort: use INV-1
+                                        setCurrentInvoice(generateNewInvoice(currentUserName, 'INV-1'));
+                                    }
                                 });
                             // Return current state for now, will be updated asynchronously
                             return prev;

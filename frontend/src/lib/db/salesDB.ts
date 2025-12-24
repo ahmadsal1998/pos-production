@@ -734,6 +734,7 @@ class SalesDB {
   /**
    * Get the next invoice number for a store when offline
    * Checks IndexedDB for existing invoice numbers and generates the next unique one
+   * Handles both sequential format (INV-123) and legacy timestamp format (INV-timestamp-random)
    */
   async getNextInvoiceNumberOffline(storeId: string): Promise<string> {
     const db = await this.ensureDB();
@@ -746,17 +747,32 @@ class SalesDB {
       request.onsuccess = () => {
         const sales: SaleRecord[] = request.result || [];
         
-        // Extract invoice numbers and find the highest number
+        // Extract invoice numbers and find the highest sequential number
         let maxNumber = 0;
-        const invoiceNumberPattern = /^INV-(\d+)$/i;
+        const sequentialPattern = /^INV-(\d+)$/i; // Matches INV-123 format
+        const timestampPattern = /^INV-(\d+)-/i; // Matches INV-timestamp-... format (legacy)
         
         sales.forEach(sale => {
           if (sale.invoiceNumber) {
-            const match = sale.invoiceNumber.match(invoiceNumberPattern);
-            if (match) {
-              const number = parseInt(match[1], 10);
+            // First try sequential format (INV-123)
+            const sequentialMatch = sale.invoiceNumber.match(sequentialPattern);
+            if (sequentialMatch) {
+              const number = parseInt(sequentialMatch[1], 10);
               if (!isNaN(number) && number > maxNumber) {
                 maxNumber = number;
+              }
+            } else {
+              // Legacy format: extract timestamp and convert to approximate sequential number
+              // This helps maintain continuity when migrating from old format
+              const timestampMatch = sale.invoiceNumber.match(timestampPattern);
+              if (timestampMatch) {
+                // For legacy invoices, we'll start from 1 and increment
+                // The actual number doesn't matter as long as it's unique
+                // We'll use a high base number to avoid conflicts
+                const baseNumber = 1000000; // Start from 1M to avoid conflicts with sequential numbers
+                if (maxNumber < baseNumber) {
+                  maxNumber = baseNumber;
+                }
               }
             }
           }
