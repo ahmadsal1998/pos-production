@@ -270,6 +270,7 @@ const POSPage: React.FC = () => {
     const [showCostPrice, setShowCostPrice] = useState<boolean>(false); // Toggle for cost price column visibility
     const [toastMessage, setToastMessage] = useState<string | null>(null); // Toast notification message
     const [toastType, setToastType] = useState<'info' | 'error' | 'success'>('info'); // Toast type
+    const [unsyncedSalesCount, setUnsyncedSalesCount] = useState<number>(0); // Count of sales pending sync
 
     // Show toast notification
     const showToast = useCallback((message: string, type: 'info' | 'error' | 'success' = 'info') => {
@@ -781,6 +782,29 @@ const POSPage: React.FC = () => {
             // On error, don't block payment - assume no critical errors
             setHasUnsyncedSales(false);
         }
+    }, [user?.storeId]);
+
+    // Poll for unsynced sales count for UI feedback
+    useEffect(() => {
+        const updateUnsyncedCount = async () => {
+            try {
+                const storeId = user?.storeId;
+                if (storeId) {
+                    const count = await salesSync.getUnsyncedCount(storeId);
+                    setUnsyncedSalesCount(count);
+                }
+            } catch (error) {
+                console.warn('Failed to get unsynced sales count:', error);
+            }
+        };
+
+        // Initial check
+        updateUnsyncedCount();
+
+        // Poll every 5 seconds
+        const interval = setInterval(updateUnsyncedCount, 5000);
+
+        return () => clearInterval(interval);
     }, [user?.storeId]);
 
     // Check for unsynced sales on mount and periodically
@@ -3242,13 +3266,13 @@ const POSPage: React.FC = () => {
                     seller: returnInvoice.cashier,
                 };
 
-                // Use IndexedDB sync service (saves locally and syncs with backend)
-                const syncResult = await salesSync.createAndSyncSale(saleData, storeId);
+                // Use non-blocking sale creation (saves locally immediately, syncs in background)
+                const syncResult = await salesSync.createSale(saleData, storeId);
                 
                 if (syncResult.success) {
-                    console.log('✅ Return saved to IndexedDB and synced:', returnInvoice.id);
+                    console.log('✅ Return saved to IndexedDB (will sync in background):', returnInvoice.id);
                     
-                    // Show warning if sync had errors but return was saved locally
+                    // Note: Any sync errors will be handled by background sync service
                     if (syncResult.error) {
                         console.warn('⚠️ Return saved locally, will sync later:', syncResult.error);
                     }
@@ -4189,75 +4213,34 @@ const POSPage: React.FC = () => {
                     console.warn('⚠️ Could not check invoice number uniqueness, proceeding anyway:', checkError);
                 }
 
-                // Use IndexedDB sync service (saves locally and syncs with backend)
-                // CRITICAL: Ensure sale is saved to IndexedDB even if sync fails
+                // Use non-blocking sale creation (saves locally immediately, syncs in background)
+                // This allows users to start new sales without waiting for sync to complete
                 let syncResult;
-                const maxInvoiceRetries = 2;
-                let syncAttempt = 0;
-                while (syncAttempt <= maxInvoiceRetries) {
-                    try {
-                        syncResult = await salesSync.createAndSyncSale(saleData, storeId);
-                        console.log(`[POS] Sale sync result for ${saleData.invoiceNumber}:`, {
-                            success: syncResult.success,
-                            saleId: syncResult.saleId,
-                            error: syncResult.error
-                        });
-                        
-                        // Break out if success or no error
-                        if (!syncResult || syncResult.success || !syncResult.error) {
-                            break;
-                        }
-
-                        const errorText = (syncResult.error || '').toLowerCase();
-                        const errorType = (syncResult as any).errorType;
-                        const isNumberConflict = errorType === 'invoice_number_conflict' || errorText.includes('invoice number conflict') || errorText.includes('already exists');
-
-                        if (isNumberConflict) {
-                            const conflictedNumber = (syncResult as any).duplicateInvoiceNumber || invoiceNumberToUse;
-                            conflictInvoiceNumbersRef.current.add(conflictedNumber);
-                            console.warn(`⚠️ Invoice number ${conflictedNumber} conflicted during sync. Auto-generating a new number and retrying...`);
-                            try {
-                                const newInvoiceNumber = await fetchNextInvoiceNumber();
-                                finalInvoice.id = newInvoiceNumber;
-                                saleData.invoiceNumber = newInvoiceNumber;
-                                invoiceNumberToUse = newInvoiceNumber;
-                                setCurrentInvoice({ ...finalInvoice });
-                                lockedInvoiceNumberRef.current = newInvoiceNumber;
-                                showToast(`رقم الفاتورة ${conflictedNumber} مستخدم. تم تعيين رقم جديد ${newInvoiceNumber} وسيتم المحاولة تلقائياً.`, 'info');
-                                syncAttempt++;
-                                continue; // Retry with new number
-                            } catch (error) {
-                                console.error('❌ Failed to generate new invoice number during sync retry:', error);
-                                isSubmittingInvoiceRef.current = false;
-                                setIsProcessingPayment(false);
-                                lockedInvoiceNumberRef.current = null;
-                                showToast('فشل في إنشاء رقم فاتورة جديد أثناء إعادة المحاولة. يرجى المحاولة مرة أخرى.', 'error');
-                                return;
-                            }
-                        }
-
-                        // Non-conflict error - break and let existing error handling continue
-                        break;
-                    } catch (syncError: any) {
-                        // If createAndSyncSale throws an error, try to save directly to IndexedDB
-                        console.error('❌ Error in createAndSyncSale, attempting direct IndexedDB save:', syncError);
-                        try {
-                            await salesDB.init();
-                            // Create a new object with synced property for IndexedDB
-                            const saleDataWithSynced = { ...saleData, synced: false } as any;
-                            await salesDB.saveSale(saleDataWithSynced);
-                            console.log('✅ Sale saved directly to IndexedDB after sync error:', saleData.invoiceNumber);
-                            syncResult = { success: true, saleId: saleData.invoiceNumber, error: syncError?.message };
-                            // Update invoice ID to match saved invoice number
-                            finalInvoice.id = saleData.invoiceNumber;
-                            setCurrentInvoice(finalInvoice);
-                        } catch (dbError: any) {
-                            console.error('❌ Failed to save sale to IndexedDB:', dbError);
-                            // Still try to save to localStorage as last resort
-                            syncResult = { success: false, error: dbError?.message || 'Failed to save sale' };
-                        }
-                        break; // Exit retry loop after fallback
+                try {
+                    syncResult = await salesSync.createSale(saleData, storeId);
+                    console.log(`[POS] Sale saved (will sync in background) for ${saleData.invoiceNumber}:`, {
+                        success: syncResult.success,
+                        saleId: syncResult.saleId,
+                        error: syncResult.error
+                    });
+                    
+                    if (!syncResult.success) {
+                        // Sale save failed - this is critical, show error
+                        console.error('❌ Failed to save sale to IndexedDB:', syncResult.error);
+                        isSubmittingInvoiceRef.current = false;
+                        setIsProcessingPayment(false);
+                        lockedInvoiceNumberRef.current = null;
+                        showToast(`فشل في حفظ الفاتورة: ${syncResult.error || 'خطأ غير معروف'}`, 'error');
+                        return;
                     }
+                } catch (saveError: any) {
+                    // Critical error - sale could not be saved
+                    console.error('❌ Critical error saving sale:', saveError);
+                    isSubmittingInvoiceRef.current = false;
+                    setIsProcessingPayment(false);
+                    lockedInvoiceNumberRef.current = null;
+                    showToast(`فشل في حفظ الفاتورة: ${saveError?.message || 'خطأ غير معروف'}`, 'error');
+                    return;
                 }
                 
                 // CRITICAL: Use locked invoice number - don't change it
@@ -4756,6 +4739,34 @@ const POSPage: React.FC = () => {
                                         </button>
                                     </div>
                                 ))}
+                            </div>
+                        </div>
+                    </div>
+                )}
+                
+                {/* Sync Status Indicator */}
+                {unsyncedSalesCount > 0 && (
+                    <div className="flex-shrink-0 mb-1.5 sm:mb-2 w-full">
+                        <div className="bg-yellow-50/95 dark:bg-yellow-900/20 rounded-md sm:rounded-lg shadow-sm p-2 sm:p-2.5 backdrop-blur-xl border border-yellow-200 dark:border-yellow-800/50">
+                            <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2">
+                                    <div className="flex-shrink-0">
+                                        <svg className="animate-spin h-4 w-4 text-yellow-600 dark:text-yellow-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                        </svg>
+                                    </div>
+                                    <div className="text-right">
+                                        <p className="text-xs sm:text-sm font-medium text-yellow-800 dark:text-yellow-200">
+                                            {unsyncedSalesCount === 1 
+                                                ? 'فاتورة واحدة في انتظار المزامنة' 
+                                                : `${unsyncedSalesCount} فواتير في انتظار المزامنة`}
+                                        </p>
+                                        <p className="text-[10px] sm:text-xs text-yellow-600 dark:text-yellow-400 mt-0.5">
+                                            سيتم المزامنة تلقائياً في الخلفية
+                                        </p>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>

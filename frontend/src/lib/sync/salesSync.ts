@@ -342,8 +342,67 @@ class SalesSyncService {
   }
 
   /**
-   * Create a sale and sync immediately
-   * This is the main method to use when creating a new sale
+   * Create a sale and save to IndexedDB immediately without waiting for sync
+   * The sale will be synced in the background automatically
+   * This is the recommended method for creating new sales as it doesn't block the UI
+   */
+  async createSale(sale: SaleRecord, storeId: string): Promise<{ success: boolean; saleId?: string; error?: string }> {
+    let localSaleId: string | undefined;
+
+    try {
+      // Ensure storeId is set and normalized
+      sale.storeId = storeId.toLowerCase().trim();
+
+      // Normalize payment method to lowercase (backend expects: cash, card, credit)
+      if (sale.paymentMethod) {
+        const normalizedPaymentMethod = sale.paymentMethod.toLowerCase();
+        const validPaymentMethods = ['cash', 'card', 'credit'];
+        sale.paymentMethod = validPaymentMethods.includes(normalizedPaymentMethod) 
+          ? normalizedPaymentMethod 
+          : 'cash'; // Default to cash if invalid
+      } else {
+        sale.paymentMethod = 'cash'; // Default if not provided
+      }
+
+      // Generate temporary ID if not provided
+      // Use a combination of storeId, invoiceNumber, and timestamp to ensure uniqueness
+      if (!sale.id && !sale._id) {
+        const timestamp = Date.now();
+        const random = Math.random().toString(36).substr(2, 9);
+        sale.id = `temp_${sale.storeId}_${sale.invoiceNumber}_${timestamp}_${random}`;
+      }
+      localSaleId = sale.id;
+
+      // Save to IndexedDB immediately (mark as unsynced)
+      try {
+        await salesDB.init();
+        // Mark as unsynced initially - will be synced by background worker
+        sale.synced = false;
+        await salesDB.saveSale(sale);
+        console.log('💾 Sale saved to IndexedDB (will sync in background):', sale.invoiceNumber);
+        
+        // Trigger background sync immediately (non-blocking)
+        // This ensures the sale syncs as soon as possible without blocking the UI
+        this.syncUnsyncedSales(storeId).catch((error) => {
+          console.warn('⚠️ Background sync triggered but failed (will retry later):', error);
+        });
+        
+        return { success: true, saleId: localSaleId };
+      } catch (dbError: any) {
+        // IndexedDB not available - this is a critical error
+        console.error('❌ Failed to save sale to IndexedDB:', dbError);
+        return { success: false, error: dbError?.message || 'Failed to save sale to local storage' };
+      }
+    } catch (error: any) {
+      console.error('❌ Failed to create sale:', error);
+      return { success: false, error: error?.message || 'Unknown error' };
+    }
+  }
+
+  /**
+   * Create a sale and sync immediately (blocking)
+   * @deprecated Use createSale() instead for better UX. This method blocks the UI until sync completes.
+   * Only use this if you specifically need to wait for sync confirmation.
    */
   async createAndSyncSale(sale: SaleRecord, storeId: string): Promise<{ success: boolean; saleId?: string; error?: string }> {
     let indexedDBAvailable = false;
@@ -458,6 +517,27 @@ class SalesSyncService {
   async getSale(saleId: string): Promise<SaleRecord | null> {
     await salesDB.init();
     return salesDB.getSale(saleId);
+  }
+
+  /**
+   * Get count of unsynced sales for UI feedback
+   */
+  async getUnsyncedCount(storeId?: string): Promise<number> {
+    try {
+      const unsyncedSales = await salesDB.getUnsyncedSales(storeId);
+      return unsyncedSales.length;
+    } catch (error) {
+      console.warn('⚠️ Failed to get unsynced count:', error);
+      return 0;
+    }
+  }
+
+  /**
+   * Check if there are any unsynced sales
+   */
+  async hasUnsyncedSales(storeId?: string): Promise<boolean> {
+    const count = await this.getUnsyncedCount(storeId);
+    return count > 0;
   }
 }
 
