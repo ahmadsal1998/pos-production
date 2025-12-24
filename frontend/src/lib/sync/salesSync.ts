@@ -364,14 +364,20 @@ class SalesSyncService {
         sale.paymentMethod = 'cash'; // Default if not provided
       }
 
-      // Generate temporary ID if not provided
-      // Use a combination of storeId, invoiceNumber, and timestamp to ensure uniqueness
+      // CRITICAL FIX: Generate unique temporary ID immediately if not provided
+      // This ensures each sale is stored independently, even if invoice numbers are similar
+      // Use a combination of storeId, invoiceNumber, timestamp, and random to ensure absolute uniqueness
       if (!sale.id && !sale._id) {
         const timestamp = Date.now();
         const random = Math.random().toString(36).substr(2, 9);
-        sale.id = `temp_${sale.storeId}_${sale.invoiceNumber}_${timestamp}_${random}`;
+        const microsecond = performance.now(); // Add microsecond precision for uniqueness
+        sale.id = `temp_${sale.storeId}_${sale.invoiceNumber}_${timestamp}_${microsecond}_${random}`;
       }
       localSaleId = sale.id;
+      
+      // CRITICAL: Ensure the sale has a unique ID that won't conflict with other sales
+      // This prevents merging of sales even if they have similar invoice numbers
+      console.log(`[SalesSync] Creating sale with unique ID: ${localSaleId}, Invoice: ${sale.invoiceNumber}`);
 
       // Save to IndexedDB immediately (mark as unsynced)
       try {
@@ -379,7 +385,7 @@ class SalesSyncService {
         // Mark as unsynced initially - will be synced by background worker
         sale.synced = false;
         await salesDB.saveSale(sale);
-        console.log('💾 Sale saved to IndexedDB (will sync in background):', sale.invoiceNumber);
+        console.log('💾 Sale saved to IndexedDB (will sync in background):', sale.invoiceNumber, 'ID:', localSaleId);
         
         // Trigger background sync immediately (non-blocking)
         // This ensures the sale syncs as soon as possible without blocking the UI
@@ -423,14 +429,20 @@ class SalesSyncService {
         sale.paymentMethod = 'cash'; // Default if not provided
       }
 
-      // Generate temporary ID if not provided
-      // Use a combination of storeId, invoiceNumber, and timestamp to ensure uniqueness
+      // CRITICAL FIX: Generate unique temporary ID immediately if not provided
+      // This ensures each sale is stored independently, even if invoice numbers are similar
+      // Use a combination of storeId, invoiceNumber, timestamp, and random to ensure absolute uniqueness
       if (!sale.id && !sale._id) {
         const timestamp = Date.now();
         const random = Math.random().toString(36).substr(2, 9);
-        sale.id = `temp_${sale.storeId}_${sale.invoiceNumber}_${timestamp}_${random}`;
+        const microsecond = performance.now(); // Add microsecond precision for uniqueness
+        sale.id = `temp_${sale.storeId}_${sale.invoiceNumber}_${timestamp}_${microsecond}_${random}`;
       }
       localSaleId = sale.id;
+      
+      // CRITICAL: Ensure the sale has a unique ID that won't conflict with other sales
+      // This prevents merging of sales even if they have similar invoice numbers
+      console.log(`[SalesSync] Creating sale with unique ID: ${localSaleId}, Invoice: ${sale.invoiceNumber}`);
 
       // Try to save to IndexedDB first (for offline support)
       try {
@@ -439,7 +451,7 @@ class SalesSyncService {
         sale.synced = false;
         await salesDB.saveSale(sale);
         indexedDBAvailable = true;
-        console.log('💾 Sale saved to IndexedDB:', sale.invoiceNumber);
+        console.log('💾 Sale saved to IndexedDB:', sale.invoiceNumber, 'ID:', localSaleId);
       } catch (dbError: any) {
         // IndexedDB not available or failed - log but continue
         console.warn('⚠️ IndexedDB not available, will sync directly to backend:', dbError?.message);

@@ -257,29 +257,40 @@ class InventorySyncService {
       
       if (Math.abs(serverStock - expectedOldStock) > 0.01) {
         // Conflict detected - server stock differs from what we expected
+        // This can happen if:
+        // 1. Another sale was processed between local update and sync
+        // 2. Stock was manually adjusted on server
+        // 3. Local stock calculation was incorrect
+        
+        // Calculate the actual change amount
+        const actualChange = change.change; // This is newStock - oldStock (can be negative for sales)
+        
+        // Apply the change to the actual server stock
+        const adjustedNewStock = Math.max(0, serverStock + actualChange);
+        
         console.warn(
-          `⚠️ Stock conflict for ${change.productName}: expected ${expectedOldStock}, server has ${serverStock}. ` +
-          `Adjusting change from ${change.change} to ${change.newStock - serverStock}`
+          `⚠️ Stock conflict for ${change.productName}: expected old stock ${expectedOldStock}, server has ${serverStock}. ` +
+          `Applying change of ${actualChange} to server stock: ${serverStock} -> ${adjustedNewStock}`
         );
         
-        // Adjust the new stock based on actual server stock
-        const adjustedNewStock = serverStock + change.change;
-        
-        // Update with adjusted stock
+        // Update with adjusted stock based on actual server stock
         await productsApi.updateProduct(change.productId, {
           ...currentProduct,
-          stock: Math.max(0, adjustedNewStock),
+          stock: adjustedNewStock,
         });
+        
+        // Update local IndexedDB to match server (use adjusted value)
+        await productsDB.updateProductStock(change.productId, adjustedNewStock);
       } else {
         // No conflict - apply change directly
         await productsApi.updateProduct(change.productId, {
           ...currentProduct,
           stock: change.newStock,
         });
+        
+        // Update local IndexedDB to match server
+        await productsDB.updateProductStock(change.productId, change.newStock);
       }
-
-      // Update local IndexedDB to match server
-      await productsDB.updateProductStock(change.productId, change.newStock);
 
       console.log(`✅ Stock synced for ${change.productName}: ${change.oldStock} -> ${change.newStock}`);
       return { success: true };

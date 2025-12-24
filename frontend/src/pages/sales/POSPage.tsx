@@ -2839,9 +2839,11 @@ const POSPage: React.FC = () => {
             return updated;
         });
         
-        // Fetch next invoice number and create new invoice
+        // CRITICAL FIX: Generate unique invoice number immediately for new invoice
         // This ensures the held invoice is completely isolated from the new one
-        const nextInvoiceNumber = await fetchNextInvoiceNumber();
+        const timestamp = Date.now();
+        const random = Math.random().toString(36).substr(2, 9);
+        const nextInvoiceNumber = `INV-${timestamp}-${random}`;
         setCurrentInvoice(generateNewInvoice(currentUserName, nextInvoiceNumber));
         
         console.log(`[POS] Invoice ${invoiceToHold.id} suspended. New invoice ${nextInvoiceNumber} created.`);
@@ -2861,9 +2863,11 @@ const POSPage: React.FC = () => {
         
         const invoiceToRestore = heldInvoices.find(inv => inv.heldKey === heldKey);
         if (invoiceToRestore) {
-            // CRITICAL FIX: Fetch a new invoice number when restoring a suspended invoice
+            // CRITICAL FIX: Generate unique invoice number immediately when restoring a suspended invoice
             // This prevents conflicts when the suspended invoice is completed and synced
-            const newInvoiceNumber = await fetchNextInvoiceNumber();
+            const timestamp = Date.now();
+            const random = Math.random().toString(36).substr(2, 9);
+            const newInvoiceNumber = `INV-${timestamp}-${random}`;
             
             // Create a deep copy when restoring to prevent reference issues
             // IMPORTANT: Assign the new invoice number to avoid conflicts
@@ -2919,8 +2923,16 @@ const POSPage: React.FC = () => {
         lockedInvoiceNumberRef.current = null;
         setSaleCompleted(false);
         setCompletedInvoice(null); // Clear completed invoice when starting new sale
-        const nextInvoiceNumber = await fetchNextInvoiceNumber();
+        
+        // CRITICAL FIX: Generate unique invoice number immediately (synchronous)
+        // This ensures each new sale is independent, even if previous sales are still syncing
+        const timestamp = Date.now();
+        const random = Math.random().toString(36).substr(2, 9);
+        const nextInvoiceNumber = `INV-${timestamp}-${random}`;
         setCurrentInvoice(generateNewInvoice(currentUserName, nextInvoiceNumber));
+        
+        console.log(`[POS] Started new sale with unique invoice number: ${nextInvoiceNumber}`);
+        
         setSelectedPaymentMethod('Cash');
         setCreditPaidAmount(0);
         setCreditPaidAmountError(null);
@@ -3618,9 +3630,26 @@ const POSPage: React.FC = () => {
             return;
         }
         
-        // CRITICAL: Lock invoice number NOW - it must not change during save process
-        const lockedInvoiceNumber = finalInvoice.id;
-        lockedInvoiceNumberRef.current = lockedInvoiceNumber;
+        // CRITICAL FIX: Generate unique temporary invoice number IMMEDIATELY before any async operations
+        // This ensures each sale gets a unique number even if user starts a new sale before sync completes
+        let lockedInvoiceNumber: string;
+        if (lockedInvoiceNumberRef.current) {
+            // Use locked number if already set (shouldn't happen, but safety check)
+            lockedInvoiceNumber = lockedInvoiceNumberRef.current;
+        } else {
+            // Generate unique temporary invoice number immediately (synchronous)
+            // Format: INV-{timestamp}-{random} to ensure uniqueness
+            const timestamp = Date.now();
+            const random = Math.random().toString(36).substr(2, 9);
+            lockedInvoiceNumber = `INV-${timestamp}-${random}`;
+            lockedInvoiceNumberRef.current = lockedInvoiceNumber;
+            
+            // Update the invoice with the new unique number
+            finalInvoice.id = lockedInvoiceNumber;
+            setCurrentInvoice({ ...finalInvoice });
+        }
+        
+        console.log(`[POS] Generated unique invoice number immediately: ${lockedInvoiceNumber}`);
         
         // Mark as submitting immediately to prevent race conditions
         isSubmittingInvoiceRef.current = true;
@@ -3720,14 +3749,16 @@ const POSPage: React.FC = () => {
         setCompletedInvoice(finalInvoice);
         setSaleCompleted(true);
         
-        // CRITICAL FIX: Clear cart immediately after sale completion to prevent items from reappearing
-        // Generate a new empty invoice to replace current invoice
-        // IMPORTANT: Always fetch a new invoice number to prevent duplicate detection on next sale
-        // The fingerprint includes the invoice number, so a new invoice number will automatically
-        // generate a different fingerprint, allowing repeat sales (same product to same customer)
-        const nextInvoiceNumber = await fetchNextInvoiceNumber();
+        // CRITICAL FIX: Generate new unique invoice number IMMEDIATELY for next sale
+        // This ensures the next sale is completely independent, even if previous sale hasn't synced yet
+        // Use timestamp-based unique number to prevent any conflicts
+        const timestamp = Date.now();
+        const random = Math.random().toString(36).substr(2, 9);
+        const nextInvoiceNumber = `INV-${timestamp}-${random}`;
         const newEmptyInvoice = generateNewInvoice(currentUserName, nextInvoiceNumber);
         setCurrentInvoice(newEmptyInvoice);
+        
+        console.log(`[POS] Generated new independent invoice number for next sale: ${nextInvoiceNumber}`);
         
         // NOTE: Keep isProcessingPayment true until sale sync completes to prevent duplicate submissions
         
@@ -4165,8 +4196,9 @@ const POSPage: React.FC = () => {
                     seller: finalInvoice.cashier,
                 };
 
-                // Check if invoice number already exists - if so, generate a new one
-                // Only rule: invoice numbers must be unique
+                // CRITICAL FIX: With our new unique invoice number generation (timestamp-based),
+                // conflicts should be extremely rare. However, we still check for safety.
+                // If a conflict is detected, we keep the unique number but ensure the sale is saved independently.
                 try {
                     await salesDB.init();
                     const invoiceExistsInDB = await salesDB.invoiceNumberExists(storeId, invoiceNumberToUse);
@@ -4187,27 +4219,15 @@ const POSPage: React.FC = () => {
                         }
                     }
                     
-                    // If invoice number exists anywhere, generate a new one
+                    // CRITICAL: Even if invoice number exists, we save the sale with its unique ID
+                    // The backend will handle invoice number conflicts during sync and assign a new number if needed
+                    // We don't change the invoice number here because the sale is already finalized and locked
                     if (invoiceExistsInDB || invoiceExistsOnBackend) {
                         const conflictedNumber = invoiceNumberToUse;
                         conflictInvoiceNumbersRef.current.add(conflictedNumber);
-                        console.warn(`⚠️ Invoice number ${conflictedNumber} already exists. Auto-generating a new number to continue.`);
-                        try {
-                            const newInvoiceNumber = await fetchNextInvoiceNumber();
-                            finalInvoice.id = newInvoiceNumber;
-                            saleData.invoiceNumber = newInvoiceNumber;
-                            invoiceNumberToUse = newInvoiceNumber;
-                            setCurrentInvoice({ ...finalInvoice });
-                            lockedInvoiceNumberRef.current = newInvoiceNumber;
-                            showToast(`رقم الفاتورة ${conflictedNumber} مستخدم. تم تعيين رقم جديد ${newInvoiceNumber} والمتابعة تلقائياً.`, 'info');
-                        } catch (error) {
-                            console.error('❌ Failed to generate new invoice number:', error);
-                            isSubmittingInvoiceRef.current = false;
-                            setIsProcessingPayment(false);
-                            lockedInvoiceNumberRef.current = null;
-                            showToast('فشل في إنشاء رقم فاتورة جديد. يرجى المحاولة مرة أخرى.', 'error');
-                            return;
-                        }
+                        console.warn(`⚠️ Invoice number ${conflictedNumber} already exists, but sale will be saved with unique ID. Backend will handle conflict during sync.`);
+                        // Don't change the invoice number - let the backend handle it during sync
+                        // The sale is already saved with a unique ID, so it won't merge with existing sales
                     }
                 } catch (checkError: any) {
                     console.warn('⚠️ Could not check invoice number uniqueness, proceeding anyway:', checkError);

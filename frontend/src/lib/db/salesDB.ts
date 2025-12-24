@@ -157,25 +157,29 @@ class SalesDB {
     saleData.storeId = saleData.storeId.toLowerCase().trim();
 
     return new Promise((resolve, reject) => {
-      // Check if a sale with the same storeId and invoiceNumber already exists
-      const checkRequest = uniqueIndex.get([saleData.storeId, saleData.invoiceNumber]);
+      // CRITICAL FIX: Each sale must be stored independently with a unique ID
+      // The sale.id is the primary key, so each sale gets its own record
+      // We check for existing sales by ID, not by invoice number, to prevent merging
       
-      checkRequest.onsuccess = () => {
-        const existingSale = checkRequest.result;
+      // Check if a sale with the same ID already exists (for updates)
+      const getRequest = store.get(saleData.id);
+      
+      getRequest.onsuccess = () => {
+        const existingSale = getRequest.result;
         
         if (existingSale) {
-          // Invoice number already exists - update existing sale, preserving its ID
-          // Only rule: invoice numbers must be unique, but we allow updating existing invoices
+          // Sale with this ID already exists - this is an update, not a merge
+          // Only update if it's the same sale (same ID), preserve all data
           const updatedSale: SaleRecord = {
             ...existingSale, // Preserve existing data
             ...saleData, // Override with new data
-            id: existingSale.id, // Always keep the existing ID to avoid duplicates
+            id: existingSale.id, // Always keep the existing ID
             _id: saleData._id || saleData.id || existingSale._id || existingSale.id, // Update _id if provided
           };
           
           const putRequest = store.put(updatedSale);
           putRequest.onsuccess = () => {
-            console.log('✅ Sale updated in IndexedDB:', saleData.invoiceNumber);
+            console.log('✅ Sale updated in IndexedDB (by ID):', saleData.invoiceNumber, 'ID:', saleData.id);
             resolve();
           };
           putRequest.onerror = () => {
@@ -183,118 +187,74 @@ class SalesDB {
             reject(putRequest.error);
           };
         } else {
-          // New sale - use put instead of add to handle any edge cases
-          // Put will insert if the ID doesn't exist, or update if it does
-          const putRequest = store.put(saleData);
-          putRequest.onsuccess = () => {
-            console.log('✅ Sale saved to IndexedDB:', saleData.invoiceNumber);
-            resolve();
-          };
-          putRequest.onerror = () => {
-            // If put fails due to unique constraint, try to find and update existing sale
-            if (putRequest.error?.name === 'ConstraintError' || putRequest.error?.name === 'DataError') {
-              console.warn('⚠️ Constraint error on put, checking for existing sale...');
+          // New sale - check if invoice number already exists (for conflict detection)
+          const checkRequest = uniqueIndex.get([saleData.storeId, saleData.invoiceNumber]);
+          
+          checkRequest.onsuccess = () => {
+            const existingByInvoice = checkRequest.result;
+            
+            if (existingByInvoice && existingByInvoice.id !== saleData.id) {
+              // CRITICAL: Invoice number conflict - but different sale ID
+              // This should not happen with our new unique invoice number generation
+              // But if it does, we create a new sale with a modified invoice number to prevent merging
+              console.warn(`⚠️ Invoice number conflict detected: ${saleData.invoiceNumber} already exists with different ID. Creating new sale with unique ID.`);
               
-              // Try to find existing sale by storeId and invoiceNumber again
-              const retryCheckRequest = uniqueIndex.get([saleData.storeId, saleData.invoiceNumber]);
-              retryCheckRequest.onsuccess = () => {
-                const retryExistingSale = retryCheckRequest.result;
-                if (retryExistingSale) {
-                  // Found existing sale, update it
-                  const mergedSale: SaleRecord = {
-                    ...retryExistingSale,
-                    ...saleData,
-                    id: retryExistingSale.id, // Keep existing ID
-                    _id: saleData._id || saleData.id || retryExistingSale._id || retryExistingSale.id,
-                  };
-                  
-                  const retryPutRequest = store.put(mergedSale);
-                  retryPutRequest.onsuccess = () => {
-                    console.log('✅ Sale updated in IndexedDB (retry):', saleData.invoiceNumber);
-                    resolve();
-                  };
-                  retryPutRequest.onerror = () => {
-                    console.error('❌ Failed to update sale in IndexedDB (retry):', retryPutRequest.error);
-                    reject(retryPutRequest.error);
-                  };
-                } else {
-                  // Still not found, this is unexpected
-                  console.error('❌ Sale not found but constraint error occurred:', saleData.invoiceNumber);
-                  reject(new Error('Failed to save sale: unique constraint violation'));
-                }
+              // Generate a new unique ID to ensure this sale is stored independently
+              const timestamp = Date.now();
+              const random = Math.random().toString(36).substr(2, 9);
+              saleData.id = `temp_${saleData.storeId}_${saleData.invoiceNumber}_${timestamp}_${random}`;
+              
+              // Now save as new sale
+              const putRequest = store.put(saleData);
+              putRequest.onsuccess = () => {
+                console.log('✅ Sale saved to IndexedDB with unique ID (conflict resolved):', saleData.invoiceNumber, 'ID:', saleData.id);
+                resolve();
               };
-              retryCheckRequest.onerror = () => {
-                console.error('❌ Failed to check for existing sale:', retryCheckRequest.error);
-                reject(retryCheckRequest.error);
+              putRequest.onerror = () => {
+                console.error('❌ Failed to save sale in IndexedDB:', putRequest.error);
+                reject(putRequest.error);
               };
             } else {
-              console.error('❌ Failed to save sale to IndexedDB:', putRequest.error);
-              reject(putRequest.error);
+              // No conflict - save as new sale
+              const putRequest = store.put(saleData);
+              putRequest.onsuccess = () => {
+                console.log('✅ Sale saved to IndexedDB (new sale):', saleData.invoiceNumber, 'ID:', saleData.id);
+                resolve();
+              };
+              putRequest.onerror = () => {
+                console.error('❌ Failed to save sale in IndexedDB:', putRequest.error);
+                reject(putRequest.error);
+              };
             }
+          };
+          
+          checkRequest.onerror = () => {
+            // If check fails, still try to save (might be a new invoice number)
+            console.warn('⚠️ Could not check invoice number uniqueness, saving anyway:', checkRequest.error);
+            const putRequest = store.put(saleData);
+            putRequest.onsuccess = () => {
+              console.log('✅ Sale saved to IndexedDB (check failed):', saleData.invoiceNumber, 'ID:', saleData.id);
+              resolve();
+            };
+            putRequest.onerror = () => {
+              console.error('❌ Failed to save sale in IndexedDB:', putRequest.error);
+              reject(putRequest.error);
+            };
           };
         }
       };
       
-      checkRequest.onerror = () => {
-        // If index check fails, try direct put (will handle insert or update)
-        console.warn('⚠️ Index check failed, trying direct put...');
+      getRequest.onerror = () => {
+        // If get fails, treat as new sale
+        console.warn('⚠️ Could not check for existing sale by ID, saving as new:', getRequest.error);
         const putRequest = store.put(saleData);
         putRequest.onsuccess = () => {
-          console.log('✅ Sale saved to IndexedDB (direct put):', saleData.invoiceNumber);
+          console.log('✅ Sale saved to IndexedDB (get failed):', saleData.invoiceNumber, 'ID:', saleData.id);
           resolve();
         };
         putRequest.onerror = () => {
-          // If direct put also fails, try to find existing sale by scanning
-          if (putRequest.error?.name === 'ConstraintError' || putRequest.error?.name === 'DataError') {
-            console.warn('⚠️ Direct put failed with constraint error, scanning for existing sale...');
-            
-            // Fallback: scan all sales to find matching storeId + invoiceNumber
-            const scanRequest = store.openCursor();
-            let foundExisting = false;
-            
-            scanRequest.onsuccess = (event) => {
-              const cursor = (event.target as IDBRequest<IDBCursorWithValue>).result;
-              if (cursor) {
-                const sale = cursor.value as SaleRecord;
-                if (sale.storeId === saleData.storeId && sale.invoiceNumber === saleData.invoiceNumber) {
-                  foundExisting = true;
-                  // Found existing sale, update it
-                  const mergedSale: SaleRecord = {
-                    ...sale,
-                    ...saleData,
-                    id: sale.id, // Keep existing ID
-                    _id: saleData._id || saleData.id || sale._id || sale.id,
-                  };
-                  
-                  const updateRequest = store.put(mergedSale);
-                  updateRequest.onsuccess = () => {
-                    console.log('✅ Sale updated in IndexedDB (scan fallback):', saleData.invoiceNumber);
-                    resolve();
-                  };
-                  updateRequest.onerror = () => {
-                    console.error('❌ Failed to update sale (scan fallback):', updateRequest.error);
-                    reject(updateRequest.error);
-                  };
-                } else {
-                  cursor.continue();
-                }
-              } else {
-                // No matching sale found after scanning
-                if (!foundExisting) {
-                  console.error('❌ Sale not found but constraint error occurred:', saleData.invoiceNumber);
-                  reject(new Error('Failed to save sale: unique constraint violation without existing record'));
-                }
-              }
-            };
-            
-            scanRequest.onerror = () => {
-              console.error('❌ Failed to scan sales:', scanRequest.error);
-              reject(scanRequest.error);
-            };
-          } else {
-            console.error('❌ Failed to save sale to IndexedDB:', putRequest.error);
-            reject(putRequest.error);
-          }
+          console.error('❌ Failed to save sale in IndexedDB:', putRequest.error);
+          reject(putRequest.error);
         };
       };
     });
