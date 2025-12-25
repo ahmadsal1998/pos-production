@@ -132,7 +132,6 @@ class SalesDB {
     const db = await this.ensureDB();
     const transaction = db.transaction([STORE_NAME], 'readwrite');
     const store = transaction.objectStore(STORE_NAME);
-    const uniqueIndex = store.index('storeId_invoiceNumber');
 
     // Normalize sale data
     const saleData: SaleRecord = {
@@ -157,19 +156,19 @@ class SalesDB {
     saleData.storeId = saleData.storeId.toLowerCase().trim();
 
     return new Promise((resolve, reject) => {
-      // CRITICAL FIX: Each sale must be stored independently with a unique ID
-      // The sale.id is the primary key, so each sale gets its own record
-      // We check for existing sales by ID, not by invoice number, to prevent merging
+      // Check if a sale with the same ID already exists (for updates only)
+      if (typeof saleData.id === "undefined") {
+        reject(new Error("Sale must have a defined ID to be saved"));
+        return;
+      }
       
-      // Check if a sale with the same ID already exists (for updates)
       const getRequest = store.get(saleData.id);
-      
+
       getRequest.onsuccess = () => {
         const existingSale = getRequest.result;
-        
+
         if (existingSale) {
-          // Sale with this ID already exists - this is an update, not a merge
-          // Only update if it's the same sale (same ID), preserve all data
+          // Sale with this ID already exists - update it
           const updatedSale: SaleRecord = {
             ...existingSale, // Preserve existing data
             ...saleData, // Override with new data
@@ -187,59 +186,15 @@ class SalesDB {
             reject(putRequest.error);
           };
         } else {
-          // New sale - check if invoice number already exists (for conflict detection)
-          const checkRequest = uniqueIndex.get([saleData.storeId, saleData.invoiceNumber]);
-          
-          checkRequest.onsuccess = () => {
-            const existingByInvoice = checkRequest.result;
-            
-            if (existingByInvoice && existingByInvoice.id !== saleData.id) {
-              // CRITICAL: Invoice number conflict - but different sale ID
-              // This should not happen with our new unique invoice number generation
-              // But if it does, we create a new sale with a modified invoice number to prevent merging
-              console.warn(`⚠️ Invoice number conflict detected: ${saleData.invoiceNumber} already exists with different ID. Creating new sale with unique ID.`);
-              
-              // Generate a new unique ID to ensure this sale is stored independently
-              const timestamp = Date.now();
-              const random = Math.random().toString(36).substr(2, 9);
-              saleData.id = `temp_${saleData.storeId}_${saleData.invoiceNumber}_${timestamp}_${random}`;
-              
-              // Now save as new sale
-              const putRequest = store.put(saleData);
-              putRequest.onsuccess = () => {
-                console.log('✅ Sale saved to IndexedDB with unique ID (conflict resolved):', saleData.invoiceNumber, 'ID:', saleData.id);
-                resolve();
-              };
-              putRequest.onerror = () => {
-                console.error('❌ Failed to save sale in IndexedDB:', putRequest.error);
-                reject(putRequest.error);
-              };
-            } else {
-              // No conflict - save as new sale
-              const putRequest = store.put(saleData);
-              putRequest.onsuccess = () => {
-                console.log('✅ Sale saved to IndexedDB (new sale):', saleData.invoiceNumber, 'ID:', saleData.id);
-                resolve();
-              };
-              putRequest.onerror = () => {
-                console.error('❌ Failed to save sale in IndexedDB:', putRequest.error);
-                reject(putRequest.error);
-              };
-            }
+          // New sale - always create new record
+          const putRequest = store.put(saleData);
+          putRequest.onsuccess = () => {
+            console.log('✅ Sale saved to IndexedDB (new sale):', saleData.invoiceNumber, 'ID:', saleData.id);
+            resolve();
           };
-          
-          checkRequest.onerror = () => {
-            // If check fails, still try to save (might be a new invoice number)
-            console.warn('⚠️ Could not check invoice number uniqueness, saving anyway:', checkRequest.error);
-            const putRequest = store.put(saleData);
-            putRequest.onsuccess = () => {
-              console.log('✅ Sale saved to IndexedDB (check failed):', saleData.invoiceNumber, 'ID:', saleData.id);
-              resolve();
-            };
-            putRequest.onerror = () => {
-              console.error('❌ Failed to save sale in IndexedDB:', putRequest.error);
-              reject(putRequest.error);
-            };
+          putRequest.onerror = () => {
+            console.error('❌ Failed to save sale in IndexedDB:', putRequest.error);
+            reject(putRequest.error);
           };
         }
       };

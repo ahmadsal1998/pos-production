@@ -3659,40 +3659,23 @@ const POSPage: React.FC = () => {
             return;
         }
         
-        // CRITICAL FIX: Generate unique temporary invoice number IMMEDIATELY before any async operations
-        // This ensures each sale gets a unique number even if user starts a new sale before sync completes
-        let lockedInvoiceNumber: string;
-        if (lockedInvoiceNumberRef.current) {
-            // Use locked number if already set (shouldn't happen, but safety check)
-            lockedInvoiceNumber = lockedInvoiceNumberRef.current;
-        } else {
-            // Get next sequential invoice number (incrementing) when completing sale
-            // This ensures proper sequential numbering
-            try {
-                lockedInvoiceNumber = await fetchNextInvoiceNumber();
-                lockedInvoiceNumberRef.current = lockedInvoiceNumber;
-                
-                // Update the invoice with the new sequential number
-                finalInvoice.id = lockedInvoiceNumber;
-                setCurrentInvoice({ ...finalInvoice });
-            } catch (error) {
-                console.error('Failed to fetch next invoice number, using fallback:', error);
-                // Fallback: generate sequential number from current invoice number
-                const currentMatch = finalInvoice.id?.match(/^INV-(\d+)$/);
-                if (currentMatch) {
-                    const currentNum = parseInt(currentMatch[1], 10);
-                    lockedInvoiceNumber = `INV-${currentNum + 1}`;
-                } else {
-                    // Last resort: use INV-1
-                    lockedInvoiceNumber = 'INV-1';
-                }
-                lockedInvoiceNumberRef.current = lockedInvoiceNumber;
-                finalInvoice.id = lockedInvoiceNumber;
-                setCurrentInvoice({ ...finalInvoice });
+        // PERFORMANCE FIX: Generate invoice number synchronously first (use current invoice ID as fallback)
+        // This allows us to show the receipt screen immediately without waiting for async operations
+        let lockedInvoiceNumber: string = finalInvoice.id || 'INV-1';
+        if (!lockedInvoiceNumberRef.current) {
+            // Try to extract number from current invoice ID for sequential numbering
+            const currentMatch = finalInvoice.id?.match(/^INV-(\d+)$/);
+            if (currentMatch) {
+                const currentNum = parseInt(currentMatch[1], 10);
+                lockedInvoiceNumber = `INV-${currentNum}`;
             }
+            lockedInvoiceNumberRef.current = lockedInvoiceNumber;
+        } else {
+            lockedInvoiceNumber = lockedInvoiceNumberRef.current;
         }
         
-        console.log(`[POS] Generated sequential invoice number: ${lockedInvoiceNumber}`);
+        // Update invoice with locked number
+        finalInvoice.id = lockedInvoiceNumber;
         
         // Mark as submitting immediately to prevent race conditions
         isSubmittingInvoiceRef.current = true;
@@ -3700,11 +3683,9 @@ const POSPage: React.FC = () => {
         // Show immediate feedback
         setIsProcessingPayment(true);
         
-        console.log(`[POS] Starting invoice submission with locked invoice number: ${lockedInvoiceNumber}`);
-        
         // CRITICAL: Only update stock for products in the invoice items
         // Ensure we're iterating ONLY over currentInvoice.items, not all products
-        const invoiceItems = currentInvoice.items || [];
+        const invoiceItems = finalInvoice.items || [];
         
         if (invoiceItems.length === 0) {
             console.warn('No items in invoice, skipping stock update');
@@ -3715,7 +3696,7 @@ const POSPage: React.FC = () => {
         
         // PERFORMANCE FIX: Do optimistic local state updates immediately (non-blocking)
         // This ensures the UI updates instantly while background operations run
-        const invoiceItemsForStateUpdate = currentInvoice.items || [];
+        const invoiceItemsForStateUpdate = finalInvoice.items || [];
         
         // Store original stock values BEFORE optimistic update for use in background task
         const originalStockValues = new Map<string | number, number>();
@@ -3784,39 +3765,57 @@ const POSPage: React.FC = () => {
             return newProducts;
         });
         
-        // CRITICAL: Mark sale as completed IMMEDIATELY to enable instant navigation
-        // This happens before any blocking operations
+        // PERFORMANCE FIX: Mark sale as completed IMMEDIATELY and synchronously BEFORE any async operations
+        // This ensures the receipt screen appears instantly without waiting for network requests
         console.log('Sale Finalized:', finalInvoice);
         
         // Store completed invoice for receipt display
         setCompletedInvoice(finalInvoice);
         setSaleCompleted(true);
         
-        // Get next sequential invoice number for the next sale
-        // This ensures proper sequential numbering
-        fetchNextInvoiceNumber()
-            .then(nextInvoiceNumber => {
-                const newEmptyInvoice = generateNewInvoice(currentUserName, nextInvoiceNumber);
-                setCurrentInvoice(newEmptyInvoice);
-                console.log(`[POS] Generated new sequential invoice number for next sale: ${nextInvoiceNumber}`);
-            })
-            .catch(error => {
-                console.error('Failed to fetch next invoice number after sale completion, using fallback:', error);
-                // Fallback: generate sequential number from locked invoice number
-                const lockedMatch = lockedInvoiceNumberRef.current?.match(/^INV-(\d+)$/);
-                if (lockedMatch) {
-                    const lockedNum = parseInt(lockedMatch[1], 10);
-                    const fallbackNumber = `INV-${lockedNum + 1}`;
-                    const newEmptyInvoice = generateNewInvoice(currentUserName, fallbackNumber);
-                    setCurrentInvoice(newEmptyInvoice);
-                    console.log(`[POS] Generated fallback sequential invoice number: ${fallbackNumber}`);
-                } else {
-                    // Last resort: use INV-1
-                    const newEmptyInvoice = generateNewInvoice(currentUserName, 'INV-1');
-                    setCurrentInvoice(newEmptyInvoice);
-                    console.log(`[POS] Generated fallback invoice number: INV-1`);
+        // CRITICAL FIX: Fetch and update invoice number asynchronously in background
+        // The receipt will show the current invoice ID, which will be updated if needed
+        Promise.resolve().then(async () => {
+            try {
+                // Get next sequential invoice number (incrementing) when completing sale
+                // This ensures proper sequential numbering
+                const fetchedInvoiceNumber = await fetchNextInvoiceNumber();
+                
+                // Only update if different from current locked number
+                if (fetchedInvoiceNumber !== lockedInvoiceNumber) {
+                    lockedInvoiceNumber = fetchedInvoiceNumber;
+                    lockedInvoiceNumberRef.current = lockedInvoiceNumber;
+                    
+                    // Update the completed invoice with the correct number
+                    setCompletedInvoice(prev => prev ? { ...prev, id: lockedInvoiceNumber } : null);
+                    
+                    // Update the final invoice for sync
+                    finalInvoice.id = lockedInvoiceNumber;
+                    console.log(`[POS] Updated invoice number to: ${lockedInvoiceNumber}`);
                 }
-            });
+            } catch (error) {
+                console.error('Failed to fetch next invoice number, using fallback:', error);
+                // Fallback: generate sequential number from current invoice number
+                const currentMatch = lockedInvoiceNumber?.match(/^INV-(\d+)$/);
+                if (currentMatch) {
+                    const currentNum = parseInt(currentMatch[1], 10);
+                    const fallbackNumber = `INV-${currentNum + 1}`;
+                    lockedInvoiceNumber = fallbackNumber;
+                    lockedInvoiceNumberRef.current = lockedInvoiceNumber;
+                    finalInvoice.id = lockedInvoiceNumber;
+                    setCompletedInvoice(prev => prev ? { ...prev, id: lockedInvoiceNumber } : null);
+                    console.log(`[POS] Using fallback invoice number: ${lockedInvoiceNumber}`);
+                }
+            }
+        }).catch(error => {
+            console.error('Error fetching invoice number in background:', error);
+        });
+        
+        console.log(`[POS] Starting invoice submission with locked invoice number: ${lockedInvoiceNumber}`);
+        
+        // CRITICAL FIX: Don't create new invoice immediately - wait until processing completes
+        // This prevents clearing the cart before queued products are processed
+        // The new invoice will be created in the finally block after queued products are added
         
         // NOTE: Keep isProcessingPayment true until sale sync completes to prevent duplicate submissions
         
@@ -4458,27 +4457,57 @@ const POSPage: React.FC = () => {
                 isSubmittingInvoiceRef.current = false;
                 setIsProcessingPayment(false);
                 
-                // Process any products that were queued during payment processing
-                // Use setTimeout to ensure state updates have settled before processing queue
+                // CRITICAL FIX: Process queued products into a new invoice
+                // This ensures queued products are added to the next sale, not lost
                 const queuedProducts = queuedProductsRef.current.splice(0); // Get and clear queue
+                
                 if (queuedProducts.length > 0) {
                     console.log(`[POS] Processing ${queuedProducts.length} queued product(s) that were scanned during payment processing`);
-                    // Process queued products after a short delay to ensure state has settled
+                    
+                    // Use setTimeout to ensure state updates have settled before processing queue
                     setTimeout(async () => {
-                        // Process queued products sequentially to avoid race conditions
-                        for (const queued of queuedProducts) {
-                            try {
-                                await handleAddProduct(
-                                    queued.product,
-                                    queued.unit,
-                                    queued.unitPriceOverride,
-                                    queued.conversionFactorOverride,
-                                    queued.piecesPerUnitOverride,
-                                    queued.useServerStockCheck
-                                );
-                            } catch (error) {
-                                console.error('[POS] Error processing queued product:', error);
+                        // Create a new invoice manually (without calling startNewSale to keep receipt visible)
+                        // This invoice will be shown when user starts the next sale
+                        try {
+                            const nextInvoiceNumber = await fetchNextInvoiceNumber();
+                            const newInvoice = generateNewInvoice(currentUserName, nextInvoiceNumber);
+                            setCurrentInvoice(newInvoice);
+                            console.log(`[POS] Created new invoice for queued products: ${nextInvoiceNumber}`);
+                            
+                            // Wait for state to settle
+                            await new Promise(resolve => setTimeout(resolve, 50));
+                            
+                            // Temporarily set saleCompleted to false so handleAddProduct can add to the new invoice
+                            // We'll set it back to true after adding products to keep receipt visible
+                            setSaleCompleted(false);
+                            await new Promise(resolve => setTimeout(resolve, 50));
+                            
+                            // Process queued products sequentially - they'll be added to the new invoice
+                            for (const queued of queuedProducts) {
+                                try {
+                                    await handleAddProduct(
+                                        queued.product,
+                                        queued.unit,
+                                        queued.unitPriceOverride,
+                                        queued.conversionFactorOverride,
+                                        queued.piecesPerUnitOverride,
+                                        queued.useServerStockCheck
+                                    );
+                                } catch (error) {
+                                    console.error('[POS] Error processing queued product:', error);
+                                }
                             }
+                            
+                            // Wait a bit for products to be added
+                            await new Promise(resolve => setTimeout(resolve, 50));
+                            
+                            // Set saleCompleted back to true to keep receipt visible
+                            // The cart now contains the queued products and will be shown when user starts next sale
+                            setSaleCompleted(true);
+                            console.log(`[POS] Queued products added to cart. Receipt remains visible.`);
+                        } catch (error) {
+                            console.error('Failed to process queued products:', error);
+                            // Keep saleCompleted true to maintain receipt visibility
                         }
                     }, 100); // Small delay to ensure state updates have settled
                 }
@@ -4496,29 +4525,52 @@ const POSPage: React.FC = () => {
             isSubmittingInvoiceRef.current = false;
             setIsProcessingPayment(false);
             
-            // Process any products that were queued during payment processing
-            // Use setTimeout to ensure state updates have settled before processing queue
+            // CRITICAL FIX: Process queued products into a new invoice
+            // This ensures queued products are added to the next sale, not lost
             const queuedProducts = queuedProductsRef.current.splice(0); // Get and clear queue
+            
             if (queuedProducts.length > 0) {
                 console.log(`[POS] Processing ${queuedProducts.length} queued product(s) that were scanned during payment processing (after error)`);
-                // Process queued products after a short delay to ensure state has settled
+                
+                // Use setTimeout to ensure state updates have settled before processing queue
                 setTimeout(async () => {
-                    // Process queued products sequentially to avoid race conditions
-                    for (const queued of queuedProducts) {
-                        try {
-                            await handleAddProduct(
-                                queued.product,
-                                queued.unit,
-                                queued.unitPriceOverride,
-                                queued.conversionFactorOverride,
-                                queued.piecesPerUnitOverride,
-                                queued.useServerStockCheck
-                            );
-                        } catch (error) {
-                            console.error('[POS] Error processing queued product:', error);
+                    try {
+                        const nextInvoiceNumber = await fetchNextInvoiceNumber();
+                        const newInvoice = generateNewInvoice(currentUserName, nextInvoiceNumber);
+                        setCurrentInvoice(newInvoice);
+                        console.log(`[POS] Created new invoice for queued products (after error): ${nextInvoiceNumber}`);
+                        
+                        await new Promise(resolve => setTimeout(resolve, 50));
+                        
+                        // Temporarily set saleCompleted to false so handleAddProduct can add to the new invoice
+                        setSaleCompleted(false);
+                        await new Promise(resolve => setTimeout(resolve, 50));
+                        
+                        // Process queued products sequentially
+                        for (const queued of queuedProducts) {
+                            try {
+                                await handleAddProduct(
+                                    queued.product,
+                                    queued.unit,
+                                    queued.unitPriceOverride,
+                                    queued.conversionFactorOverride,
+                                    queued.piecesPerUnitOverride,
+                                    queued.useServerStockCheck
+                                );
+                            } catch (error) {
+                                console.error('[POS] Error processing queued product:', error);
+                            }
                         }
+                        
+                        await new Promise(resolve => setTimeout(resolve, 50));
+                        
+                        // Set saleCompleted back to true to keep receipt visible
+                        setSaleCompleted(true);
+                        console.log(`[POS] Queued products added to cart (after error). Receipt remains visible.`);
+                    } catch (error) {
+                        console.error('Failed to process queued products (after error):', error);
                     }
-                }, 100); // Small delay to ensure state updates have settled
+                }, 100);
             }
             
             lockedInvoiceNumberRef.current = null;
