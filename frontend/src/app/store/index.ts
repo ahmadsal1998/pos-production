@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import axios from 'axios';
 import { cleanupAllIndexedDB } from '../../lib/db/indexedDBCleanup';
+import { productSync } from '../../lib/sync/productSync';
 
 // Auth types
 export interface User {
@@ -92,6 +93,30 @@ export const useAuthStore = create<AuthState>()(
               window.location.href = '/subscription-expired';
             }
             return;
+          }
+
+          // CRITICAL: Sync ALL products to IndexedDB on login for store users
+          // This ensures barcode scanning works instantly without API calls
+          if (user?.storeId) {
+            console.log('[Auth] Starting product sync to IndexedDB on login...');
+            try {
+              // Force full refresh to ensure all products are synced
+              const syncResult = await productSync.syncProducts({ 
+                forceRefresh: true 
+              });
+              
+              if (syncResult.success) {
+                console.log(`[Auth] ✅ Product sync completed: ${syncResult.syncedCount} products synced to IndexedDB`);
+              } else {
+                console.error(`[Auth] ⚠️ Product sync failed: ${syncResult.error}`);
+                // Don't block login if sync fails, but log the error
+                // The system will try to sync again when POS page loads
+              }
+            } catch (syncError) {
+              console.error('[Auth] Error during product sync on login:', syncError);
+              // Don't block login if sync fails - user can still use the system
+              // Sync will retry when POS page loads
+            }
           }
         } catch (error: any) {
           const errorData = error.response?.data || {};
