@@ -4917,8 +4917,8 @@ const POSPage: React.FC = () => {
             <div className="flex flex-col items-center justify-center min-h-screen bg-gray-100 dark:bg-gray-900 p-4 sm:p-6">
                 {/* Container for buttons and invoice to ensure alignment */}
                 <div className="w-full max-w-md flex flex-col items-center">
-                    {/* Background processing indicator */}
-                    {isProcessingPayment && (
+                    {/* Background processing indicator - HIDDEN: Technical processing messages hidden from UI (logged only) */}
+                    {/* {isProcessingPayment && (
                         <div className="mb-2 sm:mb-3 print-hidden w-full">
                             <div className="flex items-center justify-center gap-2 px-3 py-2 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
                                 <svg className="animate-spin h-4 w-4 text-blue-600 dark:text-blue-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
@@ -4930,7 +4930,7 @@ const POSPage: React.FC = () => {
                                 </span>
                             </div>
                         </div>
-                    )}
+                    )} */}
                     {/* Buttons above invoice */}
                     <div className="flex flex-row gap-2 sm:gap-3 mb-4 sm:mb-6 print-hidden w-full justify-center">
                         <button 
@@ -5047,8 +5047,8 @@ const POSPage: React.FC = () => {
                     </div>
                 )}
                 
-                {/* Sync Status Indicator */}
-                {unsyncedSalesCount > 0 && (
+                {/* Sync Status Indicator - HIDDEN: Technical sync messages hidden from UI (logged only) */}
+                {/* {unsyncedSalesCount > 0 && (
                     <div className="flex-shrink-0 mb-1.5 sm:mb-2 w-full">
                         <div className="bg-yellow-50/95 dark:bg-yellow-900/20 rounded-md sm:rounded-lg shadow-sm p-2 sm:p-2.5 backdrop-blur-xl border border-yellow-200 dark:border-yellow-800/50">
                             <div className="flex items-center justify-between">
@@ -5073,7 +5073,7 @@ const POSPage: React.FC = () => {
                             </div>
                         </div>
                     </div>
-                )}
+                )} */}
                 
                 {/* Three Column Layout - Proportional widths: ~19% - 50% - 31% */}
                 <div className="grid grid-cols-1 md:grid-cols-[0.75fr_2.3fr_1fr] gap-2 sm:gap-3 md:gap-4 h-full min-h-0 w-full overflow-hidden items-stretch">
@@ -5813,7 +5813,8 @@ const POSPage: React.FC = () => {
                                         className="w-full px-8 py-5 text-lg sm:text-xl font-bold text-white bg-gradient-to-r from-green-500 via-emerald-500 to-green-600 rounded-xl hover:from-green-600 hover:via-emerald-600 hover:to-green-700 disabled:from-gray-400 disabled:via-gray-400 disabled:to-gray-500 dark:disabled:from-gray-600 dark:disabled:via-gray-600 dark:disabled:to-gray-700 shadow-2xl hover:shadow-3xl hover:scale-[1.02] transition-all duration-200 disabled:cursor-not-allowed disabled:scale-100"
                                         title={hasUnsyncedSales ? 'لا يمكن تأكيد الدفع: يوجد فواتير مكررة تحتاج للمراجعة. يرجى التحقق من الفواتير المحفوظة وحذف المكررة.' : ''}
                                     >
-                                        {isProcessingPayment ? 'جاري المعالجة...' : hasUnsyncedSales ? 'فاتورة مكررة - يرجى المراجعة' : AR_LABELS.confirmPayment}
+                                        {/* HIDDEN: Processing message removed - button stays disabled but shows normal text */}
+                                        {hasUnsyncedSales ? 'فاتورة مكررة - يرجى المراجعة' : AR_LABELS.confirmPayment}
                                     </button>
                                 </div>
                             </div>

@@ -987,7 +987,8 @@ const WholesalePOSPage: React.FC = () => {
                                 disabled={isProcessingPayment}
                                 className="w-full px-4 py-2.5 text-sm sm:text-base bg-gradient-to-r from-green-500 via-emerald-500 to-green-600 text-white rounded-xl hover:from-green-600 hover:via-emerald-600 hover:to-green-700 disabled:from-gray-400 disabled:via-gray-400 disabled:to-gray-500 dark:disabled:from-gray-600 dark:disabled:via-gray-600 dark:disabled:to-gray-700 shadow-xl hover:shadow-2xl transition-all duration-200 disabled:cursor-not-allowed"
                             >
-                                {isProcessingPayment ? 'جاري المعالجة...' : AR_LABELS.confirmPayment}
+                                {/* HIDDEN: Processing message removed - button stays disabled but shows normal text */}
+                                {AR_LABELS.confirmPayment}
                             </button>
                         </div>
                     </div>
