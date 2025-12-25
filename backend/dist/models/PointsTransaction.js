@@ -41,7 +41,6 @@ const pointsTransactionSchema = new mongoose_1.Schema({
         required: [true, 'Global customer ID is required'],
         trim: true,
         lowercase: true,
-        index: true,
     },
     customerName: {
         type: String,
@@ -52,24 +51,20 @@ const pointsTransactionSchema = new mongoose_1.Schema({
         type: String,
         trim: true,
         lowercase: true,
-        index: true,
     },
     redeemingStoreId: {
         type: String,
         trim: true,
         lowercase: true,
-        index: true,
     },
     invoiceNumber: {
         type: String,
         trim: true,
-        index: true,
     },
     transactionType: {
         type: String,
         enum: ['earned', 'spent', 'expired', 'adjusted'],
         required: [true, 'Transaction type is required'],
-        index: true,
     },
     points: {
         type: Number,

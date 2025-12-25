@@ -38,7 +38,6 @@ const sequenceSchema = new mongoose_1.Schema({
     storeId: {
         type: String,
         required: true,
-        index: true,
         lowercase: true,
         trim: true,
     },
@@ -46,7 +45,6 @@ const sequenceSchema = new mongoose_1.Schema({
         type: String,
         required: true,
         default: 'invoiceNumber',
-        index: true,
     },
     value: {
         type: Number,

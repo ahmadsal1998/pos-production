@@ -210,7 +210,9 @@ exports.getProducts = (0, error_middleware_1.asyncHandler)(async (req, res) => {
         // Pagination parameters with validation
         // Support "all" parameter to fetch all products (for single-store optimization)
         const allParam = req.query.all;
-        const fetchAll = allParam === 'true' || allParam === '1' || allParam === 'yes';
+        // Handle string values for "all" parameter (query params are always strings)
+        const allParamStr = typeof allParam === 'string' ? allParam.toLowerCase() : '';
+        const fetchAll = allParamStr === 'true' || allParamStr === '1' || allParamStr === 'yes';
         const page = Math.max(1, parseInt(req.query.page) || 1);
         const limit = fetchAll
             ? 10000 // High limit for "all" mode

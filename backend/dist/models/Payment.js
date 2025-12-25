@@ -39,14 +39,12 @@ const paymentSchema = new mongoose_1.Schema({
     invoiceId: {
         type: String,
         required: [true, 'Invoice ID is required'],
-        index: true,
     },
     storeId: {
         type: String,
         required: [true, 'Store ID is required'],
         trim: true,
         lowercase: true,
-        index: true,
     },
     merchantId: {
         type: mongoose_1.Schema.Types.ObjectId,
@@ -57,7 +55,6 @@ const paymentSchema = new mongoose_1.Schema({
     terminalId: {
         type: mongoose_1.Schema.Types.ObjectId,
         ref: 'Terminal',
-        index: true,
         default: null,
     },
     amount: {
@@ -80,7 +77,6 @@ const paymentSchema = new mongoose_1.Schema({
         type: String,
         enum: ['Pending', 'Approved', 'Declined', 'Error', 'Cancelled'],
         default: 'Pending',
-        index: true,
     },
     transactionId: {
         type: String,

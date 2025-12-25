@@ -41,8 +41,6 @@ const storeAccountSchema = new mongoose_1.Schema({
         required: [true, 'Store ID is required'],
         trim: true,
         lowercase: true,
-        unique: true,
-        index: true,
     },
     storeName: {
         type: String,
@@ -73,7 +71,6 @@ const storeAccountSchema = new mongoose_1.Schema({
     isPaused: {
         type: Boolean,
         default: false,
-        index: true,
     },
     pausedAt: {
         type: Date,

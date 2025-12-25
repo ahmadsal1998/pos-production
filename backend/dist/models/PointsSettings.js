@@ -41,7 +41,6 @@ const pointsSettingsSchema = new mongoose_1.Schema({
         default: 'global', // Global settings by default
         trim: true,
         lowercase: true,
-        index: true,
     },
     userPointsPercentage: {
         type: Number,
