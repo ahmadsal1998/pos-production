@@ -16,7 +16,6 @@ const otpSchema = new Schema<OTPDocument>(
       required: [true, 'Email is required'],
       trim: true,
       lowercase: true,
-      index: true,
     },
     code: {
       type: String,

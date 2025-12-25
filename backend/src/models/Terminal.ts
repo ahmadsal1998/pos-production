@@ -25,21 +25,18 @@ const terminalSchema = new Schema<ITerminal>(
       type: Schema.Types.ObjectId,
       ref: 'Merchant',
       required: false,
-      index: true,
       default: null,
     },
     storeId: {
       type: String,
       trim: true,
       lowercase: true,
-      index: true,
       default: null,
     },
     merchantIdMid: {
       type: String,
       trim: true,
       uppercase: true,
-      index: true,
       default: null,
     },
     terminalId: {
@@ -47,7 +44,6 @@ const terminalSchema = new Schema<ITerminal>(
       required: [true, 'Terminal ID (TID) is required'],
       trim: true,
       uppercase: true,
-      index: true,
     },
     name: {
       type: String,
@@ -83,12 +79,10 @@ const terminalSchema = new Schema<ITerminal>(
       type: String,
       enum: ['Active', 'Inactive', 'Maintenance'],
       default: 'Active',
-      index: true,
     },
     testMode: {
       type: Boolean,
       default: false,
-      index: true,
     },
     timeout: {
       type: Number,

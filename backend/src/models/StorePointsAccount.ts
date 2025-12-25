@@ -37,10 +37,8 @@ const storePointsAccountSchema = new Schema<IStorePointsAccount>(
     storeId: {
       type: String,
       required: [true, 'Store ID is required'],
-      unique: true,
       trim: true,
       lowercase: true,
-      index: true,
     },
     storeName: {
       type: String,

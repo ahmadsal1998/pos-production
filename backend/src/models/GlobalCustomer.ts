@@ -51,10 +51,8 @@ const globalCustomerSchema = new Schema<IGlobalCustomer>(
     globalCustomerId: {
       type: String,
       required: [true, 'Global customer ID is required'],
-      unique: true,
       trim: true,
       lowercase: true,
-      index: true,
     },
     identifierType: {
       type: String,
@@ -69,13 +67,11 @@ const globalCustomerSchema = new Schema<IGlobalCustomer>(
     phone: {
       type: String,
       trim: true,
-      index: true,
     },
     email: {
       type: String,
       trim: true,
       lowercase: true,
-      index: true,
     },
     stores: {
       type: [globalCustomerStoreSchema],

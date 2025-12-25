@@ -184,6 +184,17 @@ class ProductSyncManager {
           // Verify we got all products
           if (totalProductsFromServer !== null && allProducts.length !== totalProductsFromServer) {
             console.warn(`[ProductSync] ⚠️ Mismatch: Expected ${totalProductsFromServer} products but got ${allProducts.length}. This may indicate a server-side issue.`);
+            // If we got fewer products than expected, fall back to pagination to get the rest
+            if (allProducts.length < totalProductsFromServer) {
+              console.log(`[ProductSync] ⚠️ Only got ${allProducts.length} of ${totalProductsFromServer} products. Falling back to pagination to fetch remaining products...`);
+              throw new Error(`Only fetched ${allProducts.length} of ${totalProductsFromServer} products, using pagination fallback`);
+            }
+          }
+          
+          // If we got products but no pagination info, and the count seems low, try pagination as fallback
+          if (allProducts.length > 0 && totalProductsFromServer === null && allProducts.length < 100) {
+            console.warn(`[ProductSync] ⚠️ Got ${allProducts.length} products without pagination info. This might be incomplete. Falling back to pagination...`);
+            throw new Error('Products count seems incomplete, using pagination fallback');
           }
         } else {
           console.warn(`[ProductSync] ⚠️ All-products fetch returned success=false, falling back to pagination`);
@@ -192,11 +203,20 @@ class ProductSyncManager {
       } catch (allError: any) {
         // Fallback to pagination if all=true fails or returns insufficient data
         console.log(`[ProductSync] Falling back to pagination-based fetching...`);
+        console.log(`[ProductSync] Error reason: ${allError.message || 'Unknown error'}`);
+        
+        // If we already got some products from the all=true attempt, keep them
+        const initialProductCount = allProducts.length;
+        if (initialProductCount > 0) {
+          console.log(`[ProductSync] Keeping ${initialProductCount} products from all=true attempt, fetching remaining via pagination...`);
+          // Start from page 2 if we already have products (assuming page 1 was already fetched)
+          // But actually, if all=true returned products, we should start from page 1 to ensure we get everything
+          // So we'll start from page 1 but skip products we already have
+        }
         
         let currentPage = 1;
         let hasMorePages = true;
         const pageSize = 100; // Backend max is 100 per page
-        allProducts = [];
 
         while (hasMorePages && currentPage <= this.MAX_PAGES) {
           try {
@@ -233,9 +253,22 @@ class ProductSyncManager {
                 hasMorePages = pagination.hasNextPage === true;
                 currentPage++;
                 console.log(`[ProductSync] Has more pages: ${hasMorePages}, next page: ${currentPage}`);
+                
+                // Safety check: if we've fetched all products according to pagination, stop
+                if (totalProductsFromServer !== null && allProducts.length >= totalProductsFromServer) {
+                  console.log(`[ProductSync] ✅ Fetched all ${totalProductsFromServer} products, stopping pagination`);
+                  hasMorePages = false;
+                }
               } else {
-                console.log(`[ProductSync] No pagination info, assuming no more pages`);
-                hasMorePages = false;
+                // If no pagination info but we got products, continue to next page
+                // Only stop if we got 0 products (empty page)
+                if (productsData.length === 0) {
+                  console.log(`[ProductSync] No pagination info and empty page, assuming no more pages`);
+                  hasMorePages = false;
+                } else {
+                  console.log(`[ProductSync] No pagination info but got ${productsData.length} products, continuing to next page...`);
+                  currentPage++;
+                }
               }
             } else {
               console.warn(`[ProductSync] ⚠️ Page ${currentPage} returned success=false, stopping pagination`);

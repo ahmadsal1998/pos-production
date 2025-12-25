@@ -20,10 +20,8 @@ const pointsBalanceSchema = new Schema<IPointsBalance>(
     globalCustomerId: {
       type: String,
       required: [true, 'Global customer ID is required'],
-      unique: true,
       trim: true,
       lowercase: true,
-      index: true,
     },
     customerName: {
       type: String,
@@ -33,13 +31,11 @@ const pointsBalanceSchema = new Schema<IPointsBalance>(
     customerPhone: {
       type: String,
       trim: true,
-      index: true,
     },
     customerEmail: {
       type: String,
       trim: true,
       lowercase: true,
-      index: true,
     },
     totalPoints: {
       type: Number,

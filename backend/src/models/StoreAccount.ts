@@ -23,8 +23,6 @@ const storeAccountSchema = new Schema<IStoreAccount>(
       required: [true, 'Store ID is required'],
       trim: true,
       lowercase: true,
-      unique: true,
-      index: true,
     },
     storeName: {
       type: String,
@@ -55,7 +53,6 @@ const storeAccountSchema = new Schema<IStoreAccount>(
     isPaused: {
       type: Boolean,
       default: false,
-      index: true,
     },
     pausedAt: {
       type: Date,
