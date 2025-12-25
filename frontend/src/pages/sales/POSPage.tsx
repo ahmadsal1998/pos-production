@@ -262,6 +262,11 @@ const POSPage: React.FC = () => {
     const invoiceNumberInitializedRef = useRef(false); // Track if invoice number has been initialized
     const lockedInvoiceNumberRef = useRef<string | null>(null); // Lock invoice number once submission starts
     const conflictInvoiceNumbersRef = useRef<Set<string>>(new Set()); // Track invoice numbers that have conflicts to prevent infinite loops
+    // CRITICAL: Pre-fetched next invoice number for immediate use in new sales
+    // This prevents delays when starting a new sale after completing the previous one
+    const nextInvoiceNumberRef = useRef<string | null>(null); // Pre-fetched next invoice number
+    const isFetchingNextInvoiceNumberRef = useRef(false); // Track if we're currently fetching next invoice number
+    const pendingNewSaleRef = useRef(false); // Track if user requested new sale during processing
     const [currentInvoice, setCurrentInvoice] = useState<POSInvoice>(() => generateNewInvoice(currentUserName, 'INV-1'));
     const [completedInvoice, setCompletedInvoice] = useState<POSInvoice | null>(null); // Store completed invoice for receipt display
     const [quantityDrafts, setQuantityDrafts] = useState<Record<string, string>>({});
@@ -729,6 +734,43 @@ const POSPage: React.FC = () => {
         }
     }, [user?.storeId]);
 
+    // CRITICAL: Pre-fetch next invoice number for immediate use in new sales
+    // This function fetches and caches the next invoice number
+    const preFetchNextInvoiceNumber = useCallback(async (): Promise<void> => {
+        // Prevent concurrent fetches
+        if (isFetchingNextInvoiceNumberRef.current) {
+            return;
+        }
+        
+        isFetchingNextInvoiceNumberRef.current = true;
+        
+        try {
+            // Fetch next invoice number (incrementing) and cache it
+            const nextNumber = await fetchNextInvoiceNumber();
+            nextInvoiceNumberRef.current = nextNumber;
+            console.log(`[POS] Pre-fetched next invoice number: ${nextNumber}`);
+        } catch (error) {
+            console.error('[POS] Failed to pre-fetch next invoice number:', error);
+            // Fallback: try to generate from current invoice number
+            try {
+                const currentNumber = await fetchCurrentInvoiceNumber();
+                const currentMatch = currentNumber.match(/^INV-(\d+)$/);
+                if (currentMatch) {
+                    const currentNum = parseInt(currentMatch[1], 10);
+                    const fallbackNumber = `INV-${currentNum + 1}`;
+                    nextInvoiceNumberRef.current = fallbackNumber;
+                    console.log(`[POS] Pre-fetched fallback invoice number: ${fallbackNumber}`);
+                } else {
+                    nextInvoiceNumberRef.current = 'INV-1';
+                }
+            } catch (fallbackError) {
+                console.error('[POS] Failed to generate fallback invoice number:', fallbackError);
+                nextInvoiceNumberRef.current = 'INV-1';
+            }
+        } finally {
+            isFetchingNextInvoiceNumberRef.current = false;
+        }
+    }, [fetchNextInvoiceNumber, fetchCurrentInvoiceNumber]);
 
     // Fetch initial invoice number on mount (only once)
     useEffect(() => {
@@ -750,6 +792,12 @@ const POSPage: React.FC = () => {
                 if (isMountedRef.current && !invoiceNumberInitializedRef.current) {
                     invoiceNumberInitializedRef.current = true;
                     setCurrentInvoice(inv => ({ ...inv, id: currentInvoiceNumber }));
+                    
+                    // CRITICAL: Pre-fetch the next invoice number immediately after initialization
+                    // This ensures it's ready when user starts the first sale
+                    preFetchNextInvoiceNumber().catch(error => {
+                        console.error('[POS] Failed to pre-fetch next invoice number on mount:', error);
+                    });
                 }
             } catch (error) {
                 console.error('Failed to initialize invoice number:', error);
@@ -758,7 +806,7 @@ const POSPage: React.FC = () => {
             }
         };
         initializeInvoiceNumber();
-    }, [fetchCurrentInvoiceNumber]); // Include fetchCurrentInvoiceNumber in dependencies
+    }, [fetchCurrentInvoiceNumber, preFetchNextInvoiceNumber]); // Include dependencies
 
     // Initialize sales sync service on mount
     useEffect(() => {
@@ -2942,25 +2990,56 @@ const POSPage: React.FC = () => {
     };
     
     const startNewSale = async () => {
+        // CRITICAL: If previous sale is still processing, queue this operation
+        if (isProcessingPayment || isSubmittingInvoiceRef.current) {
+            console.warn('[POS] Previous sale still processing. New sale will start after processing completes.');
+            // Mark that user requested new sale - it will be started automatically after processing
+            pendingNewSaleRef.current = true;
+            return;
+        }
+        
+        // Clear pending flag since we're starting the sale now
+        pendingNewSaleRef.current = false;
+        
         // Reset submission flag when starting new sale
         isSubmittingInvoiceRef.current = false;
         lockedInvoiceNumberRef.current = null;
         setSaleCompleted(false);
         setCompletedInvoice(null); // Clear completed invoice when starting new sale
         
-        // Get sequential invoice number (non-incrementing, for display only)
-        // The actual increment happens when the sale is completed
-        try {
-            const nextInvoiceNumber = await fetchCurrentInvoiceNumber();
-            setCurrentInvoice(generateNewInvoice(currentUserName, nextInvoiceNumber));
-            console.log(`[POS] Started new sale with invoice number: ${nextInvoiceNumber}`);
-        } catch (error) {
-            console.error('Failed to fetch invoice number, using fallback:', error);
-            // Fallback: use INV-1 if fetch fails
-            const fallbackNumber = 'INV-1';
-            setCurrentInvoice(generateNewInvoice(currentUserName, fallbackNumber));
-            console.log(`[POS] Started new sale with fallback invoice number: ${fallbackNumber}`);
+        // CRITICAL FIX: Use pre-fetched invoice number synchronously (no async wait)
+        // This ensures immediate invoice number availability for new sales
+        let nextInvoiceNumber: string;
+        
+        if (nextInvoiceNumberRef.current) {
+            // Use pre-fetched number immediately
+            nextInvoiceNumber = nextInvoiceNumberRef.current;
+            nextInvoiceNumberRef.current = null; // Clear it since we're using it
+            console.log(`[POS] Started new sale with pre-fetched invoice number: ${nextInvoiceNumber}`);
+            
+            // Pre-fetch the next invoice number in background for the upcoming sale
+            preFetchNextInvoiceNumber().catch(error => {
+                console.error('[POS] Failed to pre-fetch next invoice number after starting sale:', error);
+            });
+        } else {
+            // Fallback: fetch synchronously if pre-fetched number not available
+            console.warn('[POS] Pre-fetched invoice number not available, fetching now...');
+            try {
+                nextInvoiceNumber = await fetchCurrentInvoiceNumber();
+                console.log(`[POS] Started new sale with fetched invoice number: ${nextInvoiceNumber}`);
+                
+                // Pre-fetch the next invoice number in background
+                preFetchNextInvoiceNumber().catch(error => {
+                    console.error('[POS] Failed to pre-fetch next invoice number:', error);
+                });
+            } catch (error) {
+                console.error('Failed to fetch invoice number, using fallback:', error);
+                // Fallback: use INV-1 if fetch fails
+                nextInvoiceNumber = 'INV-1';
+            }
         }
+        
+        setCurrentInvoice(generateNewInvoice(currentUserName, nextInvoiceNumber));
         
         setSelectedPaymentMethod('Cash');
         setCreditPaidAmount(0);
@@ -3793,6 +3872,10 @@ const POSPage: React.FC = () => {
                     finalInvoice.id = lockedInvoiceNumber;
                     console.log(`[POS] Updated invoice number to: ${lockedInvoiceNumber}`);
                 }
+                
+                // CRITICAL: Pre-fetch the next invoice number for the upcoming sale
+                // This ensures it's ready immediately when user starts the next sale
+                await preFetchNextInvoiceNumber();
             } catch (error) {
                 console.error('Failed to fetch next invoice number, using fallback:', error);
                 // Fallback: generate sequential number from current invoice number
@@ -3805,6 +3888,10 @@ const POSPage: React.FC = () => {
                     finalInvoice.id = lockedInvoiceNumber;
                     setCompletedInvoice(prev => prev ? { ...prev, id: lockedInvoiceNumber } : null);
                     console.log(`[POS] Using fallback invoice number: ${lockedInvoiceNumber}`);
+                    
+                    // Pre-fetch next number using fallback calculation
+                    const nextFallbackNumber = `INV-${currentNum + 2}`;
+                    nextInvoiceNumberRef.current = nextFallbackNumber;
                 }
             }
         }).catch(error => {
@@ -4466,10 +4553,40 @@ const POSPage: React.FC = () => {
                     
                     // Use setTimeout to ensure state updates have settled before processing queue
                     setTimeout(async () => {
+                        // CRITICAL: Use pre-fetched invoice number if available, otherwise fetch
+                        let nextInvoiceNumber: string;
+                        
+                        if (nextInvoiceNumberRef.current) {
+                            // Use pre-fetched number immediately
+                            nextInvoiceNumber = nextInvoiceNumberRef.current;
+                            nextInvoiceNumberRef.current = null; // Clear it since we're using it
+                            console.log(`[POS] Using pre-fetched invoice number for queued products: ${nextInvoiceNumber}`);
+                            
+                            // Pre-fetch next number for upcoming sale
+                            preFetchNextInvoiceNumber().catch(error => {
+                                console.error('[POS] Failed to pre-fetch next invoice number:', error);
+                            });
+                        } else {
+                            // Fallback: fetch if pre-fetched not available
+                            try {
+                                nextInvoiceNumber = await fetchNextInvoiceNumber();
+                                console.log(`[POS] Fetched invoice number for queued products: ${nextInvoiceNumber}`);
+                                
+                                // Pre-fetch next number
+                                preFetchNextInvoiceNumber().catch(error => {
+                                    console.error('[POS] Failed to pre-fetch next invoice number:', error);
+                                });
+                            } catch (error) {
+                                console.error('Failed to fetch invoice number for queued products:', error);
+                                // Generate fallback
+                                const currentMatch = lockedInvoiceNumberRef.current?.match(/^INV-(\d+)$/);
+                                nextInvoiceNumber = currentMatch ? `INV-${parseInt(currentMatch[1], 10) + 1}` : 'INV-1';
+                            }
+                        }
+                        
                         // Create a new invoice manually (without calling startNewSale to keep receipt visible)
                         // This invoice will be shown when user starts the next sale
                         try {
-                            const nextInvoiceNumber = await fetchNextInvoiceNumber();
                             const newInvoice = generateNewInvoice(currentUserName, nextInvoiceNumber);
                             setCurrentInvoice(newInvoice);
                             console.log(`[POS] Created new invoice for queued products: ${nextInvoiceNumber}`);
@@ -4510,6 +4627,25 @@ const POSPage: React.FC = () => {
                             // Keep saleCompleted true to maintain receipt visibility
                         }
                     }, 100); // Small delay to ensure state updates have settled
+                } else {
+                    // No queued products - ensure next invoice number is pre-fetched for next sale
+                    if (!nextInvoiceNumberRef.current) {
+                        preFetchNextInvoiceNumber().catch(error => {
+                            console.error('[POS] Failed to pre-fetch next invoice number after sale completion:', error);
+                        });
+                    }
+                }
+                
+                // CRITICAL: If user requested new sale during processing, start it now
+                if (pendingNewSaleRef.current) {
+                    console.log('[POS] User requested new sale during processing, starting now...');
+                    pendingNewSaleRef.current = false;
+                    // Use setTimeout to ensure state has settled
+                    setTimeout(() => {
+                        startNewSale().catch(error => {
+                            console.error('[POS] Error starting new sale after processing:', error);
+                        });
+                    }, 100);
                 }
                 
                 // Check for unsynced sales after sync completes
@@ -4534,8 +4670,31 @@ const POSPage: React.FC = () => {
                 
                 // Use setTimeout to ensure state updates have settled before processing queue
                 setTimeout(async () => {
+                    // CRITICAL: Use pre-fetched invoice number if available
+                    let nextInvoiceNumber: string;
+                    
+                    if (nextInvoiceNumberRef.current) {
+                        nextInvoiceNumber = nextInvoiceNumberRef.current;
+                        nextInvoiceNumberRef.current = null;
+                        console.log(`[POS] Using pre-fetched invoice number for queued products (after error): ${nextInvoiceNumber}`);
+                        preFetchNextInvoiceNumber().catch(error => {
+                            console.error('[POS] Failed to pre-fetch next invoice number:', error);
+                        });
+                    } else {
+                        try {
+                            nextInvoiceNumber = await fetchNextInvoiceNumber();
+                            console.log(`[POS] Fetched invoice number for queued products (after error): ${nextInvoiceNumber}`);
+                            preFetchNextInvoiceNumber().catch(error => {
+                                console.error('[POS] Failed to pre-fetch next invoice number:', error);
+                            });
+                        } catch (error) {
+                            console.error('Failed to fetch invoice number (after error):', error);
+                            const currentMatch = lockedInvoiceNumberRef.current?.match(/^INV-(\d+)$/);
+                            nextInvoiceNumber = currentMatch ? `INV-${parseInt(currentMatch[1], 10) + 1}` : 'INV-1';
+                        }
+                    }
+                    
                     try {
-                        const nextInvoiceNumber = await fetchNextInvoiceNumber();
                         const newInvoice = generateNewInvoice(currentUserName, nextInvoiceNumber);
                         setCurrentInvoice(newInvoice);
                         console.log(`[POS] Created new invoice for queued products (after error): ${nextInvoiceNumber}`);
@@ -4570,6 +4729,24 @@ const POSPage: React.FC = () => {
                     } catch (error) {
                         console.error('Failed to process queued products (after error):', error);
                     }
+                }, 100);
+            } else {
+                // Ensure next invoice number is pre-fetched
+                if (!nextInvoiceNumberRef.current) {
+                    preFetchNextInvoiceNumber().catch(error => {
+                        console.error('[POS] Failed to pre-fetch next invoice number (after error):', error);
+                    });
+                }
+            }
+            
+            // CRITICAL: If user requested new sale during processing, start it now
+            if (pendingNewSaleRef.current) {
+                console.log('[POS] User requested new sale during processing (after error), starting now...');
+                pendingNewSaleRef.current = false;
+                setTimeout(() => {
+                    startNewSale().catch(error => {
+                        console.error('[POS] Error starting new sale after processing (after error):', error);
+                    });
                 }, 100);
             }
             
