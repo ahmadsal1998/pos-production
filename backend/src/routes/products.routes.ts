@@ -40,31 +40,9 @@ router.get('/', getProducts);
 router.get('/metrics', getProductMetrics);
 
 // Barcode route must come before /:id route to avoid conflicts
-// Using explicit route pattern to ensure it matches correctly
 // CRITICAL: This route must be registered before /:id to prevent route conflicts
-// Using regex pattern to ensure exact match and prevent /:id from matching
-router.get(/^\/barcode\/(.+)$/, async (req, res, next) => {
-  // Extract barcode from the matched groups
-  const match = req.path.match(/^\/barcode\/(.+)$/);
-  if (match) {
-    req.params.barcode = match[1];
-  }
-  
-  log.debug('[Products Router] BARCODE ROUTE MATCHED (REGEX)', {
-    method: req.method,
-    path: req.path,
-    originalUrl: req.originalUrl,
-    baseUrl: req.baseUrl,
-    url: req.url,
-    barcode: req.params.barcode,
-    params: req.params,
-  });
-  next();
-}, getProductByBarcode);
-
-// Also keep the string route as fallback
 router.get('/barcode/:barcode', async (req, res, next) => {
-  log.debug('[Products Router] Barcode route MATCHED (STRING)', {
+  log.debug('[Products Router] Barcode route MATCHED', {
     method: req.method,
     path: req.path,
     originalUrl: req.originalUrl,

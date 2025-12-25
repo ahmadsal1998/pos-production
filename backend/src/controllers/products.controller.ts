@@ -1108,8 +1108,14 @@ export const getProductByBarcode = asyncHandler(async (req: AuthenticatedRequest
     });
   }
 
-  // Decode the barcode in case it was URL encoded
-  const decodedBarcode = decodeURIComponent(barcode || '');
+  // Decode the barcode in case it was URL encoded (Express already decodes, but handle edge cases)
+  let decodedBarcode: string;
+  try {
+    decodedBarcode = decodeURIComponent(barcode || '');
+  } catch (decodeError) {
+    // If decode fails (invalid encoding), use the barcode as-is (Express already decoded it)
+    decodedBarcode = barcode || '';
+  }
 
   if (!decodedBarcode || !decodedBarcode.trim()) {
     return res.status(400).json({
