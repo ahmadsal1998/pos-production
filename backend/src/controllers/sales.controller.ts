@@ -716,15 +716,66 @@ export const getSales = asyncHandler(async (req: AuthenticatedRequest, res: Resp
   const skip = (pageNum - 1) * limitNum;
   
   // Execute query with business date filtering
-  // Sort by date descending (most recent first)
-  let [sales, total] = await Promise.all([
-    Sale.find(query)
-      .sort({ date: -1 }) // Sort by date descending (most recent first)
-      .skip(skip)
-      .limit(limitNum)
-      .lean(),
-    Sale.countDocuments(query),
-  ]);
+  // Sort by invoice number descending (highest number first) using aggregation pipeline
+  // This extracts the numeric part from invoice numbers for proper numeric sorting
+  let sales: any[] = [];
+  let total = 0;
+  
+  try {
+    // Build aggregation pipeline to extract numeric part and sort
+    const pipeline: any[] = [
+      { $match: query }, // Apply all filters
+      {
+        $addFields: {
+          // Extract numeric part from invoiceNumber (handles INV-123 format)
+          invoiceNum: {
+            $let: {
+              vars: {
+                matchResult: {
+                  $regexFind: {
+                    input: '$invoiceNumber',
+                    regex: /^INV-(\d+)$/,
+                  },
+                },
+              },
+              in: {
+                $cond: {
+                  if: { $ne: ['$$matchResult', null] },
+                  then: { $toInt: { $arrayElemAt: ['$$matchResult.captures', 0] } },
+                  else: 0, // Fallback for legacy formats or invalid invoice numbers
+                },
+              },
+            },
+          },
+        },
+      },
+      { $sort: { invoiceNum: -1 } }, // Sort by numeric invoice number descending
+      { $skip: skip },
+      { $limit: limitNum },
+      {
+        $project: {
+          invoiceNum: 0, // Remove the temporary field from output
+        },
+      },
+    ];
+    
+    // Execute aggregation for sales
+    sales = await Sale.aggregate(pipeline);
+    
+    // Get total count separately
+    total = await Sale.countDocuments(query);
+  } catch (aggregationError: any) {
+    // Fallback to simple string sorting if aggregation fails
+    log.warn('[Sales Controller] Aggregation sorting failed, falling back to string sort:', aggregationError);
+    [sales, total] = await Promise.all([
+      Sale.find(query)
+        .sort({ invoiceNumber: -1 }) // Sort by invoice number string descending
+        .skip(skip)
+        .limit(limitNum)
+        .lean(),
+      Sale.countDocuments(query),
+    ]);
+  }
   
   // If business date filtering returned 0 results but we have date filters,
   // try simple calendar date filtering as a fallback
@@ -753,14 +804,56 @@ export const getSales = asyncHandler(async (req: AuthenticatedRequest, res: Resp
     }
     
     // Retry query with calendar date filtering
-    const [calendarSales, calendarTotal] = await Promise.all([
-      Sale.find(calendarQuery)
-        .sort({ date: -1 }) // Sort by date descending (most recent first)
-        .skip(skip)
-        .limit(limitNum)
-        .lean(),
-      Sale.countDocuments(calendarQuery),
-    ]);
+    // Use aggregation for proper numeric invoice number sorting
+    let calendarSales: any[] = [];
+    let calendarTotal = 0;
+    
+    try {
+      const calendarPipeline: any[] = [
+        { $match: calendarQuery },
+        {
+          $addFields: {
+            invoiceNum: {
+              $let: {
+                vars: {
+                  matchResult: {
+                    $regexFind: {
+                      input: '$invoiceNumber',
+                      regex: /^INV-(\d+)$/,
+                    },
+                  },
+                },
+                in: {
+                  $cond: {
+                    if: { $ne: ['$$matchResult', null] },
+                    then: { $toInt: { $arrayElemAt: ['$$matchResult.captures', 0] } },
+                    else: 0,
+                  },
+                },
+              },
+            },
+          },
+        },
+        { $sort: { invoiceNum: -1 } },
+        { $skip: skip },
+        { $limit: limitNum },
+        { $project: { invoiceNum: 0 } },
+      ];
+      
+      calendarSales = await Sale.aggregate(calendarPipeline);
+      calendarTotal = await Sale.countDocuments(calendarQuery);
+    } catch (calendarAggError: any) {
+      // Fallback to string sorting
+      log.warn('[Sales Controller] Calendar aggregation sorting failed, using string sort:', calendarAggError);
+      [calendarSales, calendarTotal] = await Promise.all([
+        Sale.find(calendarQuery)
+          .sort({ invoiceNumber: -1 })
+          .skip(skip)
+          .limit(limitNum)
+          .lean(),
+        Sale.countDocuments(calendarQuery),
+      ]);
+    }
     
     if (calendarTotal > 0) {
       log.warn('[Sales Controller] Business date filtering returned 0 results, using calendar date filtering fallback');

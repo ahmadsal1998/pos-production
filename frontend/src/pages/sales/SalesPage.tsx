@@ -27,6 +27,36 @@ const FilterIcon = () => (
     </svg>
 );
 
+// Utility function to extract numeric part from invoice number for sorting
+const extractInvoiceNumber = (invoiceNumber: string | undefined | null): number => {
+    if (!invoiceNumber) return 0;
+    
+    // Handle sequential format: INV-123
+    const sequentialPattern = /^INV-(\d+)$/;
+    const sequentialMatch = invoiceNumber.match(sequentialPattern);
+    if (sequentialMatch) {
+        const num = parseInt(sequentialMatch[1], 10);
+        return isNaN(num) ? 0 : num;
+    }
+    
+    // Handle legacy timestamp format: INV-timestamp-...
+    const timestampPattern = /^INV-(\d+)-/;
+    const timestampMatch = invoiceNumber.match(timestampPattern);
+    if (timestampMatch) {
+        // For legacy format, use a high base number to maintain order
+        return 1000000;
+    }
+    
+    // Fallback: try to extract any number from the string
+    const anyNumberMatch = invoiceNumber.match(/(\d+)/);
+    if (anyNumberMatch) {
+        const num = parseInt(anyNumberMatch[1], 10);
+        return isNaN(num) ? 0 : num;
+    }
+    
+    return 0;
+};
+
 // Utility function to calculate cost price for a sale
 const calculateCostPrice = async (items: any[]): Promise<number> => {
     if (!items || items.length === 0) return 0;
@@ -1142,6 +1172,13 @@ const SalesPage: React.FC<SalesPageProps> = ({ setActivePath }) => {
                     
                     // Use server-side pagination info
                     pagination = backendResponse.data?.pagination;
+                    
+                    // Sort API sales by invoice number (highest number first)
+                    apiSales.sort((a, b) => {
+                        const numA = extractInvoiceNumber(a.invoiceNumber);
+                        const numB = extractInvoiceNumber(b.invoiceNumber);
+                        return numB - numA; // Descending order (highest number first)
+                    });
                 }
             } catch (apiError: any) {
                 console.error('[SalesPage] API fetch failed:', apiError);
@@ -1256,9 +1293,13 @@ const SalesPage: React.FC<SalesPageProps> = ({ setActivePath }) => {
                 }
             });
             
-            // Convert to array and sort by date (most recent first)
+            // Convert to array and sort by invoice number (highest number first)
             const allSales = Array.from(salesMap.values());
-            allSales.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+            allSales.sort((a, b) => {
+                const numA = extractInvoiceNumber(a.invoiceNumber);
+                const numB = extractInvoiceNumber(b.invoiceNumber);
+                return numB - numA; // Descending order (highest number first)
+            });
             
             // Use server-side pagination as the primary source
             // Only merge unsynced sales on page 1 to avoid breaking pagination
@@ -1268,7 +1309,7 @@ const SalesPage: React.FC<SalesPageProps> = ({ setActivePath }) => {
             
             if (page === 1 && unsyncedSales.length > 0) {
                 // On page 1: merge unsynced sales with API sales
-                // Sort by date (most recent first) and limit to pageSize
+                // Sort by invoice number (highest number first) and limit to pageSize
                 finalSales = allSales.slice(0, pageSize);
                 // Adjust total to include unsynced sales that match filters
                 const apiTotal = pagination?.totalSales || apiSales.length;
