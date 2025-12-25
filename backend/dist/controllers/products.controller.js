@@ -962,8 +962,15 @@ exports.getProductByBarcode = (0, error_middleware_1.asyncHandler)(async (req, r
             message: 'Store ID is required. Please ensure you are logged in as a store user.',
         });
     }
-    // Decode the barcode in case it was URL encoded
-    const decodedBarcode = decodeURIComponent(barcode || '');
+    // Decode the barcode in case it was URL encoded (Express already decodes, but handle edge cases)
+    let decodedBarcode;
+    try {
+        decodedBarcode = decodeURIComponent(barcode || '');
+    }
+    catch (decodeError) {
+        // If decode fails (invalid encoding), use the barcode as-is (Express already decoded it)
+        decodedBarcode = barcode || '';
+    }
     if (!decodedBarcode || !decodedBarcode.trim()) {
         return res.status(400).json({
             success: false,
