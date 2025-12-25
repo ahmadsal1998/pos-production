@@ -1,10 +1,14 @@
 /**
  * Sales synchronization service
  * Handles syncing between IndexedDB and backend API
+ * Uses event-driven sync with queue management and debouncing
  */
 
 import { salesDB, SaleRecord } from '../db/salesDB';
 import { salesApi } from '../api/client';
+import { syncQueue } from './syncQueue';
+import { debounce } from '../utils/debounce';
+import { logger } from '../utils/logger';
 
 interface SyncResult {
   success: boolean;
@@ -14,66 +18,81 @@ interface SyncResult {
 }
 
 class SalesSyncService {
-  private isSyncing = false;
-  private syncInterval: number | null = null;
+  private debouncedSync: ReturnType<typeof debounce>;
+  private hasUnsyncedSales = false;
 
   /**
-   * Initialize sync service
+   * Initialize sync service (event-driven, no periodic polling)
    */
   async init(): Promise<void> {
     // Try to initialize IndexedDB (may fail on some mobile browsers)
-    let savedInvoiceNumber: string | undefined;
     try {
       await salesDB.init();
-      console.log('✅ Sales sync service initialized with IndexedDB');
+      logger.info('✅ Sales sync service initialized with IndexedDB');
     } catch (error) {
-      console.warn('⚠️ IndexedDB not available, sync service will work without local storage:', error);
+      logger.warn('⚠️ IndexedDB not available, sync service will work without local storage:', error);
       // Continue anyway - we can still sync to backend
     }
 
-    // Start periodic sync (every 30 seconds)
-    this.startPeriodicSync(30000);
+    // Create debounced sync function (batches rapid changes within 1.5 seconds)
+    this.debouncedSync = debounce(() => {
+      this.triggerSync();
+    }, 1500);
 
     // Sync on page visibility change (when user comes back to tab)
     document.addEventListener('visibilitychange', () => {
-      if (!document.hidden) {
-        this.syncUnsyncedSales().catch((error) => {
-          console.error('Error syncing on visibility change:', error);
-        });
+      if (!document.hidden && navigator.onLine) {
+        this.triggerSync();
       }
     });
 
     // Sync on online event
     window.addEventListener('online', () => {
-      this.syncUnsyncedSales().catch((error) => {
-        console.error('Error syncing on online event:', error);
-      });
+      this.triggerSync();
     });
+
+    // Initial check for unsynced sales (only once on init)
+    this.checkAndSyncIfNeeded();
   }
 
   /**
-   * Start periodic sync
+   * Trigger sync (adds to queue, debounced)
    */
-  startPeriodicSync(intervalMs: number): void {
-    if (this.syncInterval) {
-      clearInterval(this.syncInterval);
+  private triggerSync(): void {
+    if (!navigator.onLine) {
+      logger.debug('📴 Offline, skipping sync trigger');
+      return;
     }
 
-    this.syncInterval = window.setInterval(() => {
-      this.syncUnsyncedSales().catch((error) => {
-        console.error('Error in periodic sync:', error);
-      });
-    }, intervalMs);
+    // Use debounced sync to batch rapid changes
+    this.debouncedSync();
   }
 
   /**
-   * Stop periodic sync
+   * Check if there are unsynced sales and sync if needed
+   * Only syncs if there are actually unsynced sales
    */
-  stopPeriodicSync(): void {
-    if (this.syncInterval) {
-      clearInterval(this.syncInterval);
-      this.syncInterval = null;
+  private async checkAndSyncIfNeeded(): Promise<void> {
+    try {
+      const unsyncedCount = await this.getUnsyncedCount();
+      if (unsyncedCount > 0) {
+        this.hasUnsyncedSales = true;
+        this.triggerSync();
+      } else {
+        this.hasUnsyncedSales = false;
+      }
+    } catch (error) {
+      logger.error('Error checking unsynced sales:', error);
     }
+  }
+
+  /**
+   * Notify that a new sale was created (event-driven)
+   * This triggers sync immediately
+   */
+  notifySaleCreated(): void {
+    this.hasUnsyncedSales = true;
+    this.triggerSync();
   }
 
   /**
@@ -85,7 +104,7 @@ class SalesSyncService {
       // CRITICAL: Check if this sale was already synced before attempting sync
       // This prevents duplicate sync attempts
       if (sale.synced && sale._id) {
-        console.log(`✅ Sale ${sale.invoiceNumber} already synced (backend ID: ${sale._id}), skipping sync`);
+        logger.debug(`✅ Sale ${sale.invoiceNumber} already synced (backend ID: ${sale._id}), skipping sync`);
         return { success: true, backendId: sale._id };
       }
 
@@ -140,12 +159,12 @@ class SalesSyncService {
               sale.invoiceNumber = savedInvoiceNumber;
             }
           } catch (dbError) {
-            console.warn('⚠️ Failed to mark sale as synced in IndexedDB:', dbError);
+            logger.warn('⚠️ Failed to mark sale as synced in IndexedDB:', dbError);
             // Continue anyway - backend sync succeeded
           }
         }
 
-        console.log('✅ Sale synced successfully:', sale.invoiceNumber);
+        logger.debug('✅ Sale synced successfully:', sale.invoiceNumber);
         return { success: true, backendId };
       } else {
         throw new Error('Backend returned unsuccessful response');
@@ -165,14 +184,14 @@ class SalesSyncService {
         
         const detailedErrorMessage = `تعارض رقم الفاتورة: رقم الفاتورة ${sale.invoiceNumber} مستخدم بالفعل. سيتم إنشاء رقم فاتورة جديد تلقائياً.`;
         
-        console.warn(`⚠️ INVOICE NUMBER CONFLICT BY BACKEND: ${detailedErrorMessage}`);
+        logger.warn(`⚠️ INVOICE NUMBER CONFLICT BY BACKEND: ${detailedErrorMessage}`);
         
         // Mark as error but allow retry with new number
         if (indexedDBAvailable && sale.id) {
           try {
             await salesDB.markSyncError(sale.id, detailedErrorMessage, sale.storeId, sale.invoiceNumber);
           } catch (dbError) {
-            console.warn('Could not mark conflict error in IndexedDB:', dbError);
+            logger.warn('Could not mark conflict error in IndexedDB:', dbError);
           }
         }
         
@@ -215,22 +234,22 @@ class SalesSyncService {
             }
           }
           
-          console.log(`✅ Sale ${sale.invoiceNumber} already exists on server, marked as synced`);
+          logger.debug(`✅ Sale ${sale.invoiceNumber} already exists on server, marked as synced`);
           return { success: true, backendId };
         }
       } catch (fetchError) {
         // Couldn't fetch existing sale, continue with error handling
-        console.warn('Could not verify existing sale:', fetchError);
+        logger.warn('Could not verify existing sale:', fetchError);
       }
       
-      console.error('❌ Failed to sync sale:', sale.invoiceNumber, errorMessage);
+      logger.error('❌ Failed to sync sale:', sale.invoiceNumber, errorMessage);
 
       // Mark sync error in IndexedDB (only if available)
       if (indexedDBAvailable && sale.id) {
         try {
           await salesDB.markSyncError(sale.id, errorMessage, sale.storeId, sale.invoiceNumber);
         } catch (dbError) {
-          console.warn('⚠️ Failed to mark sync error in IndexedDB:', dbError);
+          logger.warn('⚠️ Failed to mark sync error in IndexedDB:', dbError);
           // Continue anyway
         }
       }
@@ -240,40 +259,34 @@ class SalesSyncService {
   }
 
   /**
-   * Sync all unsynced sales
+   * Sync all unsynced sales (internal, called via queue)
    */
-  async syncUnsyncedSales(storeId?: string): Promise<SyncResult> {
-    if (this.isSyncing) {
-      console.log('⏳ Sync already in progress, skipping...');
-      return { success: false, synced: 0, failed: 0, errors: [] };
-    }
-
+  private async syncUnsyncedSalesInternal(storeId?: string): Promise<SyncResult> {
     // Check if online
     if (!navigator.onLine) {
-      console.log('📴 Offline, skipping sync');
+      logger.debug('📴 Offline, skipping sync');
       return { success: false, synced: 0, failed: 0, errors: [] };
     }
-
-    this.isSyncing = true;
 
     try {
       const unsyncedSales = await salesDB.getUnsyncedSales(storeId);
-      console.log(`🔄 Syncing ${unsyncedSales.length} unsynced sales...`);
       
-      // Log all unsynced sales for debugging
+      if (unsyncedSales.length === 0) {
+        this.hasUnsyncedSales = false;
+        return { success: true, synced: 0, failed: 0, errors: [] };
+      }
+
+      logger.debug(`🔄 Syncing ${unsyncedSales.length} unsynced sales...`);
+      
+      // Log unsynced sales only in development
       if (unsyncedSales.length > 0) {
-        console.log('[SalesSync] Unsynced sales:', unsyncedSales.map(s => ({
+        logger.debug('[SalesSync] Unsynced sales:', unsyncedSales.map(s => ({
           id: s.id,
           invoiceNumber: s.invoiceNumber,
           storeId: s.storeId,
           synced: s.synced,
           syncError: s.syncError
         })));
-      }
-
-      if (unsyncedSales.length === 0) {
-        this.isSyncing = false;
-        return { success: true, synced: 0, failed: 0, errors: [] };
       }
 
       const results: SyncResult = {
@@ -288,10 +301,10 @@ class SalesSyncService {
         const sale = unsyncedSales[i];
         const saleStoreId = sale.storeId || storeId;
         
-        console.log(`[SalesSync] Syncing sale ${i + 1}/${unsyncedSales.length}: ${sale.invoiceNumber} (ID: ${sale.id})`);
+        logger.debug(`[SalesSync] Syncing sale ${i + 1}/${unsyncedSales.length}: ${sale.invoiceNumber} (ID: ${sale.id})`);
         
         if (!saleStoreId) {
-          console.warn('⚠️ Sale missing storeId, skipping:', sale.invoiceNumber);
+          logger.warn('⚠️ Sale missing storeId, skipping:', sale.invoiceNumber);
           results.failed++;
           results.errors.push({
             saleId: sale.id || 'unknown',
@@ -306,7 +319,7 @@ class SalesSyncService {
 
         if (syncResult.success) {
           results.synced++;
-          console.log(`✅ [SalesSync] Successfully synced sale ${i + 1}/${unsyncedSales.length}: ${sale.invoiceNumber}`);
+          logger.debug(`✅ [SalesSync] Successfully synced sale ${i + 1}/${unsyncedSales.length}: ${sale.invoiceNumber}`);
         } else {
           results.failed++;
           const errorMessage = syncResult.error || 'Unknown error';
@@ -316,22 +329,24 @@ class SalesSyncService {
           });
           
           // Log error information
-          console.error(`❌ [SalesSync] Failed to sync sale ${i + 1}/${unsyncedSales.length}: ${sale.invoiceNumber} - ${errorMessage}`);
+          logger.error(`❌ [SalesSync] Failed to sync sale ${i + 1}/${unsyncedSales.length}: ${sale.invoiceNumber} - ${errorMessage}`);
         }
 
         // Small delay between syncs to avoid rate limiting
         await new Promise((resolve) => setTimeout(resolve, 100));
       }
 
-      console.log(`✅ Sync completed: ${results.synced} synced, ${results.failed} failed`);
+      logger.debug(`✅ Sync completed: ${results.synced} synced, ${results.failed} failed`);
       if (results.failed > 0) {
-        console.warn(`⚠️ ${results.failed} sales failed to sync. Errors:`, results.errors);
+        logger.warn(`⚠️ ${results.failed} sales failed to sync. Errors:`, results.errors);
       }
-      this.isSyncing = false;
+
+      // Update flag based on result
+      this.hasUnsyncedSales = results.failed > 0;
+      
       return results;
     } catch (error: any) {
-      console.error('❌ Error during sync:', error);
-      this.isSyncing = false;
+      logger.error('❌ Error during sync:', error);
       return {
         success: false,
         synced: 0,
@@ -339,6 +354,37 @@ class SalesSyncService {
         errors: [{ saleId: 'unknown', error: error?.message || 'Unknown error' }],
       };
     }
+  }
+
+  /**
+   * Sync all unsynced sales (public API, uses queue)
+   */
+  async syncUnsyncedSales(storeId?: string): Promise<SyncResult> {
+    // Check if there are actually unsynced sales before queuing
+    const unsyncedCount = await this.getUnsyncedCount(storeId);
+    if (unsyncedCount === 0) {
+      this.hasUnsyncedSales = false;
+      return { success: true, synced: 0, failed: 0, errors: [] };
+    }
+
+    // Add to queue for sequential processing
+    return syncQueue.enqueue(() => this.syncUnsyncedSalesInternal(storeId), 1);
+  }
+
+  /**
+   * Internal method to trigger sync (used by debounced function)
+   */
+  private async triggerSync(): Promise<void> {
+    // Only sync if we know there are unsynced sales, or check first time
+    if (!this.hasUnsyncedSales) {
+      await this.checkAndSyncIfNeeded();
+      return;
+    }
+
+    // Add to queue
+    syncQueue.enqueue(() => this.syncUnsyncedSalesInternal(), 1).catch((error) => {
+      logger.error('Error in queued sync:', error);
+    });
   }
 
   /**
@@ -377,7 +423,7 @@ class SalesSyncService {
       
       // CRITICAL: Ensure the sale has a unique ID that won't conflict with other sales
       // This prevents merging of sales even if they have similar invoice numbers
-      console.log(`[SalesSync] Creating sale with unique ID: ${localSaleId}, Invoice: ${sale.invoiceNumber}`);
+      logger.debug(`[SalesSync] Creating sale with unique ID: ${localSaleId}, Invoice: ${sale.invoiceNumber}`);
 
       // Save to IndexedDB immediately (mark as unsynced)
       try {
@@ -389,7 +435,7 @@ class SalesSyncService {
         
         if (existingSaleByInvoice) {
           // Sale with this invoice number already exists - update it instead of creating new
-          console.log(`[SalesSync] Sale with invoice ${sale.invoiceNumber} already exists, updating instead of creating new`);
+          logger.debug(`[SalesSync] Sale with invoice ${sale.invoiceNumber} already exists, updating instead of creating new`);
           // Use the existing sale's ID to update it
           sale.id = existingSaleByInvoice.id;
           sale._id = existingSaleByInvoice._id || sale._id;
@@ -399,19 +445,16 @@ class SalesSyncService {
         // Mark as unsynced initially - will be synced by background worker
         sale.synced = false;
         await salesDB.saveSale(sale);
-        console.log('💾 Sale saved to IndexedDB (will sync in background):', sale.invoiceNumber, 'ID:', localSaleId);
+        logger.debug('💾 Sale saved to IndexedDB (will sync in background):', sale.invoiceNumber, 'ID:', localSaleId);
         
-        // Trigger background sync immediately (non-blocking)
-        // This ensures the sale syncs as soon as possible without blocking the UI
-        this.syncUnsyncedSales(storeId).catch((error) => {
-          console.warn('⚠️ Background sync triggered but failed (will retry later):', error);
-        });
+        // Notify that a sale was created (event-driven sync)
+        this.notifySaleCreated();
         
         return { success: true, saleId: localSaleId };
       } catch (dbError: any) {
         // Check if this is a unique constraint error
         if (dbError?.name === 'ConstraintError' || dbError?.message?.includes('uniqueness requirements')) {
-          console.warn(`[SalesSync] Constraint error for invoice ${sale.invoiceNumber}, attempting to update existing sale`);
+          logger.warn(`[SalesSync] Constraint error for invoice ${sale.invoiceNumber}, attempting to update existing sale`);
           try {
             // Try to get existing sale and update it
             const existingSale = await salesDB.getSaleByInvoiceNumber(storeId, sale.invoiceNumber);
@@ -420,20 +463,22 @@ class SalesSyncService {
               sale._id = existingSale._id || sale._id;
               sale.synced = false;
               await salesDB.saveSale(sale);
-              console.log('💾 Updated existing sale in IndexedDB:', sale.invoiceNumber, 'ID:', sale.id);
+              logger.debug('💾 Updated existing sale in IndexedDB:', sale.invoiceNumber, 'ID:', sale.id);
+              // Notify that a sale was created (event-driven sync)
+              this.notifySaleCreated();
               return { success: true, saleId: sale.id };
             }
           } catch (updateError) {
-            console.error('❌ Failed to update existing sale:', updateError);
+            logger.error('❌ Failed to update existing sale:', updateError);
           }
         }
         
         // IndexedDB not available or other error - this is a critical error
-        console.error('❌ Failed to save sale to IndexedDB:', dbError);
+        logger.error('❌ Failed to save sale to IndexedDB:', dbError);
         return { success: false, error: dbError?.message || 'Failed to save sale to local storage' };
       }
     } catch (error: any) {
-      console.error('❌ Failed to create sale:', error);
+      logger.error('❌ Failed to create sale:', error);
       return { success: false, error: error?.message || 'Unknown error' };
     }
   }
@@ -475,7 +520,7 @@ class SalesSyncService {
       
       // CRITICAL: Ensure the sale has a unique ID that won't conflict with other sales
       // This prevents merging of sales even if they have similar invoice numbers
-      console.log(`[SalesSync] Creating sale with unique ID: ${localSaleId}, Invoice: ${sale.invoiceNumber}`);
+      logger.debug(`[SalesSync] Creating sale with unique ID: ${localSaleId}, Invoice: ${sale.invoiceNumber}`);
 
       // Try to save to IndexedDB first (for offline support)
       try {
@@ -484,10 +529,10 @@ class SalesSyncService {
         sale.synced = false;
         await salesDB.saveSale(sale);
         indexedDBAvailable = true;
-        console.log('💾 Sale saved to IndexedDB:', sale.invoiceNumber, 'ID:', localSaleId);
+        logger.debug('💾 Sale saved to IndexedDB:', sale.invoiceNumber, 'ID:', localSaleId);
       } catch (dbError: any) {
         // IndexedDB not available or failed - log but continue
-        console.warn('⚠️ IndexedDB not available, will sync directly to backend:', dbError?.message);
+        logger.warn('⚠️ IndexedDB not available, will sync directly to backend:', dbError?.message);
         indexedDBAvailable = false;
         // Continue to sync to backend even if IndexedDB fails
       }
@@ -501,7 +546,7 @@ class SalesSyncService {
           } else {
             // Sync failed but sale might be saved locally
             if (indexedDBAvailable) {
-              console.warn('⚠️ Sale saved locally, will sync later:', syncResult.error);
+              logger.warn('⚠️ Sale saved locally, will sync later:', syncResult.error);
               return { success: true, saleId: localSaleId, error: syncResult.error };
             } else {
               // No local storage, sync failed
@@ -512,11 +557,11 @@ class SalesSyncService {
           // Sync to backend failed
           if (indexedDBAvailable) {
             // At least saved locally
-            console.warn('⚠️ Sale saved locally, sync to backend failed:', syncError?.message);
+            logger.warn('⚠️ Sale saved locally, sync to backend failed:', syncError?.message);
             return { success: true, saleId: localSaleId, error: syncError?.message || 'Failed to sync to backend' };
           } else {
             // No local storage and sync failed
-            console.error('❌ Failed to save sale (no IndexedDB and sync failed):', syncError);
+            logger.error('❌ Failed to save sale (no IndexedDB and sync failed):', syncError);
             return { success: false, error: syncError?.message || 'Failed to save sale' };
           }
         }
@@ -524,7 +569,7 @@ class SalesSyncService {
         // Offline
         if (indexedDBAvailable) {
           // Sale is saved locally, will sync when online
-          console.log('📴 Offline - sale saved locally, will sync when online');
+          logger.debug('📴 Offline - sale saved locally, will sync when online');
           return { success: true, saleId: localSaleId };
         } else {
           // No IndexedDB and offline - cannot save
@@ -532,7 +577,7 @@ class SalesSyncService {
         }
       }
     } catch (error: any) {
-      console.error('❌ Failed to create sale:', error);
+      logger.error('❌ Failed to create sale:', error);
       return { success: false, error: error?.message || 'Unknown error' };
     }
   }
@@ -572,7 +617,7 @@ class SalesSyncService {
       const unsyncedSales = await salesDB.getUnsyncedSales(storeId);
       return unsyncedSales.length;
     } catch (error) {
-      console.warn('⚠️ Failed to get unsynced count:', error);
+      logger.warn('⚠️ Failed to get unsynced count:', error);
       return 0;
     }
   }

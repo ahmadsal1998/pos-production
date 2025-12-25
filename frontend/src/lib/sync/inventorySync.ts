@@ -1,10 +1,14 @@
 /**
  * Inventory synchronization service
  * Handles offline stock updates and syncs with backend when online
+ * Uses event-driven sync with queue management and debouncing
  */
 
 import { productsApi, ApiError } from '../api/client';
 import { productsDB } from '../db/productsDB';
+import { syncQueue } from './syncQueue';
+import { debounce } from '../utils/debounce';
+import { logger } from '../utils/logger';
 
 interface StockChange {
   id: string;
@@ -28,8 +32,8 @@ interface SyncResult {
 }
 
 class InventorySyncService {
-  private isSyncing = false;
-  private syncInterval: number | null = null;
+  private debouncedSync: ReturnType<typeof debounce>;
+  private hasUnsyncedChanges = false;
   private readonly DB_NAME = 'POS_Inventory_Sync_DB';
   private readonly DB_VERSION = 1;
   private readonly STORE_NAME = 'stock_changes';
@@ -47,13 +51,13 @@ class InventorySyncService {
       const request = indexedDB.open(this.DB_NAME, this.DB_VERSION);
 
       request.onerror = () => {
-        console.error('Failed to open Inventory Sync IndexedDB:', request.error);
+        logger.error('Failed to open Inventory Sync IndexedDB:', request.error);
         reject(request.error);
       };
 
       request.onsuccess = () => {
         this.db = request.result;
-        console.log('✅ Inventory sync service initialized');
+        logger.info('✅ Inventory sync service initialized');
         resolve();
       };
 
@@ -118,12 +122,14 @@ class InventorySyncService {
       const request = store.add(stockChange);
 
       request.onsuccess = () => {
-        console.log(`📦 Queued stock change for ${productName}: ${oldStock} -> ${newStock} (${change > 0 ? '+' : ''}${change})`);
+        logger.debug(`📦 Queued stock change for ${productName}: ${oldStock} -> ${newStock} (${change > 0 ? '+' : ''}${change})`);
+        // Notify that a stock change occurred (event-driven sync)
+        this.notifyStockChange();
         resolve();
       };
 
       request.onerror = () => {
-        console.error('Failed to queue stock change:', request.error);
+        logger.error('Failed to queue stock change:', request.error);
         reject(request.error);
       };
     });
@@ -268,7 +274,7 @@ class InventorySyncService {
         // Apply the change to the actual server stock
         const adjustedNewStock = Math.max(0, serverStock + actualChange);
         
-        console.warn(
+        logger.warn(
           `⚠️ Stock conflict for ${change.productName}: expected old stock ${expectedOldStock}, server has ${serverStock}. ` +
           `Applying change of ${actualChange} to server stock: ${serverStock} -> ${adjustedNewStock}`
         );
@@ -292,40 +298,72 @@ class InventorySyncService {
         await productsDB.updateProductStock(change.productId, change.newStock);
       }
 
-      console.log(`✅ Stock synced for ${change.productName}: ${change.oldStock} -> ${change.newStock}`);
+      logger.debug(`✅ Stock synced for ${change.productName}: ${change.oldStock} -> ${change.newStock}`);
       return { success: true };
     } catch (error: any) {
       const errorMessage = error?.message || 'Unknown error';
-      console.error(`❌ Failed to sync stock change for ${change.productName}:`, errorMessage);
+      logger.error(`❌ Failed to sync stock change for ${change.productName}:`, errorMessage);
       return { success: false, error: errorMessage };
     }
   }
 
   /**
-   * Sync all unsynced stock changes
+   * Notify that a stock change occurred (event-driven)
    */
-  async syncUnsyncedChanges(): Promise<SyncResult> {
-    if (this.isSyncing) {
-      console.log('⏳ Inventory sync already in progress, skipping...');
-      return { success: false, synced: 0, failed: 0, errors: [] };
+  private notifyStockChange(): void {
+    this.hasUnsyncedChanges = true;
+    this.triggerSync();
+  }
+
+  /**
+   * Trigger sync (adds to queue, debounced)
+   */
+  private triggerSync(): void {
+    if (!navigator.onLine) {
+      logger.debug('📴 Offline, skipping inventory sync trigger');
+      return;
     }
 
+    // Use debounced sync to batch rapid changes
+    this.debouncedSync();
+  }
+
+  /**
+   * Check if there are unsynced changes and sync if needed
+   */
+  private async checkAndSyncIfNeeded(): Promise<void> {
+    try {
+      const unsyncedCount = await this.getUnsyncedCount();
+      if (unsyncedCount > 0) {
+        this.hasUnsyncedChanges = true;
+        this.triggerSync();
+      } else {
+        this.hasUnsyncedChanges = false;
+      }
+    } catch (error) {
+      logger.error('Error checking unsynced stock changes:', error);
+    }
+  }
+
+  /**
+   * Sync all unsynced stock changes (internal, called via queue)
+   */
+  private async syncUnsyncedChangesInternal(): Promise<SyncResult> {
     // Check if online
     if (!navigator.onLine) {
-      console.log('📴 Offline, skipping inventory sync');
+      logger.debug('📴 Offline, skipping inventory sync');
       return { success: false, synced: 0, failed: 0, errors: [] };
     }
-
-    this.isSyncing = true;
 
     try {
       const unsyncedChanges = await this.getUnsyncedChanges();
-      console.log(`🔄 Syncing ${unsyncedChanges.length} unsynced stock changes...`);
 
       if (unsyncedChanges.length === 0) {
-        this.isSyncing = false;
+        this.hasUnsyncedChanges = false;
         return { success: true, synced: 0, failed: 0, errors: [] };
       }
+
+      logger.debug(`🔄 Syncing ${unsyncedChanges.length} unsynced stock changes...`);
 
       const results: SyncResult = {
         success: true,
@@ -384,12 +422,14 @@ class InventorySyncService {
         await new Promise((resolve) => setTimeout(resolve, 100));
       }
 
-      console.log(`✅ Inventory sync completed: ${results.synced} synced, ${results.failed} failed`);
-      this.isSyncing = false;
+      logger.debug(`✅ Inventory sync completed: ${results.synced} synced, ${results.failed} failed`);
+
+      // Update flag based on result
+      this.hasUnsyncedChanges = results.failed > 0;
+
       return results;
     } catch (error: any) {
-      console.error('❌ Error during inventory sync:', error);
-      this.isSyncing = false;
+      logger.error('❌ Error during inventory sync:', error);
       return {
         success: false,
         synced: 0,
@@ -400,58 +440,66 @@ class InventorySyncService {
   }
 
   /**
-   * Start periodic sync
+   * Sync all unsynced stock changes (public API, uses queue)
    */
-  startPeriodicSync(intervalMs: number = 30000): void {
-    if (this.syncInterval) {
-      clearInterval(this.syncInterval);
+  async syncUnsyncedChanges(): Promise<SyncResult> {
+    // Check if there are actually unsynced changes before queuing
+    const unsyncedCount = await this.getUnsyncedCount();
+    if (unsyncedCount === 0) {
+      this.hasUnsyncedChanges = false;
+      return { success: true, synced: 0, failed: 0, errors: [] };
     }
 
-    this.syncInterval = window.setInterval(() => {
-      this.syncUnsyncedChanges().catch((error) => {
-        console.error('Error in periodic inventory sync:', error);
-      });
-    }, intervalMs);
+    // Add to queue for sequential processing
+    return syncQueue.enqueue(() => this.syncUnsyncedChangesInternal(), 1);
   }
 
   /**
-   * Stop periodic sync
+   * Internal method to trigger sync (used by debounced function)
    */
-  stopPeriodicSync(): void {
-    if (this.syncInterval) {
-      clearInterval(this.syncInterval);
-      this.syncInterval = null;
+  private async triggerSync(): Promise<void> {
+    // Only sync if we know there are unsynced changes, or check first time
+    if (!this.hasUnsyncedChanges) {
+      await this.checkAndSyncIfNeeded();
+      return;
     }
+
+    // Add to queue
+    syncQueue.enqueue(() => this.syncUnsyncedChangesInternal(), 1).catch((error) => {
+      logger.error('Error in queued inventory sync:', error);
+    });
   }
 
+
   /**
-   * Initialize sync service with event listeners
+   * Initialize sync service with event listeners (event-driven, no periodic polling)
    */
   async initService(): Promise<void> {
     try {
       await this.init();
-      console.log('✅ Inventory sync service initialized');
+      logger.info('✅ Inventory sync service initialized');
 
-      // Start periodic sync (every 30 seconds)
-      this.startPeriodicSync(30000);
+      // Create debounced sync function (batches rapid changes within 1.5 seconds)
+      this.debouncedSync = debounce(() => {
+        this.triggerSync();
+      }, 1500);
 
       // Sync on online event
       window.addEventListener('online', () => {
-        this.syncUnsyncedChanges().catch((error) => {
-          console.error('Error syncing on online event:', error);
-        });
+        this.triggerSync();
       });
 
       // Sync on page visibility change
       document.addEventListener('visibilitychange', () => {
         if (!document.hidden && navigator.onLine) {
-          this.syncUnsyncedChanges().catch((error) => {
-            console.error('Error syncing on visibility change:', error);
-          });
+          this.triggerSync();
         }
       });
+
+      // Initial check for unsynced changes (only once on init)
+      this.checkAndSyncIfNeeded();
     } catch (error) {
-      console.warn('⚠️ Inventory sync service initialization failed:', error);
+      logger.warn('⚠️ Inventory sync service initialization failed:', error);
     }
   }
 
