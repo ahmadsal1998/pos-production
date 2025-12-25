@@ -40,21 +40,18 @@ const terminalSchema = new mongoose_1.Schema({
         type: mongoose_1.Schema.Types.ObjectId,
         ref: 'Merchant',
         required: false,
-        index: true,
         default: null,
     },
     storeId: {
         type: String,
         trim: true,
         lowercase: true,
-        index: true,
         default: null,
     },
     merchantIdMid: {
         type: String,
         trim: true,
         uppercase: true,
-        index: true,
         default: null,
     },
     terminalId: {
@@ -62,7 +59,6 @@ const terminalSchema = new mongoose_1.Schema({
         required: [true, 'Terminal ID (TID) is required'],
         trim: true,
         uppercase: true,
-        index: true,
     },
     name: {
         type: String,
@@ -98,12 +94,10 @@ const terminalSchema = new mongoose_1.Schema({
         type: String,
         enum: ['Active', 'Inactive', 'Maintenance'],
         default: 'Active',
-        index: true,
     },
     testMode: {
         type: Boolean,
         default: false,
-        index: true,
     },
     timeout: {
         type: Number,

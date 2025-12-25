@@ -39,10 +39,8 @@ const storePointsAccountSchema = new mongoose_1.Schema({
     storeId: {
         type: String,
         required: [true, 'Store ID is required'],
-        unique: true,
         trim: true,
         lowercase: true,
-        index: true,
     },
     storeName: {
         type: String,
