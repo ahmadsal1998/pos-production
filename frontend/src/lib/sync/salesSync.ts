@@ -382,6 +382,20 @@ class SalesSyncService {
       // Save to IndexedDB immediately (mark as unsynced)
       try {
         await salesDB.init();
+        
+        // CRITICAL FIX: Check if a sale with this invoice number already exists
+        // IndexedDB has a unique index on storeId_invoiceNumber, so we need to handle duplicates
+        const existingSaleByInvoice = await salesDB.getSaleByInvoiceNumber(storeId, sale.invoiceNumber);
+        
+        if (existingSaleByInvoice) {
+          // Sale with this invoice number already exists - update it instead of creating new
+          console.log(`[SalesSync] Sale with invoice ${sale.invoiceNumber} already exists, updating instead of creating new`);
+          // Use the existing sale's ID to update it
+          sale.id = existingSaleByInvoice.id;
+          sale._id = existingSaleByInvoice._id || sale._id;
+          localSaleId = sale.id;
+        }
+        
         // Mark as unsynced initially - will be synced by background worker
         sale.synced = false;
         await salesDB.saveSale(sale);
@@ -395,7 +409,26 @@ class SalesSyncService {
         
         return { success: true, saleId: localSaleId };
       } catch (dbError: any) {
-        // IndexedDB not available - this is a critical error
+        // Check if this is a unique constraint error
+        if (dbError?.name === 'ConstraintError' || dbError?.message?.includes('uniqueness requirements')) {
+          console.warn(`[SalesSync] Constraint error for invoice ${sale.invoiceNumber}, attempting to update existing sale`);
+          try {
+            // Try to get existing sale and update it
+            const existingSale = await salesDB.getSaleByInvoiceNumber(storeId, sale.invoiceNumber);
+            if (existingSale) {
+              sale.id = existingSale.id;
+              sale._id = existingSale._id || sale._id;
+              sale.synced = false;
+              await salesDB.saveSale(sale);
+              console.log('💾 Updated existing sale in IndexedDB:', sale.invoiceNumber, 'ID:', sale.id);
+              return { success: true, saleId: sale.id };
+            }
+          } catch (updateError) {
+            console.error('❌ Failed to update existing sale:', updateError);
+          }
+        }
+        
+        // IndexedDB not available or other error - this is a critical error
         console.error('❌ Failed to save sale to IndexedDB:', dbError);
         return { success: false, error: dbError?.message || 'Failed to save sale to local storage' };
       }

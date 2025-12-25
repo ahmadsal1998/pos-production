@@ -770,6 +770,26 @@ class SalesDB {
   }
 
   /**
+   * Get a sale by storeId and invoiceNumber
+   */
+  async getSaleByInvoiceNumber(storeId: string, invoiceNumber: string): Promise<SaleRecord | null> {
+    const db = await this.ensureDB();
+    const transaction = db.transaction([STORE_NAME], 'readonly');
+    const store = transaction.objectStore(STORE_NAME);
+    const uniqueIndex = store.index('storeId_invoiceNumber');
+
+    return new Promise((resolve, reject) => {
+      const request = uniqueIndex.get([storeId.toLowerCase().trim(), invoiceNumber]);
+      request.onsuccess = () => {
+        resolve(request.result || null);
+      };
+      request.onerror = () => {
+        reject(request.error);
+      };
+    });
+  }
+
+  /**
    * Close database connection
    */
   close(): void {

@@ -3852,8 +3852,21 @@ const POSPage: React.FC = () => {
         setCompletedInvoice(finalInvoice);
         setSaleCompleted(true);
         
+        // CRITICAL FIX: Calculate next invoice number locally from locked number
+        // This ensures we have the next number ready immediately without waiting for backend
+        // The pre-fetch from backend will happen AFTER the sale is saved
+        const currentMatch = lockedInvoiceNumber?.match(/^INV-(\d+)$/);
+        if (currentMatch) {
+            const currentNum = parseInt(currentMatch[1], 10);
+            const nextLocalNumber = `INV-${currentNum + 1}`;
+            // Pre-fetch this number immediately for the next sale
+            nextInvoiceNumberRef.current = nextLocalNumber;
+            console.log(`[POS] Pre-calculated next invoice number locally: ${nextLocalNumber}`);
+        }
+        
         // CRITICAL FIX: Fetch and update invoice number asynchronously in background
         // The receipt will show the current invoice ID, which will be updated if needed
+        // NOTE: Pre-fetch of next number happens AFTER sale is saved (see finally block)
         Promise.resolve().then(async () => {
             try {
                 // Get next sequential invoice number (incrementing) when completing sale
@@ -3871,11 +3884,16 @@ const POSPage: React.FC = () => {
                     // Update the final invoice for sync
                     finalInvoice.id = lockedInvoiceNumber;
                     console.log(`[POS] Updated invoice number to: ${lockedInvoiceNumber}`);
+                    
+                    // Update pre-fetched number based on fetched number
+                    const fetchedMatch = lockedInvoiceNumber.match(/^INV-(\d+)$/);
+                    if (fetchedMatch) {
+                        const fetchedNum = parseInt(fetchedMatch[1], 10);
+                        const nextFromFetched = `INV-${fetchedNum + 1}`;
+                        nextInvoiceNumberRef.current = nextFromFetched;
+                        console.log(`[POS] Updated pre-fetched number based on fetched: ${nextFromFetched}`);
+                    }
                 }
-                
-                // CRITICAL: Pre-fetch the next invoice number for the upcoming sale
-                // This ensures it's ready immediately when user starts the next sale
-                await preFetchNextInvoiceNumber();
             } catch (error) {
                 console.error('Failed to fetch next invoice number, using fallback:', error);
                 // Fallback: generate sequential number from current invoice number
@@ -4458,6 +4476,24 @@ const POSPage: React.FC = () => {
                     // Clear conflict tracking for this invoice number since it was successfully saved
                     if (invoiceNumberToUse) {
                         conflictInvoiceNumbersRef.current.delete(invoiceNumberToUse);
+                    }
+                    
+                    // CRITICAL: Pre-fetch next invoice number AFTER sale is saved to backend
+                    // This ensures the backend has incremented the sequence before we fetch
+                    // Calculate locally first, then verify with backend
+                    const savedMatch = invoiceNumberToUse.match(/^INV-(\d+)$/);
+                    if (savedMatch) {
+                        const savedNum = parseInt(savedMatch[1], 10);
+                        const nextLocal = `INV-${savedNum + 1}`;
+                        // Set local pre-fetch immediately
+                        nextInvoiceNumberRef.current = nextLocal;
+                        console.log(`[POS] Pre-fetched next invoice number locally after save: ${nextLocal}`);
+                        
+                        // Verify with backend in background (non-blocking)
+                        preFetchNextInvoiceNumber().catch(error => {
+                            console.warn('[POS] Failed to verify pre-fetched number with backend, using local:', error);
+                            // Keep the local pre-fetched number
+                        });
                     }
                     
                     // CRITICAL FIX: Ensure cart is still cleared after successful save
