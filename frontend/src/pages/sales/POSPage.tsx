@@ -4813,16 +4813,33 @@ const POSPage: React.FC = () => {
                     ) : null}
                 </div>
 
-                <div className="invoice-info text-xs my-4 space-y-1.5">
+                <div className="invoice-info text-sm sm:text-base my-4">
                     {businessNameToDisplay && (
-                        <p><strong>اسم المتجر:</strong> {businessNameToDisplay}</p>
+                        <p className="mb-3 text-center"><strong>اسم المتجر:</strong> {businessNameToDisplay}</p>
                     )}
-                    <p><strong>{AR_LABELS.invoiceNumber}:</strong> {invoice.id}</p>
-                    {isReturn && 'originalInvoiceId' in invoice && <p><strong>{AR_LABELS.originalInvoiceNumber}:</strong> {invoice.originalInvoiceId}</p>}
-                    <p><strong>{AR_LABELS.date}:</strong> {new Date(invoice.date).toLocaleString('ar-SA')}</p>
-                    {/* FIX: Use type guard to access 'cashier' or 'seller' property */}
-                    <p><strong>{AR_LABELS.posCashier}:</strong> {'cashier' in invoice ? invoice.cashier : invoice.seller}</p>
-                    <p><strong>{AR_LABELS.customerName}:</strong> {'customer' in invoice ? invoice.customer?.name : invoice.customerName || 'N/A'}</p>
+                    <div className="grid grid-cols-2 gap-3 sm:gap-4">
+                        <div className="flex flex-col">
+                            <p className="mb-1"><strong>{AR_LABELS.date}:</strong></p>
+                            <p className="text-base sm:text-lg font-semibold">{new Date(invoice.date).toLocaleString('ar-SA')}</p>
+                        </div>
+                        <div className="flex flex-col">
+                            <p className="mb-1"><strong>{AR_LABELS.posCashier}:</strong></p>
+                            <p className="text-base sm:text-lg font-semibold">{'cashier' in invoice ? invoice.cashier : invoice.seller}</p>
+                        </div>
+                        <div className="flex flex-col">
+                            <p className="mb-1"><strong>{AR_LABELS.invoiceNumber}:</strong></p>
+                            <p className="text-base sm:text-lg font-semibold">{invoice.id}</p>
+                            {isReturn && 'originalInvoiceId' in invoice && (
+                                <p className="text-xs mt-1 text-gray-600 dark:text-gray-400">
+                                    <strong>{AR_LABELS.originalInvoiceNumber}:</strong> {invoice.originalInvoiceId}
+                                </p>
+                            )}
+                        </div>
+                        <div className="flex flex-col">
+                            <p className="mb-1"><strong>{AR_LABELS.customerName}:</strong></p>
+                            <p className="text-base sm:text-lg font-semibold">{'customer' in invoice ? invoice.customer?.name : invoice.customerName || 'N/A'}</p>
+                        </div>
+                    </div>
                 </div>
                 
                 <div className="overflow-x-auto -mx-2 sm:mx-0">
