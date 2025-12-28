@@ -32,7 +32,7 @@ interface SyncResult {
 }
 
 class InventorySyncService {
-  private debouncedSync: ReturnType<typeof debounce>;
+  private debouncedSync!: ReturnType<typeof debounce>;
   private hasUnsyncedChanges = false;
   private readonly DB_NAME = 'POS_Inventory_Sync_DB';
   private readonly DB_VERSION = 1;
@@ -316,19 +316,6 @@ class InventorySyncService {
   }
 
   /**
-   * Trigger sync (adds to queue, debounced)
-   */
-  private triggerSync(): void {
-    if (!navigator.onLine) {
-      logger.debug('📴 Offline, skipping inventory sync trigger');
-      return;
-    }
-
-    // Use debounced sync to batch rapid changes
-    this.debouncedSync();
-  }
-
-  /**
    * Check if there are unsynced changes and sync if needed
    */
   private async checkAndSyncIfNeeded(): Promise<void> {
@@ -455,9 +442,22 @@ class InventorySyncService {
   }
 
   /**
+   * Trigger sync (adds to queue, debounced)
+   */
+  private triggerSync(): void {
+    if (!navigator.onLine) {
+      logger.debug('📴 Offline, skipping inventory sync trigger');
+      return;
+    }
+
+    // Use debounced sync to batch rapid changes
+    this.debouncedSync();
+  }
+
+  /**
    * Internal method to trigger sync (used by debounced function)
    */
-  private async triggerSync(): Promise<void> {
+  private async _doSyncInternal(): Promise<void> {
     // Only sync if we know there are unsynced changes, or check first time
     if (!this.hasUnsyncedChanges) {
       await this.checkAndSyncIfNeeded();
@@ -481,7 +481,7 @@ class InventorySyncService {
 
       // Create debounced sync function (batches rapid changes within 1.5 seconds)
       this.debouncedSync = debounce(() => {
-        this.triggerSync();
+        this._doSyncInternal();
       }, 1500);
 
       // Sync on online event

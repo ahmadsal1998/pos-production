@@ -18,7 +18,7 @@ interface SyncResult {
 }
 
 class SalesSyncService {
-  private debouncedSync: ReturnType<typeof debounce>;
+  private debouncedSync!: ReturnType<typeof debounce>;
   private hasUnsyncedSales = false;
 
   /**
@@ -36,7 +36,7 @@ class SalesSyncService {
 
     // Create debounced sync function (batches rapid changes within 1.5 seconds)
     this.debouncedSync = debounce(() => {
-      this.triggerSync();
+      this._doSyncInternal();
     }, 1500);
 
     // Sync on page visibility change (when user comes back to tab)
@@ -53,19 +53,6 @@ class SalesSyncService {
 
     // Initial check for unsynced sales (only once on init)
     this.checkAndSyncIfNeeded();
-  }
-
-  /**
-   * Trigger sync (adds to queue, debounced)
-   */
-  private triggerSync(): void {
-    if (!navigator.onLine) {
-      logger.debug('📴 Offline, skipping sync trigger');
-      return;
-    }
-
-    // Use debounced sync to batch rapid changes
-    this.debouncedSync();
   }
 
   /**
@@ -372,9 +359,22 @@ class SalesSyncService {
   }
 
   /**
+   * Trigger sync (adds to queue, debounced)
+   */
+  private triggerSync(): void {
+    if (!navigator.onLine) {
+      logger.debug('📴 Offline, skipping sync trigger');
+      return;
+    }
+
+    // Use debounced sync to batch rapid changes
+    this.debouncedSync();
+  }
+
+  /**
    * Internal method to trigger sync (used by debounced function)
    */
-  private async triggerSync(): Promise<void> {
+  private async _doSyncInternal(): Promise<void> {
     // Only sync if we know there are unsynced sales, or check first time
     if (!this.hasUnsyncedSales) {
       await this.checkAndSyncIfNeeded();
@@ -625,7 +625,7 @@ class SalesSyncService {
   /**
    * Check if there are any unsynced sales
    */
-  async hasUnsyncedSales(storeId?: string): Promise<boolean> {
+  async checkHasUnsyncedSales(storeId?: string): Promise<boolean> {
     const count = await this.getUnsyncedCount(storeId);
     return count > 0;
   }

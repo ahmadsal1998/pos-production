@@ -2,7 +2,6 @@ import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AR_LABELS, EditIcon, DeleteIcon, SearchIcon, GridViewIcon, TableViewIcon } from '@/shared/constants';
 import { Product } from '@/shared/types';
-import ProductAnalytics from '@/features/products/components/ProductAnalytics';
 import ProductQuickActions from '@/features/products/components/ProductQuickActions';
 import { formatDate } from '@/shared/utils';
 import { productsApi, categoriesApi } from '@/lib/api/client';
@@ -842,9 +841,8 @@ const ProductListPage: React.FC<ProductListPageProps> = () => {
 
   return (
     <div className="space-y-6">
-      {/* Analytics and Quick Actions - Reserve space to prevent layout shift */}
-      <div className="space-y-6 min-h-[200px]">
-        <ProductAnalytics />
+      {/* Quick Actions */}
+      <div className="space-y-6">
         <ProductQuickActions
           onAddProduct={() => {}}
           onImportProducts={() => handleQuickAction('import')}

@@ -244,6 +244,7 @@ const POSPage: React.FC = () => {
     const confirmPaymentButtonRef = useRef<HTMLButtonElement | null>(null); // Main checkout button (F1)
     const startNewSaleButtonRef = useRef<HTMLButtonElement | null>(null); // Start new sale button (F2)
     const startNewSaleRef = useRef<(() => Promise<void>) | null>(null); // Ref to store startNewSale function
+    const searchInputRef = useRef<HTMLInputElement | null>(null); // Ref for the product search input field
     // Barcode processing queue to prevent concurrent searches
     const barcodeQueueRef = useRef<string[]>([]); // Queue of barcodes waiting to be processed
     const isProcessingBarcodeRef = useRef(false); // Track if a barcode is currently being processed
@@ -820,6 +821,54 @@ const POSPage: React.FC = () => {
         };
         initializeSalesSync();
     }, []);
+
+    // Auto-focus search input on mount and after certain actions
+    useEffect(() => {
+        // Focus search input after a short delay to ensure DOM is ready
+        const timer = setTimeout(() => {
+            if (searchInputRef.current) {
+                searchInputRef.current.focus();
+            }
+        }, 100);
+        return () => clearTimeout(timer);
+    }, []);
+
+    // Global keyboard listener to auto-focus search field when typing starts
+    // This ensures barcode scanners or keyboard input is captured even if field is not focused
+    useEffect(() => {
+        const handleGlobalKeyDown = (e: KeyboardEvent) => {
+            // Ignore if user is already typing in an input, textarea, or contenteditable element
+            const target = e.target as HTMLElement;
+            const isInputElement = target.tagName === 'INPUT' || 
+                                  target.tagName === 'TEXTAREA' || 
+                                  target.isContentEditable ||
+                                  (target.closest('input') !== null) ||
+                                  (target.closest('textarea') !== null);
+            
+            // If already in an input field, don't interfere
+            if (isInputElement) {
+                return;
+            }
+
+            // Ignore modifier keys, function keys, arrow keys, etc.
+            // Only focus on printable characters (letters, numbers, symbols)
+            const isPrintableKey = e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey;
+            
+            if (isPrintableKey && searchInputRef.current) {
+                // Prevent default to stop the character from being processed elsewhere
+                e.preventDefault();
+                // Update the search term state with the captured character
+                setSearchTerm(prev => prev + e.key);
+                // Focus the search input so subsequent characters are captured naturally
+                searchInputRef.current.focus();
+            }
+        };
+
+        window.addEventListener('keydown', handleGlobalKeyDown);
+        return () => {
+            window.removeEventListener('keydown', handleGlobalKeyDown);
+        };
+    }, []); // setSearchTerm is stable from useState, no need to include in deps
 
     // Function to check for unsynced sales (sales under review)
     // IMPORTANT: Only disable Confirm Payment for critical errors (duplicates), not just unsynced sales
@@ -2141,6 +2190,13 @@ const POSPage: React.FC = () => {
 
         setSearchTerm('');
         setProductSuggestionsOpen(false);
+        
+        // Auto-focus search field after adding product for faster workflow
+        setTimeout(() => {
+            if (searchInputRef.current) {
+                searchInputRef.current.focus();
+            }
+        }, 50);
     };
     
     type SearchMatch = { product: POSProduct; unitName: string; unitPrice: number; barcode?: string; conversionFactor?: number; piecesPerUnit?: number };
@@ -2928,6 +2984,13 @@ const POSPage: React.FC = () => {
         setSelectedPaymentMethod('Cash');
         setCreditPaidAmount(0);
         setCreditPaidAmountError(null);
+        
+        // Auto-focus search field after starting new sale for faster workflow
+        setTimeout(() => {
+            if (searchInputRef.current) {
+                searchInputRef.current.focus();
+            }
+        }, 100);
     }
     
     // Store startNewSale in ref so it can be accessed by handleAddProduct (which is defined earlier)
@@ -5007,10 +5070,10 @@ const POSPage: React.FC = () => {
             <div className="absolute -top-40 -right-40 h-80 w-80 rounded-full bg-gradient-to-br from-orange-400/15 to-amber-400/15 blur-3xl animate-pulse" />
             <div className="absolute -bottom-40 -left-40 h-80 w-80 rounded-full bg-gradient-to-br from-rose-400/15 to-orange-400/15 blur-3xl animate-pulse" style={{ animationDelay: '2s' }} />
             
-            <div className="relative w-full h-full flex flex-col px-2 sm:px-4 py-2 sm:py-4 overflow-hidden">
+            <div className="relative w-full h-full flex flex-col px-2 sm:px-4 lg:px-6 py-2 sm:py-3 lg:py-4 overflow-hidden">
                 {/* Suspended Invoices Horizontal Tabs - Above main grid */}
                 {heldInvoices.length > 0 && (
-                    <div className="flex-shrink-0 mb-1.5 sm:mb-2 w-full">
+                    <div className="flex-shrink-0 mb-1 sm:mb-1.5 lg:mb-2 w-full">
                         <div className="bg-white/95 dark:bg-gray-800/95 rounded-md sm:rounded-lg shadow-lg p-1.5 sm:p-2 backdrop-blur-xl border border-slate-200/50 dark:border-slate-700/50">
                             <h3 className="font-bold text-[11px] sm:text-xs text-gray-700 dark:text-gray-200 text-right mb-1 sm:mb-1.5">
                                 {AR_LABELS.heldInvoices}
@@ -5076,12 +5139,12 @@ const POSPage: React.FC = () => {
                 )} */}
                 
                 {/* Three Column Layout - Proportional widths: ~19% - 50% - 31% */}
-                <div className="grid grid-cols-1 md:grid-cols-[0.75fr_2.3fr_1fr] gap-2 sm:gap-3 md:gap-4 h-full min-h-0 w-full overflow-hidden items-stretch">
+                <div className="grid grid-cols-1 md:grid-cols-[0.75fr_2.3fr_1fr] gap-2 sm:gap-3 md:gap-3 lg:gap-4 h-full min-h-0 w-full overflow-hidden items-stretch">
                 {/* Column 1: Customer & Quick Products (25%) */}
-                    <div className="flex flex-col gap-2 sm:gap-3 md:gap-4 min-h-0 min-w-0 h-full">
+                    <div className="flex flex-col gap-2 sm:gap-2.5 md:gap-3 lg:gap-4 min-h-0 min-w-0 h-full">
                         {/* Quick Products */}
-                        <div className="bg-white/95 dark:bg-gray-800/95 rounded-xl sm:rounded-2xl shadow-sm p-3 sm:p-4 md:p-6 backdrop-blur-xl border border-slate-200/50 dark:border-slate-700/50 flex-grow min-h-0 overflow-y-auto relative z-0">
-                            <h3 className="font-bold text-sm sm:text-base text-gray-900 dark:text-gray-100 text-right mb-3 sm:mb-4">{AR_LABELS.quickProducts}</h3>
+                        <div className="bg-white/95 dark:bg-gray-800/95 rounded-xl sm:rounded-2xl shadow-sm p-2.5 sm:p-3 md:p-4 lg:p-5 backdrop-blur-xl border border-slate-200/50 dark:border-slate-700/50 flex-grow min-h-0 overflow-y-auto relative z-0">
+                            <h3 className="font-bold text-sm sm:text-base text-gray-900 dark:text-gray-100 text-right mb-2 sm:mb-3 lg:mb-4">{AR_LABELS.quickProducts}</h3>
                             {isLoadingQuickProducts ? (
                                 <div className="text-center py-4 text-sm text-gray-500 dark:text-gray-400">
                                     جاري التحميل...
@@ -5091,7 +5154,7 @@ const POSPage: React.FC = () => {
                                     لا توجد منتجات سريعة. قم بتمكين المنتجات من إعدادات المنتج.
                                 </div>
                             ) : (
-                                <div className="grid grid-cols-2 gap-2 sm:gap-3">
+                                <div className="grid grid-cols-2 gap-1.5 sm:gap-2 md:gap-2.5 lg:gap-3">
                                     {quickProducts.map((p, index) => (
                                         <button 
                                             key={`quick-product-${p.id}-${index}`} 
@@ -5118,17 +5181,18 @@ const POSPage: React.FC = () => {
                     {/* Column 2: Transaction/Cart (50% - Center, wider) */}
                     <div className="flex flex-col bg-white/95 dark:bg-gray-800/95 rounded-xl sm:rounded-2xl shadow-sm backdrop-blur-xl border border-slate-200/50 dark:border-slate-700/50 min-h-0 min-w-0 overflow-hidden h-full">
                         {/* Header */}
-                        <div className="p-3 sm:p-4 md:p-6 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 text-xs sm:text-sm text-gray-700 dark:text-gray-300 flex flex-col sm:flex-row justify-between items-center gap-2 sm:gap-0 rounded-t-xl sm:rounded-t-2xl flex-shrink-0">
+                        <div className="p-2.5 sm:p-3 md:p-4 lg:p-5 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 text-xs sm:text-sm text-gray-700 dark:text-gray-300 flex flex-col sm:flex-row justify-between items-center gap-2 sm:gap-0 rounded-t-xl sm:rounded-t-2xl flex-shrink-0">
                             <div className="flex flex-col sm:flex-row gap-2 sm:gap-4">
                                 <span className="font-semibold truncate">{AR_LABELS.invoiceNumber}: <span className="font-mono text-orange-600">{currentInvoice.id}</span></span>
                                 <span className="font-semibold truncate">{AR_LABELS.posCashier}: <span className="text-gray-900 dark:text-gray-100">{currentInvoice.cashier}</span></span>
                             </div>
                         </div>
                         {/* Search */}
-                        <form onSubmit={handleSearch} className="p-3 sm:p-4 border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
+                        <form onSubmit={handleSearch} className="p-2.5 sm:p-3 md:p-3.5 lg:p-4 border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
                             <div className="relative">
                                 <SearchIcon className="absolute left-2 sm:left-3 top-1/2 -translate-y-1/2 h-4 w-4 sm:h-5 sm:w-5 text-gray-400 dark:text-gray-500" />
                                 <input 
+                                    ref={searchInputRef}
                                     type="text" 
                                     value={searchTerm} 
                                     onChange={e => {
@@ -5243,6 +5307,10 @@ const POSPage: React.FC = () => {
                                                         type="text"
                                                         inputMode="decimal"
                                                         value={item.cartItemId ? (quantityDrafts[item.cartItemId] ?? formatQuantityForInput(item.quantity)) : formatQuantityForInput(item.quantity)}
+                                                        onFocus={(e) => {
+                                                            // Select all text when focused for easy replacement
+                                                            e.target.select();
+                                                        }}
                                                         onChange={(e) => {
                                                             if (!item.cartItemId) return;
                                                             const raw = e.target.value.replace(',', '.');
@@ -5339,22 +5407,22 @@ const POSPage: React.FC = () => {
                     </div>
 
                     {/* Column 3: Totals, Payment & Actions (25%) */}
-                    <div className="flex flex-col gap-2 sm:gap-3 md:gap-4 min-w-0 h-full min-h-0">
-                        <div className="bg-gradient-to-br from-white via-orange-50/30 to-amber-50/30 dark:from-gray-800 dark:via-orange-950/20 dark:to-amber-950/20 rounded-xl sm:rounded-2xl shadow-lg border border-orange-200/50 dark:border-orange-800/50 backdrop-blur-xl p-3 sm:p-4 md:p-5 flex flex-col min-h-0 overflow-y-auto">
+                    <div className="flex flex-col gap-2 sm:gap-2.5 md:gap-3 lg:gap-4 min-w-0 h-full min-h-0">
+                        <div className="bg-gradient-to-br from-white via-orange-50/30 to-amber-50/30 dark:from-gray-800 dark:via-orange-950/20 dark:to-amber-950/20 rounded-xl sm:rounded-2xl shadow-lg border border-orange-200/50 dark:border-orange-800/50 backdrop-blur-xl p-2.5 sm:p-3 md:p-4 lg:p-4.5 flex flex-col min-h-0 overflow-y-auto">
                             {/* Hold / Cancel Buttons (above Customer Name) */}
-                            <div className="mb-2 sm:mb-3 md:mb-4">
-                                <div className="flex flex-row gap-2 sm:gap-3">
+                            <div className="mb-1.5 sm:mb-2 md:mb-2.5 lg:mb-3">
+                                <div className="flex flex-row gap-1.5 sm:gap-2 md:gap-2.5 lg:gap-3">
                                     <button
                                         onClick={handleHoldSale}
                                         disabled={currentInvoice.items.length === 0}
-                                        className="flex-1 inline-flex items-center justify-center px-4 py-2.5 rounded-xl border-2 border-yellow-400 dark:border-yellow-600 text-sm font-medium text-yellow-700 dark:text-yellow-300 bg-yellow-50 dark:bg-yellow-900/30 hover:bg-yellow-100 dark:hover:bg-yellow-900/50 disabled:opacity-50 transition-all duration-200 shadow-sm hover:shadow-md"
+                                        className="flex-1 inline-flex items-center justify-center px-3 sm:px-3.5 md:px-4 py-2 sm:py-2.5 rounded-xl border-2 border-yellow-400 dark:border-yellow-600 text-xs sm:text-sm font-medium text-yellow-700 dark:text-yellow-300 bg-yellow-50 dark:bg-yellow-900/30 hover:bg-yellow-100 dark:hover:bg-yellow-900/50 disabled:opacity-50 transition-all duration-200 shadow-sm hover:shadow-md"
                                     >
                                         <span className="h-4 w-4 sm:h-5 sm:w-5 block"><HandIcon /></span>
                                         <span className="mr-2">{AR_LABELS.holdSale}</span>
                                     </button>
                                     <button
                                         onClick={handleCancelSale}
-                                        className="flex-1 inline-flex items-center justify-center px-4 py-2.5 rounded-xl border-2 border-red-400 dark:border-red-600 text-sm font-medium text-red-700 dark:text-red-300 bg-red-50 dark:bg-red-900/30 hover:bg-red-100 dark:hover:bg-red-900/50 transition-all duration-200 shadow-sm hover:shadow-md"
+                                        className="flex-1 inline-flex items-center justify-center px-3 sm:px-3.5 md:px-4 py-2 sm:py-2.5 rounded-xl border-2 border-red-400 dark:border-red-600 text-xs sm:text-sm font-medium text-red-700 dark:text-red-300 bg-red-50 dark:bg-red-900/30 hover:bg-red-100 dark:hover:bg-red-900/50 transition-all duration-200 shadow-sm hover:shadow-md"
                                     >
                                         <span className="w-4 h-4 block"><CancelIcon /></span>
                                         <span className="mr-2">{AR_LABELS.cancel}</span>
@@ -5362,8 +5430,8 @@ const POSPage: React.FC = () => {
                                 </div>
                             </div>
                             {/* Customer Section */}
-                            <div className="flex-shrink-0 mb-2 sm:mb-3 md:mb-4">
-                                <div className="flex items-center justify-between mb-1.5 sm:mb-2">
+                            <div className="flex-shrink-0 mb-1.5 sm:mb-2 md:mb-2.5 lg:mb-3">
+                                <div className="flex items-center justify-between mb-1 sm:mb-1.5 lg:mb-2">
                                     <h3 className="font-bold text-sm sm:text-base text-gray-700 dark:text-gray-200 text-right">{AR_LABELS.customerName}</h3>
                                 </div>
                                 
@@ -5595,11 +5663,11 @@ const POSPage: React.FC = () => {
                             </div>
 
                             {/* Totals Summary */}
-                            <div className="mb-2 sm:mb-3 md:mb-4">
-                                <h3 className="text-[10px] sm:text-xs md:text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1.5 sm:mb-2 md:mb-3 text-right">ملخص الفاتورة</h3>
-                                <div className="bg-white/85 dark:bg-gray-800/80 rounded-lg sm:rounded-xl md:rounded-2xl p-2 sm:p-3 md:p-4 lg:p-5 border border-gray-200/60 dark:border-gray-700/60 backdrop-blur-sm shadow-sm">
+                            <div className="mb-1.5 sm:mb-2 md:mb-2.5 lg:mb-3">
+                                <h3 className="text-[10px] sm:text-xs md:text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1 sm:mb-1.5 lg:mb-2 text-right">ملخص الفاتورة</h3>
+                                <div className="bg-white/85 dark:bg-gray-800/80 rounded-lg sm:rounded-xl md:rounded-2xl p-2 sm:p-2.5 md:p-3 lg:p-3.5 border border-gray-200/60 dark:border-gray-700/60 backdrop-blur-sm shadow-sm">
                                     <div className="divide-y divide-gray-200/70 dark:divide-gray-700/70">
-                                        <div className="py-1.5 sm:py-2 grid grid-cols-[minmax(0,auto)_1fr] items-center gap-x-2 sm:gap-x-3 md:gap-x-4 lg:gap-x-6">
+                                        <div className="py-1 sm:py-1.5 md:py-2 grid grid-cols-[minmax(0,auto)_1fr] items-center gap-x-2 sm:gap-x-2.5 md:gap-x-3 lg:gap-x-4">
                                             <span className="text-[11px] sm:text-xs md:text-sm lg:text-base font-semibold text-gray-900 dark:text-gray-100 tabular-nums text-left justify-self-start break-words">
                                                 {formatCurrency(currentInvoice.subtotal)}
                                             </span>
@@ -5608,14 +5676,18 @@ const POSPage: React.FC = () => {
                                             </span>
                                         </div>
 
-                                        <div className="py-1.5 sm:py-2 grid grid-cols-[minmax(0,auto)_1fr] items-center gap-x-2 sm:gap-x-3 md:gap-x-4 lg:gap-x-6">
+                                        <div className="py-1 sm:py-1.5 md:py-2 grid grid-cols-[minmax(0,auto)_1fr] items-center gap-x-2 sm:gap-x-2.5 md:gap-x-3 lg:gap-x-4">
                                             <div className="justify-self-start">
                                                 <input
                                                     type="number"
                                                     id="invoiceDiscount"
                                                     value={currentInvoice.invoiceDiscount}
+                                                    onFocus={(e) => {
+                                                        // Select all text when focused for easy replacement
+                                                        e.target.select();
+                                                    }}
                                                     onChange={e => setCurrentInvoice(inv => ({...inv, invoiceDiscount: parseFloat(e.target.value) || 0}))}
-                                                    className="w-16 sm:w-20 md:w-24 lg:w-28 text-[10px] sm:text-xs md:text-sm text-left border border-orange-300 dark:border-orange-600 bg-white dark:bg-gray-700 rounded-md sm:rounded-lg font-semibold tabular-nums focus:ring-2 focus:ring-orange-500 focus:border-orange-500 py-1 sm:py-1.5 px-1.5 sm:px-2"
+                                                    className="w-16 sm:w-18 md:w-20 lg:w-24 text-[10px] sm:text-xs md:text-sm text-left border border-orange-300 dark:border-orange-600 bg-white dark:bg-gray-700 rounded-md sm:rounded-lg font-semibold tabular-nums focus:ring-2 focus:ring-orange-500 focus:border-orange-500 py-1 sm:py-1.5 px-1.5 sm:px-2"
                                                 />
                                             </div>
                                             <label htmlFor="invoiceDiscount" className="text-[10px] sm:text-[11px] md:text-xs lg:text-sm text-gray-600 dark:text-gray-400 whitespace-nowrap text-right justify-self-end">
@@ -5623,7 +5695,7 @@ const POSPage: React.FC = () => {
                                             </label>
                                         </div>
 
-                                        <div className="py-1.5 sm:py-2 grid grid-cols-[minmax(0,auto)_1fr] items-center gap-x-2 sm:gap-x-3 md:gap-x-4 lg:gap-x-6">
+                                        <div className="py-1 sm:py-1.5 md:py-2 grid grid-cols-[minmax(0,auto)_1fr] items-center gap-x-2 sm:gap-x-2.5 md:gap-x-3 lg:gap-x-4">
                                             <span className="text-[11px] sm:text-xs md:text-sm lg:text-base font-semibold text-red-600 tabular-nums text-left justify-self-start break-words">
                                                 {formatCurrency(currentInvoice.totalItemDiscount + currentInvoice.invoiceDiscount)}
                                             </span>
@@ -5632,7 +5704,7 @@ const POSPage: React.FC = () => {
                                             </span>
                                         </div>
 
-                                        <div className="py-1.5 sm:py-2 grid grid-cols-[minmax(0,auto)_1fr] items-center gap-x-2 sm:gap-x-3 md:gap-x-4 lg:gap-x-6">
+                                        <div className="py-1 sm:py-1.5 md:py-2 grid grid-cols-[minmax(0,auto)_1fr] items-center gap-x-2 sm:gap-x-2.5 md:gap-x-3 lg:gap-x-4">
                                             <span className="text-[11px] sm:text-xs md:text-sm lg:text-base font-semibold text-gray-900 dark:text-gray-100 tabular-nums text-left justify-self-start break-words">
                                                 {formatCurrency(currentInvoice.tax)}
                                             </span>
@@ -5642,8 +5714,8 @@ const POSPage: React.FC = () => {
                                         </div>
                                     </div>
 
-                                    <div className="mt-2 sm:mt-2.5 md:mt-3 bg-gradient-to-l from-orange-50 to-amber-50 dark:from-orange-900/30 dark:to-amber-900/30 border-2 border-orange-400 dark:border-orange-600 rounded-lg sm:rounded-xl md:rounded-xl p-2 sm:p-2.5 md:p-3 lg:p-4 shadow-md ring-2 ring-orange-200 dark:ring-orange-800/50">
-                                        <div className="grid grid-cols-[minmax(0,auto)_1fr] items-center gap-x-2 sm:gap-x-3 md:gap-x-4 lg:gap-x-6">
+                                    <div className="mt-1.5 sm:mt-2 md:mt-2.5 lg:mt-3 bg-gradient-to-l from-orange-50 to-amber-50 dark:from-orange-900/30 dark:to-amber-900/30 border-2 border-orange-400 dark:border-orange-600 rounded-lg sm:rounded-xl md:rounded-xl p-2 sm:p-2 md:p-2.5 lg:p-3 shadow-md ring-2 ring-orange-200 dark:ring-orange-800/50">
+                                        <div className="grid grid-cols-[minmax(0,auto)_1fr] items-center gap-x-2 sm:gap-x-2.5 md:gap-x-3 lg:gap-x-4">
                                             <span className="text-base sm:text-lg md:text-xl lg:text-2xl font-bold text-orange-600 dark:text-orange-400 tabular-nums text-left justify-self-start break-words">
                                                 {formatCurrency(currentInvoice.grandTotal)}
                                             </span>
@@ -5657,12 +5729,12 @@ const POSPage: React.FC = () => {
 
                             {/* Payment Method & Confirm */}
                             <div>
-                                <h3 className="text-xs sm:text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2 sm:mb-3 text-right">طريقة الدفع</h3>
-                                <div className="bg-white/80 dark:bg-gray-800/80 rounded-xl p-4 border border-gray-200/50 dark:border-gray-700/50 backdrop-blur-sm space-y-3">
-                                    <div className="grid grid-cols-2 gap-2">
+                                <h3 className="text-xs sm:text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1.5 sm:mb-2 md:mb-2.5 lg:mb-3 text-right">طريقة الدفع</h3>
+                                <div className="bg-white/80 dark:bg-gray-800/80 rounded-xl p-2.5 sm:p-3 md:p-3.5 lg:p-4 border border-gray-200/50 dark:border-gray-700/50 backdrop-blur-sm space-y-2 sm:space-y-2.5 md:space-y-3">
+                                    <div className="grid grid-cols-2 gap-1.5 sm:gap-2 md:gap-2.5 lg:gap-3">
                                         <button 
                                             onClick={() => { setSelectedPaymentMethod('Cash'); setCreditPaidAmount(0); setCreditPaidAmountError(null); setPointsToRedeem(0); }} 
-                                            className={`p-2 sm:p-3 rounded-xl border-2 text-center font-semibold text-xs sm:text-sm transition-all duration-200 ${
+                                            className={`p-1.5 sm:p-2 md:p-2.5 lg:p-3 rounded-xl border-2 text-center font-semibold text-xs sm:text-sm transition-all duration-200 ${
                                                 selectedPaymentMethod === 'Cash' 
                                                     ? 'border-orange-500 bg-gradient-to-br from-orange-50 to-orange-100 dark:from-orange-900/40 dark:to-orange-800/40 text-orange-700 dark:text-orange-300 shadow-lg scale-105' 
                                                     : 'border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 hover:border-orange-300 dark:hover:border-orange-700 hover:bg-orange-50/50 dark:hover:bg-orange-900/20'
@@ -5672,7 +5744,7 @@ const POSPage: React.FC = () => {
                                         </button>
                                         <button 
                                             onClick={() => { setSelectedPaymentMethod('Card'); setCreditPaidAmount(0); setCreditPaidAmountError(null); setPointsToRedeem(0); }} 
-                                            className={`p-2 sm:p-3 rounded-xl border-2 text-center font-semibold text-xs sm:text-sm transition-all duration-200 ${
+                                            className={`p-1.5 sm:p-2 md:p-2.5 lg:p-3 rounded-xl border-2 text-center font-semibold text-xs sm:text-sm transition-all duration-200 ${
                                                 selectedPaymentMethod === 'Card' 
                                                     ? 'border-orange-500 bg-gradient-to-br from-orange-50 to-orange-100 dark:from-orange-900/40 dark:to-orange-800/40 text-orange-700 dark:text-orange-300 shadow-lg scale-105' 
                                                     : 'border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 hover:border-orange-300 dark:hover:border-orange-700 hover:bg-orange-50/50 dark:hover:bg-orange-900/20'
@@ -5682,7 +5754,7 @@ const POSPage: React.FC = () => {
                                         </button>
                                         <button 
                                             onClick={() => { setSelectedPaymentMethod('Credit'); setCreditPaidAmountError(null); setPointsToRedeem(0); }} 
-                                            className={`p-2 sm:p-3 rounded-xl border-2 text-center font-semibold text-xs sm:text-sm transition-all duration-200 ${
+                                            className={`p-1.5 sm:p-2 md:p-2.5 lg:p-3 rounded-xl border-2 text-center font-semibold text-xs sm:text-sm transition-all duration-200 ${
                                                 selectedPaymentMethod === 'Credit' 
                                                     ? 'border-orange-500 bg-gradient-to-br from-orange-50 to-orange-100 dark:from-orange-900/40 dark:to-orange-800/40 text-orange-700 dark:text-orange-300 shadow-lg scale-105' 
                                                     : 'border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 hover:border-orange-300 dark:hover:border-orange-700 hover:bg-orange-50/50 dark:hover:bg-orange-900/20'
@@ -5710,7 +5782,7 @@ const POSPage: React.FC = () => {
                                                 setCreditPaidAmountError(null); 
                                             }} 
                                             disabled={!currentInvoice.customer || currentInvoice.customer.id === 'walk-in-customer' || (customerPointsBalance !== null && customerPointsBalance <= 0)}
-                                            className={`p-2 sm:p-3 rounded-xl border-2 text-center font-semibold text-xs sm:text-sm transition-all duration-200 ${
+                                            className={`p-1.5 sm:p-2 md:p-2.5 lg:p-3 rounded-xl border-2 text-center font-semibold text-xs sm:text-sm transition-all duration-200 ${
                                                 selectedPaymentMethod === 'Points' 
                                                     ? 'border-blue-500 bg-gradient-to-br from-blue-50 to-blue-100 dark:from-blue-900/40 dark:to-blue-800/40 text-blue-700 dark:text-blue-300 shadow-lg scale-105' 
                                                     : 'border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 hover:border-blue-300 dark:hover:border-blue-700 hover:bg-blue-50/50 dark:hover:bg-blue-900/20 disabled:opacity-50 disabled:cursor-not-allowed'
@@ -5788,8 +5860,8 @@ const POSPage: React.FC = () => {
                                             )}
                                         </div>
                                     )}
-                                    <div className="flex flex-col sm:flex-row gap-2 sm:gap-3">
-                                        <div className="flex justify-between items-center bg-gray-50 dark:bg-gray-700/50 p-1.5 sm:p-2 rounded-lg border border-gray-200 dark:border-gray-600 flex-1">
+                                    <div className="flex flex-col sm:flex-row gap-1.5 sm:gap-2 md:gap-2.5 lg:gap-3">
+                                        <div className="flex justify-between items-center bg-gray-50 dark:bg-gray-700/50 p-1.5 sm:p-1.5 md:p-2 rounded-lg border border-gray-200 dark:border-gray-600 flex-1">
                                             <ToggleSwitch
                                                 enabled={autoPrintEnabled}
                                                 onChange={setAutoPrintEnabled}
@@ -5801,7 +5873,7 @@ const POSPage: React.FC = () => {
                                         <button 
                                             onClick={handleReturn} 
                                             disabled={currentInvoice.items.length === 0} 
-                                            className="flex-1 px-3 py-2 text-xs sm:text-sm font-bold text-white bg-gradient-to-r from-red-500 via-rose-500 to-red-600 rounded-lg hover:from-red-600 hover:via-rose-600 hover:to-red-700 disabled:from-gray-400 disabled:via-gray-400 disabled:to-gray-500 dark:disabled:from-gray-600 dark:disabled:via-gray-600 dark:disabled:to-gray-700 shadow-lg hover:shadow-xl hover:scale-[1.02] transition-all duration-200 disabled:cursor-not-allowed disabled:scale-100"
+                                            className="flex-1 px-2.5 sm:px-3 md:px-3.5 lg:px-4 py-1.5 sm:py-2 md:py-2.5 text-xs sm:text-sm font-bold text-white bg-gradient-to-r from-red-500 via-rose-500 to-red-600 rounded-lg hover:from-red-600 hover:via-rose-600 hover:to-red-700 disabled:from-gray-400 disabled:via-gray-400 disabled:to-gray-500 dark:disabled:from-gray-600 dark:disabled:via-gray-600 dark:disabled:to-gray-700 shadow-lg hover:shadow-xl hover:scale-[1.02] transition-all duration-200 disabled:cursor-not-allowed disabled:scale-100"
                                         >
                                             {AR_LABELS.returnProduct}
                                         </button>
@@ -5810,7 +5882,7 @@ const POSPage: React.FC = () => {
                                         ref={confirmPaymentButtonRef}
                                         onClick={handleFinalizePayment} 
                                         disabled={currentInvoice.items.length === 0 || isProcessingPayment || hasUnsyncedSales} 
-                                        className="w-full px-8 py-5 text-lg sm:text-xl font-bold text-white bg-gradient-to-r from-green-500 via-emerald-500 to-green-600 rounded-xl hover:from-green-600 hover:via-emerald-600 hover:to-green-700 disabled:from-gray-400 disabled:via-gray-400 disabled:to-gray-500 dark:disabled:from-gray-600 dark:disabled:via-gray-600 dark:disabled:to-gray-700 shadow-2xl hover:shadow-3xl hover:scale-[1.02] transition-all duration-200 disabled:cursor-not-allowed disabled:scale-100"
+                                        className="w-full px-4 sm:px-6 md:px-7 lg:px-8 py-3 sm:py-4 md:py-4.5 lg:py-5 text-base sm:text-lg md:text-xl font-bold text-white bg-gradient-to-r from-green-500 via-emerald-500 to-green-600 rounded-xl hover:from-green-600 hover:via-emerald-600 hover:to-green-700 disabled:from-gray-400 disabled:via-gray-400 disabled:to-gray-500 dark:disabled:from-gray-600 dark:disabled:via-gray-600 dark:disabled:to-gray-700 shadow-2xl hover:shadow-3xl hover:scale-[1.02] transition-all duration-200 disabled:cursor-not-allowed disabled:scale-100"
                                         title={hasUnsyncedSales ? 'لا يمكن تأكيد الدفع: يوجد فواتير مكررة تحتاج للمراجعة. يرجى التحقق من الفواتير المحفوظة وحذف المكررة.' : ''}
                                     >
                                         {/* HIDDEN: Processing message removed - button stays disabled but shows normal text */}

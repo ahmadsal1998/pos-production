@@ -247,24 +247,27 @@ const ProductDashboard: React.FC<ProductDashboardProps> = ({ setActivePath }) =>
         {activeView === 'products' && (
           <div className="mb-8">
             {loadingMetrics ? (
-              <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
-                {[1, 2, 3, 4].map((i) => (
-                  <div
-                    key={i}
-                    className="rounded-2xl bg-white/95 p-6 shadow-lg dark:bg-slate-900/95 border border-slate-200/50 dark:border-slate-700/50 animate-pulse"
-                  >
-                    <div className="h-4 bg-slate-200 dark:bg-slate-700 rounded w-3/4 mb-4"></div>
-                    <div className="h-8 bg-slate-200 dark:bg-slate-700 rounded w-1/2"></div>
-                  </div>
-                ))}
+              <div className="scroll-fade-overlay">
+                <div className="flex gap-6 overflow-x-auto pb-4 hide-scrollbar">
+                  {[1, 2, 3, 4].map((i) => (
+                    <div
+                      key={i}
+                      className="flex-shrink-0 w-full sm:w-80 rounded-2xl bg-white/95 p-6 shadow-lg dark:bg-slate-900/95 border border-slate-200/50 dark:border-slate-700/50 animate-pulse h-[180px]"
+                    >
+                      <div className="h-4 bg-slate-200 dark:bg-slate-700 rounded w-3/4 mb-4"></div>
+                      <div className="h-8 bg-slate-200 dark:bg-slate-700 rounded w-1/2"></div>
+                    </div>
+                  ))}
+                </div>
               </div>
             ) : productMetrics ? (
-              <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
-                <div className="group relative">
+              <div className="scroll-fade-overlay">
+                <div className="flex gap-6 overflow-x-auto pb-4 hide-scrollbar">
+                <div className="group relative flex-shrink-0 w-full sm:w-80">
                   <div className="absolute -inset-0.5 rounded-2xl bg-gradient-to-r from-slate-200 to-slate-300 opacity-0 blur transition-all duration-500 group-hover:opacity-100 dark:from-slate-700 dark:to-slate-600" />
-                  <div className="relative overflow-hidden rounded-2xl bg-white/95 p-6 shadow-lg backdrop-blur-xl transition-all duration-500 hover:shadow-xl dark:bg-slate-900/95 border border-slate-200/50 dark:border-slate-700/50">
-                    <div className="flex items-start justify-between">
-                      <div className="flex-1 space-y-3">
+                  <div className="relative overflow-hidden rounded-2xl bg-white/95 p-6 shadow-lg backdrop-blur-xl transition-all duration-500 hover:shadow-xl dark:bg-slate-900/95 border border-slate-200/50 dark:border-slate-700/50 h-[180px] flex flex-col">
+                    <div className="flex items-start justify-between flex-1">
+                      <div className="flex-1 space-y-3 min-w-0">
                         <p className="text-sm font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
                           إجمالي قيمة المنتجات
                         </p>
@@ -295,9 +298,9 @@ const ProductDashboard: React.FC<ProductDashboardProps> = ({ setActivePath }) =>
                   </div>
                 </div>
 
-                <div className="group relative">
+                <div className="group relative flex-shrink-0 w-full sm:w-80">
                   <div className="absolute -inset-0.5 rounded-2xl bg-gradient-to-r from-slate-200 to-slate-300 opacity-0 blur transition-all duration-500 group-hover:opacity-100 dark:from-slate-700 dark:to-slate-600" />
-                  <div className="relative overflow-hidden rounded-2xl bg-white/95 p-6 shadow-lg backdrop-blur-xl transition-all duration-500 hover:shadow-xl dark:bg-slate-900/95 border border-slate-200/50 dark:border-slate-700/50 min-h-[160px] flex flex-col">
+                  <div className="relative overflow-hidden rounded-2xl bg-white/95 p-6 shadow-lg backdrop-blur-xl transition-all duration-500 hover:shadow-xl dark:bg-slate-900/95 border border-slate-200/50 dark:border-slate-700/50 h-[180px] flex flex-col">
                     <div className="flex items-start justify-between flex-1">
                       <div className="flex-1 space-y-3 min-w-0">
                         <p className="text-sm font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
@@ -331,9 +334,9 @@ const ProductDashboard: React.FC<ProductDashboardProps> = ({ setActivePath }) =>
                   </div>
                 </div>
 
-                <div className="group relative">
+                <div className="group relative flex-shrink-0 w-full sm:w-80">
                   <div className="absolute -inset-0.5 rounded-2xl bg-gradient-to-r from-slate-200 to-slate-300 opacity-0 blur transition-all duration-500 group-hover:opacity-100 dark:from-slate-700 dark:to-slate-600" />
-                  <div className="relative overflow-hidden rounded-2xl bg-white/95 p-6 shadow-lg backdrop-blur-xl transition-all duration-500 hover:shadow-xl dark:bg-slate-900/95 border border-slate-200/50 dark:border-slate-700/50 min-h-[160px] flex flex-col">
+                  <div className="relative overflow-hidden rounded-2xl bg-white/95 p-6 shadow-lg backdrop-blur-xl transition-all duration-500 hover:shadow-xl dark:bg-slate-900/95 border border-slate-200/50 dark:border-slate-700/50 h-[180px] flex flex-col">
                     <div className="flex items-start justify-between flex-1">
                       <div className="flex-1 space-y-3 min-w-0">
                         <p className="text-sm font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
@@ -374,9 +377,9 @@ const ProductDashboard: React.FC<ProductDashboardProps> = ({ setActivePath }) =>
                   </div>
                 </div>
 
-                <div className="group relative">
+                <div className="group relative flex-shrink-0 w-full sm:w-80">
                   <div className="absolute -inset-0.5 rounded-2xl bg-gradient-to-r from-slate-200 to-slate-300 opacity-0 blur transition-all duration-500 group-hover:opacity-100 dark:from-slate-700 dark:to-slate-600" />
-                  <div className="relative overflow-hidden rounded-2xl bg-white/95 p-6 shadow-lg backdrop-blur-xl transition-all duration-500 hover:shadow-xl dark:bg-slate-900/95 border border-slate-200/50 dark:border-slate-700/50 min-h-[160px] flex flex-col">
+                  <div className="relative overflow-hidden rounded-2xl bg-white/95 p-6 shadow-lg backdrop-blur-xl transition-all duration-500 hover:shadow-xl dark:bg-slate-900/95 border border-slate-200/50 dark:border-slate-700/50 h-[180px] flex flex-col">
                     <div className="flex items-start justify-between flex-1">
                       <div className="flex-1 space-y-3 min-w-0">
                         <p className="text-sm font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
@@ -408,6 +411,7 @@ const ProductDashboard: React.FC<ProductDashboardProps> = ({ setActivePath }) =>
                   </div>
                 </div>
               </div>
+            </div>
             ) : null}
           </div>
         )}

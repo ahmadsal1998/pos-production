@@ -1,7 +1,6 @@
 import React, { useMemo, useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { AR_LABELS, METRIC_CARDS_DATA, QUICK_ACTIONS_DATA, STORE_POINTS_ACCOUNT_ACTION } from '@/shared/constants';
-import { MetricCard } from '@/shared/components/ui/MetricCard';
+import { AR_LABELS, QUICK_ACTIONS_DATA, STORE_POINTS_ACCOUNT_ACTION } from '@/shared/constants';
 import { QuickActionCard } from '@/shared/components/ui/QuickActionCard';
 import CustomDropdown, { DropdownOption } from '@/shared/components/ui/CustomDropdown/CustomDropdown';
 import { formatDate } from '@/shared/utils';
@@ -199,27 +198,30 @@ const DashboardPage: React.FC = () => {
         <div className="mb-12">
           <div className="mb-6" />
           {loadingMetrics ? (
-            <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
-              {[1, 2, 3, 4].map((i) => (
-                <div
-                  key={i}
-                  className="rounded-2xl bg-white/95 p-6 shadow-lg dark:bg-slate-900/95 border border-slate-200/50 dark:border-slate-700/50 animate-pulse"
-                >
-                  <div className="h-4 bg-slate-200 dark:bg-slate-700 rounded w-3/4 mb-4"></div>
-                  <div className="h-8 bg-slate-200 dark:bg-slate-700 rounded w-1/2"></div>
-                </div>
-              ))}
+            <div className="scroll-fade-overlay">
+              <div className="flex gap-6 overflow-x-auto pb-4 hide-scrollbar">
+                {[1, 2, 3, 4].map((i) => (
+                  <div
+                    key={i}
+                    className="flex-shrink-0 w-full sm:w-80 rounded-2xl bg-white/95 p-6 shadow-lg dark:bg-slate-900/95 border border-slate-200/50 dark:border-slate-700/50 animate-pulse h-[180px]"
+                  >
+                    <div className="h-4 bg-slate-200 dark:bg-slate-700 rounded w-3/4 mb-4"></div>
+                    <div className="h-8 bg-slate-200 dark:bg-slate-700 rounded w-1/2"></div>
+                  </div>
+                ))}
+              </div>
             </div>
           ) : (
-            <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="scroll-fade-overlay">
+              <div className="flex gap-6 overflow-x-auto pb-4 hide-scrollbar">
               {realProductMetrics.map((metric, index) => (
                 <div
                   key={metric.id}
-                  className="group relative"
+                  className="group relative flex-shrink-0 w-full sm:w-80"
                   style={{ animationDelay: `${index * 100}ms` }}
                 >
                   <div className="absolute -inset-0.5 rounded-2xl bg-gradient-to-r from-slate-200 to-slate-300 opacity-0 blur transition-all duration-500 group-hover:opacity-100 dark:from-slate-700 dark:to-slate-600" />
-                  <div className="relative overflow-hidden rounded-2xl bg-white/95 p-6 shadow-lg backdrop-blur-xl transition-all duration-500 hover:shadow-xl dark:bg-slate-900/95 border border-slate-200/50 dark:border-slate-700/50 min-h-[160px] flex flex-col">
+                  <div className="relative overflow-hidden rounded-2xl bg-white/95 p-6 shadow-lg backdrop-blur-xl transition-all duration-500 hover:shadow-xl dark:bg-slate-900/95 border border-slate-200/50 dark:border-slate-700/50 h-[180px] flex flex-col">
                     <div className="flex items-start justify-between flex-1">
                       <div className="flex-1 space-y-3 min-w-0">
                         <p className="text-sm font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
@@ -296,6 +298,7 @@ const DashboardPage: React.FC = () => {
                   </div>
                 </div>
               ))}
+              </div>
             </div>
           )}
         </div>
@@ -364,72 +367,6 @@ const DashboardPage: React.FC = () => {
             </div>
           </div>
         )}
-
-        {/* Standard Metric Cards */}
-        <div className="mb-12">
-          <div className="mb-6">
-            <h2 className="text-2xl font-bold text-slate-900 dark:text-white mb-2">
-              مقاييس عامة
-            </h2>
-          </div>
-          <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-            {METRIC_CARDS_DATA.map((metric, index) => (
-              <div
-                key={metric.id}
-                className="group relative"
-                style={{ animationDelay: `${index * 100}ms` }}
-              >
-                <div className="absolute -inset-0.5 rounded-2xl bg-gradient-to-r from-slate-200 to-slate-300 opacity-0 blur transition-all duration-500 group-hover:opacity-100 dark:from-slate-700 dark:to-slate-600" />
-                <div className="relative overflow-hidden rounded-2xl bg-white/95 p-6 shadow-lg backdrop-blur-xl transition-all duration-500 hover:shadow-xl dark:bg-slate-900/95 border border-slate-200/50 dark:border-slate-700/50">
-                  <div className="flex items-start justify-between">
-                    <div className="flex-1 space-y-3">
-                      <p className="text-sm font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-                        {metric.title}
-                      </p>
-                      <p className={`text-2xl font-bold ${metric.valueColor} transition-all duration-300 group-hover:scale-105`}>
-                        {(() => {
-                          // Extract numeric value from string
-                          const numericValue = parseFloat(metric.value.toString().replace(/[^\d.-]/g, '')) || 0;
-                          const isCurrency = /[$€£¥₹]/.test(metric.value.toString()) || metric.value.toString().includes('SAR') || metric.value.toString().includes('ريال');
-                          
-                          if (isCurrency) {
-                            return (
-                              <AnimatedNumber
-                                value={numericValue}
-                                formatFn={formatCurrency}
-                                valueType="currency"
-                                duration={1500}
-                              />
-                            );
-                          } else {
-                            return (
-                              <AnimatedNumber
-                                value={numericValue}
-                                valueType="number"
-                                duration={1500}
-                              />
-                            );
-                          }
-                        })()}
-                      </p>
-                      <div className="flex items-center space-x-2 space-x-reverse">
-                        <div className="h-1 w-6 rounded-full bg-gradient-to-r from-emerald-400 to-emerald-500" />
-                        <span className="text-xs font-medium text-emerald-600 dark:text-emerald-400">+12.5%</span>
-                      </div>
-                    </div>
-                    <div className={`relative rounded-xl p-3 ${metric.bgColor} transition-all duration-500 group-hover:scale-110 group-hover:rotate-3`}>
-                      <div className="absolute inset-0 rounded-xl bg-white/20 opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
-                      {metric.icon}
-                    </div>
-                  </div>
-                  
-                  {/* Subtle animated border */}
-                  <div className="absolute inset-0 rounded-2xl border border-transparent bg-gradient-to-r from-transparent via-white/10 to-transparent opacity-0 transition-opacity duration-500 group-hover:opacity-100" />
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
 
         {/* Modern Quick Actions */}
         <div className="mb-12">

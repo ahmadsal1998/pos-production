@@ -62,7 +62,7 @@ const ProductQuickActions: React.FC<ProductQuickActionsProps> = ({
   return (
     <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm p-6">
       <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">الإجراءات السريعة</h3>
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-2 lg:grid-cols-5 gap-4">
         {quickActions.map((action) => (
           <button
             key={action.id}
