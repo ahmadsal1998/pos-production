@@ -295,6 +295,7 @@ export interface SystemPreferences {
   // Other
   interfaceMode: 'light' | 'dark';
   // Print Settings
+  printerType?: 'A4' | 'A3' | 'Thermal 80mm' | 'Thermal 58mm'; // Printer type selector - auto-configures all print settings
   printPaperSize: 'A4' | 'A5' | '80mm' | '58mm' | 'custom';
   printPaperWidth?: number; // in mm, for custom size
   printPaperHeight?: number; // in mm, for custom size
@@ -306,6 +307,8 @@ export interface SystemPreferences {
   printTableFontSize: number; // in px
   printShowBorders: boolean;
   printCompactMode: boolean;
+  printOrientation?: 'portrait' | 'landscape'; // Page orientation
+  printMaxColumns?: number; // Maximum number of columns in table
   // Business Day Configuration
   businessDayStartTime: string; // Format: "HH:mm" (e.g., "06:00")
   businessDayTimezone: string; // IANA timezone (e.g., "Asia/Gaza", "America/New_York")

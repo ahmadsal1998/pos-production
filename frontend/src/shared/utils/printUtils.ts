@@ -4,6 +4,7 @@
  */
 
 import { loadSettings } from './settingsStorage';
+import { getPrintSettingsFromConfig, PrinterConfig } from './printerConfig';
 
 // Guard to prevent multiple simultaneous print operations
 let isPrinting = false;
@@ -11,44 +12,88 @@ let currentPrintIframe: HTMLIFrameElement | null = null;
 
 /**
  * Get print settings from preferences with defaults
+ * Uses printer configuration if printer type is set, otherwise falls back to manual settings
  */
-const getPrintSettings = () => {
+const getPrintSettings = (): PrinterConfig & { 
+  paperSize: string;
+  paperWidth: number;
+  paperHeight: number;
+  marginTop: number;
+  marginBottom: number;
+  marginLeft: number;
+  marginRight: number;
+  fontSize: number;
+  tableFontSize: number;
+  showBorders: boolean;
+  compactMode: boolean;
+} => {
   const settings = loadSettings();
+  
+  // Try to get printer configuration first (smart mode)
+  const printerConfig = getPrintSettingsFromConfig(settings);
+  
+  // If printer type is explicitly set, use the configuration
+  if (settings && (settings as any).printerType) {
+    return {
+      ...printerConfig,
+      paperSize: printerConfig.paperSize,
+      paperWidth: printerConfig.paperWidth,
+      paperHeight: printerConfig.paperHeight,
+      marginTop: printerConfig.marginTop,
+      marginBottom: printerConfig.marginBottom,
+      marginLeft: printerConfig.marginLeft,
+      marginRight: printerConfig.marginRight,
+      fontSize: printerConfig.fontSize,
+      tableFontSize: printerConfig.tableFontSize,
+      showBorders: printerConfig.showBorders,
+      compactMode: printerConfig.compactMode,
+    };
+  }
+  
+  // Fallback to manual settings if printer type not set
   return {
+    ...printerConfig,
     paperSize: settings?.printPaperSize || 'A4',
-    paperWidth: settings?.printPaperWidth || 210,
-    paperHeight: settings?.printPaperHeight || 297,
-    marginTop: settings?.printMarginTop ?? 0.8,
-    marginBottom: settings?.printMarginBottom ?? 0.8,
-    marginLeft: settings?.printMarginLeft ?? 0.8,
-    marginRight: settings?.printMarginRight ?? 0.8,
-    fontSize: settings?.printFontSize ?? 13,
-    tableFontSize: settings?.printTableFontSize ?? 12,
-    showBorders: settings?.printShowBorders ?? true,
-    compactMode: settings?.printCompactMode ?? false,
+    paperWidth: settings?.printPaperWidth || printerConfig.paperWidth,
+    paperHeight: settings?.printPaperHeight || printerConfig.paperHeight,
+    marginTop: settings?.printMarginTop ?? printerConfig.marginTop,
+    marginBottom: settings?.printMarginBottom ?? printerConfig.marginBottom,
+    marginLeft: settings?.printMarginLeft ?? printerConfig.marginLeft,
+    marginRight: settings?.printMarginRight ?? printerConfig.marginRight,
+    fontSize: settings?.printFontSize ?? printerConfig.fontSize,
+    tableFontSize: settings?.printTableFontSize ?? printerConfig.tableFontSize,
+    showBorders: settings?.printShowBorders ?? printerConfig.showBorders,
+    compactMode: settings?.printCompactMode ?? printerConfig.compactMode,
   };
 };
 
 /**
  * Get @page size CSS based on paper size setting
+ * Enhanced to support A3 and better thermal printer handling
  */
-const getPageSize = (paperSize: string, width?: number, height?: number): string => {
+const getPageSize = (paperSize: string, width?: number, height?: number, orientation?: 'portrait' | 'landscape'): string => {
+  const orient = orientation === 'landscape' ? 'landscape' : 'portrait';
+  
   switch (paperSize) {
     case 'A4':
-      return 'size: A4;';
+      return `size: A4 ${orient};`;
+    case 'A3':
+      return `size: A3 ${orient};`;
     case 'A5':
-      return 'size: A5;';
+      return `size: A5 ${orient};`;
     case '80mm':
+      // Thermal 80mm - use fixed width, auto height
       return 'size: 80mm auto;';
     case '58mm':
+      // Thermal 58mm - use fixed width, auto height
       return 'size: 58mm auto;';
     case 'custom':
       if (width && height) {
-        return `size: ${width}mm ${height}mm;`;
+        return `size: ${width}mm ${height}mm ${orient};`;
       }
-      return 'size: A4;';
+      return `size: A4 ${orient};`;
     default:
-      return 'size: A4;';
+      return `size: A4 ${orient};`;
   }
 };
 
@@ -163,21 +208,44 @@ const getPrintableContent = (elementId: string): string => {
   // Process the cloned element to remove currency symbols only from table cells
   removeCurrencySymbolsFromTable(clone);
   
-  // Get print settings from preferences
+  // Get print settings from preferences (with printer type awareness)
   const printSettings = getPrintSettings();
   
-  // Get page size CSS
-  const pageSize = getPageSize(printSettings.paperSize, printSettings.paperWidth, printSettings.paperHeight);
+  // Get page size CSS with orientation support
+  const pageSize = getPageSize(
+    printSettings.paperSize, 
+    printSettings.paperWidth, 
+    printSettings.paperHeight,
+    (printSettings as any).orientation
+  );
   
-  // Calculate padding based on compact mode - ensure minimum readable sizes
-  const tablePadding = printSettings.compactMode ? '8px 6px' : '12px 10px';
-  const tableMargin = printSettings.compactMode ? '12px 0' : '18px 0';
-  const summaryMargin = printSettings.compactMode ? '18px' : '24px';
-  const summaryPadding = printSettings.compactMode ? '12px' : '18px';
+  // Detect if this is a thermal printer
+  const isThermal = printSettings.paperSize === '80mm' || printSettings.paperSize === '58mm';
   
-  // Ensure minimum font sizes for readability - increased for better print visibility
-  const minFontSize = Math.max(printSettings.fontSize, 12);
-  const minTableFontSize = Math.max(printSettings.tableFontSize, 11);
+  // Calculate padding based on compact mode and printer type - ensure minimum readable sizes
+  const tablePadding = isThermal 
+    ? '4px 3px' 
+    : (printSettings.compactMode ? '8px 6px' : '12px 10px');
+  const tableMargin = isThermal 
+    ? '8px 0' 
+    : (printSettings.compactMode ? '12px 0' : '18px 0');
+  const summaryMargin = isThermal 
+    ? '12px' 
+    : (printSettings.compactMode ? '18px' : '24px');
+  const summaryPadding = isThermal 
+    ? '8px' 
+    : (printSettings.compactMode ? '12px' : '18px');
+  
+  // Ensure minimum font sizes for readability - thermal printers need smaller fonts
+  const minFontSize = isThermal 
+    ? Math.max(printSettings.fontSize, 8) 
+    : Math.max(printSettings.fontSize, 12);
+  const minTableFontSize = isThermal 
+    ? Math.max(printSettings.tableFontSize, 7) 
+    : Math.max(printSettings.tableFontSize, 11);
+  
+  // Get max columns from printer config (for thermal printers, limit columns)
+  const maxColumns = (printSettings as any).maxColumns || 4;
   
   // Border styles for print - always use dark, visible borders for printing
   // Use darker colors that print clearly: black or dark gray
@@ -215,23 +283,23 @@ const getPrintableContent = (elementId: string): string => {
         max-width: 100% !important;
         width: 100% !important;
         margin: 0 auto;
-        padding: ${printSettings.compactMode ? '12px' : '16px'};
+        padding: ${isThermal ? '8px' : (printSettings.compactMode ? '12px' : '16px')};
         background: white;
         page-break-inside: avoid;
       }
       /* Header styles - ensure readable sizes */
       #printable-receipt h2,
       #printable-receipt h3 {
-        margin: 0 0 ${printSettings.compactMode ? '10px' : '12px'} 0;
+        margin: 0 0 ${isThermal ? '6px' : (printSettings.compactMode ? '10px' : '12px')} 0;
         font-weight: 700;
-        font-size: ${printSettings.compactMode ? '18px' : '20px'};
+        font-size: ${isThermal ? '14px' : (printSettings.compactMode ? '18px' : '20px')};
         line-height: 1.3;
         page-break-after: avoid;
       }
       /* Address and store info in header - ensure visible in print */
       #printable-receipt .text-center p {
-        margin: ${printSettings.compactMode ? '5px 0' : '7px 0'};
-        font-size: ${Math.max(printSettings.compactMode ? 10 : 11, 10)}px;
+        margin: ${isThermal ? '3px 0' : (printSettings.compactMode ? '5px 0' : '7px 0')};
+        font-size: ${isThermal ? '8px' : Math.max(printSettings.compactMode ? 10 : 11, 10)}px;
         color: #6c757d;
         line-height: 1.5;
       }
@@ -310,7 +378,7 @@ const getPrintableContent = (elementId: string): string => {
       #printable-receipt table td:first-child,
       #printable-receipt table th:first-child {
         text-align: right !important;
-        max-width: 40%;
+        max-width: ${isThermal ? '50%' : '40%'};
         word-break: break-word;
       }
       /* Quantity and price columns - keep compact */
@@ -320,7 +388,7 @@ const getPrintableContent = (elementId: string): string => {
       #printable-receipt table th:nth-child(3) {
         white-space: nowrap;
         width: auto;
-        min-width: 60px;
+        min-width: ${isThermal ? '40px' : '60px'};
       }
       /* Total column */
       #printable-receipt table td:last-child,
@@ -328,6 +396,28 @@ const getPrintableContent = (elementId: string): string => {
         white-space: nowrap;
         font-weight: 600;
       }
+      /* Thermal printer specific optimizations */
+      ${isThermal ? `
+        /* Force table to use fixed layout for thermal printers */
+        #printable-receipt table {
+          table-layout: fixed !important;
+        }
+        /* Ensure all columns fit within thermal width */
+        #printable-receipt table th,
+        #printable-receipt table td {
+          padding: 3px 2px !important;
+          font-size: ${minTableFontSize}px !important;
+        }
+        /* Reduce spacing in thermal receipts */
+        #printable-receipt .invoice-info {
+          padding: 8px 0 !important;
+          margin-bottom: 8px !important;
+        }
+        #printable-receipt .receipt-summary {
+          margin-top: 10px !important;
+          padding-top: 8px !important;
+        }
+      ` : ''}
       /* Align text in table cells */
       #printable-receipt table td[style*="text-right"],
       #printable-receipt table th[style*="text-right"] {

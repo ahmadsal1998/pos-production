@@ -8,6 +8,14 @@ import { CURRENCIES, CurrencyConfig } from '@/shared/utils/currency';
 import CustomDropdown from '@/shared/components/ui/CustomDropdown/CustomDropdown';
 import { loadSettings, saveSettings } from '@/shared/utils/settingsStorage';
 import { storeSettingsApi } from '@/lib/api/client';
+import { 
+  PrinterType, 
+  getAvailablePrinterTypes, 
+  getPrinterTypeDisplayName,
+  applyPrinterConfig,
+  checkSettingsMatch,
+  getPrinterConfig
+} from '@/shared/utils/printerConfig';
 
 const initialPreferences: SystemPreferences = {
   // General
@@ -41,6 +49,7 @@ const initialPreferences: SystemPreferences = {
   // Other
   interfaceMode: 'light',
   // Print Settings
+  printerType: undefined as any, // Will be set when user selects printer type
   printPaperSize: 'A4',
   printPaperWidth: 210,
   printPaperHeight: 297,
@@ -80,6 +89,10 @@ const PreferencesPage: React.FC = () => {
   const [selectedCurrencyCode, setSelectedCurrencyCode] = useState<string>(currency.code);
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [settingsOverrideWarning, setSettingsOverrideWarning] = useState<{
+    show: boolean;
+    overriddenSettings: string[];
+  }>({ show: false, overriddenSettings: [] });
 
   // Update selected currency when currency context changes
   useEffect(() => {
@@ -91,20 +104,62 @@ const PreferencesPage: React.FC = () => {
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
     const { name, value, type } = e.target;
     
+    let updatedPrefs: SystemPreferences;
+    
     if (type === 'checkbox' && e.target instanceof HTMLInputElement) {
         const { checked } = e.target;
-        setPrefs(prev => ({ ...prev, [name]: checked }));
+        updatedPrefs = { ...prefs, [name]: checked };
+        setPrefs(updatedPrefs);
     } else if (type === 'number') {
         // Convert number inputs to actual numbers (handles 0 correctly)
         const numValue = value === '' ? 0 : parseFloat(value);
-        setPrefs(prev => ({ ...prev, [name]: isNaN(numValue) ? 0 : numValue }));
+        updatedPrefs = { ...prefs, [name]: isNaN(numValue) ? 0 : numValue };
+        setPrefs(updatedPrefs);
     } else {
-        setPrefs(prev => ({ ...prev, [name]: value }));
+        updatedPrefs = { ...prefs, [name]: value };
+        setPrefs(updatedPrefs);
+    }
+    
+    // Check if this is a print setting change and if printer type is set
+    const printSettingKeys = [
+      'printPaperSize', 'printPaperWidth', 'printPaperHeight',
+      'printMarginTop', 'printMarginBottom', 'printMarginLeft', 'printMarginRight',
+      'printFontSize', 'printTableFontSize', 'printShowBorders', 'printCompactMode'
+    ];
+    
+    if (printSettingKeys.includes(name) && (prefs as any).printerType) {
+      // Check if settings still match printer config
+      const matchResult = checkSettingsMatch((prefs as any).printerType, updatedPrefs);
+      setSettingsOverrideWarning({
+        show: !matchResult.matches,
+        overriddenSettings: matchResult.overriddenSettings,
+      });
     }
   };
 
   const handleToggleChange = (name: keyof SystemPreferences, enabled: boolean) => {
-    setPrefs(prev => ({ ...prev, [name]: enabled }));
+    const updatedPrefs = { ...prefs, [name]: enabled };
+    setPrefs(updatedPrefs);
+    
+    // Check if this is a print setting change and if printer type is set
+    const printSettingKeys = ['printShowBorders', 'printCompactMode'];
+    if (printSettingKeys.includes(name) && (prefs as any).printerType) {
+      const matchResult = checkSettingsMatch((prefs as any).printerType, updatedPrefs);
+      setSettingsOverrideWarning({
+        show: !matchResult.matches,
+        overriddenSettings: matchResult.overriddenSettings,
+      });
+    }
+  };
+  
+  // Function to reset print settings to printer defaults
+  const handleResetToPrinterDefaults = () => {
+    const printerType = (prefs as any).printerType as PrinterType | undefined;
+    if (printerType) {
+      const resetPrefs = applyPrinterConfig(printerType, prefs);
+      setPrefs(resetPrefs as SystemPreferences);
+      setSettingsOverrideWarning({ show: false, overriddenSettings: [] });
+    }
   };
 
   const handleLogoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -174,6 +229,15 @@ const PreferencesPage: React.FC = () => {
             businessDayTimezone: storedSettings.businessDayTimezone || backendBusinessDayTimezone || 'UTC',
           };
           setPrefs(updated);
+
+          // Check if printer type is set and if settings match
+          if ((updated as any).printerType) {
+            const matchResult = checkSettingsMatch((updated as any).printerType, updated);
+            setSettingsOverrideWarning({
+              show: !matchResult.matches,
+              overriddenSettings: matchResult.overriddenSettings,
+            });
+          }
 
           // If currency in settings differs, sync selector
           if (updated.defaultCurrency) {
@@ -284,9 +348,78 @@ const PreferencesPage: React.FC = () => {
     </div>
   );
 
-  const renderField = (label: string, name: keyof SystemPreferences, type: 'text' | 'number' | 'textarea', children?: React.ReactNode) => (
-    <div className="space-y-2">
-        <label htmlFor={name} className="block text-sm font-semibold text-slate-700 dark:text-slate-300">{label}</label>
+  // Helper to check if a setting is auto-configured
+  const isAutoConfigured = (settingName: string): boolean => {
+    const printerType = (prefs as any).printerType as PrinterType | undefined;
+    if (!printerType) return false;
+    
+    const config = getPrinterConfig(printerType);
+    
+    // Check if this specific setting matches the printer config
+    const settingMap: Record<string, keyof PrinterConfig> = {
+      'printPaperSize': 'paperSize',
+      'printPaperWidth': 'paperWidth',
+      'printPaperHeight': 'paperHeight',
+      'printMarginTop': 'marginTop',
+      'printMarginBottom': 'marginBottom',
+      'printMarginLeft': 'marginLeft',
+      'printMarginRight': 'marginRight',
+      'printFontSize': 'fontSize',
+      'printTableFontSize': 'tableFontSize',
+      'printCompactMode': 'compactMode',
+      'printShowBorders': 'showBorders',
+    };
+    
+    const configKey = settingMap[settingName];
+    if (!configKey) return false;
+    
+    const currentValue = (prefs as any)[settingName];
+    const configValue = config[configKey];
+    
+    // Handle undefined/null values
+    if (currentValue === undefined || currentValue === null) {
+      return false;
+    }
+    
+    // Compare values based on type
+    if (typeof configValue === 'number' && typeof currentValue === 'number') {
+      // For margins, allow small differences (0.1cm tolerance)
+      if (settingName.includes('Margin')) {
+        return Math.abs(currentValue - configValue) < 0.1;
+      }
+      // For font sizes, allow 1px tolerance
+      if (settingName.includes('FontSize')) {
+        return Math.abs(currentValue - configValue) <= 1;
+      }
+      // For dimensions, exact match
+      return Math.abs(currentValue - configValue) < 0.01;
+    }
+    
+    // String/boolean comparison
+    return currentValue === configValue;
+  };
+
+  const renderField = (label: string, name: keyof SystemPreferences, type: 'text' | 'number' | 'textarea', children?: React.ReactNode) => {
+    const isAuto = isAutoConfigured(name as string);
+    const isOverridden = (prefs as any).printerType && !isAuto && 
+      ['printPaperSize', 'printPaperWidth', 'printPaperHeight', 'printMarginTop', 'printMarginBottom', 
+       'printMarginLeft', 'printMarginRight', 'printFontSize', 'printTableFontSize', 'printCompactMode', 'printShowBorders'].includes(name as string);
+    
+    return (
+      <div className="space-y-2">
+        <div className="flex items-center justify-between">
+          <label htmlFor={name} className="block text-sm font-semibold text-slate-700 dark:text-slate-300">{label}</label>
+          {isAuto && (prefs as any).printerType && (
+            <span className="text-xs px-2 py-0.5 bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300 rounded-full font-medium">
+              تلقائي
+            </span>
+          )}
+          {isOverridden && (
+            <span className="text-xs px-2 py-0.5 bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 rounded-full font-medium">
+              معدل يدوياً
+            </span>
+          )}
+        </div>
         <div className="relative">
             {type === 'textarea' ? (
                 <textarea 
@@ -295,7 +428,11 @@ const PreferencesPage: React.FC = () => {
                   value={prefs[name] as string} 
                   onChange={handleChange} 
                   rows={3} 
-                  className="w-full border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-200 rounded-xl shadow-sm text-right px-4 py-3 focus:outline-none focus:ring-2 focus:ring-orange-500/50 focus:border-orange-500 transition-all duration-200 hover:border-slate-400 dark:hover:border-slate-500"
+                  className={`w-full border rounded-xl shadow-sm text-right px-4 py-3 focus:outline-none focus:ring-2 focus:ring-orange-500/50 focus:border-orange-500 transition-all duration-200 ${
+                    isOverridden 
+                      ? 'border-amber-300 dark:border-amber-700 bg-amber-50/50 dark:bg-amber-900/10' 
+                      : 'border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800'
+                  } text-slate-900 dark:text-slate-200 hover:border-slate-400 dark:hover:border-slate-500`}
                 />
             ) : (
                 <input 
@@ -304,35 +441,84 @@ const PreferencesPage: React.FC = () => {
                   name={name} 
                   value={prefs[name] as string | number} 
                   onChange={handleChange} 
-                  className="w-full border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-200 rounded-xl shadow-sm text-right px-4 py-3 focus:outline-none focus:ring-2 focus:ring-orange-500/50 focus:border-orange-500 transition-all duration-200 hover:border-slate-400 dark:hover:border-slate-500"
+                  className={`w-full border rounded-xl shadow-sm text-right px-4 py-3 focus:outline-none focus:ring-2 focus:ring-orange-500/50 focus:border-orange-500 transition-all duration-200 ${
+                    isOverridden 
+                      ? 'border-amber-300 dark:border-amber-700 bg-amber-50/50 dark:bg-amber-900/10' 
+                      : 'border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800'
+                  } text-slate-900 dark:text-slate-200 hover:border-slate-400 dark:hover:border-slate-500`}
                 />
             )}
             {children}
         </div>
-    </div>
-  );
+      </div>
+    );
+  };
   
-   const renderSelect = (label: string, name: keyof SystemPreferences, options: {value: string, label: string}[]) => (
-     <div className="space-y-2">
-        <label htmlFor={name} className="block text-sm font-semibold text-slate-700 dark:text-slate-300">{label}</label>
-        <select 
-          id={name} 
-          name={name} 
-          value={prefs[name] as string} 
-          onChange={handleChange} 
-          className="w-full border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-200 rounded-xl shadow-sm text-right px-4 py-3 appearance-none focus:outline-none focus:ring-2 focus:ring-orange-500/50 focus:border-orange-500 transition-all duration-200 hover:border-slate-400 dark:hover:border-slate-500 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTIiIGhlaWdodD0iOCIgdmlld0JveD0iMCAwIDEyIDgiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CjxwYXRoIGQ9Ik0xIDFMNiA2TDExIDEiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2Utd2lkdGg9IjIiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPgo8L3N2Zz4K')] bg-[length:12px_8px] bg-[right_16px_center] bg-no-repeat"
-        >
-            {options.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
-        </select>
-    </div>
-  );
+   const renderSelect = (label: string, name: keyof SystemPreferences, options: {value: string, label: string}[]) => {
+     const isAuto = isAutoConfigured(name as string);
+     const isOverridden = (prefs as any).printerType && !isAuto && 
+       ['printPaperSize'].includes(name as string);
+     
+     return (
+       <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <label htmlFor={name} className="block text-sm font-semibold text-slate-700 dark:text-slate-300">{label}</label>
+            {isAuto && (prefs as any).printerType && (
+              <span className="text-xs px-2 py-0.5 bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300 rounded-full font-medium">
+                تلقائي
+              </span>
+            )}
+            {isOverridden && (
+              <span className="text-xs px-2 py-0.5 bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 rounded-full font-medium">
+                معدل يدوياً
+              </span>
+            )}
+          </div>
+          <select 
+            id={name} 
+            name={name} 
+            value={prefs[name] as string} 
+            onChange={handleChange} 
+            className={`w-full border rounded-xl shadow-sm text-right px-4 py-3 appearance-none focus:outline-none focus:ring-2 focus:ring-orange-500/50 focus:border-orange-500 transition-all duration-200 ${
+              isOverridden 
+                ? 'border-amber-300 dark:border-amber-700 bg-amber-50/50 dark:bg-amber-900/10' 
+                : 'border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800'
+            } text-slate-900 dark:text-slate-200 hover:border-slate-400 dark:hover:border-slate-500 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTIiIGhlaWdodD0iOCIgdmlld0JveD0iMCAwIDEyIDgiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CjxwYXRoIGQ9Ik0xIDFMNiA2TDExIDEiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2Utd2lkdGg9IjIiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPgo8L3N2Zz4K')] bg-[length:12px_8px] bg-[right_16px_center] bg-no-repeat`}
+          >
+              {options.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
+          </select>
+      </div>
+    );
+   };
   
-  const renderToggleField = (label: string, name: keyof SystemPreferences) => (
-    <div className="flex justify-between items-center py-3 px-4 rounded-xl border border-slate-200/50 dark:border-slate-700/50 bg-slate-50/50 dark:bg-slate-800/50 hover:bg-slate-100/50 dark:hover:bg-slate-800/80 transition-all duration-200 group">
-        <ToggleSwitch enabled={!!prefs[name]} onChange={(enabled) => handleToggleChange(name, enabled)} />
+  const renderToggleField = (label: string, name: keyof SystemPreferences) => {
+    const isAuto = isAutoConfigured(name as string);
+    const isOverridden = (prefs as any).printerType && !isAuto && 
+      ['printShowBorders', 'printCompactMode'].includes(name as string);
+    
+    return (
+      <div className={`flex justify-between items-center py-3 px-4 rounded-xl border transition-all duration-200 group ${
+        isOverridden 
+          ? 'border-amber-300 dark:border-amber-700 bg-amber-50/50 dark:bg-amber-900/10' 
+          : 'border-slate-200/50 dark:border-slate-700/50 bg-slate-50/50 dark:bg-slate-800/50 hover:bg-slate-100/50 dark:hover:bg-slate-800/80'
+      }`}>
+        <div className="flex items-center gap-2">
+          <ToggleSwitch enabled={!!prefs[name]} onChange={(enabled) => handleToggleChange(name, enabled)} />
+          {isAuto && (prefs as any).printerType && (
+            <span className="text-xs px-2 py-0.5 bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300 rounded-full font-medium">
+              تلقائي
+            </span>
+          )}
+          {isOverridden && (
+            <span className="text-xs px-2 py-0.5 bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 rounded-full font-medium">
+              معدل يدوياً
+            </span>
+          )}
+        </div>
         <span className="text-sm font-medium text-slate-700 dark:text-slate-300 group-hover:text-slate-900 dark:group-hover:text-slate-100 transition-colors">{label}</span>
-    </div>
-  );
+      </div>
+    );
+  };
 
   return (
     <div className="relative min-h-screen overflow-hidden">
@@ -530,29 +716,125 @@ const PreferencesPage: React.FC = () => {
             {renderSection(
               'إعدادات الطباعة', 
               <>
-                {renderSelect('حجم الورق', 'printPaperSize', [
-                  {value: 'A4', label: 'A4 (210 × 297 مم)'},
-                  {value: 'A5', label: 'A5 (148 × 210 مم)'},
-                  {value: '80mm', label: '80 مم (طابعة حرارية)'},
-                  {value: '58mm', label: '58 مم (طابعة حرارية)'},
-                  {value: 'custom', label: 'مخصص'}
-                ])}
-                {prefs.printPaperSize === 'custom' && (
-                  <>
-                    {renderField('عرض الورق (مم)', 'printPaperWidth', 'number')}
-                    {renderField('ارتفاع الورق (مم)', 'printPaperHeight', 'number')}
-                  </>
-                )}
-                <div className="grid grid-cols-2 gap-4">
-                  {renderField('الهامش العلوي (سم)', 'printMarginTop', 'number')}
-                  {renderField('الهامش السفلي (سم)', 'printMarginBottom', 'number')}
-                  {renderField('الهامش الأيمن (سم)', 'printMarginRight', 'number')}
-                  {renderField('الهامش الأيسر (سم)', 'printMarginLeft', 'number')}
+                <div className="space-y-2">
+                  <label htmlFor="printerType" className="block text-sm font-semibold text-slate-700 dark:text-slate-300">
+                    نوع الطابعة
+                  </label>
+                  <select 
+                    id="printerType" 
+                    name="printerType" 
+                    value={(prefs as any).printerType || ''} 
+                    onChange={(e) => {
+                      const selectedType = e.target.value as PrinterType;
+                      if (selectedType) {
+                        // Automatically apply all print settings based on printer type
+                        const updatedPrefs = applyPrinterConfig(selectedType, prefs);
+                        setPrefs(updatedPrefs as SystemPreferences);
+                        // Clear override warning when printer type is changed
+                        setSettingsOverrideWarning({ show: false, overriddenSettings: [] });
+                      } else {
+                        // Clear printer type
+                        setPrefs(prev => ({ ...prev, printerType: undefined as any }));
+                        setSettingsOverrideWarning({ show: false, overriddenSettings: [] });
+                      }
+                    }}
+                    className="w-full border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-200 rounded-xl shadow-sm text-right px-4 py-3 appearance-none focus:outline-none focus:ring-2 focus:ring-orange-500/50 focus:border-orange-500 transition-all duration-200 hover:border-slate-400 dark:hover:border-slate-500 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTIiIGhlaWdodD0iOCIgdmlld0JveD0iMCAwIDEyIDgiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CjxwYXRoIGQ9Ik0xIDFMNiA2TDExIDEiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2Utd2lkdGg9IjIiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPgo8L3N2Zz4K')] bg-[length:12px_8px] bg-[right_16px_center] bg-no-repeat"
+                  >
+                    <option value="">-- اختر نوع الطابعة --</option>
+                    {getAvailablePrinterTypes().map(type => (
+                      <option key={type} value={type}>
+                        {getPrinterTypeDisplayName(type)}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                    عند اختيار نوع الطابعة، سيتم ضبط جميع إعدادات الطباعة تلقائياً (حجم الورق، الهوامش، حجم الخط، التخطيط)
+                  </p>
+                  {(prefs as any).printerType && (
+                    <>
+                      {!settingsOverrideWarning.show ? (
+                        <div className="mt-3 p-3 rounded-lg bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800">
+                          <p className="text-xs font-medium text-emerald-700 dark:text-emerald-300">
+                            ✓ تم تطبيق إعدادات الطابعة تلقائياً
+                          </p>
+                        </div>
+                      ) : (
+                        <div className="mt-3 p-4 rounded-lg bg-amber-50 dark:bg-amber-900/20 border-2 border-amber-300 dark:border-amber-700">
+                          <div className="flex items-start gap-2 mb-2">
+                            <svg className="w-5 h-5 text-amber-600 dark:text-amber-400 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                              <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                            </svg>
+                            <div className="flex-1">
+                              <p className="text-sm font-semibold text-amber-800 dark:text-amber-200 mb-1">
+                                تنبيه: تم تعديل إعدادات الطباعة يدوياً
+                              </p>
+                              <p className="text-xs text-amber-700 dark:text-amber-300 mb-2">
+                                تم تعديل الإعدادات التالية يدوياً وقد تؤثر على جودة الطباعة:
+                              </p>
+                              <ul className="text-xs text-amber-700 dark:text-amber-300 list-disc list-inside mb-3 space-y-1">
+                                {settingsOverrideWarning.overriddenSettings.map((setting, idx) => (
+                                  <li key={idx}>{setting}</li>
+                                ))}
+                              </ul>
+                              <button
+                                onClick={handleResetToPrinterDefaults}
+                                className="text-xs px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg font-medium transition-colors"
+                              >
+                                إعادة تعيين إلى إعدادات الطابعة الافتراضية
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  )}
                 </div>
-                {renderField('حجم الخط (بكسل)', 'printFontSize', 'number')}
-                {renderField('حجم خط الجدول (بكسل)', 'printTableFontSize', 'number')}
-                {renderToggleField('إظهار حدود الجدول', 'printShowBorders')}
-                {renderToggleField('وضع المدمج (تقليل المسافات)', 'printCompactMode')}
+                
+                <div className="border-t border-slate-200 dark:border-slate-700 pt-4 mt-4">
+                  <div className="flex items-center justify-between mb-3">
+                    <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-300">
+                      إعدادات الطباعة المتقدمة (يمكن تعديلها يدوياً)
+                    </h3>
+                    {(prefs as any).printerType && (
+                      <button
+                        onClick={handleResetToPrinterDefaults}
+                        className="text-xs px-3 py-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-lg font-medium transition-colors border border-slate-300 dark:border-slate-600"
+                        title="إعادة تعيين جميع الإعدادات إلى قيم الطابعة الافتراضية"
+                      >
+                        إعادة تعيين
+                      </button>
+                    )}
+                  </div>
+                  {(prefs as any).printerType && (
+                    <p className="text-xs text-slate-500 dark:text-slate-400 mb-3 -mt-2">
+                      💡 تم ضبط هذه الإعدادات تلقائياً حسب نوع الطابعة المحدد. يمكنك تعديلها يدوياً، لكن قد يؤثر ذلك على جودة الطباعة.
+                    </p>
+                  )}
+                  
+                  {renderSelect('حجم الورق', 'printPaperSize', [
+                    {value: 'A4', label: 'A4 (210 × 297 مم)'},
+                    {value: 'A5', label: 'A5 (148 × 210 مم)'},
+                    {value: '80mm', label: '80 مم (طابعة حرارية)'},
+                    {value: '58mm', label: '58 مم (طابعة حرارية)'},
+                    {value: 'custom', label: 'مخصص'}
+                  ])}
+                  {prefs.printPaperSize === 'custom' && (
+                    <>
+                      {renderField('عرض الورق (مم)', 'printPaperWidth', 'number')}
+                      {renderField('ارتفاع الورق (مم)', 'printPaperHeight', 'number')}
+                    </>
+                  )}
+                  <div className="grid grid-cols-2 gap-4">
+                    {renderField('الهامش العلوي (سم)', 'printMarginTop', 'number')}
+                    {renderField('الهامش السفلي (سم)', 'printMarginBottom', 'number')}
+                    {renderField('الهامش الأيمن (سم)', 'printMarginRight', 'number')}
+                    {renderField('الهامش الأيسر (سم)', 'printMarginLeft', 'number')}
+                  </div>
+                  {renderField('حجم الخط (بكسل)', 'printFontSize', 'number')}
+                  {renderField('حجم خط الجدول (بكسل)', 'printTableFontSize', 'number')}
+                  {renderToggleField('إظهار حدود الجدول', 'printShowBorders')}
+                  {renderToggleField('وضع المدمج (تقليل المسافات)', 'printCompactMode')}
+                </div>
               </>,
               <div className="w-6 h-6">
                 <PrintIcon />
