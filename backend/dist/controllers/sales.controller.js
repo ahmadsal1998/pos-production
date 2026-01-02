@@ -126,7 +126,13 @@ async function generateNextInvoiceNumber(Sale, storeId) {
         // If sequence is ahead of actual invoices (due to failed attempts or deletions), sync it down
         if (sequence.value < maxExistingNumber) {
             // Sequence is behind - update it to match actual max
-            logger_1.log.warn(`[Sales Controller] Sequence value (${sequence.value}) is behind actual max invoice number (${maxExistingNumber}). Syncing sequence.`);
+            // In production, this is expected behavior and only logged at debug level
+            if (process.env.NODE_ENV === 'production') {
+                logger_1.log.debug(`[Sales Controller] Sequence value (${sequence.value}) is behind actual max invoice number (${maxExistingNumber}). Syncing sequence.`);
+            }
+            else {
+                logger_1.log.warn(`[Sales Controller] Sequence value (${sequence.value}) is behind actual max invoice number (${maxExistingNumber}). Syncing sequence.`);
+            }
             sequence = await Sequence_1.default.findOneAndUpdate({ storeId: normalizedStoreId, sequenceType }, { $set: { value: maxExistingNumber } }, { new: true });
             if (!sequence) {
                 throw new Error('Failed to sync sequence');
@@ -135,7 +141,13 @@ async function generateNextInvoiceNumber(Sale, storeId) {
         else if (sequence.value > maxExistingNumber) {
             // Sequence is ahead - sync it down to match actual max
             // This prevents skipping numbers when invoices were deleted or failed
-            logger_1.log.warn(`[Sales Controller] Sequence value (${sequence.value}) is ahead of actual max invoice number (${maxExistingNumber}). Syncing sequence down.`);
+            // In production, this is expected behavior and only logged at debug level
+            if (process.env.NODE_ENV === 'production') {
+                logger_1.log.debug(`[Sales Controller] Sequence value (${sequence.value}) is ahead of actual max invoice number (${maxExistingNumber}). Syncing sequence down.`);
+            }
+            else {
+                logger_1.log.warn(`[Sales Controller] Sequence value (${sequence.value}) is ahead of actual max invoice number (${maxExistingNumber}). Syncing sequence down.`);
+            }
             sequence = await Sequence_1.default.findOneAndUpdate({ storeId: normalizedStoreId, sequenceType }, { $set: { value: maxExistingNumber } }, { new: true });
             if (!sequence) {
                 throw new Error('Failed to sync sequence');
@@ -425,7 +437,13 @@ exports.createSale = (0, error_middleware_1.asyncHandler)(async (req, res) => {
             if (existingSale) {
                 // Invoice number already exists - generate a new one and retry
                 // Only rule: invoice numbers must be unique
-                logger_1.log.warn(`[Sales Controller] Invoice number ${currentInvoiceNumber} already exists. Generating new invoice number.`);
+                // In production, this is expected behavior and only logged at debug level
+                if (process.env.NODE_ENV === 'production') {
+                    logger_1.log.debug(`[Sales Controller] Invoice number ${currentInvoiceNumber} already exists. Generating new invoice number.`);
+                }
+                else {
+                    logger_1.log.warn(`[Sales Controller] Invoice number ${currentInvoiceNumber} already exists. Generating new invoice number.`);
+                }
                 currentInvoiceNumber = await generateNextInvoiceNumber(Sale, storeId);
                 retryCount++;
                 if (retryCount >= maxRetries) {
@@ -469,7 +487,13 @@ exports.createSale = (0, error_middleware_1.asyncHandler)(async (req, res) => {
             // Check if this is a duplicate key error (E11000)
             if (error.code === 11000) {
                 // Duplicate key error - generate new invoice number and retry
-                logger_1.log.warn(`[Sales Controller] Duplicate key error for invoice ${currentInvoiceNumber}, generating new number`);
+                // In production, this is expected behavior and only logged at debug level
+                if (process.env.NODE_ENV === 'production') {
+                    logger_1.log.debug(`[Sales Controller] Duplicate key error for invoice ${currentInvoiceNumber}, generating new number`);
+                }
+                else {
+                    logger_1.log.warn(`[Sales Controller] Duplicate key error for invoice ${currentInvoiceNumber}, generating new number`);
+                }
                 currentInvoiceNumber = await generateNextInvoiceNumber(Sale, storeId);
                 retryCount++;
                 if (retryCount >= maxRetries) {
