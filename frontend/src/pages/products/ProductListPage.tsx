@@ -138,8 +138,9 @@ const ProductListPage: React.FC<ProductListPageProps> = () => {
         
         const storeId = getStoreIdFromToken();
         
-        // For regular pagination mode, check cache first
-        if (!isAdvancedMode && !searchTerm && currentPage === 1) {
+        // For regular pagination mode, check cache first (but not for barcode searches - need fresh data)
+        const isBarcodeSearchForCache = searchTerm && searchTerm.trim() && /^[0-9]+$/.test(searchTerm.trim());
+        if (!isAdvancedMode && !searchTerm && currentPage === 1 && !isBarcodeSearchForCache) {
           const cached = storeId ? getCachedProducts(storeId) : null;
           if (cached && cached.products.length > 0) {
             // Use cached products for first page
@@ -172,13 +173,19 @@ const ProductListPage: React.FC<ProductListPageProps> = () => {
           }
         }
 
-        // Fetch from API (with pagination for regular mode, or all for advanced mode)
+        // For barcode searches, fetch all products and filter client-side to ensure exact matching
+        // This is important for single-digit barcodes which might not work correctly with server-side partial matching
+        const isBarcodeSearch = searchTerm && searchTerm.trim() && /^[0-9]+$/.test(searchTerm.trim());
+        const shouldFetchAllForBarcode = !isAdvancedMode && isBarcodeSearch;
+        
+        // Fetch from API (with pagination for regular mode, or all for advanced mode or barcode searches)
         const apiParams = {
-          page: isAdvancedMode ? undefined : currentPage,
-          limit: isAdvancedMode ? undefined : itemsPerPage,
-          all: isAdvancedMode, // Fetch all for advanced mode
+          page: (isAdvancedMode || shouldFetchAllForBarcode) ? undefined : currentPage,
+          limit: (isAdvancedMode || shouldFetchAllForBarcode) ? undefined : itemsPerPage,
+          all: isAdvancedMode || shouldFetchAllForBarcode, // Fetch all for advanced mode or barcode searches
           includeCategories: true, // Include category data
-          search: (!isAdvancedMode && searchTerm) ? searchTerm.trim() : undefined,
+          // Don't use server-side search for barcode searches - we'll filter client-side for exact matching
+          search: (!isAdvancedMode && searchTerm && !isBarcodeSearch) ? searchTerm.trim() : undefined,
         };
         
         if (process.env.NODE_ENV === 'development') {
@@ -493,12 +500,33 @@ const ProductListPage: React.FC<ProductListPageProps> = () => {
     );
   }, [advancedFilters]);
 
+  // Helper function to check if search term is a barcode (numeric only)
+  const isBarcodeInput = useCallback((input: string): boolean => {
+    const trimmed = input.trim();
+    if (!trimmed) return false;
+    // Check if input is numeric only (1 digit or more)
+    return /^[0-9]+$/.test(trimmed);
+  }, []);
+
   // Handle advanced filtering and sorting
   const filteredProducts = useMemo(() => {
+    const searchTermTrimmed = searchTerm.trim();
+    const isBarcode = searchTermTrimmed && isBarcodeInput(searchTerm);
+    
     // When not in advanced mode, use products directly (already filtered by server-side search)
     // When in advanced mode, use allProducts and apply client-side filters
     if (!isAdvancedMode) {
-      // Server-side search is already applied, just return the products
+      // For barcode searches, we fetch all products and filter client-side for exact matching
+      // This ensures single-digit barcodes work correctly
+      if (isBarcode) {
+        // Filter to exact matches only
+        return products.filter((product) => {
+          const productBarcode = String(product.barcode || '').trim();
+          const searchBarcode = searchTermTrimmed.trim();
+          return productBarcode.toLowerCase() === searchBarcode.toLowerCase();
+        });
+      }
+      // For non-barcode searches, return products as-is (already filtered by server)
       return [...products];
     }
 
@@ -510,6 +538,8 @@ const ProductListPage: React.FC<ProductListPageProps> = () => {
     if (searchTerm) {
       const searchTermTrimmed = searchTerm.trim();
       if (searchTermTrimmed) {
+        const isBarcode = isBarcodeInput(searchTerm);
+        
         // Normalize Arabic text for better matching (remove diacritics, normalize spaces)
         const normalizeText = (text: string): string => {
           return text
@@ -523,24 +553,28 @@ const ProductListPage: React.FC<ProductListPageProps> = () => {
         const lowercasedSearchTerm = searchTermTrimmed.toLowerCase();
         
         filtered = filtered.filter((product) => {
-          // Normalize and check
-          const normalizedName = normalizeText(product.name || '');
-          const normalizedBarcode = normalizeText(product.barcode || '');
-          const normalizedCategory = normalizeText(product.category || '');
-          
-          // Check normalized matches (handles Arabic diacritics)
-          const normalizedMatch = 
-            normalizedName.includes(normalizedSearchTerm) ||
-            normalizedBarcode.includes(normalizedSearchTerm) ||
-            normalizedCategory.includes(normalizedSearchTerm);
-          
-          // Also check direct lowercase matches (for exact matches and non-Arabic text)
-          const directMatch = 
-            (product.name && product.name.toLowerCase().includes(lowercasedSearchTerm)) ||
-            (product.barcode && product.barcode.toLowerCase().includes(lowercasedSearchTerm)) ||
-            (product.category && product.category.toLowerCase().includes(lowercasedSearchTerm));
-          
-          return normalizedMatch || directMatch;
+          if (isBarcode) {
+            // For barcode searches: exact match only (case-insensitive, trimmed)
+            const productBarcode = String(product.barcode || '').trim();
+            const searchBarcode = searchTermTrimmed.trim();
+            return productBarcode.toLowerCase() === searchBarcode.toLowerCase();
+          } else {
+            // For name/category searches: partial match (normalized and direct)
+            const normalizedName = normalizeText(product.name || '');
+            const normalizedCategory = normalizeText(product.category || '');
+            
+            // Check normalized matches (handles Arabic diacritics)
+            const normalizedMatch = 
+              normalizedName.includes(normalizedSearchTerm) ||
+              normalizedCategory.includes(normalizedSearchTerm);
+            
+            // Also check direct lowercase matches (for exact matches and non-Arabic text)
+            const directMatch = 
+              (product.name && product.name.toLowerCase().includes(lowercasedSearchTerm)) ||
+              (product.category && product.category.toLowerCase().includes(lowercasedSearchTerm));
+            
+            return normalizedMatch || directMatch;
+          }
         });
       }
     }
@@ -582,7 +616,7 @@ const ProductListPage: React.FC<ProductListPageProps> = () => {
     }
 
     return filtered;
-  }, [searchTerm, products, allProducts, isAdvancedMode, advancedFilters]);
+  }, [searchTerm, products, allProducts, isAdvancedMode, advancedFilters, isBarcodeInput]);
 
   // Handle page change
   const handlePageChange = (page: number) => {

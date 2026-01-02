@@ -4,9 +4,10 @@ import { WholesaleProduct, WholesaleProductUnit } from '@/features/products/type
 import { AR_LABELS, UUID, SearchIcon, DeleteIcon, PlusIcon, CancelIcon, PrintIcon, CheckCircleIcon } from '@/shared/constants';
 import CustomDropdown from '@/shared/components/ui/CustomDropdown/CustomDropdown';
 import { useAuthStore } from '@/app/store';
-import { loadSettings } from '@/shared/utils/settingsStorage';
+import { loadSettings, saveSettings } from '@/shared/utils/settingsStorage';
 import { printReceipt } from '@/shared/utils/printUtils';
 import { useCurrency } from '@/shared/contexts/CurrencyContext';
+import { storeSettingsApi } from '@/lib/api/client';
 
 // --- MOCK DATA ---
 const MOCK_WHOLESALE_PRODUCTS: WholesaleProduct[] = [
@@ -124,6 +125,7 @@ const WholesalePOSPage: React.FC = () => {
     const [isProcessingPayment, setIsProcessingPayment] = useState(false); // Prevent multiple submissions
     const [selectedProduct, setSelectedProduct] = useState<WholesaleProduct | null>(null);
     const [modalQuantities, setModalQuantities] = useState<Record<string, string>>({});
+    const [storeLogoUrl, setStoreLogoUrl] = useState<string>('');
     
     // Load autoPrintInvoice setting from preferences, default to true
     const getAutoPrintSetting = (): boolean => {
@@ -376,6 +378,66 @@ const WholesalePOSPage: React.FC = () => {
         }
     }, []);
 
+    // Load store logo when sale completes to ensure we have the latest logo for the receipt
+    useEffect(() => {
+        if (saleCompleted) {
+            const loadStoreLogo = async () => {
+                try {
+                    // Check localStorage first
+                    const settings = loadSettings(null);
+                    if (settings?.logoUrl) {
+                        setStoreLogoUrl(settings.logoUrl);
+                    }
+                    
+                    // Always check backend for latest logo URL
+                    try {
+                        const backendSettings = await storeSettingsApi.getSettings();
+                        
+                        // Handle nested response structure
+                        let settingsData: Record<string, string> | null = null;
+                        
+                        if (backendSettings.data) {
+                            // Check for nested structure: data.data.settings
+                            if ('data' in backendSettings.data && backendSettings.data.data && 'settings' in backendSettings.data.data) {
+                                settingsData = (backendSettings.data.data as any).settings as Record<string, string>;
+                            }
+                            // Check for direct structure: data.settings
+                            else if ('settings' in backendSettings.data) {
+                                settingsData = backendSettings.data.settings as Record<string, string>;
+                            }
+                        }
+                        
+                        if (settingsData) {
+                            // Load logo URL from backend settings
+                            const logoUrl = settingsData.logourl || settingsData.logoUrl || '';
+                            if (logoUrl) {
+                                console.log('[WholesalePOS] Found store logo URL in backend:', logoUrl.substring(0, 50) + '...');
+                                setStoreLogoUrl(logoUrl);
+                                // Also update localStorage for future use
+                                if (settings) {
+                                    const updatedSettings = { ...settings, logoUrl: logoUrl };
+                                    saveSettings(updatedSettings);
+                                } else {
+                                    // Create minimal settings object if none exists
+                                    const newSettings = {
+                                        logoUrl: logoUrl,
+                                    } as any;
+                                    saveSettings(newSettings);
+                                }
+                            }
+                        }
+                    } catch (backendError) {
+                        console.warn('[WholesalePOS] Failed to load logo from backend:', backendError);
+                    }
+                } catch (error) {
+                    console.error('[WholesalePOS] Error loading store logo:', error);
+                }
+            };
+            
+            loadStoreLogo();
+        }
+    }, [saleCompleted]);
+    
     // Auto-print when sale is completed and autoPrintInvoice is enabled
     useEffect(() => {
         if (saleCompleted && autoPrintEnabled) {
@@ -466,11 +528,65 @@ const WholesalePOSPage: React.FC = () => {
         const legacyDefaultBusinessName = String.fromCharCode(80, 111, 115, 104, 80, 111, 105, 110, 116, 72, 117, 98);
         const businessNameToDisplay = settings?.businessName && settings.businessName.trim() && settings.businessName !== legacyDefaultBusinessName ? settings.businessName.trim() : '';
         
+        // Get store logo from state (loaded from backend API) with fallback to localStorage settings
+        // This ensures we always use the correct store's logo from the backend
+        const logoUrlFromState = storeLogoUrl || '';
+        const logoUrlFromSettings = settings?.logoUrl || '';
+        const finalLogoUrl = logoUrlFromState || logoUrlFromSettings;
+        
+        // Check if we have a custom logo - accept Firebase URLs, data URLs (base64 images), or blob URLs
+        const hasCustomLogo = !!(finalLogoUrl && finalLogoUrl.trim() && (
+            finalLogoUrl.includes('firebasestorage.googleapis.com') || // Firebase Storage URL
+            finalLogoUrl.startsWith('data:image/') || // Base64 data URL (backward compatibility)
+            finalLogoUrl.startsWith('blob:') || // Blob URL
+            (finalLogoUrl.startsWith('http') && finalLogoUrl.includes('logo')) // HTTP URL (for other storage services)
+        ));
+        
         return (
             <div id="printable-receipt" className="w-full max-w-md bg-white dark:bg-gray-800 p-4 sm:p-6 rounded-lg shadow-lg text-right">
                 <div className="text-center mb-4 sm:mb-5">
                     <CheckCircleIcon className="w-12 h-12 sm:w-16 sm:h-16 text-green-500 mx-auto print-hidden" />
                     <h2 className="text-xl sm:text-2xl font-bold text-gray-800 dark:text-gray-100 mt-2 print-hidden">{AR_LABELS.saleCompleted}</h2>
+                    
+                    {/* Store Logo */}
+                    <div className="flex justify-center mb-4 mt-4">
+                        {hasCustomLogo && finalLogoUrl ? (
+                            <div className="receipt-logo">
+                                <img 
+                                    src={finalLogoUrl} 
+                                    alt="Store logo" 
+                                    className="w-20 h-20 sm:w-24 sm:h-24 object-contain rounded-2xl shadow-xl bg-white dark:bg-gray-800 p-2 border-2 border-gray-100 dark:border-gray-700"
+                                    style={{
+                                        maxWidth: '96px',
+                                        maxHeight: '96px',
+                                        width: 'auto',
+                                        height: 'auto',
+                                    }}
+                                    onError={(e) => {
+                                        console.error('[WholesalePOS Receipt] Failed to load logo image:', finalLogoUrl.substring(0, 50));
+                                        // Fallback to default logo on error
+                                        e.currentTarget.style.display = 'none';
+                                    }}
+                                />
+                            </div>
+                        ) : (
+                            <div className="receipt-logo w-20 h-20 sm:w-24 sm:h-24 flex items-center justify-center rounded-2xl bg-gradient-to-br from-orange-500 via-amber-500 to-orange-600 shadow-xl relative" style={{
+                                background: 'linear-gradient(135deg, #f97316 0%, #f59e0b 50%, #ea580c 100%)',
+                                boxShadow: '0 10px 25px -5px rgba(249, 115, 22, 0.3), 0 4px 6px -2px rgba(249, 115, 22, 0.2)',
+                            }}>
+                                <svg 
+                                    className="w-12 h-12 sm:w-14 sm:h-14 text-white" 
+                                    fill="none" 
+                                    viewBox="0 0 24 24" 
+                                    stroke="currentColor"
+                                    strokeWidth="2.5"
+                                >
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                                </svg>
+                            </div>
+                        )}
+                    </div>
+                    
                     <h3 className="text-lg sm:text-xl font-bold text-center text-gray-900 dark:text-gray-100 mt-3 sm:mt-4 mb-2">فاتورة جملة</h3>
                     {storeAddress && (
                         <p className="text-center text-xs text-gray-500 dark:text-gray-400">{storeAddress}</p>

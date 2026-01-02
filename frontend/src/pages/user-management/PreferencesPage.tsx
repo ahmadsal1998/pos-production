@@ -8,8 +8,11 @@ import { CURRENCIES, CurrencyConfig } from '@/shared/utils/currency';
 import CustomDropdown from '@/shared/components/ui/CustomDropdown/CustomDropdown';
 import { loadSettings, saveSettings } from '@/shared/utils/settingsStorage';
 import { storeSettingsApi } from '@/lib/api/client';
+import { useAuthStore } from '@/app/store';
+import { uploadStoreLogo, deleteStoreLogo } from '@/lib/firebase/logoStorage';
 import { 
-  PrinterType, 
+  PrinterType,
+  PrinterConfig,
   getAvailablePrinterTypes, 
   getPrinterTypeDisplayName,
   applyPrinterConfig,
@@ -84,11 +87,13 @@ const parseNumber = (value: any, fallback: number) => {
 
 const PreferencesPage: React.FC = () => {
   const { currency, updateCurrency, loading: currencyLoading } = useCurrency();
+  const { user } = useAuthStore();
   const [prefs, setPrefs] = useState<SystemPreferences>(initialPreferences);
   const [logoPreview, setLogoPreview] = useState<string | null>(null);
   const [selectedCurrencyCode, setSelectedCurrencyCode] = useState<string>(currency.code);
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [uploadingLogo, setUploadingLogo] = useState(false);
   const [settingsOverrideWarning, setSettingsOverrideWarning] = useState<{
     show: boolean;
     overriddenSettings: string[];
@@ -162,16 +167,80 @@ const PreferencesPage: React.FC = () => {
     }
   };
 
-  const handleLogoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleLogoChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
       if (e.target.files && e.target.files[0]) {
           const file = e.target.files[0];
-          const reader = new FileReader();
-          reader.onloadend = () => {
-              setLogoPreview(reader.result as string);
-              setPrefs(prev => ({...prev, logoUrl: file.name})); // In real app, you'd upload and store URL
-          };
-          reader.readAsDataURL(file);
+          const storeId = user?.storeId;
+          
+          if (!storeId) {
+              alert('خطأ: لا يمكن رفع الشعار بدون معرف المتجر');
+              return;
+          }
+          
+          // Validate file type
+          if (!file.type.startsWith('image/')) {
+              alert('الرجاء اختيار ملف صورة صالح');
+              return;
+          }
+          
+          // Validate file size (max 2MB)
+          if (file.size > 2 * 1024 * 1024) {
+              alert('حجم الصورة كبير جداً. الرجاء اختيار صورة أصغر من 2 ميجابايت');
+              return;
+          }
+          
+          try {
+              setUploadingLogo(true);
+              
+              // Show preview immediately using FileReader
+              const reader = new FileReader();
+              reader.onloadend = () => {
+                  const dataUrl = reader.result as string;
+                  setLogoPreview(dataUrl); // For immediate preview
+              };
+              reader.readAsDataURL(file);
+              
+              // Upload to Firebase Storage
+              console.log('[Preferences] Uploading logo to Firebase Storage...');
+              const firebaseUrl = await uploadStoreLogo(file, storeId);
+              
+              // Store Firebase URL in preferences (not base64)
+              setPrefs(prev => ({
+                  ...prev, 
+                  logoUrl: firebaseUrl // Store Firebase URL instead of base64
+              }));
+              
+              console.log('[Preferences] Logo uploaded to Firebase:', firebaseUrl);
+              alert('تم رفع الشعار بنجاح! اضغط على "حفظ التغييرات" لحفظ الإعدادات.');
+          } catch (error: any) {
+              console.error('[Preferences] Error uploading logo:', error);
+              alert(`فشل رفع الشعار: ${error.message || 'حدث خطأ غير متوقع'}`);
+              setLogoPreview(null);
+          } finally {
+              setUploadingLogo(false);
+          }
       }
+  };
+  
+  const handleRemoveLogo = async () => {
+      const storeId = user?.storeId;
+      const currentLogoUrl = prefs.logoUrl || '';
+      
+      // If logo exists in Firebase, delete it
+      if (currentLogoUrl && currentLogoUrl.includes('firebasestorage.googleapis.com')) {
+          try {
+              console.log('[Preferences] Deleting logo from Firebase Storage...');
+              await deleteStoreLogo(currentLogoUrl, storeId || undefined);
+              console.log('[Preferences] Logo deleted from Firebase');
+          } catch (error: any) {
+              console.error('[Preferences] Error deleting logo from Firebase:', error);
+              // Continue with removal even if Firebase deletion fails
+          }
+      }
+      
+      // Clear preview and logo URL
+      setLogoPreview(null);
+      setPrefs(prev => ({...prev, logoUrl: ''}));
   };
 
   // Load preferences from localStorage and backend
@@ -185,6 +254,7 @@ const PreferencesPage: React.FC = () => {
         let backendStoreAddress = '';
         let backendBusinessDayStartTime = '';
         let backendBusinessDayTimezone = '';
+        let backendLogoUrl = '';
         try {
           const backendSettings = await storeSettingsApi.getSettings();
           
@@ -212,6 +282,9 @@ const PreferencesPage: React.FC = () => {
             if (settingsData.businessdaytimezone) {
               backendBusinessDayTimezone = settingsData.businessdaytimezone;
             }
+            if (settingsData.logourl) {
+              backendLogoUrl = settingsData.logourl;
+            }
           }
         } catch (error) {
           console.warn('Failed to load settings from backend:', error);
@@ -227,8 +300,26 @@ const PreferencesPage: React.FC = () => {
             storeAddress: storedSettings.storeAddress || backendStoreAddress || '',
             businessDayStartTime: storedSettings.businessDayStartTime || backendBusinessDayStartTime || '06:00',
             businessDayTimezone: storedSettings.businessDayTimezone || backendBusinessDayTimezone || 'UTC',
+            logoUrl: storedSettings.logoUrl || backendLogoUrl || '',
           };
           setPrefs(updated);
+          
+          // Load logo preview if logoUrl exists
+          // Support both Firebase URLs and base64 data URLs (for backward compatibility)
+          const logoUrlToUse = updated.logoUrl || backendLogoUrl;
+          if (logoUrlToUse) {
+            if (logoUrlToUse.startsWith('data:image/') || logoUrlToUse.startsWith('blob:')) {
+              // Base64 or blob URL - use directly for preview
+              setLogoPreview(logoUrlToUse);
+              console.log('[Preferences] Loaded base64 logo from settings');
+            } else if (logoUrlToUse.includes('firebasestorage.googleapis.com') || logoUrlToUse.startsWith('http')) {
+              // Firebase URL or HTTP URL - use as preview
+              setLogoPreview(logoUrlToUse);
+              console.log('[Preferences] Loaded Firebase logo URL from settings:', logoUrlToUse.substring(0, 50));
+            } else {
+              console.log('[Preferences] Logo URL exists but format not recognized:', logoUrlToUse.substring(0, 50));
+            }
+          }
 
           // Check if printer type is set and if settings match
           if ((updated as any).printerType) {
@@ -248,12 +339,22 @@ const PreferencesPage: React.FC = () => {
           }
         } else {
           // No stored settings, use defaults but include backend settings if available
-          setPrefs({
+          const defaultPrefs = {
             ...initialPreferences,
             storeAddress: backendStoreAddress || '',
             businessDayStartTime: backendBusinessDayStartTime || '06:00',
             businessDayTimezone: backendBusinessDayTimezone || 'UTC',
-          });
+            logoUrl: backendLogoUrl || '',
+          };
+          setPrefs(defaultPrefs);
+          
+          // Load logo preview from backend if available
+          if (backendLogoUrl) {
+            if (backendLogoUrl.includes('firebasestorage.googleapis.com') || backendLogoUrl.startsWith('http')) {
+              setLogoPreview(backendLogoUrl);
+              console.log('[Preferences] Loaded Firebase logo URL from backend:', backendLogoUrl.substring(0, 50));
+            }
+          }
         }
       } catch (err) {
         console.error('Failed to load preferences from localStorage:', err);
@@ -277,8 +378,35 @@ const PreferencesPage: React.FC = () => {
         await updateCurrency(selectedCurrency);
       }
 
+      // Logo should already be saved as Firebase URL in prefs.logoUrl after upload
+      // If logoPreview exists but logoUrl is empty, it means user selected but didn't upload yet
+      const prefsToSave = { ...prefs };
+      
+      // Only update logoUrl from preview if it's a Firebase URL (not base64)
+      // Base64 previews are temporary - Firebase URL should already be in prefs.logoUrl
+      if (logoPreview && logoPreview.includes('firebasestorage.googleapis.com') && !prefsToSave.logoUrl) {
+        prefsToSave.logoUrl = logoPreview;
+        console.log('[Preferences] Setting logoUrl from Firebase URL preview');
+      }
+
+      // Debug: Log logo before saving
+      console.log('[Preferences] Saving preferences with logo:', {
+        hasLogo: !!prefsToSave.logoUrl,
+        logoUrl: prefsToSave.logoUrl ? `${prefsToSave.logoUrl.substring(0, 80)}...` : 'empty',
+        isFirebaseUrl: prefsToSave.logoUrl?.includes('firebasestorage.googleapis.com') || false,
+        isDataUrl: prefsToSave.logoUrl?.startsWith('data:image/') || false
+      });
+
       // Save preferences to localStorage
-      saveSettings(prefs);
+      saveSettings(prefsToSave);
+      
+      // Verify it was saved
+      const savedSettings = loadSettings();
+      console.log('[Preferences] Verified saved logo:', {
+        saved: !!savedSettings?.logoUrl,
+        savedUrl: savedSettings?.logoUrl ? `${savedSettings.logoUrl.substring(0, 50)}...` : 'empty',
+        isFirebaseUrl: savedSettings?.logoUrl?.includes('firebasestorage.googleapis.com') || false
+      });
       
       // Sync businessDayStartTime to backend
       try {
@@ -313,6 +441,20 @@ const PreferencesPage: React.FC = () => {
         console.log('[PreferencesPage] Store address saved successfully to backend');
       } catch (error) {
         console.warn('[PreferencesPage] Failed to sync storeAddress to backend:', error);
+        // Don't fail the entire save if backend sync fails
+      }
+      
+      // Sync logoUrl to backend
+      try {
+        const logoUrlValue = prefsToSave.logoUrl || '';
+        console.log('[PreferencesPage] Saving logo URL to backend:', logoUrlValue ? `${logoUrlValue.substring(0, 80)}...` : 'empty');
+        await storeSettingsApi.updateSetting('logourl', {
+          value: logoUrlValue,
+          description: 'Store logo URL (Firebase Storage URL)'
+        });
+        console.log('[Preferences] Logo URL saved successfully to backend');
+      } catch (error) {
+        console.warn('[Preferences] Failed to sync logoUrl to backend:', error);
         // Don't fail the entire save if backend sync fails
       }
       
@@ -374,7 +516,7 @@ const PreferencesPage: React.FC = () => {
     if (!configKey) return false;
     
     const currentValue = (prefs as any)[settingName];
-    const configValue = config[configKey];
+    const configValue = config[configKey as keyof PrinterConfig];
     
     // Handle undefined/null values
     if (currentValue === undefined || currentValue === null) {
@@ -566,28 +708,46 @@ const PreferencesPage: React.FC = () => {
                   <div className="flex items-center gap-4">
                     {logoPreview ? (
                       <div className="relative group">
-                        <img src={logoPreview} alt="logo preview" className="h-20 w-20 object-cover rounded-xl border-2 border-slate-200 dark:border-slate-700 shadow-md transition-transform duration-300 group-hover:scale-105"/>
+                        <img 
+                          src={logoPreview} 
+                          alt="Store logo" 
+                          className="h-24 w-24 object-contain rounded-xl border-2 border-slate-200 dark:border-slate-700 shadow-md transition-transform duration-300 group-hover:scale-105 bg-white dark:bg-slate-800 p-2"
+                        />
                         <div className="absolute inset-0 rounded-xl bg-slate-900/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
                           <span className="text-white text-xs">معاينة</span>
                         </div>
                       </div>
                     ) : (
-                      <div className="h-20 w-20 rounded-xl border-2 border-dashed border-slate-300 dark:border-slate-600 flex items-center justify-center bg-slate-50 dark:bg-slate-800">
-                        <span className="text-slate-400 text-xs">الشعار</span>
+                      <div className="h-24 w-24 rounded-xl border-2 border-dashed border-slate-300 dark:border-slate-600 flex items-center justify-center bg-slate-50 dark:bg-slate-800">
+                        <span className="text-slate-400 text-xs text-center px-2">لا يوجد شعار</span>
                       </div>
                     )}
-                    <label className="flex-1 cursor-pointer">
-                      <input 
-                        type="file" 
-                        onChange={handleLogoChange} 
-                        accept="image/*" 
-                        className="hidden"
-                      />
-                      <div className="px-4 py-3 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-sm font-medium text-slate-700 dark:text-slate-300 text-center cursor-pointer shadow-sm hover:shadow-md transition-all duration-200">
-                        {logoPreview ? 'تغيير الشعار' : 'اختر الشعار'}
-                      </div>
-                    </label>
+                    <div className="flex-1 flex flex-col gap-2">
+                      <label className="cursor-pointer">
+                        <input 
+                          type="file" 
+                          onChange={handleLogoChange} 
+                          accept="image/png,image/jpeg,image/jpg,image/gif,image/svg+xml" 
+                          className="hidden"
+                        />
+                        <div className={`px-4 py-3 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-sm font-medium text-slate-700 dark:text-slate-300 text-center cursor-pointer shadow-sm hover:shadow-md transition-all duration-200 ${uploadingLogo ? 'opacity-50 cursor-not-allowed' : ''}`}>
+                          {uploadingLogo ? 'جاري الرفع...' : (logoPreview ? 'تغيير الشعار' : 'اختر الشعار')}
+                        </div>
+                      </label>
+                      {logoPreview && (
+                        <button
+                          type="button"
+                          onClick={handleRemoveLogo}
+                          className="px-4 py-2 rounded-xl border border-red-300 dark:border-red-600 bg-red-50 dark:bg-red-900/20 hover:bg-red-100 dark:hover:bg-red-900/30 text-sm font-medium text-red-700 dark:text-red-400 text-center cursor-pointer transition-all duration-200"
+                        >
+                          حذف الشعار
+                        </button>
+                      )}
+                    </div>
                   </div>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-2">
+                    الحد الأقصى لحجم الملف: 2 ميجابايت. الصيغ المدعومة: PNG, JPG, GIF, SVG
+                  </p>
                 </div>
                 <div className="space-y-2">
                   <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300">

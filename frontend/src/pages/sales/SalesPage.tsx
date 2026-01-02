@@ -101,6 +101,7 @@ const SaleDetailsModal: React.FC<{ sale: SaleTransaction | null, onClose: () => 
     const { formatCurrency } = useCurrency();
     const [storeAddress, setStoreAddress] = useState<string>('');
     const [businessName, setBusinessName] = useState<string>('');
+    const [storeLogoUrl, setStoreLogoUrl] = useState<string>('');
     const [netProfit, setNetProfit] = useState<number | null>(null);
     const [isCalculatingProfit, setIsCalculatingProfit] = useState(true);
 
@@ -121,16 +122,22 @@ const SaleDetailsModal: React.FC<{ sale: SaleTransaction | null, onClose: () => 
                     }
                 }
                 
+                // Load logo URL from localStorage
+                if (settings?.logoUrl) {
+                    console.log('[SalesPage] Found store logo URL in localStorage');
+                    setStoreLogoUrl(settings.logoUrl);
+                }
+                
                 // Load address from localStorage
                 if (settings?.storeAddress) {
                     console.log('[SalesPage] Found store address in localStorage:', settings.storeAddress);
                     setStoreAddress(settings.storeAddress);
-                    return;
                 } else {
                     console.log('[SalesPage] No store address in localStorage, checking backend...');
                 }
 
-                // If not in localStorage, try backend
+                // Always check backend for latest settings, even if address exists in localStorage
+                // This ensures we have the most up-to-date logo and address for the current store
                 try {
                     const backendSettings = await storeSettingsApi.getSettings();
                     console.log('[SalesPage] Backend settings response:', backendSettings);
@@ -153,6 +160,27 @@ const SaleDetailsModal: React.FC<{ sale: SaleTransaction | null, onClose: () => 
                     
                     if (settingsData) {
                         console.log('[SalesPage] Settings data:', settingsData);
+                        
+                        // Load logo URL from backend settings
+                        const logoUrl = settingsData.logourl || settingsData.logoUrl || '';
+                        if (logoUrl) {
+                            console.log('[SalesPage] Found store logo URL in backend:', logoUrl.substring(0, 50) + '...');
+                            setStoreLogoUrl(logoUrl);
+                            // Also update localStorage for future use
+                            if (settings) {
+                                const updatedSettings = { ...settings, logoUrl: logoUrl };
+                                saveSettings(updatedSettings);
+                            } else {
+                                // Create minimal settings object if none exists
+                                const newSettings = {
+                                    logoUrl: logoUrl,
+                                } as any;
+                                saveSettings(newSettings);
+                            }
+                        } else {
+                            console.log('[SalesPage] No logo URL found in backend settings');
+                        }
+                        
                         const address = settingsData.storeaddress || settingsData.storeAddress || '';
                         if (address) {
                             console.log('[SalesPage] Found store address:', address);
@@ -167,7 +195,7 @@ const SaleDetailsModal: React.FC<{ sale: SaleTransaction | null, onClose: () => 
                         }
                     }
                 } catch (backendError) {
-                    console.warn('[SalesPage] Failed to load storeAddress from backend:', backendError);
+                    console.warn('[SalesPage] Failed to load store settings from backend:', backendError);
                 }
             } catch (error) {
                 console.error('[SalesPage] Error loading store data:', error);
@@ -246,11 +274,28 @@ const SaleDetailsModal: React.FC<{ sale: SaleTransaction | null, onClose: () => 
     // Get address to display - use state or fallback to localStorage
     const addressToDisplay = storeAddress || settings?.storeAddress || '';
     
+    // Get store logo from state (loaded from backend API) with fallback to localStorage settings
+    // This ensures we always use the correct store's logo from the backend
+    const logoUrlFromState = storeLogoUrl || '';
+    const logoUrlFromSettings = settings?.logoUrl || '';
+    const finalLogoUrl = logoUrlFromState || logoUrlFromSettings;
+    
+    // Check if we have a custom logo - accept Firebase URLs, data URLs (base64 images), or blob URLs
+    const hasCustomLogo = !!(finalLogoUrl && finalLogoUrl.trim() && (
+        finalLogoUrl.includes('firebasestorage.googleapis.com') || // Firebase Storage URL
+        finalLogoUrl.startsWith('data:image/') || // Base64 data URL (backward compatibility)
+        finalLogoUrl.startsWith('blob:') || // Blob URL
+        (finalLogoUrl.startsWith('http') && finalLogoUrl.includes('logo')) // HTTP URL (for other storage services)
+    ));
+    
     console.log('[SalesPage] Display values:', { 
         businessNameToDisplay, 
         addressToDisplay,
         storeAddressState: storeAddress,
-        addressFromSettings: settings?.storeAddress
+        addressFromSettings: settings?.storeAddress,
+        logoUrlFromState: logoUrlFromState ? `${logoUrlFromState.substring(0, 50)}...` : 'empty',
+        logoUrlFromSettings: logoUrlFromSettings ? `${logoUrlFromSettings.substring(0, 50)}...` : 'empty',
+        hasCustomLogo
     });
     
     const title =
@@ -260,10 +305,50 @@ const SaleDetailsModal: React.FC<{ sale: SaleTransaction | null, onClose: () => 
 
     return (
         <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4" onClick={onClose}>
-            <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-2xl text-right" onClick={e => e.stopPropagation()}>
-                <div id="printable-receipt" className="w-full max-w-md bg-white dark:bg-gray-800 p-4 sm:p-6 rounded-lg shadow-lg text-right mx-auto">
+            <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-2xl text-right flex flex-col max-h-[90vh] overflow-hidden" onClick={e => e.stopPropagation()}>
+                <div id="printable-receipt" className="w-full max-w-md bg-white dark:bg-gray-800 p-4 sm:p-6 rounded-lg shadow-lg text-right mx-auto overflow-y-auto flex-1 min-h-0 hide-scrollbar">
                     <div className="text-center mb-4 sm:mb-5">
                         <h2 className="text-xl sm:text-2xl font-bold text-gray-800 dark:text-gray-100 mt-2 print-hidden">{isReturn ? AR_LABELS.returnCompleted || 'إرجاع مكتمل' : AR_LABELS.saleCompleted || 'بيع مكتمل'}</h2>
+                        
+                        {/* Store Logo */}
+                        <div className="flex justify-center mb-4 mt-4">
+                            {hasCustomLogo && finalLogoUrl ? (
+                                <div className="receipt-logo">
+                                    <img 
+                                        src={finalLogoUrl} 
+                                        alt="Store logo" 
+                                        className="w-20 h-20 sm:w-24 sm:h-24 object-contain rounded-2xl shadow-xl bg-white dark:bg-gray-800 p-2 border-2 border-gray-100 dark:border-gray-700"
+                                        style={{
+                                            maxWidth: '96px',
+                                            maxHeight: '96px',
+                                            width: 'auto',
+                                            height: 'auto',
+                                        }}
+                                        onError={(e) => {
+                                            console.error('[SalesPage Receipt] Failed to load logo image:', finalLogoUrl.substring(0, 50));
+                                            // Fallback to default logo on error
+                                            e.currentTarget.style.display = 'none';
+                                        }}
+                                    />
+                                </div>
+                            ) : (
+                                <div className="receipt-logo w-20 h-20 sm:w-24 sm:h-24 flex items-center justify-center rounded-2xl bg-gradient-to-br from-orange-500 via-amber-500 to-orange-600 shadow-xl relative" style={{
+                                    background: 'linear-gradient(135deg, #f97316 0%, #f59e0b 50%, #ea580c 100%)',
+                                    boxShadow: '0 10px 25px -5px rgba(249, 115, 22, 0.3), 0 4px 6px -2px rgba(249, 115, 22, 0.2)',
+                                }}>
+                                    <svg 
+                                        className="w-12 h-12 sm:w-14 sm:h-14 text-white" 
+                                        fill="none" 
+                                        viewBox="0 0 24 24" 
+                                        stroke="currentColor"
+                                        strokeWidth="2.5"
+                                    >
+                                        <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                                    </svg>
+                                </div>
+                            )}
+                        </div>
+                        
                         <h3 className="text-lg sm:text-xl font-bold text-center text-gray-900 dark:text-gray-100 mt-3 sm:mt-4 mb-2">{title}</h3>
                         {addressToDisplay && (
                             <p className="text-center text-xs text-gray-500 dark:text-gray-400">{addressToDisplay}</p>
@@ -367,7 +452,7 @@ const SaleDetailsModal: React.FC<{ sale: SaleTransaction | null, onClose: () => 
                     </div>
                     <p className="receipt-footer text-center text-xs mt-6 text-gray-500 dark:text-gray-400">شكراً لتعاملكم معنا!</p>
                 </div>
-                <div className="flex justify-start space-x-4 space-x-reverse p-4 bg-gray-50 dark:bg-gray-800/50 border-t dark:border-gray-700 rounded-b-lg print-hidden">
+                <div className="flex justify-start space-x-4 space-x-reverse p-4 bg-gray-50 dark:bg-gray-800/50 border-t dark:border-gray-700 rounded-b-lg print-hidden flex-shrink-0">
                     <button onClick={handlePrint} className="inline-flex items-center px-4 py-2 bg-blue-500 text-white rounded-md"><PrintIcon/><span className="mr-2">{AR_LABELS.printReceipt}</span></button>
                     <button onClick={onClose} className="px-4 py-2 bg-gray-200 dark:bg-gray-600 text-gray-800 dark:text-gray-200 rounded-md">{AR_LABELS.cancel}</button>
                 </div>

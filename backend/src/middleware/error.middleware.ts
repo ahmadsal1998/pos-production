@@ -49,8 +49,20 @@ export const errorHandler = (
     statusCode = 400;
   }
 
-  // Log error (warn and error levels are always logged in production)
-  log.error('API Error', err, { statusCode, message });
+  // Log error based on severity and environment
+  // In production, don't log client errors (4xx) as errors - they're expected validation/bad request errors
+  // Only log server errors (5xx) as errors in production
+  const isClientError = statusCode >= 400 && statusCode < 500;
+  const isProduction = process.env.NODE_ENV === 'production';
+  
+  if (isProduction && isClientError) {
+    // Client errors in production: only log at debug level to avoid log spam
+    // These are expected validation errors (e.g., "stock cannot be negative", "invoice number already exists")
+    log.debug('API Client Error (4xx)', { statusCode, message, errorType: err.constructor.name });
+  } else {
+    // Server errors (5xx) or all errors in development: log at error level
+    log.error('API Error', err, { statusCode, message });
+  }
 
   res.status(statusCode).json({
     success: false,

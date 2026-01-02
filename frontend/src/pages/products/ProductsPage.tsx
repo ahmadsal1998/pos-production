@@ -175,12 +175,42 @@ const ProductsPage: React.FC<ProductsPageProps> = ({ onAddProduct, onProductClic
     { value: 'out_of_stock', label: 'نفد المخزون' }
   ], []);
 
+  // Helper function to check if search term is a barcode (numeric only)
+  const isBarcodeInput = useCallback((input: string): boolean => {
+    const trimmed = input.trim();
+    if (!trimmed) return false;
+    // Check if input is numeric only (1 digit or more)
+    return /^[0-9]+$/.test(trimmed);
+  }, []);
+
   // Filter and sort products
   const filteredAndSortedProducts = useMemo(() => {
+    const trimmedSearchTerm = searchTerm.trim();
+    const isBarcode = isBarcodeInput(searchTerm);
+    
     let filtered = products.filter(product => {
-      const matchesSearch = product.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                           product.barcode.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                           product.sku?.toLowerCase().includes(searchTerm.toLowerCase());
+      let matchesSearch = false;
+      
+      if (trimmedSearchTerm) {
+        if (isBarcode) {
+          // For barcode searches: exact match only (case-insensitive, trimmed)
+          // Convert barcode to string explicitly to handle both string and number types
+          const productBarcode = String(product.barcode || '').trim();
+          const searchBarcode = trimmedSearchTerm.trim();
+          // Use strict equality for exact matching (case-insensitive)
+          matchesSearch = productBarcode.toLowerCase() === searchBarcode.toLowerCase();
+        } else {
+          // For name searches: partial match on name and SKU
+          const searchTermLower = trimmedSearchTerm.toLowerCase();
+          const matchesName = product.name.toLowerCase().includes(searchTermLower);
+          const matchesSKU = product.sku ? product.sku.toLowerCase().includes(searchTermLower) : false;
+          matchesSearch = matchesName || matchesSKU;
+        }
+      } else {
+        // Empty search term matches all
+        matchesSearch = true;
+      }
+      
       const matchesCategory = selectedCategory === 'all' || product.category === selectedCategory;
       const matchesStatus = selectedStatus === 'all' || product.status === selectedStatus;
       return matchesSearch && matchesCategory && matchesStatus;
@@ -220,7 +250,7 @@ const ProductsPage: React.FC<ProductsPageProps> = ({ onAddProduct, onProductClic
     });
 
     return filtered;
-  }, [products, searchTerm, selectedCategory, selectedStatus, sortBy, sortOrder]);
+  }, [products, searchTerm, selectedCategory, selectedStatus, sortBy, sortOrder, isBarcodeInput]);
 
   // Calculate metrics
   const metrics = useMemo(() => {

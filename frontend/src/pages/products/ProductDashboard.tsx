@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AR_LABELS } from '@/shared/constants';
 import ProductListPage from './ProductListPage';
@@ -30,39 +30,69 @@ const ProductDashboard: React.FC<ProductDashboardProps> = ({ setActivePath }) =>
   const [activeView, setActiveView] = useState<'products' | 'categories' | 'brands' | 'warehouses' | 'units' | 'add-product' | 'import'>('products');
   const [productMetrics, setProductMetrics] = useState<ProductMetrics | null>(null);
   const [loadingMetrics, setLoadingMetrics] = useState(true);
+  const isMountedRef = useRef(true);
+  const isFetchingRef = useRef(false);
+  const fetchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const idleCallbackRef = useRef<number | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
+    isMountedRef.current = true;
+    isFetchingRef.current = false;
+
     const fetchMetrics = async () => {
+      // Prevent multiple simultaneous fetches
+      if (!isMountedRef.current || isFetchingRef.current) {
+        return;
+      }
+
+      isFetchingRef.current = true;
+
       try {
         setLoadingMetrics(true);
+        
+        // Create abort controller for this fetch
+        abortControllerRef.current = new AbortController();
+        const abortController = abortControllerRef.current;
         
         // First, try to load metrics from IndexedDB (fast, instant display)
         try {
           const cachedMetrics = await productsDB.calculateMetrics();
-          if (cachedMetrics) {
+          if (cachedMetrics && isMountedRef.current && !abortController.signal.aborted) {
             // Set cached metrics immediately for instant display
             setProductMetrics(cachedMetrics);
             setLoadingMetrics(false);
             
             // Then fetch from server in the background to get latest data
             const fetchFromServer = async () => {
+              if (!isMountedRef.current || abortController.signal.aborted) {
+                isFetchingRef.current = false;
+                return;
+              }
+              
               try {
                 const response = await productsApi.getProductMetrics();
-                if (response.data.success && response.data.data) {
-                  setProductMetrics(response.data.data);
+                if (isMountedRef.current && !abortController.signal.aborted) {
+                  if (response.data.success && response.data.data) {
+                    setProductMetrics(response.data.data);
+                  }
                 }
               } catch (error) {
-                console.error('Error fetching product metrics from server:', error);
-                // Keep cached metrics if server fetch fails
+                if (!abortController.signal.aborted) {
+                  console.error('Error fetching product metrics from server:', error);
+                  // Keep cached metrics if server fetch fails
+                }
+              } finally {
+                isFetchingRef.current = false;
               }
             };
 
             // Use requestIdleCallback for better performance, fallback to setTimeout
             if (window.requestIdleCallback) {
-              window.requestIdleCallback(fetchFromServer, { timeout: 2000 });
+              idleCallbackRef.current = window.requestIdleCallback(fetchFromServer, { timeout: 2000 });
             } else {
               // Fallback: use setTimeout with minimal delay
-              setTimeout(fetchFromServer, 0);
+              fetchTimeoutRef.current = setTimeout(fetchFromServer, 0);
             }
             return;
           }
@@ -72,18 +102,51 @@ const ProductDashboard: React.FC<ProductDashboardProps> = ({ setActivePath }) =>
         }
 
         // If no cached data, fetch from server
-        const response = await productsApi.getProductMetrics();
-        if (response.data.success && response.data.data) {
-          setProductMetrics(response.data.data);
+        if (!abortController.signal.aborted && isMountedRef.current) {
+          const response = await productsApi.getProductMetrics();
+          if (isMountedRef.current && !abortController.signal.aborted) {
+            if (response.data.success && response.data.data) {
+              setProductMetrics(response.data.data);
+            }
+          }
         }
       } catch (error) {
-        console.error('Error fetching product metrics:', error);
+        if (abortControllerRef.current && !abortControllerRef.current.signal.aborted) {
+          console.error('Error fetching product metrics:', error);
+        }
       } finally {
-        setLoadingMetrics(false);
+        isFetchingRef.current = false;
+        if (isMountedRef.current) {
+          setLoadingMetrics(false);
+        }
       }
     };
 
     fetchMetrics();
+
+    // Cleanup function
+    return () => {
+      isMountedRef.current = false;
+      isFetchingRef.current = false;
+      
+      // Cancel any pending timeouts
+      if (fetchTimeoutRef.current) {
+        clearTimeout(fetchTimeoutRef.current);
+        fetchTimeoutRef.current = null;
+      }
+      
+      // Cancel any pending idle callbacks
+      if (idleCallbackRef.current && window.cancelIdleCallback) {
+        window.cancelIdleCallback(idleCallbackRef.current);
+        idleCallbackRef.current = null;
+      }
+      
+      // Abort any in-flight requests
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+        abortControllerRef.current = null;
+      }
+    };
   }, []);
 
   const handleNavigation = (path: string) => {

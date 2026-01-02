@@ -40,6 +40,7 @@ type POSProduct = Product & {
     }>;
     cost?: number;
     costPrice?: number;
+    wholesalePrice?: number; // Wholesale price for the product
     updatedAt?: string;
     description?: string;
     showInQuickProducts?: boolean;
@@ -273,7 +274,9 @@ const POSPage: React.FC = () => {
     const [quantityDrafts, setQuantityDrafts] = useState<Record<string, string>>({});
     const [storeAddress, setStoreAddress] = useState<string>(''); // Store address for receipts
     const [businessName, setBusinessName] = useState<string>(''); // Store business name for receipts
+    const [storeLogoUrl, setStoreLogoUrl] = useState<string>(''); // Store logo URL for receipts
     const [showCostPrice, setShowCostPrice] = useState<boolean>(false); // Toggle for cost price column visibility
+    
     const [toastMessage, setToastMessage] = useState<string | null>(null); // Toast notification message
     const [toastType, setToastType] = useState<'info' | 'error' | 'success'>('info'); // Toast type
     const [unsyncedSalesCount, setUnsyncedSalesCount] = useState<number>(0); // Count of sales pending sync
@@ -1242,21 +1245,33 @@ const POSPage: React.FC = () => {
             productId = parseInt(p.id) || parseInt(p._id) || Date.now() + Math.random();
         }
         
+        // Get retail selling price (preferred) or fall back to price
+        const retailPrice = parseFloat(p.retailSellingPrice) || parseFloat(p.price) || 0;
+        // Parse wholesalePrice - only include if it's a valid positive number
+        let wholesalePrice: number | undefined = undefined;
+        if (p.wholesalePrice !== undefined && p.wholesalePrice !== null && p.wholesalePrice !== '') {
+            const parsed = typeof p.wholesalePrice === 'number' ? p.wholesalePrice : parseFloat(String(p.wholesalePrice));
+            if (!isNaN(parsed) && parsed > 0) {
+                wholesalePrice = parsed;
+            }
+        }
+        
         return {
             id: productId,
             originalId: originalId, // Store original backend ID
             name: p.name || '',
             category: p.categoryId || '',
-            price: parseFloat(p.price) || 0,
+            price: retailPrice, // Use retailSellingPrice if available, otherwise price
             costPrice: parseFloat(p.costPrice) || 0,
             cost: parseFloat(p.costPrice) || 0,
             stock: parseInt(p.stock) || 0,
-            barcode: p.barcode || '',
+            barcode: p.barcode || p.primaryBarcode || '',
+            wholesalePrice: wholesalePrice, // Include wholesale price
             units: Array.isArray(p.units)
                 ? p.units.map((u: any) => ({
                     unitName: u.unitName || u.name || '',
                     barcode: u.barcode || '',
-                    sellingPrice: parseFloat(u.sellingPrice) || parseFloat(p.price) || 0,
+                    sellingPrice: parseFloat(u.sellingPrice) || retailPrice,
                     conversionFactor: parseFloat(u.conversionFactor) || 1,
                   }))
                 : undefined,
@@ -1534,7 +1549,7 @@ const POSPage: React.FC = () => {
             // Reload tax rate if settings were changed
             if (e.key && e.key.startsWith('pos_settings_')) {
                 fetchTaxRate();
-                // Also reload store address and business name from localStorage
+                // Also reload store address, business name, and logo URL from localStorage
                 const settings = loadSettings(null);
                 if (settings?.storeAddress) {
                     setStoreAddress(settings.storeAddress);
@@ -1547,6 +1562,9 @@ const POSPage: React.FC = () => {
                     } else {
                         setBusinessName('');
                     }
+                }
+                if (settings?.logoUrl) {
+                    setStoreLogoUrl(settings.logoUrl);
                 }
             }
             // If products cache was invalidated, sync products
@@ -1632,6 +1650,21 @@ const POSPage: React.FC = () => {
             }
         };
     }, [fetchTaxRate, normalizeProduct, loadCustomersFromDB]);
+
+    // Helper function to get retail price for a product (always uses retail price)
+    const getActivePrice = useCallback((product: POSProduct, unit?: string, conversionFactor?: number): number => {
+        // Always use retail price with unit conversion
+        const basePrice = product.price;
+        const piecesPerMainUnit = conversionFactor || 1;
+        if (product.units && product.units.length > 0 && unit && unit !== 'قطعة') {
+            // Product has units and we're using a specific unit - calculate per-piece price
+            return piecesPerMainUnit > 0 ? (basePrice / piecesPerMainUnit) : basePrice;
+        } else {
+            // Product without units or using base unit - use base price directly
+            return basePrice;
+        }
+    }, []);
+
 
     // State for server-side customer search results
     const [serverCustomerSearchResults, setServerCustomerSearchResults] = useState<Customer[]>([]);
@@ -1825,10 +1858,16 @@ const POSPage: React.FC = () => {
                     }
                 }
                 
+                // Load logo URL from localStorage
+                if (settings?.logoUrl) {
+                    console.log('[POS] Found store logo URL in localStorage');
+                    setStoreLogoUrl(settings.logoUrl);
+                }
+                
                 if (settings?.storeAddress) {
                     console.log('[POS] Found store address in localStorage:', settings.storeAddress);
                     setStoreAddress(settings.storeAddress);
-                    return;
+                    // Continue to backend to get latest logo even if address exists in localStorage
                 } else {
                     console.log('[POS] No store address in localStorage, checking backend...');
                 }
@@ -1875,6 +1914,26 @@ const POSPage: React.FC = () => {
                         } else {
                             console.log('[POS] No store address found in backend settings. Available keys:', Object.keys(settingsData));
                         }
+                        
+                        // Load logo URL from backend settings
+                        const logoUrl = settingsData.logourl || settingsData.logoUrl || '';
+                        if (logoUrl) {
+                            console.log('[POS] Found store logo URL in backend:', logoUrl.substring(0, 50) + '...');
+                            setStoreLogoUrl(logoUrl);
+                            // Also update localStorage for future use
+                            if (settings) {
+                                const updatedSettings = { ...settings, logoUrl: logoUrl };
+                                saveSettings(updatedSettings);
+                            } else {
+                                // Create minimal settings object if none exists
+                                const newSettings = {
+                                    logoUrl: logoUrl,
+                                } as any;
+                                saveSettings(newSettings);
+                            }
+                        } else {
+                            console.log('[POS] No logo URL found in backend settings');
+                        }
                     } else {
                         console.log('[POS] Settings data not found in response structure');
                     }
@@ -1909,12 +1968,17 @@ const POSPage: React.FC = () => {
                         }
                     }
                     
+                    // Reload logo URL from localStorage
+                    if (settings?.logoUrl) {
+                        setStoreLogoUrl(settings.logoUrl);
+                    }
+                    
                     if (settings?.storeAddress) {
                         setStoreAddress(settings.storeAddress);
-                        return;
                     }
 
-                    // If not in localStorage, try backend
+                    // Always check backend for latest logo URL, even if address exists in localStorage
+                    // This ensures we have the most up-to-date logo for the current store
                     try {
                         const backendSettings = await storeSettingsApi.getSettings();
                         
@@ -1936,6 +2000,13 @@ const POSPage: React.FC = () => {
                             const address = settingsData.storeaddress || settingsData.storeAddress || '';
                             if (address) {
                                 setStoreAddress(address);
+                            }
+                            
+                            // Reload logo URL from backend
+                            const logoUrl = settingsData.logourl || settingsData.logoUrl || '';
+                            if (logoUrl) {
+                                console.log('[POS] Reloaded store logo URL on sale completion:', logoUrl.substring(0, 50) + '...');
+                                setStoreLogoUrl(logoUrl);
                             }
                         }
                     } catch (error) {
@@ -2063,12 +2134,16 @@ const POSPage: React.FC = () => {
         let incomingUnitPrice: number;
         if (unitPriceOverride !== undefined && unitPriceOverride > 0) {
             incomingUnitPrice = unitPriceOverride;
-        } else if (finalProduct.units && finalProduct.units.length > 0 && unit !== 'قطعة') {
-            // Product has units and we're using a specific unit - calculate per-piece price
-            incomingUnitPrice = piecesPerMainUnit > 0 ? (finalProduct.price / piecesPerMainUnit) : finalProduct.price;
         } else {
-            // Product without units or using base unit - use product price directly
-            incomingUnitPrice = finalProduct.price;
+            // Always use retail price with unit conversion
+            const basePrice = finalProduct.price;
+            if (finalProduct.units && finalProduct.units.length > 0 && unit !== 'قطعة') {
+                // Product has units and we're using a specific unit - calculate per-piece price
+                incomingUnitPrice = piecesPerMainUnit > 0 ? (basePrice / piecesPerMainUnit) : basePrice;
+            } else {
+                // Product without units or using base unit - use base price directly
+                incomingUnitPrice = basePrice;
+            }
         }
         
         // Final safety check: ensure we have a valid price
@@ -2224,13 +2299,20 @@ const POSPage: React.FC = () => {
                 productsData.forEach((p: any) => {
                     const normalizedProduct = normalizeProduct(p);
                     const piecesPerMainUnit = getPiecesPerMainUnit(normalizedProduct);
+                    
+                    // Determine price based on toggle
+                    // Always use retail price with unit conversion
+                    let getPriceForProduct = (): number => {
+                        const basePrice = normalizedProduct.price;
+                        return piecesPerMainUnit > 0 ? (basePrice / piecesPerMainUnit) : basePrice;
+                    };
 
                     // Check barcode match on product
                     if (normalizedProduct.barcode && (
                         normalizedProduct.barcode === trimmed || 
                         normalizedProduct.barcode.toLowerCase() === trimmed.toLowerCase()
                     )) {
-                        const perPiecePrice = piecesPerMainUnit > 0 ? normalizedProduct.price / piecesPerMainUnit : normalizedProduct.price;
+                        const perPiecePrice = getPriceForProduct();
                         results.push({ 
                             product: normalizedProduct, 
                             unitName: 'كرتون', 
@@ -2248,7 +2330,8 @@ const POSPage: React.FC = () => {
                                 u.barcode === trimmed || 
                                 u.barcode.toLowerCase() === trimmed.toLowerCase()
                             )) {
-                                const perPiecePrice = u.sellingPrice || (piecesPerMainUnit > 0 ? normalizedProduct.price / piecesPerMainUnit : normalizedProduct.price);
+                                // For units, use unit's sellingPrice if available, otherwise calculate from retail price
+                                const perPiecePrice = u.sellingPrice || (piecesPerMainUnit > 0 ? (normalizedProduct.price / piecesPerMainUnit) : normalizedProduct.price);
                                 results.push({ 
                                     product: normalizedProduct, 
                                     unitName: u.unitName || 'قطعة', 
@@ -2264,7 +2347,7 @@ const POSPage: React.FC = () => {
                     // Name match (API already filters by name, but we include it for completeness)
                     const lower = trimmed.toLowerCase();
                     if (normalizedProduct.name && normalizedProduct.name.toLowerCase().includes(lower)) {
-                        const perPiecePrice = piecesPerMainUnit > 0 ? normalizedProduct.price / piecesPerMainUnit : normalizedProduct.price;
+                        const perPiecePrice = getPriceForProduct();
                         results.push({ 
                             product: normalizedProduct, 
                             unitName: 'كرتون', 
@@ -2297,7 +2380,7 @@ const POSPage: React.FC = () => {
         } finally {
             setIsSearchingServer(false);
         }
-    }, [normalizeProduct]);
+    }, [normalizeProduct, getPiecesPerMainUnit]);
 
     // Client-side search function (uses IndexedDB for fast search)
     const resolveSearchMatches = useCallback(async (term: string): Promise<SearchMatch[]> => {
@@ -2317,11 +2400,17 @@ const POSPage: React.FC = () => {
             dbProducts.forEach((p: any) => {
                 const normalizedProduct = normalizeProduct(p);
                 const piecesPerMainUnit = getPiecesPerMainUnit(normalizedProduct);
+                
+                // Always use retail price with unit conversion
+                let getPriceForProduct = (): number => {
+                    const basePrice = normalizedProduct.price;
+                    return piecesPerMainUnit > 0 ? (basePrice / piecesPerMainUnit) : basePrice;
+                };
 
                 // Barcode exact match on product
                 const productBarcode = normalizedProduct.barcode || (p as any).primaryBarcode || '';
                 if (productBarcode && (productBarcode === trimmed || productBarcode.toLowerCase() === lower)) {
-                    const perPiecePrice = piecesPerMainUnit > 0 ? normalizedProduct.price / piecesPerMainUnit : normalizedProduct.price;
+                    const perPiecePrice = getPriceForProduct();
                     results.push({ 
                         product: normalizedProduct, 
                         unitName: 'كرتون', 
@@ -2336,7 +2425,8 @@ const POSPage: React.FC = () => {
                 if (normalizedProduct.units) {
                     for (const u of normalizedProduct.units) {
                         if (u.barcode && (u.barcode === trimmed || u.barcode.toLowerCase() === lower)) {
-                            const perPiecePrice = u.sellingPrice || (piecesPerMainUnit > 0 ? normalizedProduct.price / piecesPerMainUnit : normalizedProduct.price);
+                            // For units, use unit's sellingPrice if available, otherwise calculate from retail price
+                            const perPiecePrice = u.sellingPrice || (piecesPerMainUnit > 0 ? (normalizedProduct.price / piecesPerMainUnit) : normalizedProduct.price);
                             // Secondary units are counted as 1 piece per scan
                             results.push({ 
                                 product: normalizedProduct, 
@@ -2352,7 +2442,7 @@ const POSPage: React.FC = () => {
                 
                 // Name contains (already filtered by IndexedDB search, but add to results)
                 if (normalizedProduct.name && normalizedProduct.name.toLowerCase().includes(lower)) {
-                    const perPiecePrice = piecesPerMainUnit > 0 ? normalizedProduct.price / piecesPerMainUnit : normalizedProduct.price;
+                    const perPiecePrice = getPriceForProduct();
                     results.push({ 
                         product: normalizedProduct, 
                         unitName: 'كرتون', 
@@ -2378,12 +2468,15 @@ const POSPage: React.FC = () => {
             const results: SearchMatch[] = [];
             products.forEach((p) => {
                 const piecesPerMainUnit = getPiecesPerMainUnit(p);
+                
+                // Always use retail price with unit conversion
+                const basePrice = p.price;
+                const perPiecePrice = piecesPerMainUnit > 0 ? (basePrice / piecesPerMainUnit) : basePrice;
+                
                 if (p.barcode && (p.barcode === trimmed || p.barcode.toLowerCase() === lower)) {
-                    const perPiecePrice = piecesPerMainUnit > 0 ? p.price / piecesPerMainUnit : p.price;
                     results.push({ product: p, unitName: 'كرتون', unitPrice: perPiecePrice, barcode: p.barcode, conversionFactor: piecesPerMainUnit, piecesPerUnit: piecesPerMainUnit });
                 }
                 if (p.name && p.name.toLowerCase().includes(lower)) {
-                    const perPiecePrice = piecesPerMainUnit > 0 ? p.price / piecesPerMainUnit : p.price;
                     results.push({ product: p, unitName: 'كرتون', unitPrice: perPiecePrice, barcode: p.barcode, conversionFactor: piecesPerMainUnit, piecesPerUnit: piecesPerMainUnit });
                 }
             });
@@ -3298,7 +3391,8 @@ const POSPage: React.FC = () => {
                             backendProductId = item.originalId;
                         } else {
                             // Fallback: find product to get original backend ID
-                            const product = products.find(p => p.id === item.productId);
+                            // Use string comparison to handle type mismatches
+                            const product = products.find(p => String(p.id) === String(item.productId));
                             backendProductId = product?.originalId || String(item.productId);
                         }
                         // Ensure all values are positive before negating for returns
@@ -4312,7 +4406,8 @@ const POSPage: React.FC = () => {
                             backendProductId = item.originalId;
                         } else {
                             // Fallback: find product to get original backend ID
-                            const product = products.find(p => p.id === item.productId);
+                            // Use string comparison to handle type mismatches
+                            const product = products.find(p => String(p.id) === String(item.productId));
                             backendProductId = product?.originalId || String(item.productId);
                         }
                         return {
@@ -4802,54 +4897,177 @@ const POSPage: React.FC = () => {
         const legacyDefaultBusinessName = String.fromCharCode(80, 111, 115, 104, 80, 111, 105, 110, 116, 72, 117, 98);
         const businessNameToDisplay = businessName || (settings?.businessName && settings.businessName.trim() && settings.businessName !== legacyDefaultBusinessName ? settings.businessName.trim() : '');
         
+        // Get store logo from state (loaded from backend API) with fallback to localStorage settings
+        // This ensures we always use the correct store's logo from the backend
+        const logoUrlFromState = storeLogoUrl || '';
+        const logoUrlFromSettings = settings?.logoUrl || '';
+        const finalLogoUrl = logoUrlFromState || logoUrlFromSettings;
+        
+        // Check if we have a custom logo - accept Firebase URLs, data URLs (base64 images), or blob URLs
+        const hasCustomLogo = !!(finalLogoUrl && finalLogoUrl.trim() && (
+            finalLogoUrl.includes('firebasestorage.googleapis.com') || // Firebase Storage URL
+            finalLogoUrl.startsWith('data:image/') || // Base64 data URL (backward compatibility)
+            finalLogoUrl.startsWith('blob:') || // Blob URL
+            (finalLogoUrl.startsWith('http') && finalLogoUrl.includes('logo')) // HTTP URL (for other storage services)
+        ));
+        
+        // Debug logging to help troubleshoot
+        console.log('[Receipt] Logo Debug:', { 
+            hasSettings: !!settings, 
+            logoUrlFromState: logoUrlFromState ? `${logoUrlFromState.substring(0, 50)}...` : 'empty',
+            logoUrlFromSettings: logoUrlFromSettings ? `${logoUrlFromSettings.substring(0, 50)}...` : 'empty',
+            finalLogoUrl: finalLogoUrl ? `${finalLogoUrl.substring(0, 80)}...` : 'empty',
+            hasCustomLogo,
+            logoUrlType: finalLogoUrl ? (
+                finalLogoUrl.includes('firebasestorage.googleapis.com') ? 'firebase' :
+                finalLogoUrl.startsWith('data:') ? 'data' : 
+                finalLogoUrl.startsWith('blob:') ? 'blob' : 
+                finalLogoUrl.startsWith('http') ? 'http' : 'other'
+            ) : 'none',
+            settingsKeys: settings ? Object.keys(settings) : []
+        });
+        
         return (
-            <div id="printable-receipt" className="w-full max-w-md bg-white dark:bg-gray-800 p-4 sm:p-6 rounded-lg shadow-lg text-right">
-                <div className="text-center mb-4 sm:mb-5">
-                    <CheckCircleIcon className={`w-12 h-12 sm:w-16 sm:h-16 ${isReturn ? 'text-blue-500' : 'text-green-500'} mx-auto print-hidden`} />
-                    <h2 className="text-xl sm:text-2xl font-bold text-gray-800 dark:text-gray-100 mt-2 print-hidden">{isReturn ? AR_LABELS.returnCompleted : AR_LABELS.saleCompleted}</h2>
-                    <h3 className="text-lg sm:text-xl font-bold text-center text-gray-900 dark:text-gray-100 mt-3 sm:mt-4 mb-2">{title}</h3>
-                    {addressToDisplay ? (
-                        <p className="text-center text-xs text-gray-500 dark:text-gray-400">{addressToDisplay}</p>
+            <div id="printable-receipt" className="w-full max-w-md bg-white dark:bg-gray-800 p-6 sm:p-8 rounded-xl shadow-xl text-right" style={{ fontFamily: 'system-ui, -apple-system, "Segoe UI", Arial, sans-serif' }}>
+                {/* Success Icon (hidden when printing) */}
+                <div className="text-center mb-4 print-hidden">
+                    <CheckCircleIcon className={`w-12 h-12 sm:w-16 sm:h-16 ${isReturn ? 'text-blue-500' : 'text-green-500'} mx-auto`} />
+                    <h2 className="text-xl sm:text-2xl font-bold text-gray-800 dark:text-gray-100 mt-2">
+                        {isReturn ? AR_LABELS.returnCompleted : AR_LABELS.saleCompleted}
+                    </h2>
+                </div>
+
+                {/* Store Header - Modern and Prominent with Logo */}
+                <div className="text-center mb-8 pb-6 border-b-3 border-gradient" style={{ borderBottom: '3px solid #e5e7eb' }}>
+                    {/* Store Logo */}
+                    <div className="flex justify-center mb-5">
+                        {hasCustomLogo && finalLogoUrl ? (
+                            <div className="receipt-logo">
+                                <img 
+                                    src={finalLogoUrl} 
+                                    alt="Store logo" 
+                                    className="w-20 h-20 sm:w-24 sm:h-24 object-contain rounded-2xl shadow-xl bg-white dark:bg-gray-800 p-2 border-2 border-gray-100 dark:border-gray-700"
+                                    style={{
+                                        maxWidth: '96px',
+                                        maxHeight: '96px',
+                                        width: 'auto',
+                                        height: 'auto',
+                                    }}
+                                    onError={(e) => {
+                                        console.error('[Receipt] Failed to load logo image:', finalLogoUrl.substring(0, 50));
+                                        // Fallback to default logo on error
+                                        e.currentTarget.style.display = 'none';
+                                    }}
+                                />
+                            </div>
+                        ) : (
+                            <div className="receipt-logo w-20 h-20 sm:w-24 sm:h-24 flex items-center justify-center rounded-2xl bg-gradient-to-br from-orange-500 via-amber-500 to-orange-600 shadow-xl relative" style={{
+                                background: 'linear-gradient(135deg, #f97316 0%, #f59e0b 50%, #ea580c 100%)',
+                                boxShadow: '0 10px 25px -5px rgba(249, 115, 22, 0.3), 0 4px 6px -2px rgba(249, 115, 22, 0.2)',
+                            }}>
+                                <svg 
+                                    className="w-12 h-12 sm:w-14 sm:h-14 text-white" 
+                                    fill="none" 
+                                    viewBox="0 0 24 24" 
+                                    stroke="currentColor"
+                                    strokeWidth="2.5"
+                                >
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                                </svg>
+                            </div>
+                        )}
+                    </div>
+                    
+                    {businessNameToDisplay ? (
+                        <>
+                            <h1 className="text-3xl sm:text-4xl md:text-5xl font-extrabold text-gray-900 dark:text-gray-100 mb-4 tracking-tight leading-tight" style={{ 
+                                fontSize: 'clamp(1.875rem, 5vw, 2.5rem)',
+                                letterSpacing: '-0.02em',
+                            }}>
+                                {businessNameToDisplay}
+                            </h1>
+                            {addressToDisplay && (
+                                <p className="text-sm text-gray-500 dark:text-gray-400 mt-3 leading-relaxed font-medium">
+                                    {addressToDisplay}
+                                </p>
+                            )}
+                        </>
+                    ) : title ? (
+                        <>
+                            <h1 className="text-3xl sm:text-4xl md:text-5xl font-extrabold text-gray-900 dark:text-gray-100 mb-4 tracking-tight leading-tight" style={{ 
+                                fontSize: 'clamp(1.875rem, 5vw, 2.5rem)',
+                                letterSpacing: '-0.02em',
+                            }}>
+                                {title}
+                            </h1>
+                            {addressToDisplay && (
+                                <p className="text-sm text-gray-500 dark:text-gray-400 mt-3 leading-relaxed font-medium">
+                                    {addressToDisplay}
+                                </p>
+                            )}
+                        </>
+                    ) : addressToDisplay ? (
+                        <p className="text-sm text-gray-500 dark:text-gray-400 leading-relaxed font-medium">
+                            {addressToDisplay}
+                        </p>
                     ) : null}
                 </div>
 
-                <div className="invoice-info text-sm sm:text-base my-4">
-                    {businessNameToDisplay && (
-                        <p className="mb-3 text-center"><strong>اسم المتجر:</strong> {businessNameToDisplay}</p>
-                    )}
-                    <div className="grid grid-cols-2 gap-3 sm:gap-4">
+                {/* Invoice Information - Modern Card Style */}
+                <div className="invoice-info mb-6 pb-5" style={{ borderBottom: '2px dashed #e5e7eb' }}>
+                    <div className="grid grid-cols-2 gap-x-6 gap-y-4">
                         <div className="flex flex-col">
-                            <p className="mb-1"><strong>{AR_LABELS.date}:</strong></p>
-                            <p className="text-base sm:text-lg font-semibold">{new Date(invoice.date).toLocaleString('ar-SA')}</p>
+                            <span className="text-xs text-gray-400 dark:text-gray-500 mb-2 font-semibold uppercase tracking-wide">{AR_LABELS.date}</span>
+                            <span className="text-sm font-bold text-gray-900 dark:text-gray-100">
+                                {new Date(invoice.date).toLocaleString('ar-SA')}
+                            </span>
                         </div>
                         <div className="flex flex-col">
-                            <p className="mb-1"><strong>{AR_LABELS.posCashier}:</strong></p>
-                            <p className="text-base sm:text-lg font-semibold">{'cashier' in invoice ? invoice.cashier : invoice.seller}</p>
-                        </div>
-                        <div className="flex flex-col">
-                            <p className="mb-1"><strong>{AR_LABELS.invoiceNumber}:</strong></p>
-                            <p className="text-base sm:text-lg font-semibold">{invoice.id}</p>
+                            <span className="text-xs text-gray-400 dark:text-gray-500 mb-2 font-semibold uppercase tracking-wide">{AR_LABELS.invoiceNumber}</span>
+                            <span className="text-sm font-bold text-gray-900 dark:text-gray-100">
+                                {invoice.id}
+                            </span>
                             {isReturn && 'originalInvoiceId' in invoice && (
-                                <p className="text-xs mt-1 text-gray-600 dark:text-gray-400">
-                                    <strong>{AR_LABELS.originalInvoiceNumber}:</strong> {invoice.originalInvoiceId}
-                                </p>
+                                <span className="text-xs text-gray-400 dark:text-gray-500 mt-1.5">
+                                    {AR_LABELS.originalInvoiceNumber}: {invoice.originalInvoiceId}
+                                </span>
                             )}
                         </div>
                         <div className="flex flex-col">
-                            <p className="mb-1"><strong>{AR_LABELS.customerName}:</strong></p>
-                            <p className="text-base sm:text-lg font-semibold">{'customer' in invoice ? invoice.customer?.name : invoice.customerName || 'N/A'}</p>
+                            <span className="text-xs text-gray-400 dark:text-gray-500 mb-2 font-semibold uppercase tracking-wide">{AR_LABELS.posCashier}</span>
+                            <span className="text-sm font-bold text-gray-900 dark:text-gray-100">
+                                {'cashier' in invoice ? invoice.cashier : invoice.seller}
+                            </span>
+                        </div>
+                        <div className="flex flex-col">
+                            <span className="text-xs text-gray-400 dark:text-gray-500 mb-2 font-semibold uppercase tracking-wide">{AR_LABELS.customerName}</span>
+                            <span className="text-sm font-bold text-gray-900 dark:text-gray-100">
+                                {'customer' in invoice ? invoice.customer?.name : invoice.customerName || 'N/A'}
+                            </span>
                         </div>
                     </div>
                 </div>
                 
-                <div className="overflow-x-auto -mx-2 sm:mx-0">
-                                <table className="w-full text-xs min-w-full border-collapse" style={{ borderSpacing: 0 }}>
+                {/* Items Table - Modern Design */}
+                <div className="overflow-x-auto -mx-1 sm:mx-0 mb-6">
+                    <div className="mb-3">
+                        <h3 className="text-xs font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wider">المنتجات</h3>
+                    </div>
+                    <table className="w-full border-collapse text-sm" style={{ borderSpacing: 0 }}>
                         <thead>
-                            <tr className="bg-gray-100 dark:bg-gray-700">
-                                            <th className="py-2.5 px-3 text-right align-middle font-bold border border-gray-300 dark:border-gray-600" style={{ borderRight: '1px solid #dee2e6', borderLeft: '1px solid #dee2e6', borderTop: '1px solid #dee2e6', borderBottom: '2px solid #495057' }}>اسم المنتج</th>
-                                            <th className="py-2.5 px-3 text-center align-middle font-bold border border-gray-300 dark:border-gray-600" style={{ borderRight: '1px solid #dee2e6', borderLeft: '1px solid #dee2e6', borderTop: '1px solid #dee2e6', borderBottom: '2px solid #495057' }}>الكمية</th>
-                                            <th className="py-2.5 px-3 text-center align-middle font-bold border border-gray-300 dark:border-gray-600" style={{ borderRight: '1px solid #dee2e6', borderLeft: '1px solid #dee2e6', borderTop: '1px solid #dee2e6', borderBottom: '2px solid #495057' }}>سعر الوحدة</th>
-                                            <th className="py-2.5 px-3 text-center align-middle font-bold border border-gray-300 dark:border-gray-600" style={{ borderRight: '1px solid #dee2e6', borderLeft: '1px solid #dee2e6', borderTop: '1px solid #dee2e6', borderBottom: '2px solid #495057' }}>الإجمالي</th>
+                            <tr className="bg-gray-50 dark:bg-gray-800/50">
+                                <th className="py-3.5 px-4 text-right font-extrabold text-gray-900 dark:text-gray-100 border-b-2 border-gray-200 dark:border-gray-700 uppercase tracking-wide text-xs">
+                                    اسم المنتج
+                                </th>
+                                <th className="py-3.5 px-4 text-center font-extrabold text-gray-900 dark:text-gray-100 border-b-2 border-gray-200 dark:border-gray-700 uppercase tracking-wide text-xs">
+                                    الكمية
+                                </th>
+                                <th className="py-3.5 px-4 text-center font-extrabold text-gray-900 dark:text-gray-100 border-b-2 border-gray-200 dark:border-gray-700 uppercase tracking-wide text-xs">
+                                    سعر الوحدة
+                                </th>
+                                <th className="py-3.5 px-4 text-center font-extrabold text-gray-900 dark:text-gray-100 border-b-2 border-gray-200 dark:border-gray-700 uppercase tracking-wide text-xs">
+                                    الإجمالي
+                                </th>
                             </tr>
                         </thead>
                         <tbody>
@@ -4857,45 +5075,72 @@ const POSPage: React.FC = () => {
                                 const itemUnitPrice = isReturn ? -Math.abs(item.unitPrice) : item.unitPrice;
                                 const itemTotal = isReturn ? -Math.abs(item.total - item.discount * item.quantity) : (item.total - item.discount * item.quantity);
                                 return (
-                                            <tr key={item.cartItemId || `receipt-item-${idx}`} className="border-b border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700/50">
-                                                <td className="py-2.5 px-3 text-right align-middle border border-gray-300 dark:border-gray-600 font-medium">{item.name}</td>
-                                                <td className="py-2.5 px-3 text-center align-middle border border-gray-300 dark:border-gray-600">{Math.abs(item.quantity)}</td>
-                                                <td className={`py-2.5 px-3 text-center align-middle border border-gray-300 dark:border-gray-600 ${isReturn ? 'text-red-600 dark:text-red-400' : 'text-gray-700 dark:text-gray-300'}`}>{formatCurrency(itemUnitPrice)}</td>
-                                                <td className={`py-2.5 px-3 text-center align-middle border border-gray-300 dark:border-gray-600 font-semibold ${isReturn ? 'text-red-600 dark:text-red-400' : 'text-gray-900 dark:text-gray-100'}`}>{formatCurrency(itemTotal)}</td>
-                                            </tr>
+                                    <tr 
+                                        key={item.cartItemId || `receipt-item-${idx}`} 
+                                        className="border-b border-gray-100 dark:border-gray-800 hover:bg-gray-50/50 dark:hover:bg-gray-800/30 transition-colors"
+                                    >
+                                        <td className="py-3.5 px-4 text-right font-semibold text-gray-900 dark:text-gray-100">
+                                            {item.name}
+                                        </td>
+                                        <td className="py-3.5 px-4 text-center text-gray-700 dark:text-gray-300 font-medium">
+                                            {Math.abs(item.quantity)}
+                                        </td>
+                                        <td className={`py-3.5 px-4 text-center font-medium ${isReturn ? 'text-red-600 dark:text-red-400' : 'text-gray-700 dark:text-gray-300'}`}>
+                                            {formatCurrency(itemUnitPrice)}
+                                        </td>
+                                        <td className={`py-3.5 px-4 text-center font-bold ${isReturn ? 'text-red-600 dark:text-red-400' : 'text-gray-900 dark:text-gray-100'}`}>
+                                            {formatCurrency(itemTotal)}
+                                        </td>
+                                    </tr>
                                 );
                             })}
                         </tbody>
                     </table>
                 </div>
 
-                <div className="receipt-summary mt-5 text-xs">
-                    <div className="flex justify-between py-1.5">
-                        <span className="text-gray-600 dark:text-gray-400 font-medium">{AR_LABELS.subtotal}:</span>
-                        <span className={`font-semibold ${isReturn ? 'text-red-600 dark:text-red-400' : 'text-gray-900 dark:text-gray-100'}`}>
+                {/* Summary Section - Modern Totals with Visual Hierarchy */}
+                <div className="receipt-summary space-y-3 pt-6" style={{ borderTop: '2px dashed #e5e7eb' }}>
+                    <div className="flex justify-between items-center py-2">
+                        <span className="text-sm text-gray-500 dark:text-gray-400 font-semibold">{AR_LABELS.subtotal}</span>
+                        <span className={`text-sm font-bold ${isReturn ? 'text-red-600 dark:text-red-400' : 'text-gray-900 dark:text-gray-100'}`}>
                             {formatCurrency(isReturn ? -Math.abs(invoice.subtotal) : invoice.subtotal)}
                         </span>
                     </div>
-                    <div className="flex justify-between py-1.5">
-                        <span className="text-gray-600 dark:text-gray-400 font-medium">{AR_LABELS.totalDiscount}:</span>
-                        <span className={`font-semibold ${isReturn ? 'text-red-600 dark:text-red-400' : 'text-gray-900 dark:text-gray-100'}`}>
+                    <div className="flex justify-between items-center py-2">
+                        <span className="text-sm text-gray-500 dark:text-gray-400 font-semibold">{AR_LABELS.totalDiscount}</span>
+                        <span className={`text-sm font-bold ${isReturn ? 'text-red-600 dark:text-red-400' : 'text-gray-900 dark:text-gray-100'}`}>
                             {formatCurrency(isReturn ? -Math.abs(invoice.totalItemDiscount + invoice.invoiceDiscount) : -(invoice.totalItemDiscount + invoice.invoiceDiscount))}
                         </span>
                     </div>
-                    <div className="flex justify-between py-1.5">
-                        <span className="text-gray-600 dark:text-gray-400 font-medium">{AR_LABELS.tax}:</span>
-                        <span className={`font-semibold ${isReturn ? 'text-red-600 dark:text-red-400' : 'text-gray-900 dark:text-gray-100'}`}>
+                    <div className="flex justify-between items-center py-2">
+                        <span className="text-sm text-gray-500 dark:text-gray-400 font-semibold">{AR_LABELS.tax}</span>
+                        <span className={`text-sm font-bold ${isReturn ? 'text-red-600 dark:text-red-400' : 'text-gray-900 dark:text-gray-100'}`}>
                             {formatCurrency(isReturn ? -Math.abs(invoice.tax) : invoice.tax)}
                         </span>
                     </div>
-                    <div className="grand-total flex justify-between">
-                        <span className="text-gray-900 dark:text-gray-100 font-bold">{isReturn ? AR_LABELS.totalReturnValue : AR_LABELS.grandTotal}:</span>
-                        <span className={`font-bold text-lg ${isReturn ? 'text-red-600 dark:text-red-400' : 'text-orange-600 dark:text-orange-400'}`}>
+                    <div className="grand-total flex justify-between items-center pt-4 mt-4 px-4 py-4 rounded-lg bg-gradient-to-r from-orange-50 to-amber-50 dark:from-gray-800 dark:to-gray-800/50" style={{ 
+                        borderTop: '3px solid #f97316',
+                        boxShadow: '0 2px 4px rgba(0, 0, 0, 0.05)',
+                    }}>
+                        <span className="text-lg font-extrabold text-gray-900 dark:text-gray-100 uppercase tracking-tight">
+                            {isReturn ? AR_LABELS.totalReturnValue : AR_LABELS.grandTotal}
+                        </span>
+                        <span className={`text-xl font-extrabold ${isReturn ? 'text-red-600 dark:text-red-400' : 'text-orange-600 dark:text-orange-400'}`} style={{ letterSpacing: '-0.02em' }}>
                             {formatCurrency(isReturn ? -Math.abs('grandTotal' in invoice ? invoice.grandTotal : invoice.totalAmount) : ('grandTotal' in invoice ? invoice.grandTotal : invoice.totalAmount))}
                         </span>
                     </div>
                 </div>
-                <p className="receipt-footer text-center text-xs mt-6 text-gray-500 dark:text-gray-400">شكراً لتعاملكم معنا!</p>
+
+                {/* Footer - Modern Closing with Decorative Element */}
+                <div className="receipt-footer text-center mt-10 pt-6" style={{ borderTop: '1px dashed #e5e7eb' }}>
+                    <div className="inline-flex items-center justify-center w-12 h-0.5 bg-gradient-to-r from-transparent via-orange-400 to-transparent mb-4"></div>
+                    <p className="text-sm text-gray-400 dark:text-gray-500 font-semibold tracking-wide">
+                        شكراً لتعاملكم معنا!
+                    </p>
+                    <p className="text-xs text-gray-300 dark:text-gray-600 mt-2">
+                        نتمنى رؤيتك قريباً
+                    </p>
+                </div>
             </div>
         );
     }
@@ -5184,7 +5429,7 @@ const POSPage: React.FC = () => {
                                             }`}
                                         >
                                             <span className="block text-xs sm:text-sm font-semibold text-gray-800 dark:text-gray-200 mb-1">{p.name}</span>
-                                            <span className="block text-xs font-bold text-orange-600">{formatCurrency(p.price)}</span>
+                                            <span className="block text-xs font-bold text-orange-600">{formatCurrency(getActivePrice(p))}</span>
                                             {p.stock <= 0 && (
                                                 <span className="block text-xs text-red-600 dark:text-red-400 mt-1">نفد المخزون</span>
                                             )}

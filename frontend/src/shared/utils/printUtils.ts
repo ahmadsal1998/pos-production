@@ -283,9 +283,58 @@ const getPrintableContent = (elementId: string): string => {
         max-width: 100% !important;
         width: 100% !important;
         margin: 0 auto;
-        padding: ${isThermal ? '8px' : (printSettings.compactMode ? '12px' : '16px')};
+        padding: ${isThermal ? '12px' : (printSettings.compactMode ? '20px' : '32px')} !important;
         background: white;
         page-break-inside: avoid;
+        border-radius: ${isThermal ? '0' : '12px'} !important;
+      }
+      /* Store Logo - Modern and professional */
+      #printable-receipt .receipt-logo {
+        width: ${isThermal ? '56px' : (printSettings.compactMode ? '72px' : '96px')} !important;
+        height: ${isThermal ? '56px' : (printSettings.compactMode ? '72px' : '96px')} !important;
+        margin: 0 auto ${isThermal ? '16px' : (printSettings.compactMode ? '20px' : '24px')} auto !important;
+        border-radius: 16px !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        page-break-inside: avoid;
+      }
+      /* Default logo (gradient background with SVG) */
+      #printable-receipt .receipt-logo:has(> div) {
+        background: linear-gradient(135deg, #f97316 0%, #f59e0b 50%, #ea580c 100%) !important;
+        box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15) !important;
+      }
+      #printable-receipt .receipt-logo svg {
+        width: ${isThermal ? '24px' : (printSettings.compactMode ? '32px' : '40px')} !important;
+        height: ${isThermal ? '24px' : (printSettings.compactMode ? '32px' : '40px')} !important;
+        color: #ffffff !important;
+        fill: none !important;
+        stroke: #ffffff !important;
+        stroke-width: 2.5 !important;
+      }
+      /* Custom uploaded logo (img tag) */
+      #printable-receipt .receipt-logo img {
+        width: ${isThermal ? '56px' : (printSettings.compactMode ? '72px' : '96px')} !important;
+        height: ${isThermal ? '56px' : (printSettings.compactMode ? '72px' : '96px')} !important;
+        max-width: ${isThermal ? '56px' : (printSettings.compactMode ? '72px' : '96px')} !important;
+        max-height: ${isThermal ? '56px' : (printSettings.compactMode ? '72px' : '96px')} !important;
+        object-fit: contain !important;
+        border-radius: 16px !important;
+        background: white !important;
+        padding: ${isThermal ? '4px' : '8px'} !important;
+        border: 2px solid #e5e7eb !important;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1) !important;
+        page-break-inside: avoid;
+      }
+      /* Store name header (h1) - Most prominent element */
+      #printable-receipt h1 {
+        margin: 0 0 ${isThermal ? '8px' : (printSettings.compactMode ? '12px' : '16px')} 0;
+        font-weight: 900;
+        font-size: ${isThermal ? '20px' : (printSettings.compactMode ? '28px' : '32px')} !important;
+        line-height: 1.2;
+        text-align: center !important;
+        page-break-after: avoid;
+        color: #000000 !important;
       }
       /* Header styles - ensure readable sizes */
       #printable-receipt h2,
@@ -296,12 +345,23 @@ const getPrintableContent = (elementId: string): string => {
         line-height: 1.3;
         page-break-after: avoid;
       }
-      /* Address and store info in header - ensure visible in print */
+      /* Store header container - ensure proper spacing and border */
+      /* Using a more compatible selector approach */
+      #printable-receipt > div.text-center:first-of-type,
+      #printable-receipt .text-center.mb-6,
+      #printable-receipt .text-center.mb-8 {
+        margin-bottom: ${isThermal ? '20px' : (printSettings.compactMode ? '24px' : '32px')} !important;
+        padding-bottom: ${isThermal ? '16px' : (printSettings.compactMode ? '20px' : '24px')} !important;
+        border-bottom: 3px solid #e5e7eb !important;
+        text-align: center !important;
+      }
+      /* Address below store name */
       #printable-receipt .text-center p {
-        margin: ${isThermal ? '3px 0' : (printSettings.compactMode ? '5px 0' : '7px 0')};
-        font-size: ${isThermal ? '8px' : Math.max(printSettings.compactMode ? 10 : 11, 10)}px;
-        color: #6c757d;
+        margin: ${isThermal ? '4px 0 0 0' : (printSettings.compactMode ? '6px 0 0 0' : '8px 0 0 0')} !important;
+        font-size: ${isThermal ? '9px' : Math.max(printSettings.compactMode ? 11 : 12, 11)}px !important;
+        color: #000000 !important;
         line-height: 1.5;
+        text-align: center !important;
       }
       /* Table styles for professional appearance - prevent cutoff */
       #printable-receipt table {
@@ -309,12 +369,12 @@ const getPrintableContent = (elementId: string): string => {
         max-width: 100% !important;
         border-collapse: collapse !important;
         border-spacing: 0 !important;
-        margin: ${tableMargin};
+        margin: ${isThermal ? '12px 0' : (printSettings.compactMode ? '16px 0' : '20px 0')} !important;
         font-size: ${minTableFontSize}px !important;
         background: white !important;
         table-layout: auto;
         page-break-inside: auto;
-        border: ${printBorderThick} !important;
+        border: none !important;
       }
       #printable-receipt table thead {
         background-color: transparent !important;
@@ -326,39 +386,42 @@ const getPrintableContent = (elementId: string): string => {
         page-break-after: avoid;
       }
       #printable-receipt table th {
-        padding: ${tablePadding} !important;
-        text-align: center;
-        font-weight: 700 !important;
-        border: ${printBorderStyle} !important;
-        border-top: ${printBorderThick} !important;
-        border-left: ${printBorderStyle} !important;
-        border-right: ${printBorderStyle} !important;
-        border-bottom: ${printHeaderBorderBottom} !important;
+        padding: ${isThermal ? '8px 4px' : (printSettings.compactMode ? '12px 8px' : '14px 16px')} !important;
+        text-align: center !important;
+        font-weight: 900 !important;
+        border-bottom: 2px solid #e5e7eb !important;
         color: #000000 !important;
-        font-size: ${minTableFontSize}px !important;
+        font-size: ${Math.max(minTableFontSize - 1, 10)}px !important;
+        text-transform: uppercase !important;
+        letter-spacing: 0.5px !important;
         word-wrap: break-word;
         overflow-wrap: break-word;
         hyphens: auto;
         min-width: 0;
-        background-color: transparent !important;
-        background: transparent !important;
+        background-color: ${isThermal ? '#ffffff' : '#f9fafb'} !important;
+        background: ${isThermal ? '#ffffff' : '#f9fafb'} !important;
       }
       #printable-receipt table td {
-        padding: ${tablePadding} !important;
-        border: ${printBorderStyle} !important;
-        border-top: ${printBorderBottom} !important;
-        border-left: ${printBorderStyle} !important;
-        border-right: ${printBorderStyle} !important;
-        border-bottom: ${printBorderBottom} !important;
-        text-align: center;
+        padding: ${isThermal ? '8px 4px' : (printSettings.compactMode ? '12px 8px' : '14px 16px')} !important;
+        border-bottom: 1px solid #f3f4f6 !important;
+        text-align: center !important;
         font-size: ${minTableFontSize}px !important;
         color: #000000 !important;
         word-wrap: break-word;
         overflow-wrap: break-word;
         hyphens: auto;
         min-width: 0;
-        line-height: 1.5;
+        line-height: 1.6;
         background-color: white !important;
+      }
+      /* First column (product name) - right align */
+      #printable-receipt table td:first-child {
+        font-weight: 600 !important;
+      }
+      /* First column (product name) - right align */
+      #printable-receipt table td:first-child,
+      #printable-receipt table th:first-child {
+        text-align: right !important;
       }
       /* Prevent table rows from breaking across pages */
       #printable-receipt table tbody tr {
@@ -374,13 +437,7 @@ const getPrintableContent = (elementId: string): string => {
       #printable-receipt table td[style*="border"] {
         border: ${printBorderStyle} !important;
       }
-      /* Product name column - allow wrapping for long names */
-      #printable-receipt table td:first-child,
-      #printable-receipt table th:first-child {
-        text-align: right !important;
-        max-width: ${isThermal ? '50%' : '40%'};
-        word-break: break-word;
-      }
+      /* Product name column styling handled above */
       /* Quantity and price columns - keep compact */
       #printable-receipt table td:nth-child(2),
       #printable-receipt table th:nth-child(2),
@@ -405,17 +462,39 @@ const getPrintableContent = (elementId: string): string => {
         /* Ensure all columns fit within thermal width */
         #printable-receipt table th,
         #printable-receipt table td {
-          padding: 3px 2px !important;
+          padding: 6px 4px !important;
           font-size: ${minTableFontSize}px !important;
+        }
+        /* Store header for thermal - slightly smaller but still prominent */
+        #printable-receipt h1 {
+          font-size: 20px !important;
+          margin-bottom: 8px !important;
+        }
+        /* Store header container for thermal */
+        #printable-receipt > div.text-center:first-of-type,
+        #printable-receipt .text-center.mb-6,
+        #printable-receipt .text-center.mb-8 {
+          margin-bottom: 16px !important;
+          padding-bottom: 10px !important;
+        }
+        /* Logo for thermal - ensure it fits */
+        #printable-receipt .receipt-logo img {
+          max-width: 56px !important;
+          max-height: 56px !important;
         }
         /* Reduce spacing in thermal receipts */
         #printable-receipt .invoice-info {
-          padding: 8px 0 !important;
-          margin-bottom: 8px !important;
+          padding: 12px 0 !important;
+          margin-bottom: 12px !important;
         }
         #printable-receipt .receipt-summary {
-          margin-top: 10px !important;
-          padding-top: 8px !important;
+          margin-top: 16px !important;
+          padding-top: 12px !important;
+        }
+        /* Table header - use solid color for thermal (gradients don't print well) */
+        #printable-receipt table th {
+          background-color: #ffffff !important;
+          background: #ffffff !important;
         }
       ` : ''}
       /* Align text in table cells */
@@ -433,74 +512,86 @@ const getPrintableContent = (elementId: string): string => {
       }
       /* Summary section - prevent page break */
       #printable-receipt .receipt-summary {
-        margin-top: ${summaryMargin};
-        padding-top: ${summaryPadding};
-        border-top: ${printBorderThick} !important;
+        margin-top: ${isThermal ? '16px' : (printSettings.compactMode ? '20px' : '24px')} !important;
+        padding-top: ${isThermal ? '16px' : (printSettings.compactMode ? '20px' : '24px')} !important;
+        border-top: 2px dashed #e5e7eb !important;
         page-break-inside: avoid;
       }
       #printable-receipt .receipt-summary > div {
-        display: flex;
-        justify-content: space-between;
-        padding: ${printSettings.compactMode ? '6px 0' : '8px 0'};
-        font-size: ${minFontSize}px;
-        line-height: 1.5;
+        display: flex !important;
+        justify-content: space-between !important;
+        align-items: center !important;
+        padding: ${printSettings.compactMode ? '6px 0' : '8px 0'} !important;
+        font-size: ${minFontSize}px !important;
+        line-height: 1.5 !important;
         page-break-inside: avoid;
+      }
+      #printable-receipt .receipt-summary > div span:first-child {
+        color: #000000 !important;
+        font-weight: 500 !important;
+      }
+      #printable-receipt .receipt-summary > div span:last-child {
+        color: #000000 !important;
+        font-weight: 600 !important;
       }
       #printable-receipt .receipt-summary .grand-total {
-        font-weight: 700;
+        font-weight: 900 !important;
         font-size: ${Math.max(printSettings.compactMode ? 16 : 18, 16)}px !important;
-        padding-top: ${printSettings.compactMode ? '10px' : '12px'};
-        margin-top: ${printSettings.compactMode ? '10px' : '12px'};
-        border-top: ${printBorderThick} !important;
+        padding: ${printSettings.compactMode ? '16px' : '20px'} !important;
+        margin-top: ${printSettings.compactMode ? '16px' : '16px'} !important;
+        border-top: 3px solid #f97316 !important;
+        border-radius: 8px !important;
+        background-color: ${isThermal ? '#ffffff' : '#fff7ed'} !important;
+        background: ${isThermal ? '#ffffff' : '#fff7ed'} !important;
         page-break-inside: avoid;
         color: #000000 !important;
+        box-shadow: ${isThermal ? 'none' : '0 1px 3px rgba(0, 0, 0, 0.1)'} !important;
       }
-      /* Invoice info section - 2-row layout with larger text */
+      #printable-receipt .receipt-summary .grand-total span:first-child {
+        font-size: ${Math.max(printSettings.compactMode ? 16 : 18, 16)}px !important;
+        font-weight: 900 !important;
+        text-transform: uppercase !important;
+        letter-spacing: 0.5px !important;
+      }
+      #printable-receipt .receipt-summary .grand-total span:last-child {
+        font-size: ${Math.max(printSettings.compactMode ? 18 : 20, 18)}px !important;
+        font-weight: 900 !important;
+        letter-spacing: -0.5px !important;
+      }
+      /* Invoice info section - Modern clean layout */
       #printable-receipt .invoice-info {
-        padding: ${printSettings.compactMode ? '12px 0' : '16px 0'};
-        border-bottom: ${printBorderThick} !important;
-        margin-bottom: ${printSettings.compactMode ? '12px' : '16px'};
+        padding: ${printSettings.compactMode ? '16px 0' : '20px 0'} !important;
+        border-bottom: 2px dashed #e5e7eb !important;
+        margin-bottom: ${printSettings.compactMode ? '20px' : '24px'} !important;
         page-break-inside: avoid;
-      }
-      #printable-receipt .invoice-info > p {
-        margin: ${printSettings.compactMode ? '4px 0 8px 0' : '6px 0 12px 0'};
-        font-size: ${Math.max(minFontSize, 13)}px !important;
-        line-height: 1.5;
-        color: #000000 !important;
-        text-align: center;
       }
       /* Grid layout for invoice info - 2 columns, 2 rows */
       #printable-receipt .invoice-info .grid {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: ${printSettings.compactMode ? '12px' : '16px'};
-        margin-top: ${printSettings.compactMode ? '8px' : '12px'};
+        display: grid !important;
+        grid-template-columns: 1fr 1fr !important;
+        gap: ${printSettings.compactMode ? '12px' : '16px'} !important;
+        margin-top: 0 !important;
       }
       #printable-receipt .invoice-info .grid > div {
-        display: flex;
-        flex-direction: column;
+        display: flex !important;
+        flex-direction: column !important;
       }
-      #printable-receipt .invoice-info .grid p {
-        margin: 0;
-        color: #000000 !important;
-      }
-      #printable-receipt .invoice-info .grid p strong {
-        font-size: ${Math.max(minFontSize, 13)}px !important;
-        font-weight: 700;
-        color: #000000 !important;
-        display: block;
-        margin-bottom: 4px;
-      }
-      #printable-receipt .invoice-info .grid p:not(strong) {
-        font-size: ${Math.max(minFontSize + 2, 15)}px !important;
-        font-weight: 600;
-        color: #000000 !important;
-        line-height: 1.4;
-      }
-      #printable-receipt .invoice-info .grid p.text-xs {
+      /* Label (first span with text-xs) */
+      #printable-receipt .invoice-info .grid span.text-xs {
         font-size: ${Math.max(minTableFontSize, 10)}px !important;
-        font-weight: 400;
-        margin-top: 4px;
+        font-weight: 600 !important;
+        color: #6b7280 !important;
+        margin-bottom: ${isThermal ? '4px' : '8px'} !important;
+        line-height: 1.4;
+        text-transform: uppercase !important;
+        letter-spacing: 0.5px !important;
+      }
+      /* Value (second span with text-sm) */
+      #printable-receipt .invoice-info .grid span.text-sm {
+        font-size: ${Math.max(minFontSize, 12)}px !important;
+        font-weight: 600 !important;
+        color: #000000 !important;
+        line-height: 1.5;
       }
       /* Ensure grid layout works in print */
       @media print {
@@ -513,24 +604,31 @@ const getPrintableContent = (elementId: string): string => {
           display: flex !important;
           flex-direction: column !important;
         }
-        #printable-receipt .invoice-info .grid p strong {
-          font-size: 14px !important;
-          font-weight: 700 !important;
+        #printable-receipt .invoice-info .grid span.text-xs {
+          font-size: 11px !important;
+          font-weight: 500 !important;
         }
-        #printable-receipt .invoice-info .grid p:not(strong):not(.text-xs) {
-          font-size: 16px !important;
+        #printable-receipt .invoice-info .grid span.text-sm {
+          font-size: 13px !important;
           font-weight: 600 !important;
         }
       }
       /* Footer */
       #printable-receipt .receipt-footer {
-        text-align: center;
-        margin-top: ${printSettings.compactMode ? '18px' : '24px'};
-        padding-top: ${printSettings.compactMode ? '12px' : '16px'};
-        border-top: ${printSettings.showBorders ? '1px dashed #dee2e6' : 'none'};
-        font-size: ${Math.max(printSettings.compactMode ? 10 : 11, 10)}px;
-        color: #6c757d;
+        text-align: center !important;
+        margin-top: ${printSettings.compactMode ? '32px' : '40px'} !important;
+        padding-top: ${printSettings.compactMode ? '24px' : '24px'} !important;
+        border-top: 1px dashed #e5e7eb !important;
+        font-size: ${Math.max(printSettings.compactMode ? 11 : 12, 11)}px !important;
+        font-weight: 600 !important;
+        color: #9ca3af !important;
         page-break-inside: avoid;
+        letter-spacing: 0.5px !important;
+      }
+      #printable-receipt .receipt-footer p:last-child {
+        font-size: ${Math.max(printSettings.compactMode ? 9 : 10, 9)}px !important;
+        color: #d1d5db !important;
+        margin-top: 8px !important;
       }
       /* Ensure all text is visible and readable - force black text */
       #printable-receipt {
@@ -601,6 +699,47 @@ const getPrintableContent = (elementId: string): string => {
           orphans: 3;
           widows: 3;
         }
+        /* Store Logo - ensure prints well */
+        #printable-receipt .receipt-logo {
+          width: ${isThermal ? '56px' : (printSettings.compactMode ? '72px' : '96px')} !important;
+          height: ${isThermal ? '56px' : (printSettings.compactMode ? '72px' : '96px')} !important;
+          margin: 0 auto ${isThermal ? '16px' : (printSettings.compactMode ? '20px' : '24px')} auto !important;
+        }
+        /* Default logo (gradient) */
+        #printable-receipt .receipt-logo:has(> div) {
+          background: linear-gradient(135deg, #f97316 0%, #f59e0b 50%, #ea580c 100%) !important;
+          box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2) !important;
+        }
+        #printable-receipt .receipt-logo svg {
+          width: ${isThermal ? '24px' : (printSettings.compactMode ? '32px' : '40px')} !important;
+          height: ${isThermal ? '24px' : (printSettings.compactMode ? '32px' : '40px')} !important;
+          color: #ffffff !important;
+        }
+        /* Custom uploaded logo */
+        #printable-receipt .receipt-logo img {
+          width: ${isThermal ? '56px' : (printSettings.compactMode ? '72px' : '96px')} !important;
+          height: ${isThermal ? '56px' : (printSettings.compactMode ? '72px' : '96px')} !important;
+          max-width: ${isThermal ? '56px' : (printSettings.compactMode ? '72px' : '96px')} !important;
+          max-height: ${isThermal ? '56px' : (printSettings.compactMode ? '72px' : '96px')} !important;
+          object-fit: contain !important;
+          background: white !important;
+          border: 2px solid #e5e7eb !important;
+        }
+        /* Store header - ensure prominent in print */
+        #printable-receipt h1 {
+          font-size: ${isThermal ? '20px' : (printSettings.compactMode ? '28px' : '32px')} !important;
+          font-weight: 900 !important;
+          text-align: center !important;
+          margin-bottom: ${isThermal ? '8px' : (printSettings.compactMode ? '12px' : '16px')} !important;
+          color: #000000 !important;
+        }
+        /* Store header container border */
+        #printable-receipt > div.text-center:first-of-type,
+        #printable-receipt .text-center.mb-6 {
+          border-bottom: 2px solid #000000 !important;
+          padding-bottom: ${isThermal ? '10px' : (printSettings.compactMode ? '14px' : '16px')} !important;
+          margin-bottom: ${isThermal ? '16px' : (printSettings.compactMode ? '20px' : '24px')} !important;
+        }
         /* Force all text to be black for maximum contrast */
         #printable-receipt * {
           color: #000000 !important;
@@ -608,26 +747,41 @@ const getPrintableContent = (elementId: string): string => {
         #printable-receipt {
           background: white !important;
         }
-        /* Force table borders to be visible in print */
-        #printable-receipt table,
-        #printable-receipt table th,
-        #printable-receipt table td {
-          border: ${printBorderStyle} !important;
+        /* Modern table styling for print - clean borders */
+        #printable-receipt table {
+          border: none !important;
           border-collapse: collapse !important;
         }
         #printable-receipt table th {
-          border-bottom: ${printHeaderBorderBottom} !important;
-          border-top: ${printBorderThick} !important;
-          background-color: transparent !important;
-          background: transparent !important;
+          border-bottom: 2px solid #e5e7eb !important;
+          border-top: none !important;
+          border-left: none !important;
+          border-right: none !important;
+          background-color: ${isThermal ? '#ffffff' : '#f9fafb'} !important;
+          background: ${isThermal ? '#ffffff' : '#f9fafb'} !important;
+          font-weight: 900 !important;
+          text-transform: uppercase !important;
         }
         #printable-receipt table td {
-          border-bottom: ${printBorderBottom} !important;
-          background-color: transparent !important;
-          background: transparent !important;
+          border-bottom: 1px solid #f3f4f6 !important;
+          border-top: none !important;
+          border-left: none !important;
+          border-right: none !important;
+          background-color: white !important;
+          background: white !important;
         }
-        #printable-receipt table tbody tr:last-child td {
-          border-bottom: ${printBorderThick} !important;
+        #printable-receipt table td:first-child,
+        #printable-receipt table th:first-child {
+          text-align: right !important;
+        }
+        #printable-receipt table td:first-child {
+          font-weight: 600 !important;
+        }
+        /* Grand total styling for print */
+        #printable-receipt .grand-total {
+          background-color: ${isThermal ? '#ffffff' : '#fff7ed'} !important;
+          background: ${isThermal ? '#ffffff' : '#fff7ed'} !important;
+          border-top: 3px solid #f97316 !important;
         }
         /* Override any inline styles that might hide borders or text */
         #printable-receipt table th[style],
