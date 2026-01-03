@@ -242,8 +242,8 @@ const generateThermalStyles = (printSettings: PrinterConfig & { paperSize: strin
       }
       /* Store Logo - fixed size */
       #printable-receipt .receipt-logo {
-        width: 40px !important;
-        height: 40px !important;
+        width: 60px !important;
+        height: 60px !important;
         margin: 0 auto 8px auto !important;
         border-radius: 0 !important;
         display: flex !important;
@@ -255,18 +255,18 @@ const generateThermalStyles = (printSettings: PrinterConfig & { paperSize: strin
         box-shadow: none !important;
       }
       #printable-receipt .receipt-logo svg {
-        width: 20px !important;
-        height: 20px !important;
+        width: 30px !important;
+        height: 30px !important;
         color: #ffffff !important;
         fill: none !important;
         stroke: #ffffff !important;
         stroke-width: 2 !important;
       }
       #printable-receipt .receipt-logo img {
-        width: 40px !important;
-        height: 40px !important;
-        max-width: 40px !important;
-        max-height: 40px !important;
+        width: 60px !important;
+        height: 60px !important;
+        max-width: 60px !important;
+        max-height: 60px !important;
         object-fit: contain !important;
         border-radius: 0 !important;
         background: white !important;
@@ -317,6 +317,7 @@ const generateThermalStyles = (printSettings: PrinterConfig & { paperSize: strin
         font-size: ${tableFontSize}px !important;
         background: white !important;
         table-layout: fixed !important;
+        border: 1px solid #000 !important;
       }
       #printable-receipt table thead {
         background-color: transparent !important;
@@ -326,7 +327,7 @@ const generateThermalStyles = (printSettings: PrinterConfig & { paperSize: strin
         padding: 4px 2px !important;
         text-align: center !important;
         font-weight: 900 !important;
-        border-bottom: 1px solid #000 !important;
+        border: 1px solid #000 !important;
         color: #000000 !important;
         font-size: ${tableFontSize}px !important;
         text-transform: uppercase !important;
@@ -337,7 +338,7 @@ const generateThermalStyles = (printSettings: PrinterConfig & { paperSize: strin
       }
       #printable-receipt table td {
         padding: 4px 2px !important;
-        border-bottom: 1px solid #000 !important;
+        border: 1px solid #000 !important;
         text-align: center !important;
         font-size: ${tableFontSize}px !important;
         color: #000000 !important;
@@ -540,8 +541,8 @@ const generateA4Styles = (printSettings: PrinterConfig & { paperSize: string; pa
         border-radius: 12px !important;
       }
       #printable-receipt .receipt-logo {
-        width: ${printSettings.compactMode ? '72px' : '96px'} !important;
-        height: ${printSettings.compactMode ? '72px' : '96px'} !important;
+        width: ${printSettings.compactMode ? '90px' : '120px'} !important;
+        height: ${printSettings.compactMode ? '90px' : '120px'} !important;
         margin: 0 auto ${printSettings.compactMode ? '20px' : '24px'} auto !important;
         border-radius: 16px !important;
         display: flex !important;
@@ -554,18 +555,18 @@ const generateA4Styles = (printSettings: PrinterConfig & { paperSize: string; pa
         box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15) !important;
       }
       #printable-receipt .receipt-logo svg {
-        width: ${printSettings.compactMode ? '32px' : '40px'} !important;
-        height: ${printSettings.compactMode ? '32px' : '40px'} !important;
+        width: ${printSettings.compactMode ? '40px' : '50px'} !important;
+        height: ${printSettings.compactMode ? '40px' : '50px'} !important;
         color: #ffffff !important;
         fill: none !important;
         stroke: #ffffff !important;
         stroke-width: 2.5 !important;
       }
       #printable-receipt .receipt-logo img {
-        width: ${printSettings.compactMode ? '72px' : '96px'} !important;
-        height: ${printSettings.compactMode ? '72px' : '96px'} !important;
-        max-width: ${printSettings.compactMode ? '72px' : '96px'} !important;
-        max-height: ${printSettings.compactMode ? '72px' : '96px'} !important;
+        width: ${printSettings.compactMode ? '90px' : '120px'} !important;
+        height: ${printSettings.compactMode ? '90px' : '120px'} !important;
+        max-width: ${printSettings.compactMode ? '90px' : '120px'} !important;
+        max-height: ${printSettings.compactMode ? '90px' : '120px'} !important;
         object-fit: contain !important;
         border-radius: 16px !important;
         background: white !important;
@@ -616,7 +617,7 @@ const generateA4Styles = (printSettings: PrinterConfig & { paperSize: string; pa
         background: white !important;
         table-layout: auto;
         page-break-inside: auto;
-        border: none !important;
+        border: 1px solid #000000 !important;
       }
       #printable-receipt table thead {
         background-color: transparent !important;
@@ -631,7 +632,7 @@ const generateA4Styles = (printSettings: PrinterConfig & { paperSize: string; pa
         padding: ${tablePadding} !important;
         text-align: center !important;
         font-weight: 900 !important;
-        border-bottom: 2px solid #e5e7eb !important;
+        border: 1px solid #000000 !important;
         color: #000000 !important;
         font-size: ${Math.max(minTableFontSize - 1, 10)}px !important;
         text-transform: uppercase !important;
@@ -645,7 +646,7 @@ const generateA4Styles = (printSettings: PrinterConfig & { paperSize: string; pa
       }
       #printable-receipt table td {
         padding: ${tablePadding} !important;
-        border-bottom: 1px solid #f3f4f6 !important;
+        border: 1px solid #000000 !important;
         text-align: center !important;
         font-size: ${minTableFontSize}px !important;
         color: #000000 !important;
@@ -850,8 +851,8 @@ const generateA4Styles = (printSettings: PrinterConfig & { paperSize: string; pa
           widows: 3;
         }
         #printable-receipt .receipt-logo {
-          width: ${printSettings.compactMode ? '72px' : '96px'} !important;
-          height: ${printSettings.compactMode ? '72px' : '96px'} !important;
+          width: ${printSettings.compactMode ? '90px' : '120px'} !important;
+          height: ${printSettings.compactMode ? '90px' : '120px'} !important;
           margin: 0 auto ${printSettings.compactMode ? '20px' : '24px'} auto !important;
         }
         #printable-receipt .receipt-logo:has(> div) {
@@ -859,15 +860,15 @@ const generateA4Styles = (printSettings: PrinterConfig & { paperSize: string; pa
           box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2) !important;
         }
         #printable-receipt .receipt-logo svg {
-          width: ${printSettings.compactMode ? '32px' : '40px'} !important;
-          height: ${printSettings.compactMode ? '32px' : '40px'} !important;
+          width: ${printSettings.compactMode ? '40px' : '50px'} !important;
+          height: ${printSettings.compactMode ? '40px' : '50px'} !important;
           color: #ffffff !important;
         }
         #printable-receipt .receipt-logo img {
-          width: ${printSettings.compactMode ? '72px' : '96px'} !important;
-          height: ${printSettings.compactMode ? '72px' : '96px'} !important;
-          max-width: ${printSettings.compactMode ? '72px' : '96px'} !important;
-          max-height: ${printSettings.compactMode ? '72px' : '96px'} !important;
+          width: ${printSettings.compactMode ? '90px' : '120px'} !important;
+          height: ${printSettings.compactMode ? '90px' : '120px'} !important;
+          max-width: ${printSettings.compactMode ? '90px' : '120px'} !important;
+          max-height: ${printSettings.compactMode ? '90px' : '120px'} !important;
           object-fit: contain !important;
           background: white !important;
           border: 2px solid #e5e7eb !important;
@@ -892,24 +893,18 @@ const generateA4Styles = (printSettings: PrinterConfig & { paperSize: string; pa
           background: white !important;
         }
         #printable-receipt table {
-          border: none !important;
+          border: 1px solid #000000 !important;
           border-collapse: collapse !important;
         }
         #printable-receipt table th {
-          border-bottom: 2px solid #e5e7eb !important;
-          border-top: none !important;
-          border-left: none !important;
-          border-right: none !important;
+          border: 1px solid #000000 !important;
           background-color: #f9fafb !important;
           background: #f9fafb !important;
           font-weight: 900 !important;
           text-transform: uppercase !important;
         }
         #printable-receipt table td {
-          border-bottom: 1px solid #f3f4f6 !important;
-          border-top: none !important;
-          border-left: none !important;
-          border-right: none !important;
+          border: 1px solid #000000 !important;
           background-color: white !important;
           background: white !important;
         }
@@ -988,6 +983,9 @@ interface InvoiceData {
   tax: number;
   grandTotal: number;
   currencySymbol: string;
+  paymentMethod?: string;
+  paidAmount?: number;
+  remainingAmount?: number;
 }
 
 const extractInvoiceData = (element: HTMLElement): InvoiceData | null => {
@@ -1113,6 +1111,41 @@ const extractInvoiceData = (element: HTMLElement): InvoiceData | null => {
     // Get currency symbol from settings
     const currencySymbol = settings?.defaultCurrency || '₪';
     
+    // Extract payment information from data attributes or invoice info section
+    let paymentMethod: string | undefined;
+    let paidAmount: number | undefined;
+    let remainingAmount: number | undefined;
+    
+    // Try to get payment info from data attributes on the receipt element
+    const paymentMethodAttr = element.getAttribute('data-payment-method');
+    const paidAmountAttr = element.getAttribute('data-paid-amount');
+    const remainingAmountAttr = element.getAttribute('data-remaining-amount');
+    
+    if (paymentMethodAttr) {
+      paymentMethod = paymentMethodAttr;
+      paidAmount = paidAmountAttr ? parseFloat(paidAmountAttr) : undefined;
+      remainingAmount = remainingAmountAttr ? parseFloat(remainingAmountAttr) : undefined;
+    }
+    
+    // Also try to extract from invoice-info section if not found in attributes
+    if (!paymentMethod && invoiceInfoEl) {
+      const gridDivs = invoiceInfoEl.querySelectorAll('.grid > div, [class*="grid"] > div');
+      gridDivs.forEach(div => {
+        const labelEl = div.querySelector('span.text-xs, span:first-child');
+        const valueEl = div.querySelector('span.text-sm, span:last-child');
+        const label = labelEl?.textContent?.trim() || '';
+        const value = valueEl?.textContent?.trim() || '';
+        
+        if (label.includes('طريقة الدفع') || label.includes('Payment') || label.includes('Payment Method')) {
+          paymentMethod = value.toLowerCase();
+        } else if (label.includes('المدفوع') || label.includes('Paid') || label.includes('Paid Amount')) {
+          paidAmount = parseFloat(value.replace(/[^\d.-]/g, '')) || undefined;
+        } else if (label.includes('المتبقي') || label.includes('Remaining') || label.includes('Balance')) {
+          remainingAmount = parseFloat(value.replace(/[^\d.-]/g, '')) || undefined;
+        }
+      });
+    }
+    
     return {
       logoUrl: finalLogoUrl,
       businessName: finalBusinessName,
@@ -1126,7 +1159,10 @@ const extractInvoiceData = (element: HTMLElement): InvoiceData | null => {
       discount,
       tax,
       grandTotal,
-      currencySymbol
+      currencySymbol,
+      paymentMethod,
+      paidAmount,
+      remainingAmount
     };
   } catch (error) {
     console.error('Error extracting invoice data:', error);
@@ -1144,18 +1180,23 @@ const generateInvoiceHTML = (data: InvoiceData, printSettings: ReturnType<typeof
     ? (paperSize === '58mm' ? 'width-58mm' : 'width-80mm')
     : 'width-std';
   
-  // Format currency helper
+  // Format currency helper (for totals section only)
   const formatCurrency = (value: number): string => {
     return `${value.toFixed(2)} ${data.currencySymbol}`;
   };
   
-  // Generate items table rows
+  // Format number only (for table cells - no currency symbol)
+  const formatNumber = (value: number): string => {
+    return value.toFixed(2);
+  };
+  
+  // Generate items table rows (numbers only, no currency)
   const itemsRows = data.items.map(item => `
     <tr>
       <td class="col-name">${item.name}</td>
       <td class="col-qty">${item.quantity}</td>
-      <td class="col-unit-price">${formatCurrency(item.unitPrice)}</td>
-      <td class="col-total">${formatCurrency(item.lineTotal)}</td>
+      <td class="col-unit-price">${formatNumber(item.unitPrice)}</td>
+      <td class="col-total">${formatNumber(item.lineTotal)}</td>
     </tr>
   `).join('');
   
@@ -1170,18 +1211,18 @@ const generateInvoiceHTML = (data: InvoiceData, printSettings: ReturnType<typeof
       
       <!-- Meta Data -->
       <div class="invoice-meta">
-        <span>INV #: ${data.invoiceNumber}</span>
-        <span>$$ ${data.date} $$</span>
+        <span> ${data.invoiceNumber}</span>
+        <span> ${data.date} </span>
       </div>
       
       <!-- Parties -->
       <div class="parties">
         <div class="party-block">
           <div class="party-title">البائع</div>
-          ${data.cashier ? `الكاشير: ${data.cashier}` : ''}
+          ${data.cashier ? `المحاسب: ${data.cashier}` : ''}
         </div>
         <div class="party-block" style="text-align: right;">
-          <div class="party-title">العميل</div>
+          <div class="party-title"> :العميل</div>
           <strong>${data.customerName}</strong>
         </div>
       </div>
@@ -1226,6 +1267,38 @@ const generateInvoiceHTML = (data: InvoiceData, printSettings: ReturnType<typeof
         <div class="grand-total-label">الإجمالي:</div>
         <div class="grand-total-amount">${formatCurrency(data.grandTotal)}</div>
       </div>
+      
+      <!-- Payment Information -->
+      ${data.paymentMethod ? `
+      <div class="payment-info">
+        <div class="payment-method">
+          <span class="payment-label">طريقة الدفع:</span>
+          <span class="payment-value">${(() => {
+            const method = data.paymentMethod.toLowerCase();
+            if (method === 'cash') return 'نقد';
+            if (method === 'card' || method === 'visa') return 'فيزا';
+            if (method === 'credit') return 'آجل';
+            return data.paymentMethod;
+          })()}</span>
+        </div>
+        ${data.paymentMethod.toLowerCase() === 'credit' && (data.paidAmount !== undefined || data.remainingAmount !== undefined) ? `
+        <div class="payment-details">
+          ${data.paidAmount !== undefined ? `
+          <div class="payment-detail-row">
+            <span class="payment-detail-label">المدفوع:</span>
+            <span class="payment-detail-value">${formatCurrency(data.paidAmount)}</span>
+          </div>
+          ` : ''}
+          ${data.remainingAmount !== undefined && data.remainingAmount > 0 ? `
+          <div class="payment-detail-row">
+            <span class="payment-detail-label">المتبقي:</span>
+            <span class="payment-detail-value">${formatCurrency(data.remainingAmount)}</span>
+          </div>
+          ` : ''}
+        </div>
+        ` : ''}
+      </div>
+      ` : ''}
       
       <div class="thank-you-message">
         شكراً لتعاملكم معنا!
@@ -1302,8 +1375,8 @@ const generateUniversalInvoiceStyles = (printSettings: ReturnType<typeof getPrin
       }
       
       .logo {
-        max-width: 150px;
-        max-height: 80px;
+        max-width: 180px;
+        max-height: 100px;
         margin-bottom: 10px !important;
         margin-top: 0 !important;
         display: block !important;
@@ -1368,6 +1441,7 @@ const generateUniversalInvoiceStyles = (printSettings: ReturnType<typeof getPrin
         width: 100%;
         border-collapse: collapse;
         margin-bottom: 15px;
+        border: 1px solid #000;
       }
       
       th {
@@ -1375,13 +1449,13 @@ const generateUniversalInvoiceStyles = (printSettings: ReturnType<typeof getPrin
         padding: 5px;
         font-size: 0.85em;
         font-weight: bold;
-        border-bottom: 1px solid #333;
+        border: 1px solid #000;
         color: #000;
       }
       
       td {
         padding: 5px;
-        border-bottom: 1px solid #eee;
+        border: 1px solid #000;
         font-size: 0.9em;
         color: #000;
       }
@@ -1503,6 +1577,57 @@ const generateUniversalInvoiceStyles = (printSettings: ReturnType<typeof getPrin
         color: #000;
       }
       
+      .payment-info {
+        margin-top: 15px;
+        padding-top: 15px;
+        border-top: 2px dashed #333;
+        color: #000;
+      }
+      
+      .payment-method {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 8px;
+        font-weight: 600;
+        font-size: 0.95em;
+      }
+      
+      .payment-label {
+        color: #000;
+        font-weight: 600;
+      }
+      
+      .payment-value {
+        color: #000;
+        font-weight: 700;
+        text-transform: uppercase;
+      }
+      
+      .payment-details {
+        margin-top: 8px;
+        padding-top: 8px;
+        border-top: 1px dashed #999;
+      }
+      
+      .payment-detail-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 4px;
+        font-size: 0.9em;
+      }
+      
+      .payment-detail-label {
+        color: #000;
+        font-weight: 500;
+      }
+      
+      .payment-detail-value {
+        color: #000;
+        font-weight: 600;
+      }
+      
       .thank-you-message {
         text-align: center;
         margin-top: 15px;
@@ -1533,7 +1658,7 @@ const generateUniversalInvoiceStyles = (printSettings: ReturnType<typeof getPrin
         align-items: center !important;
       }
       .width-58mm .logo { 
-        max-width: 100px !important; 
+        max-width: 120px !important; 
         margin-bottom: 5px !important;
         margin-top: 0 !important;
         display: block !important;
@@ -1606,6 +1731,29 @@ const generateUniversalInvoiceStyles = (printSettings: ReturnType<typeof getPrin
         color: #000 !important;
       }
       
+      .width-58mm .payment-info {
+        margin-top: 10px !important;
+        padding-top: 10px !important;
+        border-top: 1px dashed #000 !important;
+        font-size: 0.85em !important;
+      }
+      
+      .width-58mm .payment-method {
+        font-size: 0.9em !important;
+        margin-bottom: 6px !important;
+      }
+      
+      .width-58mm .payment-details {
+        margin-top: 6px !important;
+        padding-top: 6px !important;
+        font-size: 0.85em !important;
+      }
+      
+      .width-58mm .payment-detail-row {
+        font-size: 0.85em !important;
+        margin-bottom: 3px !important;
+      }
+      
       /* -------------------------------------
          THERMAL 80MM MODE
       ------------------------------------- */
@@ -1621,7 +1769,7 @@ const generateUniversalInvoiceStyles = (printSettings: ReturnType<typeof getPrin
         align-items: center !important;
       }
       .width-80mm .logo { 
-        max-width: 120px !important; 
+        max-width: 150px !important; 
         margin-bottom: 8px !important;
         margin-top: 0 !important;
         display: block !important;
@@ -1652,6 +1800,29 @@ const generateUniversalInvoiceStyles = (printSettings: ReturnType<typeof getPrin
         font-size: 1.3em !important;
         font-weight: 900 !important;
         color: #000 !important;
+      }
+      
+      .width-80mm .payment-info {
+        margin-top: 12px !important;
+        padding-top: 12px !important;
+        border-top: 2px dashed #000 !important;
+        font-size: 0.9em !important;
+      }
+      
+      .width-80mm .payment-method {
+        font-size: 0.95em !important;
+        margin-bottom: 8px !important;
+      }
+      
+      .width-80mm .payment-details {
+        margin-top: 8px !important;
+        padding-top: 8px !important;
+        font-size: 0.9em !important;
+      }
+      
+      .width-80mm .payment-detail-row {
+        font-size: 0.9em !important;
+        margin-bottom: 4px !important;
       }
       
       /* Table columns for 80mm thermal */
@@ -1759,8 +1930,8 @@ const generateUniversalInvoiceStyles = (printSettings: ReturnType<typeof getPrin
         
         .logo {
           display: block !important;
-          max-width: 150px !important;
-          max-height: 80px !important;
+          max-width: 180px !important;
+          max-height: 100px !important;
           margin: 0 auto 10px auto !important;
           margin-bottom: 10px !important;
           margin-top: 0 !important;
