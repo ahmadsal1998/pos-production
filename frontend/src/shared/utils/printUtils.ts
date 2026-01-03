@@ -1015,23 +1015,52 @@ const extractInvoiceData = (element: HTMLElement): InvoiceData | null => {
     let customerName = 'N/A';
     
     if (invoiceInfoEl) {
+      // Try grid format first (POSPage format: .grid > div with span.text-xs and span.text-sm)
       const gridDivs = invoiceInfoEl.querySelectorAll('.grid > div, [class*="grid"] > div');
-      gridDivs.forEach(div => {
-        const labelEl = div.querySelector('span.text-xs, span:first-child');
-        const valueEl = div.querySelector('span.text-sm, span:last-child');
-        const label = labelEl?.textContent?.trim() || '';
-        const value = valueEl?.textContent?.trim() || '';
-        
-        if (label.includes('رقم الفاتورة') || label.includes('Invoice') || label.includes('INV')) {
-          invoiceNumber = value;
-        } else if (label.includes('التاريخ') || label.includes('Date')) {
-          dateText = value;
-        } else if (label.includes('كاشير') || label.includes('Cashier') || label.includes('بائع')) {
-          cashier = value;
-        } else if (label.includes('عميل') || label.includes('Customer')) {
-          customerName = value;
-        }
-      });
+      if (gridDivs.length > 0) {
+        gridDivs.forEach(div => {
+          const labelEl = div.querySelector('span.text-xs, span:first-child');
+          const valueEl = div.querySelector('span.text-sm, span:last-child');
+          const label = labelEl?.textContent?.trim() || '';
+          const value = valueEl?.textContent?.trim() || '';
+          
+          if (label.includes('رقم الفاتورة') || label.includes('Invoice') || label.includes('INV')) {
+            invoiceNumber = value;
+          } else if (label.includes('التاريخ') || label.includes('Date')) {
+            dateText = value;
+          } else if (label.includes('كاشير') || label.includes('Cashier') || label.includes('بائع')) {
+            cashier = value;
+          } else if (label.includes('عميل') || label.includes('Customer')) {
+            customerName = value;
+          }
+        });
+      } else {
+        // Try paragraph format (SalesPage format: <p><strong>Label:</strong> Value</p>)
+        const paragraphs = invoiceInfoEl.querySelectorAll('p');
+        paragraphs.forEach(p => {
+          const strongEl = p.querySelector('strong');
+          const label = strongEl?.textContent?.trim() || '';
+          // Get the full text content of the paragraph
+          const fullText = p.textContent?.trim() || '';
+          // Extract value by removing the label and colon
+          // Handle both "Label: Value" and "Label Value" formats
+          let value = fullText;
+          if (label) {
+            // Remove the label part (with or without colon)
+            value = fullText.replace(new RegExp(`^${label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}:?\\s*`), '').trim();
+          }
+          
+          if (label.includes('رقم الفاتورة') || label.includes('Invoice') || label.includes('INV') || label.includes('Invoice Number')) {
+            invoiceNumber = value || 'N/A';
+          } else if (label.includes('التاريخ') || label.includes('Date')) {
+            dateText = value || new Date().toLocaleString('ar-SA');
+          } else if (label.includes('كاشير') || label.includes('Cashier') || label.includes('بائع') || label.includes('Seller')) {
+            cashier = value || 'N/A';
+          } else if (label.includes('عميل') || label.includes('Customer') || label.includes('Customer Name')) {
+            customerName = value || 'N/A';
+          }
+        });
+      }
     }
     
     // Extract items from table
@@ -1039,8 +1068,27 @@ const extractInvoiceData = (element: HTMLElement): InvoiceData | null => {
     const tableRows = element.querySelectorAll('table tbody tr');
     tableRows.forEach(row => {
       const cells = row.querySelectorAll('td');
-      // Table structure: Product | Quantity | Unit Price | Total (4 columns)
-      if (cells.length >= 4) {
+      // Table structure can be:
+      // 5 columns (with index): Index | Product | Quantity | Unit Price | Total
+      // 4 columns (without index): Product | Quantity | Unit Price | Total
+      // 3 columns (fallback): Product | Quantity | Price
+      
+      if (cells.length >= 5) {
+        // 5 columns: Index | Product | Quantity | Unit Price | Total
+        const name = cells[1]?.textContent?.trim() || '';
+        const quantityText = cells[2]?.textContent?.trim() || '0';
+        const quantity = parseFloat(quantityText.replace(/[^\d.-]/g, '')) || 0;
+        const unitPriceText = cells[3]?.textContent?.trim() || '0';
+        const lineTotalText = cells[4]?.textContent?.trim() || '0';
+        // Remove currency symbols and parse
+        const unitPrice = parseFloat(unitPriceText.replace(/[^\d.-]/g, '')) || 0;
+        const lineTotal = parseFloat(lineTotalText.replace(/[^\d.-]/g, '')) || 0;
+        
+        if (name && quantity > 0) {
+          items.push({ name, quantity, unitPrice, lineTotal });
+        }
+      } else if (cells.length >= 4) {
+        // 4 columns: Product | Quantity | Unit Price | Total
         const name = cells[0]?.textContent?.trim() || '';
         const quantityText = cells[1]?.textContent?.trim() || '0';
         const quantity = parseFloat(quantityText.replace(/[^\d.-]/g, '')) || 0;
@@ -1239,19 +1287,31 @@ const generateInvoiceHTML = (data: InvoiceData, printSettings: ReturnType<typeof
   };
   
   // Format number only (for table cells - no currency symbol)
+  // Remove unnecessary .00 for whole numbers, keep decimals when needed
   const formatNumber = (value: number): string => {
-    return value.toFixed(2);
+    // Check if it's a whole number (no decimal part)
+    if (value % 1 === 0) {
+      return value.toString();
+    }
+    // For decimals, format to 2 decimal places then remove trailing zeros
+    const formatted = value.toFixed(2);
+    // Remove trailing zeros and the decimal point if all zeros
+    return formatted.replace(/\.?0+$/, '');
   };
   
   // Generate items table rows (numbers only, no currency)
-  const itemsRows = data.items.map(item => `
+  const itemsRows = data.items.map((item, idx) => {
+    const productIndex = idx + 1; // 1-based index
+    return `
     <tr>
+      <td class="col-index">${productIndex}</td>
       <td class="col-name">${item.name}</td>
       <td class="col-qty">${item.quantity}</td>
       <td class="col-unit-price">${formatNumber(item.unitPrice)}</td>
       <td class="col-total">${formatNumber(item.lineTotal)}</td>
     </tr>
-  `).join('');
+  `;
+  }).join('');
   
   return `
     <div id="invoice" class="invoice-container ${widthClass}">
@@ -1271,7 +1331,6 @@ const generateInvoiceHTML = (data: InvoiceData, printSettings: ReturnType<typeof
       <!-- Parties -->
       <div class="parties">
         <div class="party-block">
-          <div class="party-title">البائع</div>
           ${data.cashier ? `المحاسب: ${data.cashier}` : ''}
         </div>
         <div class="party-block" style="text-align: right;">
@@ -1284,6 +1343,7 @@ const generateInvoiceHTML = (data: InvoiceData, printSettings: ReturnType<typeof
       <table>
         <thead>
           <tr>
+            <th class="col-index">#</th>
             <th class="col-name">المنتج</th>
             <th class="col-qty">الكمية</th>
             <th class="col-unit-price">سعر الوحدة</th>
@@ -1521,32 +1581,47 @@ const generateUniversalInvoiceStyles = (printSettings: ReturnType<typeof getPrin
       }
       
       /* Column alignment - consistent for headers and data */
+      .col-index {
+        width: 5%;
+        color: #000;
+        text-align: center;
+        font-weight: 600;
+      }
+      
       .col-name { 
-        width: 40%; 
+        width: 45%; 
         color: #000; 
         text-align: right; /* RTL: Arabic text right-aligned */
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
       }
       
       .col-qty { 
-        width: 12%; 
+        width: 10%; 
         text-align: center; 
         color: #000; 
       }
       
       .col-unit-price { 
-        width: 24%; 
+        width: 20%; 
         text-align: right; 
         color: #000; 
       }
       
       .col-total { 
-        width: 24%; 
+        width: 20%; 
         text-align: right; 
         font-weight: 600; 
         color: #000; 
       }
       
       /* Ensure headers match data cell alignment */
+      th.col-index,
+      td.col-index {
+        text-align: center;
+      }
+      
       th.col-name,
       td.col-name {
         text-align: right;
@@ -1603,14 +1678,14 @@ const generateUniversalInvoiceStyles = (printSettings: ReturnType<typeof getPrin
       }
       
       .grand-total-label {
-        font-size: 1.3em;
+        font-size: 1.2em;
         font-weight: 900;
         color: #000;
         text-transform: uppercase;
       }
       
       .grand-total-amount {
-        font-size: 1.5em;
+        font-size: 1.3em;
         font-weight: 900;
         color: #000;
         text-align: right;
@@ -1732,28 +1807,40 @@ const generateUniversalInvoiceStyles = (printSettings: ReturnType<typeof getPrin
       }
       
       /* Table columns for 58mm thermal */
+      .width-58mm .col-index {
+        width: 8% !important;
+        font-size: 0.85em !important;
+        text-align: center !important;
+      }
       .width-58mm .col-name { 
-        width: 35% !important; 
+        width: 40% !important; 
         font-size: 0.85em !important; 
         text-align: right !important;
+        white-space: nowrap !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
       }
       .width-58mm .col-qty { 
-        width: 10% !important; 
+        width: 8% !important; 
         font-size: 0.85em !important; 
         text-align: center !important;
       }
       .width-58mm .col-unit-price { 
-        width: 27.5% !important; 
+        width: 22% !important; 
         font-size: 0.85em !important; 
         text-align: right !important;
       }
       .width-58mm .col-total { 
-        width: 27.5% !important; 
+        width: 22% !important; 
         font-size: 0.85em !important; 
         text-align: right !important;
       }
       
       /* Ensure headers match data alignment for 58mm */
+      .width-58mm th.col-index,
+      .width-58mm td.col-index {
+        text-align: center !important;
+      }
       .width-58mm th.col-name,
       .width-58mm td.col-name {
         text-align: right !important;
@@ -1780,13 +1867,13 @@ const generateUniversalInvoiceStyles = (printSettings: ReturnType<typeof getPrin
       }
       
       .width-58mm .grand-total-label {
-        font-size: 1em !important;
+        font-size: 0.9em !important;
         font-weight: 900 !important;
         color: #000 !important;
       }
       
       .width-58mm .grand-total-amount {
-        font-size: 1.2em !important;
+        font-size: 1.1em !important;
         font-weight: 900 !important;
         color: #000 !important;
       }
@@ -1851,13 +1938,13 @@ const generateUniversalInvoiceStyles = (printSettings: ReturnType<typeof getPrin
       }
       
       .width-80mm .grand-total-label {
-        font-size: 1.1em !important;
+        font-size: 1em !important;
         font-weight: 900 !important;
         color: #000 !important;
       }
       
       .width-80mm .grand-total-amount {
-        font-size: 1.3em !important;
+        font-size: 1.2em !important;
         font-weight: 900 !important;
         color: #000 !important;
       }
@@ -1886,24 +1973,35 @@ const generateUniversalInvoiceStyles = (printSettings: ReturnType<typeof getPrin
       }
       
       /* Table columns for 80mm thermal */
+      .width-80mm .col-index {
+        width: 6% !important;
+        text-align: center !important;
+      }
       .width-80mm .col-name { 
-        width: 38% !important; 
+        width: 42% !important; 
         text-align: right !important;
+        white-space: nowrap !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
       }
       .width-80mm .col-qty { 
-        width: 11% !important; 
+        width: 10% !important; 
         text-align: center !important;
       }
       .width-80mm .col-unit-price { 
-        width: 25.5% !important; 
+        width: 21% !important; 
         text-align: right !important;
       }
       .width-80mm .col-total { 
-        width: 25.5% !important; 
+        width: 21% !important; 
         text-align: right !important;
       }
       
       /* Ensure headers match data alignment for 80mm */
+      .width-80mm th.col-index,
+      .width-80mm td.col-index {
+        text-align: center !important;
+      }
       .width-80mm th.col-name,
       .width-80mm td.col-name {
         text-align: right !important;
@@ -2025,14 +2123,14 @@ const generateUniversalInvoiceStyles = (printSettings: ReturnType<typeof getPrin
         }
         
         .grand-total-label {
-          font-size: 1.3em !important;
+          font-size: 1.2em !important;
           font-weight: 900 !important;
           color: #000 !important;
           text-transform: uppercase !important;
         }
         
         .grand-total-amount {
-          font-size: 1.5em !important;
+          font-size: 1.3em !important;
           font-weight: 900 !important;
           color: #000 !important;
           text-align: right !important;

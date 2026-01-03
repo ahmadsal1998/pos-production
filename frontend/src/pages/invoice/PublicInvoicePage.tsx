@@ -111,7 +111,6 @@ const PublicInvoicePage: React.FC = () => {
           <div className="invoice-info text-sm mb-6 space-y-2 border-b border-gray-200 dark:border-gray-700 pb-4">
             <p><strong>{AR_LABELS.invoiceNumber}:</strong> {invoice.invoiceNumber || invoice.id}</p>
             <p><strong>{AR_LABELS.date}:</strong> {new Date(invoice.date).toLocaleString('ar-SA')}</p>
-            <p><strong>البائع:</strong> {invoice.seller || 'N/A'}</p>
             <p><strong>{AR_LABELS.customerName}:</strong> {invoice.customerName || 'عميل نقدي'}</p>
           </div>
 
@@ -130,12 +129,12 @@ const PublicInvoicePage: React.FC = () => {
                 {invoice.items?.map((item, idx) => {
                   const itemUnitPrice = isReturn ? -Math.abs(item.unitPrice || 0) : (item.unitPrice || 0);
                   const itemTotal = isReturn 
-                    ? -Math.abs((item.totalPrice || 0) - (item.discount || 0) * (item.quantity || 0))
-                    : (item.totalPrice || 0) - (item.discount || 0) * (item.quantity || 0);
+                    ? -Math.abs((item.total || 0) - (item.discount || 0) * (item.quantity || 0))
+                    : (item.total || 0) - (item.discount || 0) * (item.quantity || 0);
                   
                   return (
                     <tr key={idx} className="border-b border-gray-200 dark:border-gray-700">
-                      <td className="py-3 px-4 text-right font-medium">{item.productName || item.name}</td>
+                      <td className="py-3 px-4 text-right font-medium">{item.name}</td>
                       <td className="py-3 px-4 text-center">{Math.abs(item.quantity || 0)}</td>
                       <td className={`py-3 px-4 text-center ${isReturn ? 'text-red-600 dark:text-red-400' : ''}`}>
                         {formatCurrency(itemUnitPrice)}
@@ -158,11 +157,11 @@ const PublicInvoicePage: React.FC = () => {
                 {formatCurrency(isReturn ? -Math.abs(invoice.subtotal || 0) : (invoice.subtotal || 0))}
               </span>
             </div>
-            {invoice.totalDiscount && invoice.totalDiscount !== 0 && (
+            {((invoice.totalItemDiscount || 0) + (invoice.invoiceDiscount || 0)) !== 0 && (
               <div className="flex justify-between">
                 <span className="text-gray-600 dark:text-gray-400 font-medium">{AR_LABELS.totalDiscount}:</span>
                 <span className="font-semibold text-gray-900 dark:text-gray-100">
-                  {formatCurrency(isReturn ? -Math.abs(invoice.totalDiscount) : -invoice.totalDiscount)}
+                  {formatCurrency(isReturn ? -Math.abs((invoice.totalItemDiscount || 0) + (invoice.invoiceDiscount || 0)) : -((invoice.totalItemDiscount || 0) + (invoice.invoiceDiscount || 0)))}
                 </span>
               </div>
             )}

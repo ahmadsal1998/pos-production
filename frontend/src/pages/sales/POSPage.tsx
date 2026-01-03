@@ -5103,6 +5103,9 @@ const POSPage: React.FC = () => {
                     <table className="w-full border-collapse text-sm" style={{ borderSpacing: 0 }}>
                         <thead>
                             <tr className="bg-gray-50 dark:bg-gray-800/50">
+                                <th className="py-3.5 px-3 text-center font-extrabold text-gray-900 dark:text-gray-100 border-b-2 border-gray-200 dark:border-gray-700 uppercase tracking-wide text-xs" style={{ width: '40px' }}>
+                                    #
+                                </th>
                                 <th className="py-3.5 px-4 text-right font-extrabold text-gray-900 dark:text-gray-100 border-b-2 border-gray-200 dark:border-gray-700 uppercase tracking-wide text-xs">
                                     اسم المنتج
                                 </th>
@@ -5121,11 +5124,16 @@ const POSPage: React.FC = () => {
                             {invoice.items.slice().reverse().map((item, idx) => {
                                 const itemUnitPrice = isReturn ? -Math.abs(item.unitPrice) : item.unitPrice;
                                 const itemTotal = isReturn ? -Math.abs(item.total - item.discount * item.quantity) : (item.total - item.discount * item.quantity);
+                                // Calculate index based on original order (before reversal)
+                                const productIndex = invoice.items.length - idx;
                                 return (
                                     <tr 
                                         key={item.cartItemId || `receipt-item-${idx}`} 
                                         className="border-b border-gray-100 dark:border-gray-800 hover:bg-gray-50/50 dark:hover:bg-gray-800/30 transition-colors"
                                     >
+                                        <td className="py-3.5 px-3 text-center text-gray-700 dark:text-gray-300 font-medium">
+                                            {productIndex}
+                                        </td>
                                         <td className="py-3.5 px-4 text-right font-semibold text-gray-900 dark:text-gray-100">
                                             {item.name}
                                         </td>
