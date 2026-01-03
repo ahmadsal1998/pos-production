@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { SaleTransaction, Customer, CustomerPayment, CustomerAccountSummary, SalePaymentMethod, SaleStatus } from '@/shared/types';
 import { AR_LABELS, UUID, SearchIcon, PlusIcon, EditIcon, DeleteIcon, PrintIcon, ViewIcon, ExportIcon, AddPaymentIcon } from '@/shared/constants';
@@ -404,8 +405,8 @@ const SaleDetailsModal: React.FC<{ sale: SaleTransaction | null, onClose: () => 
                                         `${item.productId}-${item.unit || 'unit'}-${idx}`;
                                     return (
                                     <tr key={receiptRowKey} className="border-b border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700/50">
-                                        <td className="py-2.5 px-3 text-right border border-gray-300 dark:border-gray-600 font-medium">{item.name}</td>
-                                        <td className="py-2.5 px-3 text-center border border-gray-300 dark:border-gray-600">{Math.abs(item.quantity)}</td>
+                                        <td className="py-2.5 px-3 text-right border border-gray-300 dark:border-gray-600 font-medium text-gray-900 dark:text-gray-100">{item.name}</td>
+                                        <td className="py-2.5 px-3 text-center border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300">{Math.abs(item.quantity)}</td>
                                         <td className={`py-2.5 px-3 text-center border border-gray-300 dark:border-gray-600 ${isReturn ? 'text-red-600 dark:text-red-400' : 'text-gray-700 dark:text-gray-300'}`}>{formatCurrency(itemUnitPrice)}</td>
                                         <td className={`py-2.5 px-3 text-left border border-gray-300 dark:border-gray-600 font-semibold ${isReturn ? 'text-red-600 dark:text-red-400' : 'text-gray-900 dark:text-gray-100'}`}>{formatCurrency(itemTotal)}</td>
                                     </tr>
@@ -755,11 +756,34 @@ const CustomerDetailsModal: React.FC<{
     onClose: () => void;
 }> = ({ summary, sales, payments, onClose }) => {
     const { formatCurrency } = useCurrency();
+    const { user } = useAuthStore();
     const [storeAddress, setStoreAddress] = useState<string>('');
     const [businessName, setBusinessName] = useState<string>('');
     const [allCustomerSales, setAllCustomerSales] = useState<SaleTransaction[]>([]);
     const [allCustomerPayments, setAllCustomerPayments] = useState<CustomerPayment[]>([]);
     const [isLoadingTransactions, setIsLoadingTransactions] = useState(false);
+
+    // Prevent body scroll when modal is open and lock scroll position
+    useEffect(() => {
+        if (summary) {
+            // Get current scroll position
+            const scrollY = window.scrollY;
+            // Prevent body scroll
+            document.body.style.overflow = 'hidden';
+            document.body.style.position = 'fixed';
+            document.body.style.top = `-${scrollY}px`;
+            document.body.style.width = '100%';
+            
+            return () => {
+                // Restore scroll position
+                document.body.style.overflow = '';
+                document.body.style.position = '';
+                document.body.style.top = '';
+                document.body.style.width = '';
+                window.scrollTo(0, scrollY);
+            };
+        }
+    }, [summary]);
 
     // Fetch ALL historical transactions for the customer when modal opens
     useEffect(() => {
@@ -947,6 +971,7 @@ const CustomerDetailsModal: React.FC<{
                     date: s.date,
                     type: isReturn ? 'return' as const : 'purchase' as const,
                     description,
+                    invoiceNumber: s.invoiceNumber || s.id || null,
                     debit: isReturn ? 0 : amount,
                     credit: isReturn ? amount : 0,
                     // Explicitly exclude: items, product details, item-level discounts, etc.
@@ -984,6 +1009,7 @@ const CustomerDetailsModal: React.FC<{
                     date: p.date,
                     type: isCredit ? 'payment' as const : 'debt' as const,
                     description,
+                    invoiceNumber: p.invoiceId || null,
                     debit: isCredit ? 0 : absoluteAmount,
                     credit: isCredit ? absoluteAmount : 0,
                 };
@@ -999,6 +1025,54 @@ const CustomerDetailsModal: React.FC<{
             }, [] as any[]);
 
     }, [summary?.customerId, allCustomerSales, allCustomerPayments, sales, payments]);
+
+    // Helper function to render description with clickable invoice numbers
+    const renderDescriptionWithInvoiceLink = (transaction: any) => {
+        const { description, invoiceNumber } = transaction;
+        
+        if (!invoiceNumber) {
+            return <span>{description}</span>;
+        }
+
+        // Find the invoice number in the description (format: "شراء - فاتورة #INV-123" or "إرجاع - فاتورة #INV-123" or "دفعة - نقدي (فاتورة #INV-123)")
+        const invoicePattern = `#${invoiceNumber}`;
+        const index = description.indexOf(invoicePattern);
+        
+        if (index === -1) {
+            return <span>{description}</span>;
+        }
+
+        const before = description.substring(0, index);
+        const after = description.substring(index + invoicePattern.length);
+        
+        // Build invoice URL
+        const storeId = user?.storeId;
+        const invoiceUrl = storeId 
+            ? `/invoice/${storeId}/${invoiceNumber}`
+            : `/invoice/${invoiceNumber}`;
+
+        const handleInvoiceClick = (e: React.MouseEvent) => {
+            e.preventDefault();
+            e.stopPropagation();
+            window.open(invoiceUrl, '_blank', 'noopener,noreferrer');
+        };
+
+        return (
+            <span>
+                {before}
+                <a
+                    href={invoiceUrl}
+                    onClick={handleInvoiceClick}
+                    className="text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 underline cursor-pointer font-medium print:text-black print:no-underline"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                >
+                    {invoicePattern}
+                </a>
+                {after}
+            </span>
+        );
+    };
 
     if (!summary) return null;
 
@@ -1016,10 +1090,37 @@ const CustomerDetailsModal: React.FC<{
     // Get address to display - use state or fallback to localStorage
     const addressToDisplay = storeAddress || settings?.storeAddress || '';
 
-    return (
-        <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4" onClick={onClose}>
-            <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-3xl text-right" onClick={e => e.stopPropagation()}>
-                <div id="printable-receipt" className="p-6 customer-statement-print">
+    const modalContent = (
+        <>
+            <div 
+                className="fixed inset-0 bg-black bg-opacity-60" 
+                onClick={onClose}
+                style={{ 
+                    position: 'fixed',
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    margin: 0,
+                    padding: 0,
+                    zIndex: 9998
+                }}
+            />
+            <div 
+                className="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-3xl text-right flex flex-col overflow-hidden" 
+                onClick={e => e.stopPropagation()}
+                style={{
+                    position: 'fixed',
+                    top: '50%',
+                    left: '50%',
+                    transform: 'translate(-50%, -50%)',
+                    maxHeight: '90vh',
+                    maxWidth: '90vw',
+                    zIndex: 9999,
+                    margin: 0
+                }}
+            >
+                <div id="printable-receipt" className="p-6 customer-statement-print overflow-y-auto flex-1 min-h-0">
                     {/* Store Header - visible in print */}
                     {(businessNameToDisplay || addressToDisplay) && (
                         <div className="text-center mb-4 pb-4 border-b dark:border-gray-700">
@@ -1065,7 +1166,7 @@ const CustomerDetailsModal: React.FC<{
                         </div>
                     </div>
                     {/* Transaction History Table - Only shows transaction summaries, NOT full invoice details */}
-                    <div className="mt-4 max-h-96 overflow-y-auto statement-table-container">
+                    <div className="mt-4 max-h-[50vh] overflow-y-auto statement-table-container">
                         {isLoadingTransactions ? (
                             <div className="text-center py-8 text-gray-500 dark:text-gray-400">
                                 <p>جاري تحميل جميع المعاملات...</p>
@@ -1080,33 +1181,43 @@ const CustomerDetailsModal: React.FC<{
                                     <tr>
                                         <th className="p-2 text-xs font-medium uppercase text-right statement-col-date">{AR_LABELS.date}</th>
                                         <th className="p-2 text-xs font-medium uppercase text-right statement-col-description">{AR_LABELS.description}</th>
-                                        <th className="p-2 text-xs font-medium uppercase text-right statement-col-debit">{AR_LABELS.debit}</th>
-                                        <th className="p-2 text-xs font-medium uppercase text-right statement-col-credit">{AR_LABELS.creditTerm}</th>
+                                        <th className="p-2 text-xs font-medium uppercase text-right statement-col-amount">{AR_LABELS.amount}</th>
                                         <th className="p-2 text-xs font-medium uppercase text-right statement-col-balance">{AR_LABELS.balance}</th>
                                     </tr>
                                 </thead>
                                  <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
-                                     {transactions.map((t, i) => (
-                                         <tr key={i}>
-                                             <td className="p-2 text-sm statement-col-date">{formatDate(t.date)}</td>
-                                             <td className="p-2 text-sm statement-col-description">{t.description}</td>
-                                             <td className="p-2 text-sm text-right font-mono statement-col-debit">{t.debit > 0 ? formatStatementNumber(t.debit, (val) => formatCurrency(val, { minimumFractionDigits: 0, maximumFractionDigits: 2 })) : '-'}</td>
-                                             <td className="p-2 text-sm text-right font-mono statement-col-credit print-text-black">{t.credit > 0 ? formatStatementNumber(t.credit, (val) => formatCurrency(val, { minimumFractionDigits: 0, maximumFractionDigits: 2 })) : '-'}</td>
-                                             <td className="p-2 text-sm text-right font-mono font-semibold statement-col-balance">{formatCurrency(t.balance)}</td>
-                                         </tr>
-                                     ))}
+                                     {transactions.map((t, i) => {
+                                         // Calculate amount: positive for debits, negative for credits
+                                         const amount = t.debit > 0 ? t.debit : (t.credit > 0 ? -t.credit : 0);
+                                         const amountDisplay = amount !== 0 
+                                             ? (amount > 0 ? '+' : '-') + formatStatementNumber(Math.abs(amount), (val) => formatCurrency(val, { minimumFractionDigits: 0, maximumFractionDigits: 2, showSymbol: false }))
+                                             : '-';
+                                         return (
+                                             <tr key={i}>
+                                                 <td className="p-2 text-sm statement-col-date">{formatDate(t.date)}</td>
+                                                 <td className="p-2 text-sm statement-col-description">{renderDescriptionWithInvoiceLink(t)}</td>
+                                                 <td className={`p-2 text-sm text-right font-mono statement-col-amount print-text-black ${amount !== 0 ? (amount > 0 ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400') : ''}`}>
+                                                     {amountDisplay}
+                                                 </td>
+                                                 <td className="p-2 text-sm text-right font-mono font-semibold statement-col-balance">{formatCurrency(t.balance)}</td>
+                                             </tr>
+                                         );
+                                     })}
                                 </tbody>
                             </table>
                         )}
                     </div>
                 </div>
-                 <div className="flex justify-start space-x-4 space-x-reverse p-4 bg-gray-50 dark:bg-gray-800/50 border-t dark:border-gray-700 rounded-b-lg print-hidden">
+                 <div className="flex justify-start space-x-4 space-x-reverse p-4 bg-gray-50 dark:bg-gray-800/50 border-t dark:border-gray-700 rounded-b-lg print-hidden flex-shrink-0">
                     <button onClick={() => printReceipt('printable-receipt')} className="inline-flex items-center px-4 py-2 bg-blue-500 text-white rounded-md"><PrintIcon/><span className="mr-2">{AR_LABELS.printReceipt}</span></button>
                     <button onClick={onClose} className="px-4 py-2 bg-gray-200 dark:bg-gray-600 text-gray-800 dark:text-gray-200 rounded-md">{AR_LABELS.cancel}</button>
                 </div>
             </div>
-        </div>
+        </>
     );
+
+    // Render modal using portal to ensure it's at root level, unaffected by parent containers
+    return createPortal(modalContent, document.body);
 };
 
 // --- FILTER MODAL COMPONENT ---

@@ -421,7 +421,7 @@ const generateThermalStyles = (printSettings: PrinterConfig & { paperSize: strin
         border-spacing: 0 !important;
         margin: 4px 0 !important;
       }
-      /* Compact column widths for thermal printers - all 5 columns must fit: Date(12%) + Description(30%) + Debit(10%) + Credit(10%) + Balance(18%) = 80% (leaving room for borders/padding) */
+      /* Compact column widths for thermal printers - all 4 columns must fit: Date(12%) + Description(35%) + Amount(20%) + Balance(18%) = 85% (leaving room for borders/padding) */
       #printable-receipt .statement-transactions-table .statement-col-date {
         width: 12% !important;
         min-width: 0 !important;
@@ -435,9 +435,9 @@ const generateThermalStyles = (printSettings: PrinterConfig & { paperSize: strin
         border: 1px solid #000 !important;
       }
       #printable-receipt .statement-transactions-table .statement-col-description {
-        width: 30% !important;
+        width: 35% !important;
         min-width: 0 !important;
-        max-width: 30% !important;
+        max-width: 35% !important;
         text-align: right !important;
         word-wrap: break-word !important;
         padding: 1px !important;
@@ -447,23 +447,10 @@ const generateThermalStyles = (printSettings: PrinterConfig & { paperSize: strin
         line-height: 1.2 !important;
         border: 1px solid #000 !important;
       }
-      #printable-receipt .statement-transactions-table .statement-col-debit {
-        width: 10% !important;
+      #printable-receipt .statement-transactions-table .statement-col-amount {
+        width: 20% !important;
         min-width: 0 !important;
-        max-width: 10% !important;
-        text-align: right !important;
-        font-family: 'Courier New', monospace !important;
-        padding: 1px !important;
-        font-size: ${Math.max(tableFontSize - 2, 7)}px !important;
-        white-space: nowrap !important;
-        overflow: hidden !important;
-        text-overflow: ellipsis !important;
-        border: 1px solid #000 !important;
-      }
-      #printable-receipt .statement-transactions-table .statement-col-credit {
-        width: 10% !important;
-        min-width: 0 !important;
-        max-width: 10% !important;
+        max-width: 20% !important;
         text-align: right !important;
         font-family: 'Courier New', monospace !important;
         color: #000000 !important;
@@ -494,8 +481,7 @@ const generateThermalStyles = (printSettings: PrinterConfig & { paperSize: strin
       /* Ensure table headers also use compact sizing for thermal printers */
       #printable-receipt .statement-transactions-table th.statement-col-date,
       #printable-receipt .statement-transactions-table th.statement-col-description,
-      #printable-receipt .statement-transactions-table th.statement-col-debit,
-      #printable-receipt .statement-transactions-table th.statement-col-credit,
+      #printable-receipt .statement-transactions-table th.statement-col-amount,
       #printable-receipt .statement-transactions-table th.statement-col-balance {
         padding: 1px !important;
         font-size: ${Math.max(tableFontSize - 2, 7)}px !important;
@@ -631,7 +617,7 @@ const generateThermalStyles = (printSettings: PrinterConfig & { paperSize: strin
           width: 100% !important;
           max-width: 100% !important;
         }
-        /* Statement table column alignment for thermal printers - Ensure all 5 columns fit */
+        /* Statement table column alignment for thermal printers - Ensure all 4 columns fit */
         #printable-receipt .statement-transactions-table {
           width: 100% !important;
           max-width: 100% !important;
@@ -649,25 +635,17 @@ const generateThermalStyles = (printSettings: PrinterConfig & { paperSize: strin
           overflow: hidden !important;
         }
         #printable-receipt .statement-transactions-table .statement-col-description {
-          width: 30% !important;
-          max-width: 30% !important;
+          width: 35% !important;
+          max-width: 35% !important;
           text-align: right !important;
           padding: 1px !important;
           font-size: ${Math.max(tableFontSize - 2, 7)}px !important;
           word-wrap: break-word !important;
           overflow-wrap: break-word !important;
         }
-        #printable-receipt .statement-transactions-table .statement-col-debit {
-          width: 10% !important;
-          max-width: 10% !important;
-          text-align: right !important;
-          padding: 1px !important;
-          font-size: ${Math.max(tableFontSize - 2, 7)}px !important;
-          overflow: hidden !important;
-        }
-        #printable-receipt .statement-transactions-table .statement-col-credit {
-          width: 10% !important;
-          max-width: 10% !important;
+        #printable-receipt .statement-transactions-table .statement-col-amount {
+          width: 20% !important;
+          max-width: 20% !important;
           text-align: right !important;
           padding: 1px !important;
           font-size: ${Math.max(tableFontSize - 2, 7)}px !important;
@@ -976,20 +954,13 @@ const generateA4Styles = (printSettings: PrinterConfig & { paperSize: string; pa
       }
       #printable-receipt .statement-transactions-table .statement-col-description {
         width: auto !important;
-        min-width: 150px !important;
+        min-width: 200px !important;
         text-align: right !important;
         word-wrap: break-word !important;
       }
-      #printable-receipt .statement-transactions-table .statement-col-debit {
-        width: 12% !important;
-        min-width: 80px !important;
-        text-align: right !important;
-        font-family: 'Courier New', monospace !important;
-        white-space: nowrap !important;
-      }
-      #printable-receipt .statement-transactions-table .statement-col-credit {
-        width: 12% !important;
-        min-width: 80px !important;
+      #printable-receipt .statement-transactions-table .statement-col-amount {
+        width: 18% !important;
+        min-width: 120px !important;
         text-align: right !important;
         font-family: 'Courier New', monospace !important;
         white-space: nowrap !important;
@@ -1163,8 +1134,7 @@ const generateA4Styles = (printSettings: PrinterConfig & { paperSize: string; pa
         #printable-receipt .statement-transactions-table .statement-col-description {
           text-align: right !important;
         }
-        #printable-receipt .statement-transactions-table .statement-col-debit,
-        #printable-receipt .statement-transactions-table .statement-col-credit,
+        #printable-receipt .statement-transactions-table .statement-col-amount,
         #printable-receipt .statement-transactions-table .statement-col-balance {
           text-align: right !important;
           font-family: 'Courier New', monospace !important;
@@ -1423,13 +1393,13 @@ const extractInvoiceData = (element: HTMLElement): InvoiceData | null => {
       return null; // Don't extract invoice data from statements
     }
     
-    // Check table headers to identify statement tables (Date, Description, Debit, Credit, Balance)
+    // Check table headers to identify statement tables (Date, Description, Amount, Balance)
     const allTables = element.querySelectorAll('table');
     let hasStatementTable = false;
     allTables.forEach(table => {
       const headers = Array.from(table.querySelectorAll('thead th, th')).map(th => th.textContent?.trim() || '');
-      // Check if this looks like a statement table (has Debit/Credit columns)
-      if (headers.some(h => h.includes('مدين') || h.includes('دائن') || h.includes('Debit') || h.includes('Credit'))) {
+      // Check if this looks like a statement table (has Amount column or old Debit/Credit columns)
+      if (headers.some(h => h.includes('المبلغ') || h.includes('مدين') || h.includes('دائن') || h.includes('Amount') || h.includes('Debit') || h.includes('Credit'))) {
         hasStatementTable = true;
       }
     });
