@@ -1122,9 +1122,20 @@ const extractInvoiceData = (element: HTMLElement): InvoiceData | null => {
     const remainingAmountAttr = element.getAttribute('data-remaining-amount');
     
     if (paymentMethodAttr) {
-      paymentMethod = paymentMethodAttr;
+      // Normalize payment method: 'card' -> 'visa', keep others as-is
+      const normalizedMethod = paymentMethodAttr.toLowerCase();
+      paymentMethod = normalizedMethod === 'card' ? 'visa' : normalizedMethod;
       paidAmount = paidAmountAttr ? parseFloat(paidAmountAttr) : undefined;
       remainingAmount = remainingAmountAttr ? parseFloat(remainingAmountAttr) : undefined;
+      
+      // For Cash and Visa: ensure no remaining balance is shown (full amount is considered paid)
+      if (paymentMethod === 'cash' || paymentMethod === 'visa') {
+        remainingAmount = undefined; // Don't show remaining balance for Cash/Visa
+        // Paid amount should equal grand total for Cash/Visa
+        if (paidAmount === undefined) {
+          paidAmount = grandTotal;
+        }
+      }
     }
     
     // Also try to extract from invoice-info section if not found in attributes
@@ -1137,13 +1148,55 @@ const extractInvoiceData = (element: HTMLElement): InvoiceData | null => {
         const value = valueEl?.textContent?.trim() || '';
         
         if (label.includes('طريقة الدفع') || label.includes('Payment') || label.includes('Payment Method')) {
-          paymentMethod = value.toLowerCase();
+          const normalizedMethod = value.toLowerCase();
+          paymentMethod = normalizedMethod === 'card' ? 'visa' : normalizedMethod;
         } else if (label.includes('المدفوع') || label.includes('Paid') || label.includes('Paid Amount')) {
           paidAmount = parseFloat(value.replace(/[^\d.-]/g, '')) || undefined;
         } else if (label.includes('المتبقي') || label.includes('Remaining') || label.includes('Balance')) {
           remainingAmount = parseFloat(value.replace(/[^\d.-]/g, '')) || undefined;
         }
       });
+      
+      // For Cash and Visa: ensure no remaining balance is shown
+      if (paymentMethod && (paymentMethod === 'cash' || paymentMethod === 'visa')) {
+        remainingAmount = undefined;
+        if (paidAmount === undefined) {
+          paidAmount = grandTotal;
+        }
+      }
+    }
+    
+    // Also try to extract from payment-info section
+    const paymentInfoEl = element.querySelector('.payment-info');
+    if (!paymentMethod && paymentInfoEl) {
+      const paymentMethodEl = paymentInfoEl.querySelector('.payment-method .payment-value, .payment-method span:last-child');
+      if (paymentMethodEl) {
+        const methodText = paymentMethodEl.textContent?.trim() || '';
+        // Map Arabic text back to English
+        if (methodText.includes('نقد') || methodText.toLowerCase().includes('cash')) {
+          paymentMethod = 'cash';
+        } else if (methodText.includes('فيزا') || methodText.toLowerCase().includes('visa') || methodText.toLowerCase().includes('card')) {
+          paymentMethod = 'visa';
+        } else if (methodText.includes('آجل') || methodText.toLowerCase().includes('credit')) {
+          paymentMethod = 'credit';
+        }
+      }
+      
+      // Extract paid amount and remaining amount from payment details
+      if (paymentMethod === 'credit') {
+        const paidAmountEl = paymentInfoEl.querySelector('.payment-details .payment-detail-row:has(.payment-detail-label:contains("المدفوع")) .payment-detail-value');
+        const remainingAmountEl = paymentInfoEl.querySelector('.payment-details .payment-detail-row:has(.payment-detail-label:contains("المتبقي")) .payment-detail-value');
+        
+        if (paidAmountEl) {
+          const paidText = paidAmountEl.textContent?.trim() || '';
+          paidAmount = parseFloat(paidText.replace(/[^\d.-]/g, '')) || undefined;
+        }
+        
+        if (remainingAmountEl) {
+          const remainingText = remainingAmountEl.textContent?.trim() || '';
+          remainingAmount = parseFloat(remainingText.replace(/[^\d.-]/g, '')) || undefined;
+        }
+      }
     }
     
     return {
@@ -1268,20 +1321,27 @@ const generateInvoiceHTML = (data: InvoiceData, printSettings: ReturnType<typeof
         <div class="grand-total-amount">${formatCurrency(data.grandTotal)}</div>
       </div>
       
-      <!-- Payment Information -->
+      <!-- Payment Information - Clearly Visible Near Totals -->
       ${data.paymentMethod ? `
       <div class="payment-info">
         <div class="payment-method">
           <span class="payment-label">طريقة الدفع:</span>
           <span class="payment-value">${(() => {
             const method = data.paymentMethod.toLowerCase();
-            if (method === 'cash') return 'نقد';
-            if (method === 'card' || method === 'visa') return 'فيزا';
-            if (method === 'credit') return 'آجل';
+            // Normalize: 'card' -> 'visa'
+            const normalizedMethod = method === 'card' ? 'visa' : method;
+            if (normalizedMethod === 'cash') return 'نقد';
+            if (normalizedMethod === 'visa') return 'فيزا';
+            if (normalizedMethod === 'credit') return 'آجل';
             return data.paymentMethod;
           })()}</span>
         </div>
-        ${data.paymentMethod.toLowerCase() === 'credit' && (data.paidAmount !== undefined || data.remainingAmount !== undefined) ? `
+        ${(() => {
+          const method = data.paymentMethod.toLowerCase();
+          const normalizedMethod = method === 'card' ? 'visa' : method;
+          // Only show payment details for Credit payments
+          return normalizedMethod === 'credit' && (data.paidAmount !== undefined || data.remainingAmount !== undefined);
+        })() ? `
         <div class="payment-details">
           ${data.paidAmount !== undefined ? `
           <div class="payment-detail-row">

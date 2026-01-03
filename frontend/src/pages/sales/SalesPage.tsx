@@ -306,7 +306,26 @@ const SaleDetailsModal: React.FC<{ sale: SaleTransaction | null, onClose: () => 
     return (
         <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4" onClick={onClose}>
             <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-2xl text-right flex flex-col max-h-[90vh] overflow-hidden" onClick={e => e.stopPropagation()}>
-                <div id="printable-receipt" className="w-full max-w-md bg-white dark:bg-gray-800 p-4 sm:p-6 rounded-lg shadow-lg text-right mx-auto overflow-y-auto flex-1 min-h-0 hide-scrollbar">
+                {(() => {
+                    // Calculate payment method for data attributes
+                    const method = sale.paymentMethod ? String(sale.paymentMethod).toLowerCase() : 'cash';
+                    const normalizedMethod = method === 'card' ? 'visa' : method;
+                    const grandTotalValue = isReturn ? -Math.abs(sale.totalAmount) : sale.totalAmount;
+                    const paidAmount = (normalizedMethod === 'cash' || normalizedMethod === 'visa') 
+                        ? Math.abs(grandTotalValue) 
+                        : (sale.paidAmount !== undefined ? sale.paidAmount : 0);
+                    const remainingAmount = (normalizedMethod === 'cash' || normalizedMethod === 'visa')
+                        ? undefined
+                        : (sale.remainingAmount !== undefined ? sale.remainingAmount : (grandTotalValue - paidAmount));
+                    
+                    return (
+                        <div 
+                            id="printable-receipt" 
+                            className="w-full max-w-md bg-white dark:bg-gray-800 p-4 sm:p-6 rounded-lg shadow-lg text-right mx-auto overflow-y-auto flex-1 min-h-0 hide-scrollbar"
+                            data-payment-method={normalizedMethod}
+                            data-paid-amount={paidAmount}
+                            data-remaining-amount={remainingAmount}
+                        >
                     <div className="text-center mb-4 sm:mb-5">
                         <h2 className="text-xl sm:text-2xl font-bold text-gray-800 dark:text-gray-100 mt-2 print-hidden">{isReturn ? AR_LABELS.returnCompleted || 'إرجاع مكتمل' : AR_LABELS.saleCompleted || 'بيع مكتمل'}</h2>
                         
@@ -421,20 +440,54 @@ const SaleDetailsModal: React.FC<{ sale: SaleTransaction | null, onClose: () => 
                                 {formatCurrency(isReturn ? -Math.abs(sale.totalAmount) : sale.totalAmount)}
                             </span>
                         </div>
-                        {sale.paidAmount > 0 && (
-                            <div className="flex justify-between py-1.5 mt-2">
-                                <span className="text-gray-600 dark:text-gray-400 font-medium">{AR_LABELS.amountPaid}:</span>
-                                <span className={`font-semibold ${isReturn ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400'}`}>
-                                    {formatCurrency(isReturn ? -Math.abs(sale.paidAmount) : sale.paidAmount)}
-                                </span>
-                            </div>
-                        )}
-                        {sale.remainingAmount !== 0 && (
-                            <div className="flex justify-between py-1.5">
-                                <span className="text-gray-600 dark:text-gray-400 font-medium">{AR_LABELS.remaining}:</span>
-                                <span className="font-semibold text-red-600 dark:text-red-400">
-                                    {formatCurrency(isReturn ? -Math.abs(sale.remainingAmount) : sale.remainingAmount)}
-                                </span>
+                        
+                        {/* Payment Information Section - Clearly Visible Near Totals */}
+                        {sale.paymentMethod && (
+                            <div className="payment-info mt-4 pt-4 border-t border-dashed border-gray-300 dark:border-gray-600">
+                                <div className="payment-method flex justify-between items-center py-1.5">
+                                    <span className="text-xs text-gray-500 dark:text-gray-400 font-semibold uppercase tracking-wide">
+                                        {AR_LABELS.paymentMethod}:
+                                    </span>
+                                    <span className="text-sm font-bold text-gray-900 dark:text-gray-100 uppercase">
+                                        {(() => {
+                                            const method = String(sale.paymentMethod).toLowerCase();
+                                            const normalizedMethod = method === 'card' ? 'visa' : method;
+                                            if (normalizedMethod === 'cash') return 'نقد';
+                                            if (normalizedMethod === 'visa') return 'فيزا';
+                                            if (normalizedMethod === 'credit') return 'آجل';
+                                            return sale.paymentMethod;
+                                        })()}
+                                    </span>
+                                </div>
+                                {(() => {
+                                    const method = String(sale.paymentMethod).toLowerCase();
+                                    const normalizedMethod = method === 'card' ? 'visa' : method;
+                                    // Only show payment details for Credit payments
+                                    return normalizedMethod === 'credit' && (sale.paidAmount !== undefined || sale.remainingAmount !== undefined);
+                                })() && (
+                                    <div className="payment-details space-y-1.5 pt-2 border-t border-dashed border-gray-200 dark:border-gray-700">
+                                        {sale.paidAmount !== undefined && (
+                                            <div className="payment-detail-row flex justify-between items-center">
+                                                <span className="text-xs text-gray-500 dark:text-gray-400 font-medium">
+                                                    المدفوع:
+                                                </span>
+                                                <span className="text-xs font-bold text-gray-900 dark:text-gray-100">
+                                                    {formatCurrency(isReturn ? -Math.abs(sale.paidAmount) : sale.paidAmount)}
+                                                </span>
+                                            </div>
+                                        )}
+                                        {sale.remainingAmount !== undefined && sale.remainingAmount > 0 && (
+                                            <div className="payment-detail-row flex justify-between items-center">
+                                                <span className="text-xs text-gray-500 dark:text-gray-400 font-medium">
+                                                    المتبقي:
+                                                </span>
+                                                <span className="text-xs font-bold text-red-600 dark:text-red-400">
+                                                    {formatCurrency(isReturn ? -Math.abs(sale.remainingAmount) : sale.remainingAmount)}
+                                                </span>
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
                             </div>
                         )}
                         {netProfit !== null && (
@@ -451,7 +504,9 @@ const SaleDetailsModal: React.FC<{ sale: SaleTransaction | null, onClose: () => 
                         )}
                     </div>
                     <p className="receipt-footer text-center text-xs mt-6 text-gray-500 dark:text-gray-400">شكراً لتعاملكم معنا!</p>
-                </div>
+                        </div>
+                    );
+                })()}
                 <div className="flex justify-start space-x-4 space-x-reverse p-4 bg-gray-50 dark:bg-gray-800/50 border-t dark:border-gray-700 rounded-b-lg print-hidden flex-shrink-0">
                     <button onClick={handlePrint} className="inline-flex items-center px-4 py-2 bg-blue-500 text-white rounded-md"><PrintIcon/><span className="mr-2">{AR_LABELS.printReceipt}</span></button>
                     <button onClick={onClose} className="px-4 py-2 bg-gray-200 dark:bg-gray-600 text-gray-800 dark:text-gray-200 rounded-md">{AR_LABELS.cancel}</button>

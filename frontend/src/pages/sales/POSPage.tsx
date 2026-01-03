@@ -4927,8 +4927,55 @@ const POSPage: React.FC = () => {
             settingsKeys: settings ? Object.keys(settings) : []
         });
         
+        // Calculate payment information
+        // Get payment method from invoice (could be POSInvoice or SaleTransaction)
+        const paymentMethod = ('paymentMethod' in invoice && invoice.paymentMethod) 
+            ? String(invoice.paymentMethod).toLowerCase() 
+            : null;
+        const grandTotalValue = isReturn 
+            ? -Math.abs('grandTotal' in invoice ? invoice.grandTotal : ('totalAmount' in invoice ? invoice.totalAmount : 0)) 
+            : ('grandTotal' in invoice ? invoice.grandTotal : ('totalAmount' in invoice ? invoice.totalAmount : 0));
+        
+        // Calculate paid amount and remaining amount based on payment method
+        // For Cash and Visa: full amount is paid, no remaining balance
+        // For Credit: check if invoice has paidAmount/remainingAmount, otherwise calculate
+        let paidAmount: number | undefined;
+        let remainingAmount: number | undefined;
+        
+        if (paymentMethod === 'cash' || paymentMethod === 'card' || paymentMethod === 'visa') {
+            // Cash and Visa: full amount is considered paid
+            paidAmount = Math.abs(grandTotalValue);
+            remainingAmount = undefined; // No remaining balance for Cash/Visa
+        } else if (paymentMethod === 'credit') {
+            // Credit: check if invoice has payment details, otherwise assume partial payment
+            if ('paidAmount' in invoice && invoice.paidAmount !== undefined) {
+                paidAmount = invoice.paidAmount;
+            } else {
+                paidAmount = 0; // Default to 0 for credit if not specified
+            }
+            if ('remainingAmount' in invoice && invoice.remainingAmount !== undefined) {
+                remainingAmount = invoice.remainingAmount;
+            } else {
+                remainingAmount = grandTotalValue - (paidAmount || 0); // Calculate remaining
+            }
+        } else {
+            // Default: assume cash payment
+            paidAmount = Math.abs(grandTotalValue);
+            remainingAmount = undefined;
+        }
+        
+        // Normalize payment method for display: 'card' -> 'visa', 'cash' -> 'cash', 'credit' -> 'credit'
+        const displayPaymentMethod = paymentMethod === 'card' ? 'visa' : (paymentMethod || 'cash');
+        
         return (
-            <div id="printable-receipt" className="w-full max-w-md bg-white dark:bg-gray-800 p-6 sm:p-8 rounded-xl shadow-xl text-right" style={{ fontFamily: 'system-ui, -apple-system, "Segoe UI", Arial, sans-serif' }}>
+            <div 
+                id="printable-receipt" 
+                className="w-full max-w-md bg-white dark:bg-gray-800 p-6 sm:p-8 rounded-xl shadow-xl text-right" 
+                style={{ fontFamily: 'system-ui, -apple-system, "Segoe UI", Arial, sans-serif' }}
+                data-payment-method={displayPaymentMethod}
+                data-paid-amount={paidAmount}
+                data-remaining-amount={remainingAmount}
+            >
                 {/* Success Icon (hidden when printing) */}
                 <div className="text-center mb-4 print-hidden">
                     <CheckCircleIcon className={`w-12 h-12 sm:w-16 sm:h-16 ${isReturn ? 'text-blue-500' : 'text-green-500'} mx-auto`} />
@@ -5126,10 +5173,48 @@ const POSPage: React.FC = () => {
                             {isReturn ? AR_LABELS.totalReturnValue : AR_LABELS.grandTotal}
                         </span>
                         <span className={`text-xl font-extrabold ${isReturn ? 'text-red-600 dark:text-red-400' : 'text-orange-600 dark:text-orange-400'}`} style={{ letterSpacing: '-0.02em' }}>
-                            {formatCurrency(isReturn ? -Math.abs('grandTotal' in invoice ? invoice.grandTotal : invoice.totalAmount) : ('grandTotal' in invoice ? invoice.grandTotal : invoice.totalAmount))}
+                            {formatCurrency(grandTotalValue)}
                         </span>
                     </div>
                 </div>
+
+                {/* Payment Information Section - Clearly Visible Near Totals */}
+                {displayPaymentMethod && (
+                    <div className="payment-info mt-6 pt-6" style={{ borderTop: '2px dashed #e5e7eb' }}>
+                        <div className="payment-method flex justify-between items-center py-2 mb-2">
+                            <span className="text-sm text-gray-500 dark:text-gray-400 font-semibold uppercase tracking-wide">
+                                {AR_LABELS.paymentMethod}:
+                            </span>
+                            <span className="text-sm font-bold text-gray-900 dark:text-gray-100 uppercase">
+                                {displayPaymentMethod === 'cash' ? 'نقد' : displayPaymentMethod === 'visa' ? 'فيزا' : displayPaymentMethod === 'credit' ? 'آجل' : displayPaymentMethod}
+                            </span>
+                        </div>
+                        {displayPaymentMethod === 'credit' && (paidAmount !== undefined || remainingAmount !== undefined) && (
+                            <div className="payment-details space-y-2 pt-2" style={{ borderTop: '1px dashed #d1d5db' }}>
+                                {paidAmount !== undefined && (
+                                    <div className="payment-detail-row flex justify-between items-center">
+                                        <span className="text-sm text-gray-500 dark:text-gray-400 font-medium">
+                                            المدفوع:
+                                        </span>
+                                        <span className="text-sm font-bold text-gray-900 dark:text-gray-100">
+                                            {formatCurrency(paidAmount)}
+                                        </span>
+                                    </div>
+                                )}
+                                {remainingAmount !== undefined && remainingAmount > 0 && (
+                                    <div className="payment-detail-row flex justify-between items-center">
+                                        <span className="text-sm text-gray-500 dark:text-gray-400 font-medium">
+                                            المتبقي:
+                                        </span>
+                                        <span className="text-sm font-bold text-red-600 dark:text-red-400">
+                                            {formatCurrency(remainingAmount)}
+                                        </span>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+                    </div>
+                )}
 
                 {/* Footer - Modern Closing with Decorative Element */}
                 <div className="receipt-footer text-center mt-10 pt-6" style={{ borderTop: '1px dashed #e5e7eb' }}>
