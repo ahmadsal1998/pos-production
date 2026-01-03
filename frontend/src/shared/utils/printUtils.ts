@@ -980,7 +980,8 @@ interface InvoiceData {
   items: Array<{
     name: string;
     quantity: number;
-    price: number;
+    unitPrice: number;
+    lineTotal: number;
   }>;
   subtotal: number;
   discount: number;
@@ -1040,16 +1041,32 @@ const extractInvoiceData = (element: HTMLElement): InvoiceData | null => {
     const tableRows = element.querySelectorAll('table tbody tr');
     tableRows.forEach(row => {
       const cells = row.querySelectorAll('td');
-      if (cells.length >= 3) {
+      // Table structure: Product | Quantity | Unit Price | Total (4 columns)
+      if (cells.length >= 4) {
         const name = cells[0]?.textContent?.trim() || '';
         const quantityText = cells[1]?.textContent?.trim() || '0';
         const quantity = parseFloat(quantityText.replace(/[^\d.-]/g, '')) || 0;
-        const priceText = cells[2]?.textContent?.trim() || cells[3]?.textContent?.trim() || '0';
+        const unitPriceText = cells[2]?.textContent?.trim() || '0';
+        const lineTotalText = cells[3]?.textContent?.trim() || '0';
         // Remove currency symbols and parse
-        const price = parseFloat(priceText.replace(/[^\d.-]/g, '')) || 0;
+        const unitPrice = parseFloat(unitPriceText.replace(/[^\d.-]/g, '')) || 0;
+        const lineTotal = parseFloat(lineTotalText.replace(/[^\d.-]/g, '')) || 0;
         
         if (name && quantity > 0) {
-          items.push({ name, quantity, price });
+          items.push({ name, quantity, unitPrice, lineTotal });
+        }
+      } else if (cells.length >= 3) {
+        // Fallback for 3-column tables: Product | Quantity | Price (assume price is line total)
+        const name = cells[0]?.textContent?.trim() || '';
+        const quantityText = cells[1]?.textContent?.trim() || '0';
+        const quantity = parseFloat(quantityText.replace(/[^\d.-]/g, '')) || 0;
+        const lineTotalText = cells[2]?.textContent?.trim() || '0';
+        const lineTotal = parseFloat(lineTotalText.replace(/[^\d.-]/g, '')) || 0;
+        // Calculate unit price from line total and quantity
+        const unitPrice = quantity > 0 ? lineTotal / quantity : 0;
+        
+        if (name && quantity > 0) {
+          items.push({ name, quantity, unitPrice, lineTotal });
         }
       }
     });
@@ -1135,9 +1152,10 @@ const generateInvoiceHTML = (data: InvoiceData, printSettings: ReturnType<typeof
   // Generate items table rows
   const itemsRows = data.items.map(item => `
     <tr>
-      <td>${item.name}</td>
-      <td class="center-text">${item.quantity}</td>
-      <td style="text-align: right;">${formatCurrency(item.price)}</td>
+      <td class="col-name">${item.name}</td>
+      <td class="col-qty">${item.quantity}</td>
+      <td class="col-unit-price">${formatCurrency(item.unitPrice)}</td>
+      <td class="col-total">${formatCurrency(item.lineTotal)}</td>
     </tr>
   `).join('');
   
@@ -1174,7 +1192,8 @@ const generateInvoiceHTML = (data: InvoiceData, printSettings: ReturnType<typeof
           <tr>
             <th class="col-name">المنتج</th>
             <th class="col-qty">الكمية</th>
-            <th class="col-price">السعر</th>
+            <th class="col-unit-price">سعر الوحدة</th>
+            <th class="col-total">الإجمالي</th>
           </tr>
         </thead>
         <tbody>
@@ -1246,8 +1265,14 @@ const generateUniversalInvoiceStyles = (printSettings: ReturnType<typeof getPrin
         font-size: 14px;
         line-height: 1.4;
         background-color: #f0f0f0;
-        color: #333;
+        color: #000;
         direction: rtl;
+      }
+      
+      /* Ensure all text is dark black */
+      .invoice-container,
+      .invoice-container * {
+        color: #000 !important;
       }
       
       /* -------------------------------------
@@ -1293,7 +1318,7 @@ const generateUniversalInvoiceStyles = (printSettings: ReturnType<typeof getPrin
         padding: 0 !important;
         font-size: 1.2em !important;
         font-weight: bold !important;
-        color: #333 !important;
+        color: #000 !important;
         text-align: center !important;
         display: block !important;
         width: 100%;
@@ -1306,6 +1331,11 @@ const generateUniversalInvoiceStyles = (printSettings: ReturnType<typeof getPrin
         font-weight: bold;
         font-size: 0.9em;
         margin-bottom: 15px;
+        color: #000;
+      }
+      
+      .invoice-meta span {
+        color: #000;
       }
       
       /* -------------------------------------
@@ -1326,7 +1356,7 @@ const generateUniversalInvoiceStyles = (printSettings: ReturnType<typeof getPrin
         font-weight: bold;
         text-transform: uppercase;
         font-size: 0.8em;
-        color: #666;
+        color: #000;
         border-bottom: 1px solid #eee;
         margin-bottom: 4px;
       }
@@ -1342,24 +1372,66 @@ const generateUniversalInvoiceStyles = (printSettings: ReturnType<typeof getPrin
       
       th {
         background-color: #eee;
-        text-align: left;
         padding: 5px;
         font-size: 0.85em;
         font-weight: bold;
         border-bottom: 1px solid #333;
+        color: #000;
       }
       
       td {
         padding: 5px;
         border-bottom: 1px solid #eee;
         font-size: 0.9em;
+        color: #000;
       }
       
-      .col-qty { width: 15%; text-align: center; }
-      .col-price { width: 25%; text-align: right; }
-      .col-name { width: 60%; }
+      /* Column alignment - consistent for headers and data */
+      .col-name { 
+        width: 40%; 
+        color: #000; 
+        text-align: right; /* RTL: Arabic text right-aligned */
+      }
       
-      th:nth-child(3) { text-align: right; }
+      .col-qty { 
+        width: 12%; 
+        text-align: center; 
+        color: #000; 
+      }
+      
+      .col-unit-price { 
+        width: 24%; 
+        text-align: right; 
+        color: #000; 
+      }
+      
+      .col-total { 
+        width: 24%; 
+        text-align: right; 
+        font-weight: 600; 
+        color: #000; 
+      }
+      
+      /* Ensure headers match data cell alignment */
+      th.col-name,
+      td.col-name {
+        text-align: right;
+      }
+      
+      th.col-qty,
+      td.col-qty {
+        text-align: center;
+      }
+      
+      th.col-unit-price,
+      td.col-unit-price {
+        text-align: right;
+      }
+      
+      th.col-total,
+      td.col-total {
+        text-align: right;
+      }
       
       /* -------------------------------------
          TOTALS SECTION
@@ -1377,6 +1449,11 @@ const generateUniversalInvoiceStyles = (printSettings: ReturnType<typeof getPrin
         width: 100%;
         max-width: 200px;
         margin-bottom: 4px;
+        color: #000;
+      }
+      
+      .total-row span {
+        color: #000;
       }
       
       /* Grand Total - Clear and Prominent */
@@ -1407,13 +1484,32 @@ const generateUniversalInvoiceStyles = (printSettings: ReturnType<typeof getPrin
       
       .center-text { text-align: center; }
       
+      /* Ensure all text in invoice is dark black */
+      .party-block,
+      .party-block strong,
+      .party-block * {
+        color: #000;
+      }
+      
+      .invoice-meta span {
+        color: #000;
+      }
+      
+      /* Ensure all table content is black */
+      table th,
+      table td,
+      table th *,
+      table td * {
+        color: #000;
+      }
+      
       .thank-you-message {
         text-align: center;
         margin-top: 15px;
         margin-bottom: 0;
         padding-bottom: 0;
         font-size: 0.8em;
-        color: #777;
+        color: #000;
       }
       
       /* -------------------------------------
@@ -1449,6 +1545,47 @@ const generateUniversalInvoiceStyles = (printSettings: ReturnType<typeof getPrin
         display: block !important;
         width: 100% !important;
       }
+      
+      /* Table columns for 58mm thermal */
+      .width-58mm .col-name { 
+        width: 35% !important; 
+        font-size: 0.85em !important; 
+        text-align: right !important;
+      }
+      .width-58mm .col-qty { 
+        width: 10% !important; 
+        font-size: 0.85em !important; 
+        text-align: center !important;
+      }
+      .width-58mm .col-unit-price { 
+        width: 27.5% !important; 
+        font-size: 0.85em !important; 
+        text-align: right !important;
+      }
+      .width-58mm .col-total { 
+        width: 27.5% !important; 
+        font-size: 0.85em !important; 
+        text-align: right !important;
+      }
+      
+      /* Ensure headers match data alignment for 58mm */
+      .width-58mm th.col-name,
+      .width-58mm td.col-name {
+        text-align: right !important;
+      }
+      .width-58mm th.col-qty,
+      .width-58mm td.col-qty {
+        text-align: center !important;
+      }
+      .width-58mm th.col-unit-price,
+      .width-58mm td.col-unit-price {
+        text-align: right !important;
+      }
+      .width-58mm th.col-total,
+      .width-58mm td.col-total {
+        text-align: right !important;
+      }
+      
       .width-58mm .grand-total {
         margin-top: 10px !important;
         padding-top: 10px !important;
@@ -1515,6 +1652,42 @@ const generateUniversalInvoiceStyles = (printSettings: ReturnType<typeof getPrin
         font-size: 1.3em !important;
         font-weight: 900 !important;
         color: #000 !important;
+      }
+      
+      /* Table columns for 80mm thermal */
+      .width-80mm .col-name { 
+        width: 38% !important; 
+        text-align: right !important;
+      }
+      .width-80mm .col-qty { 
+        width: 11% !important; 
+        text-align: center !important;
+      }
+      .width-80mm .col-unit-price { 
+        width: 25.5% !important; 
+        text-align: right !important;
+      }
+      .width-80mm .col-total { 
+        width: 25.5% !important; 
+        text-align: right !important;
+      }
+      
+      /* Ensure headers match data alignment for 80mm */
+      .width-80mm th.col-name,
+      .width-80mm td.col-name {
+        text-align: right !important;
+      }
+      .width-80mm th.col-qty,
+      .width-80mm td.col-qty {
+        text-align: center !important;
+      }
+      .width-80mm th.col-unit-price,
+      .width-80mm td.col-unit-price {
+        text-align: right !important;
+      }
+      .width-80mm th.col-total,
+      .width-80mm td.col-total {
+        text-align: right !important;
       }
       
       /* -------------------------------------
@@ -1600,7 +1773,7 @@ const generateUniversalInvoiceStyles = (printSettings: ReturnType<typeof getPrin
           padding: 0 !important;
           font-size: 1.2em !important;
           font-weight: bold !important;
-          color: #333 !important;
+          color: #000 !important;
           text-align: center !important;
           width: 100% !important;
           line-height: 1.4 !important;
@@ -1640,7 +1813,51 @@ const generateUniversalInvoiceStyles = (printSettings: ReturnType<typeof getPrin
           margin-bottom: 0 !important;
           padding-bottom: 0 !important;
           font-size: 0.8em !important;
-          color: #777 !important;
+          color: #000 !important;
+        }
+        
+        /* Force all text to be black in print */
+        .invoice-container,
+        .invoice-container * {
+          color: #000 !important;
+        }
+        
+        /* Ensure table text is black */
+        table,
+        table * {
+          color: #000 !important;
+        }
+        
+        /* Ensure all labels and text are black */
+        .invoice-meta,
+        .invoice-meta *,
+        .parties,
+        .parties *,
+        .party-title,
+        .totals,
+        .totals * {
+          color: #000 !important;
+        }
+        
+        /* Ensure table alignment is consistent when printing */
+        th.col-name,
+        td.col-name {
+          text-align: right !important;
+        }
+        
+        th.col-qty,
+        td.col-qty {
+          text-align: center !important;
+        }
+        
+        th.col-unit-price,
+        td.col-unit-price {
+          text-align: right !important;
+        }
+        
+        th.col-total,
+        td.col-total {
+          text-align: right !important;
         }
         
         /* Remove any page breaks that create empty spaces */
