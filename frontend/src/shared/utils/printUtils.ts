@@ -967,6 +967,637 @@ const generateA4Styles = (printSettings: PrinterConfig & { paperSize: string; pa
 };
 
 /**
+ * Extract invoice data from the receipt element
+ */
+interface InvoiceData {
+  logoUrl: string | null;
+  businessName: string;
+  storeAddress: string;
+  invoiceNumber: string;
+  date: string;
+  cashier: string;
+  customerName: string;
+  items: Array<{
+    name: string;
+    quantity: number;
+    price: number;
+  }>;
+  subtotal: number;
+  discount: number;
+  tax: number;
+  grandTotal: number;
+  currencySymbol: string;
+}
+
+const extractInvoiceData = (element: HTMLElement): InvoiceData | null => {
+  try {
+    const settings = loadSettings();
+    const logoUrl = settings?.logoUrl || null;
+    const businessName = settings?.businessName || '';
+    const storeAddress = settings?.storeAddress || '';
+    
+    // Extract logo from receipt if available
+    const logoImg = element.querySelector('.receipt-logo img') as HTMLImageElement;
+    const finalLogoUrl = logoImg?.src || logoUrl;
+    
+    // Extract business name from header
+    const businessNameEl = element.querySelector('h1');
+    const finalBusinessName = businessNameEl?.textContent?.trim() || businessName;
+    
+    // Extract address from header
+    const addressEl = element.querySelector('.text-center p');
+    const finalAddress = addressEl?.textContent?.trim() || storeAddress;
+    
+    // Extract invoice info from .invoice-info section
+    const invoiceInfoEl = element.querySelector('.invoice-info');
+    let invoiceNumber = 'N/A';
+    let dateText = new Date().toLocaleString('ar-SA');
+    let cashier = 'N/A';
+    let customerName = 'N/A';
+    
+    if (invoiceInfoEl) {
+      const gridDivs = invoiceInfoEl.querySelectorAll('.grid > div, [class*="grid"] > div');
+      gridDivs.forEach(div => {
+        const labelEl = div.querySelector('span.text-xs, span:first-child');
+        const valueEl = div.querySelector('span.text-sm, span:last-child');
+        const label = labelEl?.textContent?.trim() || '';
+        const value = valueEl?.textContent?.trim() || '';
+        
+        if (label.includes('رقم الفاتورة') || label.includes('Invoice') || label.includes('INV')) {
+          invoiceNumber = value;
+        } else if (label.includes('التاريخ') || label.includes('Date')) {
+          dateText = value;
+        } else if (label.includes('كاشير') || label.includes('Cashier') || label.includes('بائع')) {
+          cashier = value;
+        } else if (label.includes('عميل') || label.includes('Customer')) {
+          customerName = value;
+        }
+      });
+    }
+    
+    // Extract items from table
+    const items: InvoiceData['items'] = [];
+    const tableRows = element.querySelectorAll('table tbody tr');
+    tableRows.forEach(row => {
+      const cells = row.querySelectorAll('td');
+      if (cells.length >= 3) {
+        const name = cells[0]?.textContent?.trim() || '';
+        const quantityText = cells[1]?.textContent?.trim() || '0';
+        const quantity = parseFloat(quantityText.replace(/[^\d.-]/g, '')) || 0;
+        const priceText = cells[2]?.textContent?.trim() || cells[3]?.textContent?.trim() || '0';
+        // Remove currency symbols and parse
+        const price = parseFloat(priceText.replace(/[^\d.-]/g, '')) || 0;
+        
+        if (name && quantity > 0) {
+          items.push({ name, quantity, price });
+        }
+      }
+    });
+    
+    // Extract totals from .receipt-summary
+    let subtotal = 0;
+    let discount = 0;
+    let tax = 0;
+    let grandTotal = 0;
+    
+    const summaryEl = element.querySelector('.receipt-summary');
+    if (summaryEl) {
+      const rows = summaryEl.querySelectorAll('div:not(.grand-total)');
+      rows.forEach(row => {
+        const labelEl = row.querySelector('span:first-child');
+        const valueEl = row.querySelector('span:last-child');
+        const label = labelEl?.textContent?.trim() || '';
+        const valueText = valueEl?.textContent?.trim() || '';
+        const value = parseFloat(valueText.replace(/[^\d.-]/g, '')) || 0;
+        
+        if (label.includes('المجموع الفرعي') || label.includes('Subtotal')) {
+          subtotal = Math.abs(value);
+        } else if (label.includes('خصم') || label.includes('Discount')) {
+          discount = Math.abs(value);
+        } else if (label.includes('ضريبة') || label.includes('Tax')) {
+          tax = Math.abs(value);
+        }
+      });
+      
+      // Extract grand total from .grand-total
+      const grandTotalEl = summaryEl.querySelector('.grand-total');
+      if (grandTotalEl) {
+        const valueEl = grandTotalEl.querySelector('span:last-child');
+        const valueText = valueEl?.textContent?.trim() || '';
+        grandTotal = Math.abs(parseFloat(valueText.replace(/[^\d.-]/g, '')) || 0);
+      }
+    }
+    
+    // If grand total is 0, calculate it
+    if (grandTotal === 0) {
+      grandTotal = subtotal - discount + tax;
+    }
+    
+    // Get currency symbol from settings
+    const currencySymbol = settings?.defaultCurrency || '₪';
+    
+    return {
+      logoUrl: finalLogoUrl,
+      businessName: finalBusinessName,
+      storeAddress: finalAddress,
+      invoiceNumber,
+      date: dateText,
+      cashier,
+      customerName,
+      items,
+      subtotal,
+      discount,
+      tax,
+      grandTotal,
+      currencySymbol
+    };
+  } catch (error) {
+    console.error('Error extracting invoice data:', error);
+    return null;
+  }
+};
+
+/**
+ * Generate invoice HTML based on the universal template
+ */
+const generateInvoiceHTML = (data: InvoiceData, printSettings: ReturnType<typeof getPrintSettings>): string => {
+  const paperSize = printSettings.paperSize;
+  const isThermal = paperSize === '80mm' || paperSize === '58mm';
+  const widthClass = isThermal 
+    ? (paperSize === '58mm' ? 'width-58mm' : 'width-80mm')
+    : 'width-std';
+  
+  // Format currency helper
+  const formatCurrency = (value: number): string => {
+    return `${value.toFixed(2)} ${data.currencySymbol}`;
+  };
+  
+  // Generate items table rows
+  const itemsRows = data.items.map(item => `
+    <tr>
+      <td>${item.name}</td>
+      <td class="center-text">${item.quantity}</td>
+      <td style="text-align: right;">${formatCurrency(item.price)}</td>
+    </tr>
+  `).join('');
+  
+  return `
+    <div id="invoice" class="invoice-container ${widthClass}">
+      <!-- Header -->
+      <div class="header">
+        ${data.logoUrl ? `<img src="${data.logoUrl}" alt="Logo" class="logo" onerror="this.style.display='none';">` : ''}
+         ${data.storeAddress ? `<strong>${data.storeAddress}</strong><br>` : ''}
+        ${data.businessName ? `<h1 class="store-name">${data.businessName}</h1>` : ''}
+      </div>
+      
+      <!-- Meta Data -->
+      <div class="invoice-meta">
+        <span>INV #: ${data.invoiceNumber}</span>
+        <span>$$ ${data.date} $$</span>
+      </div>
+      
+      <!-- Parties -->
+      <div class="parties">
+        <div class="party-block">
+          <div class="party-title">البائع</div>
+          ${data.cashier ? `الكاشير: ${data.cashier}` : ''}
+        </div>
+        <div class="party-block" style="text-align: right;">
+          <div class="party-title">العميل</div>
+          <strong>${data.customerName}</strong>
+        </div>
+      </div>
+      
+      <!-- Items Table -->
+      <table>
+        <thead>
+          <tr>
+            <th class="col-name">المنتج</th>
+            <th class="col-qty">الكمية</th>
+            <th class="col-price">السعر</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${itemsRows}
+        </tbody>
+      </table>
+      
+      <!-- Totals -->
+      <div class="totals">
+        <div class="total-row">
+          <span>المجموع الفرعي:</span>
+          <span>${formatCurrency(data.subtotal)}</span>
+        </div>
+        ${data.discount > 0 ? `
+        <div class="total-row">
+          <span>الخصم:</span>
+          <span>-${formatCurrency(data.discount)}</span>
+        </div>
+        ` : ''}
+        ${data.tax > 0 ? `
+        <div class="total-row">
+          <span>الضريبة:</span>
+          <span>${formatCurrency(data.tax)}</span>
+        </div>
+        ` : ''}
+      </div>
+      
+      <!-- Grand Total - Prominent Display -->
+      <div class="grand-total">
+        <div class="grand-total-label">الإجمالي:</div>
+        <div class="grand-total-amount">${formatCurrency(data.grandTotal)}</div>
+      </div>
+      
+      <div style="text-align: center; margin-top: 20px; font-size: 0.8em; color: #777;">
+        شكراً لتعاملكم معنا!
+      </div>
+    </div>
+  `;
+};
+
+/**
+ * Generate CSS styles for the universal invoice template
+ */
+const generateUniversalInvoiceStyles = (printSettings: ReturnType<typeof getPrintSettings>): string => {
+  const paperSize = printSettings.paperSize;
+  const isThermal = paperSize === '80mm' || paperSize === '58mm';
+  const pageSize = getPageSize(printSettings.paperSize, printSettings.paperWidth, printSettings.paperHeight, (printSettings as any).orientation);
+  
+  return `
+    <style>
+      /* -------------------------------------
+         GLOBAL & RESET
+      ------------------------------------- */
+      * {
+        box-sizing: border-box;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+      }
+      
+      body {
+        margin: 0;
+        padding: 0;
+        font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+        font-size: 14px;
+        line-height: 1.4;
+        background-color: #f0f0f0;
+        color: #333;
+        direction: rtl;
+      }
+      
+      /* -------------------------------------
+         INVOICE CONTAINER
+      ------------------------------------- */
+      .invoice-container {
+        background-color: white;
+        margin: 20px auto;
+        padding: 15px;
+        box-shadow: 0 0 10px rgba(0,0,0,0.1);
+        max-width: 210mm;
+        width: 100%;
+      }
+      
+      /* -------------------------------------
+         HEADER & LOGO
+      ------------------------------------- */
+      .header {
+        text-align: center;
+        margin-bottom: 10px;
+        border-bottom: 2px solid #333;
+        padding-bottom: 10px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+      }
+      
+      .logo {
+        max-width: 150px;
+        max-height: 80px;
+        margin-bottom: 10px !important;
+        margin-top: 0 !important;
+        display: block !important;
+        margin-left: auto !important;
+        margin-right: auto !important;
+        vertical-align: top;
+      }
+      
+      .store-name {
+        margin: 0 !important;
+        margin-top: 0 !important;
+        padding: 0 !important;
+        font-size: 1.2em !important;
+        font-weight: bold !important;
+        color: #333 !important;
+        text-align: center !important;
+        display: block !important;
+        width: 100%;
+        line-height: 1.4;
+      }
+      
+      .invoice-meta {
+        display: flex;
+        justify-content: space-between;
+        font-weight: bold;
+        font-size: 0.9em;
+        margin-bottom: 15px;
+      }
+      
+      /* -------------------------------------
+         SELLER & CUSTOMER
+      ------------------------------------- */
+      .parties {
+        display: flex;
+        justify-content: space-between;
+        margin-bottom: 15px;
+        font-size: 0.9em;
+      }
+      
+      .party-block {
+        width: 48%;
+      }
+      
+      .party-title {
+        font-weight: bold;
+        text-transform: uppercase;
+        font-size: 0.8em;
+        color: #666;
+        border-bottom: 1px solid #eee;
+        margin-bottom: 4px;
+      }
+      
+      /* -------------------------------------
+         TABLE STYLES
+      ------------------------------------- */
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-bottom: 15px;
+      }
+      
+      th {
+        background-color: #eee;
+        text-align: left;
+        padding: 5px;
+        font-size: 0.85em;
+        font-weight: bold;
+        border-bottom: 1px solid #333;
+      }
+      
+      td {
+        padding: 5px;
+        border-bottom: 1px solid #eee;
+        font-size: 0.9em;
+      }
+      
+      .col-qty { width: 15%; text-align: center; }
+      .col-price { width: 25%; text-align: right; }
+      .col-name { width: 60%; }
+      
+      th:nth-child(3) { text-align: right; }
+      
+      /* -------------------------------------
+         TOTALS SECTION
+      ------------------------------------- */
+      .totals {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-end;
+        margin-top: 10px;
+      }
+      
+      .total-row {
+        display: flex;
+        justify-content: space-between;
+        width: 100%;
+        max-width: 200px;
+        margin-bottom: 4px;
+      }
+      
+      /* Grand Total - Clear and Prominent */
+      .grand-total {
+        margin-top: 15px;
+        padding-top: 15px;
+        border-top: 3px solid #000;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        width: 100%;
+        font-weight: bold;
+      }
+      
+      .grand-total-label {
+        font-size: 1.3em;
+        font-weight: 900;
+        color: #000;
+        text-transform: uppercase;
+      }
+      
+      .grand-total-amount {
+        font-size: 1.5em;
+        font-weight: 900;
+        color: #000;
+        text-align: right;
+      }
+      
+      .center-text { text-align: center; }
+      
+      /* -------------------------------------
+         THERMAL 58MM MODE
+      ------------------------------------- */
+      .width-58mm {
+        max-width: 58mm !important;
+        padding: 2mm !important;
+        font-size: 11px !important;
+      }
+      
+      .width-58mm .invoice-meta, 
+      .width-58mm .parties {
+        flex-direction: column;
+      }
+      
+      .width-58mm .party-block { width: 100%; margin-bottom: 5px; }
+      .width-58mm .header { 
+        display: flex !important;
+        flex-direction: column !important;
+        align-items: center !important;
+      }
+      .width-58mm .logo { 
+        max-width: 100px !important; 
+        margin-bottom: 5px !important;
+        margin-top: 0 !important;
+        display: block !important;
+      }
+      .width-58mm .store-name { 
+        font-size: 0.9em !important; 
+        margin: 0 !important;
+        margin-top: 0 !important;
+        display: block !important;
+        width: 100% !important;
+      }
+      .width-58mm .grand-total {
+        margin-top: 10px !important;
+        padding-top: 10px !important;
+        border-top: 2px solid #000 !important;
+        width: 100% !important;
+        max-width: 100% !important;
+      }
+      
+      .width-58mm .grand-total-label {
+        font-size: 1em !important;
+        font-weight: 900 !important;
+        color: #000 !important;
+      }
+      
+      .width-58mm .grand-total-amount {
+        font-size: 1.2em !important;
+        font-weight: 900 !important;
+        color: #000 !important;
+      }
+      
+      /* -------------------------------------
+         THERMAL 80MM MODE
+      ------------------------------------- */
+      .width-80mm {
+        max-width: 80mm !important;
+        padding: 4mm !important;
+        font-size: 12px !important;
+      }
+      
+      .width-80mm .header { 
+        display: flex !important;
+        flex-direction: column !important;
+        align-items: center !important;
+      }
+      .width-80mm .logo { 
+        max-width: 120px !important; 
+        margin-bottom: 8px !important;
+        margin-top: 0 !important;
+        display: block !important;
+      }
+      .width-80mm .store-name { 
+        font-size: 1em !important; 
+        margin: 0 !important;
+        margin-top: 0 !important;
+        display: block !important;
+        width: 100% !important;
+      }
+      
+      .width-80mm .grand-total {
+        margin-top: 12px !important;
+        padding-top: 12px !important;
+        border-top: 2px solid #000 !important;
+        width: 100% !important;
+        max-width: 100% !important;
+      }
+      
+      .width-80mm .grand-total-label {
+        font-size: 1.1em !important;
+        font-weight: 900 !important;
+        color: #000 !important;
+      }
+      
+      .width-80mm .grand-total-amount {
+        font-size: 1.3em !important;
+        font-weight: 900 !important;
+        color: #000 !important;
+      }
+      
+      /* -------------------------------------
+         A4/A3 MODE
+      ------------------------------------- */
+      .width-std {
+        max-width: 210mm !important;
+        padding: 10mm !important;
+      }
+      
+      /* -------------------------------------
+         PRINT MEDIA QUERIES
+      ------------------------------------- */
+      @media print {
+        body { 
+          background: none; 
+        }
+        
+        .invoice-container {
+          box-shadow: none;
+          margin: 0;
+          padding: 0;
+          width: 100%;
+          max-width: 100%;
+        }
+        
+        .header {
+          display: flex !important;
+          flex-direction: column !important;
+          align-items: center !important;
+          justify-content: center !important;
+          text-align: center !important;
+          margin-bottom: 10px !important;
+          border-bottom: 2px solid #333 !important;
+          padding-bottom: 10px !important;
+        }
+        
+        .logo {
+          display: block !important;
+          max-width: 150px !important;
+          max-height: 80px !important;
+          margin: 0 auto 10px auto !important;
+          margin-bottom: 10px !important;
+          margin-top: 0 !important;
+        }
+        
+        .store-name {
+          display: block !important;
+          margin: 0 !important;
+          margin-top: 0 !important;
+          padding: 0 !important;
+          font-size: 1.2em !important;
+          font-weight: bold !important;
+          color: #333 !important;
+          text-align: center !important;
+          width: 100% !important;
+          line-height: 1.4 !important;
+        }
+        
+        /* Grand Total - Print Styles */
+        .grand-total {
+          margin-top: 15px !important;
+          padding-top: 15px !important;
+          border-top: 3px solid #000 !important;
+          display: flex !important;
+          justify-content: space-between !important;
+          align-items: center !important;
+          width: 100% !important;
+          max-width: 100% !important;
+          background: transparent !important;
+          color: #000 !important;
+        }
+        
+        .grand-total-label {
+          font-size: 1.3em !important;
+          font-weight: 900 !important;
+          color: #000 !important;
+          text-transform: uppercase !important;
+        }
+        
+        .grand-total-amount {
+          font-size: 1.5em !important;
+          font-weight: 900 !important;
+          color: #000 !important;
+          text-align: right !important;
+        }
+        
+        @page {
+          margin: ${printSettings.marginTop}cm ${printSettings.marginRight}cm ${printSettings.marginBottom}cm ${printSettings.marginLeft}cm;
+          ${pageSize}
+        }
+      }
+    </style>
+  `;
+};
+
+/**
  * Extracts the HTML content of a printable element
  * @param elementId - The ID of the element to print
  * @returns The HTML content as a string
@@ -978,6 +1609,34 @@ const getPrintableContent = (elementId: string): string => {
     return '';
   }
 
+  // Get print settings from preferences (with printer type awareness)
+  const printSettings = getPrintSettings();
+  
+  // Try to extract invoice data and use new template
+  const invoiceData = extractInvoiceData(element);
+  
+  if (invoiceData && invoiceData.items.length > 0) {
+    // Use new universal invoice template
+    const invoiceHTML = generateInvoiceHTML(invoiceData, printSettings);
+    const styleContent = generateUniversalInvoiceStyles(printSettings);
+    
+    return `
+      <!DOCTYPE html>
+      <html dir="rtl" lang="ar">
+      <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>فاتورة</title>
+        ${styleContent}
+      </head>
+      <body>
+        ${invoiceHTML}
+      </body>
+      </html>
+    `;
+  }
+  
+  // Fallback to original method if data extraction fails
   // Clone the element to avoid modifying the original
   const clone = element.cloneNode(true) as HTMLElement;
   
@@ -987,9 +1646,6 @@ const getPrintableContent = (elementId: string): string => {
   
   // Process the cloned element to remove currency symbols only from table cells
   removeCurrencySymbolsFromTable(clone);
-  
-  // Get print settings from preferences (with printer type awareness)
-  const printSettings = getPrintSettings();
   
   // Detect if this is a thermal printer
   const isThermal = printSettings.paperSize === '80mm' || printSettings.paperSize === '58mm';
