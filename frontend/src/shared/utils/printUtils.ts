@@ -1208,7 +1208,7 @@ const generateInvoiceHTML = (data: InvoiceData, printSettings: ReturnType<typeof
         <div class="grand-total-amount">${formatCurrency(data.grandTotal)}</div>
       </div>
       
-      <div style="text-align: center; margin-top: 20px; font-size: 0.8em; color: #777;">
+      <div class="thank-you-message">
         شكراً لتعاملكم معنا!
       </div>
     </div>
@@ -1234,9 +1234,14 @@ const generateUniversalInvoiceStyles = (printSettings: ReturnType<typeof getPrin
         print-color-adjust: exact;
       }
       
+      html, body {
+        margin: 0 !important;
+        padding: 0 !important;
+        width: 100%;
+        height: auto;
+      }
+      
       body {
-        margin: 0;
-        padding: 0;
         font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
         font-size: 14px;
         line-height: 1.4;
@@ -1402,6 +1407,15 @@ const generateUniversalInvoiceStyles = (printSettings: ReturnType<typeof getPrin
       
       .center-text { text-align: center; }
       
+      .thank-you-message {
+        text-align: center;
+        margin-top: 15px;
+        margin-bottom: 0;
+        padding-bottom: 0;
+        font-size: 0.8em;
+        color: #777;
+      }
+      
       /* -------------------------------------
          THERMAL 58MM MODE
       ------------------------------------- */
@@ -1515,16 +1529,48 @@ const generateUniversalInvoiceStyles = (printSettings: ReturnType<typeof getPrin
          PRINT MEDIA QUERIES
       ------------------------------------- */
       @media print {
+        /* Remove all browser print headers and footers */
+        @page {
+          margin: 0 !important;
+          size: auto;
+        }
+        
+        /* Remove default browser print headers/footers */
+        html, body {
+          margin: 0 !important;
+          padding: 0 !important;
+          width: 100% !important;
+          height: 100% !important;
+          background: white !important;
+          overflow: visible !important;
+        }
+        
         body { 
-          background: none; 
+          background: white !important;
+          margin: 0 !important;
+          padding: 0 !important;
         }
         
         .invoice-container {
-          box-shadow: none;
-          margin: 0;
-          padding: 0;
-          width: 100%;
-          max-width: 100%;
+          box-shadow: none !important;
+          margin: 0 !important;
+          padding: ${paperSize === '80mm' || paperSize === '58mm' ? '2mm' : '5mm'} !important;
+          width: 100% !important;
+          max-width: 100% !important;
+          page-break-inside: avoid;
+          min-height: auto !important;
+        }
+        
+        /* Ensure header starts at the very top with no extra space */
+        .header {
+          margin-top: 0 !important;
+          padding-top: 0 !important;
+          margin-bottom: 8px !important;
+        }
+        
+        /* Remove any top margin from logo */
+        .logo {
+          margin-top: 0 !important;
         }
         
         .header {
@@ -1588,9 +1634,33 @@ const generateUniversalInvoiceStyles = (printSettings: ReturnType<typeof getPrin
           text-align: right !important;
         }
         
+        /* Thank you message - last element, no extra space after */
+        .thank-you-message {
+          margin-top: 15px !important;
+          margin-bottom: 0 !important;
+          padding-bottom: 0 !important;
+          font-size: 0.8em !important;
+          color: #777 !important;
+        }
+        
+        /* Remove any page breaks that create empty spaces */
+        .invoice-container {
+          page-break-after: avoid !important;
+        }
+        
+        /* Ensure no extra space at the end */
+        .invoice-container > *:last-child {
+          margin-bottom: 0 !important;
+          padding-bottom: 0 !important;
+        }
+        
+        /* Set minimal page margins for thermal printers, use settings for standard */
         @page {
-          margin: ${printSettings.marginTop}cm ${printSettings.marginRight}cm ${printSettings.marginBottom}cm ${printSettings.marginLeft}cm;
+          margin: ${paperSize === '80mm' || paperSize === '58mm' ? '2mm' : `${printSettings.marginTop}cm ${printSettings.marginRight}cm ${printSettings.marginBottom}cm ${printSettings.marginLeft}cm`} !important;
           ${pageSize}
+          /* Remove browser headers/footers */
+          marks: none;
+          size: auto;
         }
       }
     </style>
@@ -1626,10 +1696,10 @@ const getPrintableContent = (elementId: string): string => {
       <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>فاتورة</title>
+        <title></title>
         ${styleContent}
       </head>
-      <body>
+      <body style="margin: 0; padding: 0;">
         ${invoiceHTML}
       </body>
       </html>
