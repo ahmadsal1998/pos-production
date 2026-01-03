@@ -411,7 +411,8 @@ const generateThermalStyles = (printSettings: PrinterConfig & { paperSize: strin
         font-weight: 900 !important;
       }
       
-      /* Statement table column styles for thermal printers - Optimized for narrow paper (58mm/80mm) */
+      /* PRINT-ONLY: Statement table column styles for thermal printers - Optimized for narrow paper (58mm/80mm) */
+      /* NOTE: These styles are injected into a print-only iframe and do NOT affect on-screen display */
       #printable-receipt .statement-transactions-table {
         width: 100% !important;
         max-width: 100% !important;
@@ -421,12 +422,13 @@ const generateThermalStyles = (printSettings: PrinterConfig & { paperSize: strin
         border-spacing: 0 !important;
         margin: 4px 0 !important;
       }
-      /* Compact column widths for thermal printers - all 4 columns must fit: Date(12%) + Description(35%) + Amount(20%) + Balance(18%) = 85% (leaving room for borders/padding) */
+      /* PRINT-ONLY: Compact column widths for thermal printers - all 4 columns must fit: Date(12%) + Description(28%) + Amount(22%) + Balance(20%) = 82% (leaving room for borders/padding) */
       #printable-receipt .statement-transactions-table .statement-col-date {
         width: 12% !important;
         min-width: 0 !important;
         max-width: 12% !important;
         text-align: right !important;
+        color: #000000 !important;
         padding: 1px !important;
         font-size: ${Math.max(tableFontSize - 2, 7)}px !important;
         white-space: nowrap !important;
@@ -435,10 +437,11 @@ const generateThermalStyles = (printSettings: PrinterConfig & { paperSize: strin
         border: 1px solid #000 !important;
       }
       #printable-receipt .statement-transactions-table .statement-col-description {
-        width: 35% !important;
+        width: 28% !important;
         min-width: 0 !important;
-        max-width: 35% !important;
+        max-width: 28% !important;
         text-align: right !important;
+        color: #000000 !important;
         word-wrap: break-word !important;
         padding: 1px !important;
         font-size: ${Math.max(tableFontSize - 2, 7)}px !important;
@@ -448,9 +451,9 @@ const generateThermalStyles = (printSettings: PrinterConfig & { paperSize: strin
         border: 1px solid #000 !important;
       }
       #printable-receipt .statement-transactions-table .statement-col-amount {
-        width: 20% !important;
+        width: 22% !important;
         min-width: 0 !important;
-        max-width: 20% !important;
+        max-width: 22% !important;
         text-align: right !important;
         font-family: 'Courier New', monospace !important;
         color: #000000 !important;
@@ -465,18 +468,25 @@ const generateThermalStyles = (printSettings: PrinterConfig & { paperSize: strin
         color: #000000 !important;
       }
       #printable-receipt .statement-transactions-table .statement-col-balance {
-        width: 18% !important;
+        width: 20% !important;
         min-width: 0 !important;
-        max-width: 18% !important;
+        max-width: 20% !important;
         text-align: right !important;
         font-family: 'Courier New', monospace !important;
         font-weight: 600 !important;
+        color: #000000 !important;
         padding: 1px !important;
         font-size: ${Math.max(tableFontSize - 2, 7)}px !important;
         white-space: nowrap !important;
         overflow: hidden !important;
         text-overflow: ellipsis !important;
         border: 1px solid #000 !important;
+      }
+      /* PRINT-ONLY: Ensure all statement table content (cells and headers) is black for thermal printers */
+      /* NOTE: This forces black text in print; on-screen display can use colors */
+      #printable-receipt .statement-transactions-table td,
+      #printable-receipt .statement-transactions-table th {
+        color: #000000 !important;
       }
       /* Ensure table headers also use compact sizing for thermal printers */
       #printable-receipt .statement-transactions-table th.statement-col-date,
@@ -486,6 +496,7 @@ const generateThermalStyles = (printSettings: PrinterConfig & { paperSize: strin
         padding: 1px !important;
         font-size: ${Math.max(tableFontSize - 2, 7)}px !important;
         font-weight: 700 !important;
+        color: #000000 !important;
         text-transform: none !important;
         letter-spacing: 0 !important;
         border: 1px solid #000 !important;
@@ -630,31 +641,35 @@ const generateThermalStyles = (printSettings: PrinterConfig & { paperSize: strin
           width: 12% !important;
           max-width: 12% !important;
           text-align: right !important;
+          color: #000000 !important;
           padding: 1px !important;
           font-size: ${Math.max(tableFontSize - 2, 7)}px !important;
           overflow: hidden !important;
         }
         #printable-receipt .statement-transactions-table .statement-col-description {
-          width: 35% !important;
-          max-width: 35% !important;
+          width: 28% !important;
+          max-width: 28% !important;
           text-align: right !important;
+          color: #000000 !important;
           padding: 1px !important;
           font-size: ${Math.max(tableFontSize - 2, 7)}px !important;
           word-wrap: break-word !important;
           overflow-wrap: break-word !important;
         }
         #printable-receipt .statement-transactions-table .statement-col-amount {
-          width: 20% !important;
-          max-width: 20% !important;
+          width: 22% !important;
+          max-width: 22% !important;
           text-align: right !important;
+          color: #000000 !important;
           padding: 1px !important;
           font-size: ${Math.max(tableFontSize - 2, 7)}px !important;
           overflow: hidden !important;
         }
         #printable-receipt .statement-transactions-table .statement-col-balance {
-          width: 18% !important;
-          max-width: 18% !important;
+          width: 20% !important;
+          max-width: 20% !important;
           text-align: right !important;
+          color: #000000 !important;
           padding: 1px !important;
           font-size: ${Math.max(tableFontSize - 2, 7)}px !important;
           overflow: hidden !important;
@@ -942,7 +957,8 @@ const generateA4Styles = (printSettings: PrinterConfig & { paperSize: string; pa
         font-weight: 900 !important;
       }
       
-      /* Statement table column styles for A4 printers */
+      /* PRINT-ONLY: Statement table column styles for A4 printers */
+      /* NOTE: These styles are injected into a print-only iframe and do NOT affect on-screen display */
       #printable-receipt .statement-transactions-table {
         width: 100% !important;
         table-layout: auto !important;
@@ -951,11 +967,13 @@ const generateA4Styles = (printSettings: PrinterConfig & { paperSize: string; pa
         width: 12% !important;
         min-width: 80px !important;
         text-align: right !important;
+        color: #000000 !important;
       }
       #printable-receipt .statement-transactions-table .statement-col-description {
         width: auto !important;
-        min-width: 200px !important;
+        min-width: 150px !important;
         text-align: right !important;
+        color: #000000 !important;
         word-wrap: break-word !important;
       }
       #printable-receipt .statement-transactions-table .statement-col-amount {
@@ -976,6 +994,7 @@ const generateA4Styles = (printSettings: PrinterConfig & { paperSize: string; pa
         font-family: 'Courier New', monospace !important;
         font-weight: 600 !important;
         white-space: nowrap !important;
+        color: #000000 !important;
       }
       #printable-receipt table td[style*="text-right"],
       #printable-receipt table th[style*="text-right"] {
@@ -1129,18 +1148,25 @@ const generateA4Styles = (printSettings: PrinterConfig & { paperSize: string; pa
           max-height: none !important;
           overflow: visible !important;
         }
-        /* Statement table column alignment for A4 printers */
+        /* PRINT-ONLY: Statement table column alignment for A4 printers */
+        /* NOTE: These styles are injected into a print-only iframe and do NOT affect on-screen display */
         #printable-receipt .statement-transactions-table .statement-col-date,
         #printable-receipt .statement-transactions-table .statement-col-description {
           text-align: right !important;
+          color: #000000 !important;
         }
         #printable-receipt .statement-transactions-table .statement-col-amount,
         #printable-receipt .statement-transactions-table .statement-col-balance {
           text-align: right !important;
           font-family: 'Courier New', monospace !important;
+          color: #000000 !important;
         }
         #printable-receipt .statement-transactions-table .statement-col-balance {
           font-weight: 600 !important;
+        }
+        /* Ensure all statement table headers are black in A4 print */
+        #printable-receipt .statement-transactions-table th {
+          color: #000000 !important;
         }
         /* Customer Statement - Ensure distinct from Invoice in A4 print */
         #printable-receipt.customer-statement-print {

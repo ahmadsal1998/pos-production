@@ -1196,7 +1196,7 @@ const CustomerDetailsModal: React.FC<{
                                              <tr key={i}>
                                                  <td className="p-2 text-sm statement-col-date">{formatDate(t.date)}</td>
                                                  <td className="p-2 text-sm statement-col-description">{renderDescriptionWithInvoiceLink(t)}</td>
-                                                 <td className={`p-2 text-sm text-right font-mono statement-col-amount print-text-black ${amount !== 0 ? (amount > 0 ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400') : ''}`}>
+                                                 <td className="p-2 text-sm text-right font-mono statement-col-amount print-text-black">
                                                      {amountDisplay}
                                                  </td>
                                                  <td className="p-2 text-sm text-right font-mono font-semibold statement-col-balance">{formatCurrency(t.balance)}</td>
