@@ -106,8 +106,9 @@ const removeCurrencySymbolsFromTable = (node: Node, isInSummary: boolean = false
   if (node.nodeType === Node.ELEMENT_NODE) {
     const element = node as HTMLElement;
     
-    // Check if we're entering the receipt-summary section (skip processing this section)
+    // Check if we're entering the receipt-summary or statement-summary section (skip processing this section)
     const isSummarySection = element.classList?.contains('receipt-summary') || 
+                             element.classList?.contains('statement-summary') ||
                              element.classList?.contains('grand-total') ||
                              isInSummary;
     
@@ -165,6 +166,7 @@ const removeCurrencySymbolsFromTable = (node: Node, isInSummary: boolean = false
       let insideSummary = false;
       while (currentParent) {
         if (currentParent.classList?.contains('receipt-summary') || 
+            currentParent.classList?.contains('statement-summary') ||
             currentParent.classList?.contains('grand-total')) {
           insideSummary = true;
           break;
@@ -360,6 +362,89 @@ const generateThermalStyles = (printSettings: PrinterConfig & { paperSize: strin
       #printable-receipt table tbody tr:last-child {
         border-bottom: 1px solid #000 !important;
       }
+      /* CUSTOMER STATEMENT SPECIFIC STYLES - Distinct from Invoice Layout */
+      /* Customer Statement Container - Different from Invoice */
+      #printable-receipt.customer-statement-print {
+        /* Statement-specific styling - ensure it's distinct from invoices */
+      }
+      
+      /* Statement Summary - Different from Invoice Summary */
+      #printable-receipt.customer-statement-print .statement-summary {
+        margin-top: 8px !important;
+        margin-bottom: 8px !important;
+        padding: 6px 0 !important;
+        border-top: 1px solid #000 !important;
+        border-bottom: 1px solid #000 !important;
+      }
+      #printable-receipt.customer-statement-print .statement-summary > div {
+        display: flex !important;
+        justify-content: space-between !important;
+        align-items: center !important;
+        padding: 3px 0 !important;
+        font-size: ${fontSize}px !important;
+        line-height: 1.4 !important;
+      }
+      #printable-receipt.customer-statement-print .statement-summary > div span:first-child {
+        color: #000000 !important;
+        font-weight: 600 !important;
+      }
+      #printable-receipt.customer-statement-print .statement-summary > div span:last-child {
+        color: #000000 !important;
+        font-weight: 700 !important;
+      }
+      #printable-receipt.customer-statement-print .statement-summary .grand-total {
+        font-weight: 900 !important;
+        font-size: ${Math.max(fontSize + 1, 12)}px !important;
+        padding: 6px 0 !important;
+        margin-top: 4px !important;
+        border-top: 2px solid #000 !important;
+        border-radius: 0 !important;
+        background-color: #ffffff !important;
+        color: #000000 !important;
+      }
+      #printable-receipt.customer-statement-print .statement-summary .grand-total span:first-child {
+        font-size: ${Math.max(fontSize + 1, 12)}px !important;
+        font-weight: 900 !important;
+      }
+      #printable-receipt.customer-statement-print .statement-summary .grand-total span:last-child {
+        font-size: ${Math.max(fontSize + 2, 14)}px !important;
+        font-weight: 900 !important;
+      }
+      
+      /* Statement table column styles for thermal printers */
+      #printable-receipt .statement-transactions-table {
+        width: 100% !important;
+        table-layout: fixed !important;
+      }
+      #printable-receipt .statement-transactions-table .statement-col-date {
+        width: 15% !important;
+        text-align: right !important;
+      }
+      #printable-receipt .statement-transactions-table .statement-col-description {
+        width: 35% !important;
+        text-align: right !important;
+        word-wrap: break-word !important;
+      }
+      #printable-receipt .statement-transactions-table .statement-col-debit {
+        width: 15% !important;
+        text-align: right !important;
+        font-family: 'Courier New', monospace !important;
+      }
+      #printable-receipt .statement-transactions-table .statement-col-credit {
+        width: 15% !important;
+        text-align: right !important;
+        font-family: 'Courier New', monospace !important;
+        color: #000000 !important;
+      }
+      #printable-receipt .statement-transactions-table .print-text-black {
+        color: #000000 !important;
+      }
+      #printable-receipt .statement-transactions-table .statement-col-balance {
+        width: 20% !important;
+        text-align: right !important;
+        font-family: 'Courier New', monospace !important;
+        font-weight: 600 !important;
+      }
       /* Invoice info section */
       #printable-receipt .invoice-info {
         padding: 4px 0 !important;
@@ -480,6 +565,32 @@ const generateThermalStyles = (printSettings: PrinterConfig & { paperSize: strin
         }
         #printable-receipt * {
           color: #000000 !important;
+        }
+        #printable-receipt .statement-table-container {
+          max-height: none !important;
+          overflow: visible !important;
+        }
+        /* Statement table column alignment for thermal printers */
+        #printable-receipt .statement-transactions-table .statement-col-date,
+        #printable-receipt .statement-transactions-table .statement-col-description,
+        #printable-receipt .statement-transactions-table .statement-col-debit,
+        #printable-receipt .statement-transactions-table .statement-col-credit,
+        #printable-receipt .statement-transactions-table .statement-col-balance {
+          text-align: right !important;
+        }
+        /* Customer Statement - Ensure distinct from Invoice in print */
+        #printable-receipt.customer-statement-print {
+          /* Statement uses transaction table layout, NOT invoice item layout */
+        }
+        /* Hide invoice-specific elements in statements */
+        #printable-receipt.customer-statement-print .invoice-info,
+        #printable-receipt.customer-statement-print .receipt-logo {
+          display: none !important;
+        }
+        /* Statement summary styling in print */
+        #printable-receipt.customer-statement-print .statement-summary {
+          border-top: 1px solid #000 !important;
+          border-bottom: 1px solid #000 !important;
         }
       }
     </style>
@@ -689,6 +800,103 @@ const generateA4Styles = (printSettings: PrinterConfig & { paperSize: string; pa
         white-space: nowrap;
         font-weight: 600;
       }
+      /* CUSTOMER STATEMENT SPECIFIC STYLES FOR A4 - Distinct from Invoice Layout */
+      /* Customer Statement Container - Different from Invoice */
+      #printable-receipt.customer-statement-print {
+        /* Statement-specific styling - ensure it's distinct from invoices */
+      }
+      
+      /* Statement Summary for A4 - Different from Invoice Summary */
+      #printable-receipt.customer-statement-print .statement-summary {
+        margin-top: ${printSettings.compactMode ? '10px' : '14px'} !important;
+        margin-bottom: ${printSettings.compactMode ? '10px' : '14px'} !important;
+        padding: ${printSettings.compactMode ? '8px' : '12px'} !important;
+        border-top: 2px solid #000000 !important;
+        border-bottom: 2px solid #000000 !important;
+        page-break-inside: avoid;
+        background-color: #ffffff !important;
+      }
+      #printable-receipt.customer-statement-print .statement-summary > div {
+        display: flex !important;
+        justify-content: space-between !important;
+        align-items: center !important;
+        padding: ${printSettings.compactMode ? '6px 0' : '8px 0'} !important;
+        font-size: ${minFontSize}px !important;
+        line-height: 1.5 !important;
+        page-break-inside: avoid;
+      }
+      #printable-receipt.customer-statement-print .statement-summary > div span:first-child {
+        color: #000000 !important;
+        font-weight: 600 !important;
+      }
+      #printable-receipt.customer-statement-print .statement-summary > div span:last-child {
+        color: #000000 !important;
+        font-weight: 700 !important;
+      }
+      #printable-receipt.customer-statement-print .statement-summary .grand-total {
+        font-weight: 900 !important;
+        font-size: ${Math.max(printSettings.compactMode ? 16 : 18, 16)}px !important;
+        padding: ${printSettings.compactMode ? '12px' : '16px'} !important;
+        margin-top: ${printSettings.compactMode ? '8px' : '12px'} !important;
+        border-top: 3px solid #000000 !important;
+        border-radius: 0 !important;
+        background-color: #ffffff !important;
+        background: #ffffff !important;
+        page-break-inside: avoid;
+        color: #000000 !important;
+        box-shadow: none !important;
+      }
+      #printable-receipt.customer-statement-print .statement-summary .grand-total span:first-child {
+        font-size: ${Math.max(printSettings.compactMode ? 16 : 18, 16)}px !important;
+        font-weight: 900 !important;
+      }
+      #printable-receipt.customer-statement-print .statement-summary .grand-total span:last-child {
+        font-size: ${Math.max(printSettings.compactMode ? 18 : 20, 18)}px !important;
+        font-weight: 900 !important;
+      }
+      
+      /* Statement table column styles for A4 printers */
+      #printable-receipt .statement-transactions-table {
+        width: 100% !important;
+        table-layout: auto !important;
+      }
+      #printable-receipt .statement-transactions-table .statement-col-date {
+        width: 12% !important;
+        min-width: 80px !important;
+        text-align: right !important;
+      }
+      #printable-receipt .statement-transactions-table .statement-col-description {
+        width: auto !important;
+        min-width: 150px !important;
+        text-align: right !important;
+        word-wrap: break-word !important;
+      }
+      #printable-receipt .statement-transactions-table .statement-col-debit {
+        width: 15% !important;
+        min-width: 100px !important;
+        text-align: right !important;
+        font-family: 'Courier New', monospace !important;
+        white-space: nowrap !important;
+      }
+      #printable-receipt .statement-transactions-table .statement-col-credit {
+        width: 15% !important;
+        min-width: 100px !important;
+        text-align: right !important;
+        font-family: 'Courier New', monospace !important;
+        white-space: nowrap !important;
+        color: #000000 !important;
+      }
+      #printable-receipt .statement-transactions-table .print-text-black {
+        color: #000000 !important;
+      }
+      #printable-receipt .statement-transactions-table .statement-col-balance {
+        width: 18% !important;
+        min-width: 120px !important;
+        text-align: right !important;
+        font-family: 'Courier New', monospace !important;
+        font-weight: 600 !important;
+        white-space: nowrap !important;
+      }
       #printable-receipt table td[style*="text-right"],
       #printable-receipt table th[style*="text-right"] {
         text-align: right !important;
@@ -836,6 +1044,39 @@ const generateA4Styles = (printSettings: PrinterConfig & { paperSize: string; pa
         #printable-receipt tr {
           page-break-inside: avoid;
           page-break-after: auto;
+        }
+        #printable-receipt .statement-table-container {
+          max-height: none !important;
+          overflow: visible !important;
+        }
+        /* Statement table column alignment for A4 printers */
+        #printable-receipt .statement-transactions-table .statement-col-date,
+        #printable-receipt .statement-transactions-table .statement-col-description {
+          text-align: right !important;
+        }
+        #printable-receipt .statement-transactions-table .statement-col-debit,
+        #printable-receipt .statement-transactions-table .statement-col-credit,
+        #printable-receipt .statement-transactions-table .statement-col-balance {
+          text-align: right !important;
+          font-family: 'Courier New', monospace !important;
+        }
+        #printable-receipt .statement-transactions-table .statement-col-balance {
+          font-weight: 600 !important;
+        }
+        /* Customer Statement - Ensure distinct from Invoice in A4 print */
+        #printable-receipt.customer-statement-print {
+          /* Statement uses transaction table layout, NOT invoice item layout */
+        }
+        /* Hide invoice-specific elements in statements */
+        #printable-receipt.customer-statement-print .invoice-info,
+        #printable-receipt.customer-statement-print .receipt-logo {
+          display: none !important;
+        }
+        /* Statement summary styling in A4 print */
+        #printable-receipt.customer-statement-print .statement-summary {
+          border-top: 2px solid #000 !important;
+          border-bottom: 2px solid #000 !important;
+          background-color: #ffffff !important;
         }
         #printable-receipt thead {
           display: table-header-group;
@@ -1063,9 +1304,33 @@ const extractInvoiceData = (element: HTMLElement): InvoiceData | null => {
       }
     }
     
-    // Extract items from table
+    // Extract items from table - BUT skip statement tables (customer statements have different structure)
     const items: InvoiceData['items'] = [];
+    
+    // Skip if this is a statement (should not happen due to check in getPrintableContent, but defensive check)
+    if (element.classList.contains('customer-statement-print') || 
+        element.querySelector('.statement-transactions-table') !== null ||
+        element.querySelector('.statement-summary') !== null) {
+      return null; // Don't extract invoice data from statements
+    }
+    
+    // Check table headers to identify statement tables (Date, Description, Debit, Credit, Balance)
+    const allTables = element.querySelectorAll('table');
+    let hasStatementTable = false;
+    allTables.forEach(table => {
+      const headers = Array.from(table.querySelectorAll('thead th, th')).map(th => th.textContent?.trim() || '');
+      // Check if this looks like a statement table (has Debit/Credit columns)
+      if (headers.some(h => h.includes('مدين') || h.includes('دائن') || h.includes('Debit') || h.includes('Credit'))) {
+        hasStatementTable = true;
+      }
+    });
+    
+    if (hasStatementTable) {
+      return null; // This is a statement table, not an invoice
+    }
+    
     const tableRows = element.querySelectorAll('table tbody tr');
+    
     tableRows.forEach(row => {
       const cells = row.querySelectorAll('td');
       // Table structure can be:
@@ -2228,7 +2493,51 @@ const getPrintableContent = (elementId: string): string => {
   // Get print settings from preferences (with printer type awareness)
   const printSettings = getPrintSettings();
   
-  // Try to extract invoice data and use new template
+  // IMPORTANT: Check if this is a Customer Statement FIRST - statements should NOT use invoice template
+  const isCustomerStatement = element.classList.contains('customer-statement-print') || 
+                               element.querySelector('.statement-transactions-table') !== null ||
+                               element.querySelector('.statement-summary') !== null;
+  
+  // If this is a customer statement, skip invoice extraction and use statement layout
+  if (isCustomerStatement) {
+    // Clone the element to avoid modifying the original
+    const clone = element.cloneNode(true) as HTMLElement;
+    
+    // Remove receipt footer elements
+    const footerElements = clone.querySelectorAll('.receipt-footer');
+    footerElements.forEach(el => el.remove());
+    
+    // Process the cloned element to remove currency symbols only from table cells (keep summary)
+    removeCurrencySymbolsFromTable(clone);
+    
+    // Detect if this is a thermal printer
+    const isThermal = printSettings.paperSize === '80mm' || printSettings.paperSize === '58mm';
+    
+    // Generate appropriate styles based on printer type
+    const styleContent = isThermal 
+      ? generateThermalStyles(printSettings)
+      : generateA4Styles(printSettings);
+    
+    // Get the HTML content
+    const content = clone.outerHTML;
+    
+    return `
+      <!DOCTYPE html>
+      <html dir="rtl" lang="ar">
+      <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Customer Statement</title>
+        ${styleContent}
+      </head>
+      <body>
+        ${content}
+      </body>
+      </html>
+    `;
+  }
+  
+  // Try to extract invoice data and use new template (only for invoices, not statements)
   const invoiceData = extractInvoiceData(element);
   
   if (invoiceData && invoiceData.items.length > 0) {

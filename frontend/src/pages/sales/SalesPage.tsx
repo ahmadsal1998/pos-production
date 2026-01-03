@@ -740,6 +740,97 @@ const CustomerDetailsModal: React.FC<{
     const { formatCurrency } = useCurrency();
     const [storeAddress, setStoreAddress] = useState<string>('');
     const [businessName, setBusinessName] = useState<string>('');
+    const [allCustomerSales, setAllCustomerSales] = useState<SaleTransaction[]>([]);
+    const [allCustomerPayments, setAllCustomerPayments] = useState<CustomerPayment[]>([]);
+    const [isLoadingTransactions, setIsLoadingTransactions] = useState(false);
+
+    // Fetch ALL historical transactions for the customer when modal opens
+    useEffect(() => {
+        if (!summary) return;
+        
+        const fetchAllCustomerTransactions = async () => {
+            setIsLoadingTransactions(true);
+            try {
+                const customerId = summary.customerId;
+                
+                // Fetch all sales for this customer (no date/pagination limits)
+                try {
+                    const salesResponse = await salesApi.getSales({
+                        customerId: customerId,
+                        limit: 10000, // Large limit to get all sales
+                        page: 1,
+                    });
+                    
+                    const backendResponse = salesResponse.data as any;
+                    if (backendResponse?.success && Array.isArray(backendResponse.data?.sales)) {
+                        const apiSales: SaleTransaction[] = backendResponse.data.sales.map((sale: any) => ({
+                            id: sale.id || sale._id || sale.invoiceNumber,
+                            invoiceNumber: sale.invoiceNumber || sale.id || sale._id,
+                            date: sale.date || sale.createdAt || new Date().toISOString(),
+                            customerName: sale.customerName || 'عميل نقدي',
+                            customerId: sale.customerId || 'walk-in-customer',
+                            totalAmount: sale.total || sale.totalAmount || 0,
+                            paidAmount: sale.paidAmount || 0,
+                            remainingAmount: sale.remainingAmount || (sale.total - (sale.paidAmount || 0)),
+                            paymentMethod: (sale.paymentMethod?.charAt(0).toUpperCase() + sale.paymentMethod?.slice(1).toLowerCase()) as SalePaymentMethod || 'Cash',
+                            status: sale.status === 'completed' ? 'Paid' : sale.status === 'partial_payment' ? 'Partial' : sale.status === 'pending' ? 'Due' : sale.status === 'refunded' || sale.status === 'partial_refund' ? 'Returned' : (sale.status as SaleStatus) || 'Paid',
+                            seller: sale.seller || sale.cashier || '',
+                            items: Array.isArray(sale.items) ? sale.items : [],
+                            subtotal: sale.subtotal || 0,
+                            totalItemDiscount: sale.totalItemDiscount || 0,
+                            invoiceDiscount: sale.invoiceDiscount || sale.discount || 0,
+                            tax: sale.tax || 0,
+                        }));
+                        setAllCustomerSales(apiSales);
+                    } else {
+                        // Fallback to props if API fails
+                        setAllCustomerSales(sales.filter(s => s.customerId === customerId));
+                    }
+                } catch (salesError) {
+                    console.warn('[CustomerDetailsModal] Error fetching all sales, using props:', salesError);
+                    // Fallback to props if API fails
+                    setAllCustomerSales(sales.filter(s => s.customerId === summary.customerId));
+                }
+                
+                // Fetch all payments for this customer
+                try {
+                    const paymentsResponse = await customersApi.getCustomerPayments({
+                        customerId: customerId,
+                    });
+                    
+                    const backendResponse = paymentsResponse.data as any;
+                    if (backendResponse?.success && Array.isArray(backendResponse.data?.payments)) {
+                        const apiPayments: CustomerPayment[] = backendResponse.data.payments.map((payment: any) => ({
+                            id: payment.id || payment._id,
+                            customerId: payment.customerId,
+                            date: payment.date || payment.createdAt || new Date().toISOString(),
+                            amount: payment.amount || 0,
+                            method: payment.method || 'Cash',
+                            invoiceId: payment.invoiceId || null,
+                            notes: payment.notes || '',
+                        }));
+                        setAllCustomerPayments(apiPayments);
+                    } else {
+                        // Fallback to props if API fails
+                        setAllCustomerPayments(payments.filter(p => p.customerId === customerId));
+                    }
+                } catch (paymentsError) {
+                    console.warn('[CustomerDetailsModal] Error fetching all payments, using props:', paymentsError);
+                    // Fallback to props if API fails
+                    setAllCustomerPayments(payments.filter(p => p.customerId === summary.customerId));
+                }
+            } catch (error) {
+                console.error('[CustomerDetailsModal] Error fetching transactions:', error);
+                // Fallback to props on error
+                setAllCustomerSales(sales.filter(s => s.customerId === summary.customerId));
+                setAllCustomerPayments(payments.filter(p => p.customerId === summary.customerId));
+            } finally {
+                setIsLoadingTransactions(false);
+            }
+        };
+        
+        fetchAllCustomerTransactions();
+    }, [summary?.customerId]); // Only refetch if customer changes
 
     // Load store address and business name when modal opens
     useEffect(() => {
@@ -807,23 +898,79 @@ const CustomerDetailsModal: React.FC<{
     const transactions = useMemo(() => {
         if (!summary) return [];
         const customerId = summary.customerId;
-        const customerSales = sales.filter(s => s.customerId === summary.customerId)
-            .map(s => ({
-                date: s.date,
-                type: 'sale' as const,
-                description: `${AR_LABELS.invoice} #${s.invoiceNumber || s.id}`,
-                debit: s.totalAmount,
-                credit: 0,
-            }));
+        
+        // Use all customer transactions (fetched from API) if available, otherwise fallback to props
+        const customerSalesToUse = allCustomerSales.length > 0 ? allCustomerSales : sales.filter(s => s.customerId === customerId);
+        const customerPaymentsToUse = allCustomerPayments.length > 0 ? allCustomerPayments : payments.filter(p => p.customerId === customerId);
+        
+        // IMPORTANT: Customer Statement should only show transaction summaries, NOT full invoice details
+        // We explicitly exclude invoice items and only include: date, invoice number, and total amount
+        const customerSales = customerSalesToUse
+            .map(s => {
+                // Determine if this is a return/refund
+                // Check status, invoice ID prefix, negative amount, or originalInvoiceId
+                const isReturn = s.status === 'Returned' || 
+                                (s.id && s.id.startsWith('RET-')) ||
+                                s.totalAmount < 0 || 
+                                (s.originalInvoiceId && s.originalInvoiceId !== s.invoiceNumber);
+                
+                // Create description - only invoice number, NO item details
+                let description = '';
+                if (isReturn) {
+                    description = `إرجاع - ${AR_LABELS.invoice} #${s.invoiceNumber || s.id}`;
+                } else {
+                    description = `شراء - ${AR_LABELS.invoice} #${s.invoiceNumber || s.id}`;
+                }
+                
+                // For returns, the amount should be negative (credit) instead of positive (debit)
+                const amount = Math.abs(s.totalAmount);
+                
+                // Return transaction summary ONLY - no invoice items included
+                return {
+                    date: s.date,
+                    type: isReturn ? 'return' as const : 'purchase' as const,
+                    description,
+                    debit: isReturn ? 0 : amount,
+                    credit: isReturn ? amount : 0,
+                    // Explicitly exclude: items, product details, item-level discounts, etc.
+                };
+            });
 
-        const customerPayments = payments.filter(p => p.customerId === customerId)
-            .map(p => ({
-                date: p.date,
-                type: 'payment' as const,
-                description: `${AR_LABELS.paymentReceived} - ${p.method}`,
-                debit: 0,
-                credit: p.amount,
-            }));
+        const customerPayments = customerPaymentsToUse
+            .map(p => {
+                // Handle positive and negative payment amounts
+                // Positive amounts = credits (payments received, balance payments)
+                // Negative amounts = debits (debt additions, balance deductions)
+                const isCredit = p.amount >= 0;
+                const absoluteAmount = Math.abs(p.amount);
+                
+                // Create appropriate description based on amount and method
+                let description = '';
+                if (isCredit) {
+                    // Positive amount: payment received or balance payment
+                    if (p.invoiceId) {
+                        description = `${AR_LABELS.paymentReceived} - ${p.method} (${AR_LABELS.invoice} #${p.invoiceId})`;
+                    } else {
+                        description = `${AR_LABELS.paymentReceived} - ${p.method}`;
+                    }
+                } else {
+                    // Negative amount: debt addition or balance deduction
+                    description = `${AR_LABELS.addDebt} - ${p.method}`;
+                }
+                
+                // Add notes if available
+                if (p.notes && p.notes.trim()) {
+                    description += ` (${p.notes.trim()})`;
+                }
+                
+                return {
+                    date: p.date,
+                    type: isCredit ? 'payment' as const : 'debt' as const,
+                    description,
+                    debit: isCredit ? 0 : absoluteAmount,
+                    credit: isCredit ? absoluteAmount : 0,
+                };
+            });
         
         return [...customerSales, ...customerPayments]
             .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
@@ -834,7 +981,7 @@ const CustomerDetailsModal: React.FC<{
                 return acc;
             }, [] as any[]);
 
-    }, [summary?.customerId, sales, payments]);
+    }, [summary?.customerId, allCustomerSales, allCustomerPayments, sales, payments]);
 
     if (!summary) return null;
 
@@ -855,55 +1002,82 @@ const CustomerDetailsModal: React.FC<{
     return (
         <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4" onClick={onClose}>
             <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-3xl text-right" onClick={e => e.stopPropagation()}>
-                <div id="printable-receipt" className="p-6">
+                <div id="printable-receipt" className="p-6 customer-statement-print">
                     {/* Store Header - visible in print */}
                     {(businessNameToDisplay || addressToDisplay) && (
                         <div className="text-center mb-4 pb-4 border-b dark:border-gray-700">
                             {businessNameToDisplay && (
-                                <h3 className="text-lg font-bold text-gray-900 dark:text-gray-100 mb-1">{businessNameToDisplay}</h3>
+                                <h1 className="text-lg font-bold text-gray-900 dark:text-gray-100 mb-1">{businessNameToDisplay}</h1>
                             )}
                             {addressToDisplay && (
                                 <p className="text-sm text-gray-600 dark:text-gray-400">{addressToDisplay}</p>
                             )}
                         </div>
                     )}
-                     <div className="flex justify-between items-start pb-4 border-b dark:border-gray-700">
+                     <div className="flex justify-between items-start pb-4 border-b dark:border-gray-700 mb-4">
                         <div>
                             <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100">{AR_LABELS.customerStatement}</h2>
-                            <p className="text-lg text-gray-700 dark:text-gray-300">{summary.customerName}</p>
+                            <p className="text-lg text-gray-700 dark:text-gray-300 mt-2">{summary.customerName}</p>
                             {summary.address && (
                                 <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">{AR_LABELS.address}: {summary.address}</p>
                             )}
+                            <p className="text-sm text-gray-600 dark:text-gray-400 mt-2">{AR_LABELS.date}: {formatDate(new Date().toISOString())}</p>
                         </div>
-                        <div className="text-left text-sm">
+                        <div className="text-left text-sm print-hidden">
                             <p><strong>{AR_LABELS.totalSales}:</strong> {formatCurrency(summary.totalSales)}</p>
                             <p><strong>{AR_LABELS.totalPayments}:</strong> {formatCurrency(summary.totalPaid)}</p>
                             <p className="font-bold text-lg">{AR_LABELS.balance}: <span className={summary.balance > 0 ? 'text-red-600' : 'text-green-600'}>{formatCurrency(summary.balance)}</span></p>
                         </div>
                     </div>
-                    <div className="mt-4 max-h-96 overflow-y-auto">
-                        <table className="min-w-full">
-                             <thead className="bg-gray-50 dark:bg-gray-700/50 sticky top-0">
-                                <tr>
-                                    <th className="p-2 text-xs font-medium uppercase text-right">{AR_LABELS.date}</th>
-                                    <th className="p-2 text-xs font-medium uppercase text-right">{AR_LABELS.description}</th>
-                                    <th className="p-2 text-xs font-medium uppercase text-left">{AR_LABELS.debit}</th>
-                                    <th className="p-2 text-xs font-medium uppercase text-left">{AR_LABELS.creditTerm}</th>
-                                    <th className="p-2 text-xs font-medium uppercase text-left">{AR_LABELS.balance}</th>
-                                </tr>
-                            </thead>
-                             <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
-                                 {transactions.map((t, i) => (
-                                     <tr key={i}>
-                                         <td className="p-2 text-sm">{formatDate(t.date)}</td>
-                                         <td className="p-2 text-sm">{t.description}</td>
-                                         <td className="p-2 text-sm text-left font-mono">{t.debit > 0 ? formatCurrency(t.debit) : '-'}</td>
-                                         <td className="p-2 text-sm text-left font-mono text-green-600">{t.credit > 0 ? formatCurrency(t.credit) : '-'}</td>
-                                         <td className="p-2 text-sm text-left font-mono font-semibold">{formatCurrency(t.balance)}</td>
-                                     </tr>
-                                 ))}
-                            </tbody>
-                        </table>
+                    {/* Statement Summary - formatted for print - Distinct from Invoice Summary */}
+                    <div className="statement-summary mb-4">
+                        <div>
+                            <span>{AR_LABELS.totalSales}:</span>
+                            <span>{formatCurrency(summary.totalSales)}</span>
+                        </div>
+                        <div>
+                            <span>{AR_LABELS.totalPayments}:</span>
+                            <span>{formatCurrency(summary.totalPaid)}</span>
+                        </div>
+                        <div className="grand-total">
+                            <span>{AR_LABELS.balance}:</span>
+                            <span>{formatCurrency(summary.balance)}</span>
+                        </div>
+                    </div>
+                    {/* Transaction History Table - Only shows transaction summaries, NOT full invoice details */}
+                    <div className="mt-4 max-h-96 overflow-y-auto statement-table-container">
+                        {isLoadingTransactions ? (
+                            <div className="text-center py-8 text-gray-500 dark:text-gray-400">
+                                <p>جاري تحميل جميع المعاملات...</p>
+                            </div>
+                        ) : transactions.length === 0 ? (
+                            <div className="text-center py-8 text-gray-500 dark:text-gray-400">
+                                <p>لا توجد معاملات</p>
+                            </div>
+                        ) : (
+                            <table className="min-w-full statement-transactions-table" title="Customer Statement Table - Distinct from Invoice Layout - Only shows transaction summaries, NOT full invoice details">
+                                 <thead className="bg-gray-50 dark:bg-gray-700/50 sticky top-0">
+                                    <tr>
+                                        <th className="p-2 text-xs font-medium uppercase text-right statement-col-date">{AR_LABELS.date}</th>
+                                        <th className="p-2 text-xs font-medium uppercase text-right statement-col-description">{AR_LABELS.description}</th>
+                                        <th className="p-2 text-xs font-medium uppercase text-right statement-col-debit">{AR_LABELS.debit}</th>
+                                        <th className="p-2 text-xs font-medium uppercase text-right statement-col-credit">{AR_LABELS.creditTerm}</th>
+                                        <th className="p-2 text-xs font-medium uppercase text-right statement-col-balance">{AR_LABELS.balance}</th>
+                                    </tr>
+                                </thead>
+                                 <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
+                                     {transactions.map((t, i) => (
+                                         <tr key={i}>
+                                             <td className="p-2 text-sm statement-col-date">{formatDate(t.date)}</td>
+                                             <td className="p-2 text-sm statement-col-description">{t.description}</td>
+                                             <td className="p-2 text-sm text-right font-mono statement-col-debit">{t.debit > 0 ? formatCurrency(t.debit) : '-'}</td>
+                                             <td className="p-2 text-sm text-right font-mono statement-col-credit print-text-black">{t.credit > 0 ? formatCurrency(t.credit) : '-'}</td>
+                                             <td className="p-2 text-sm text-right font-mono font-semibold statement-col-balance">{formatCurrency(t.balance)}</td>
+                                         </tr>
+                                     ))}
+                                </tbody>
+                            </table>
+                        )}
                     </div>
                 </div>
                  <div className="flex justify-start space-x-4 space-x-reverse p-4 bg-gray-50 dark:bg-gray-800/50 border-t dark:border-gray-700 rounded-b-lg print-hidden">

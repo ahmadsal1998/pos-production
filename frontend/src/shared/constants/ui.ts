@@ -199,8 +199,7 @@ export const AR_LABELS = {
   customerStatement: 'كشف حساب العميل',
   transactionHistory: 'سجل الحركات',
   debit: 'مدين',
-  // FIX: An object literal cannot have multiple properties with the same name.
-  creditTerm: 'دائن',
+  creditTerm: 'دائن', // Accounting term for Credit column in customer statements
   balance: 'الرصيد',
   invoice: 'فاتورة',
   paymentReceived: 'دفعة مستلمة',
