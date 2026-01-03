@@ -1058,7 +1058,10 @@ const CustomerDetailsModal: React.FC<{
                         </div>
                         <div className="grand-total">
                             <span>{AR_LABELS.balance}:</span>
-                            <span>{formatCurrency(summary.balance)}</span>
+                            <span>
+                                {summary.balance > 0 ? 'عليه ' : summary.balance < 0 ? 'له ' : ''}
+                                {formatCurrency(summary.balance)}
+                            </span>
                         </div>
                     </div>
                     {/* Transaction History Table - Only shows transaction summaries, NOT full invoice details */}
