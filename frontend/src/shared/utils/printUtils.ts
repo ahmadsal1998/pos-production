@@ -421,7 +421,7 @@ const generateThermalStyles = (printSettings: PrinterConfig & { paperSize: strin
         border-spacing: 0 !important;
         margin: 4px 0 !important;
       }
-      /* Compact column widths for thermal printers - all 5 columns must fit: Date(12%) + Description(28%) + Debit(12%) + Credit(12%) + Balance(18%) = 82% (leaving room for borders/padding) */
+      /* Compact column widths for thermal printers - all 5 columns must fit: Date(12%) + Description(30%) + Debit(10%) + Credit(10%) + Balance(18%) = 80% (leaving room for borders/padding) */
       #printable-receipt .statement-transactions-table .statement-col-date {
         width: 12% !important;
         min-width: 0 !important;
@@ -435,9 +435,9 @@ const generateThermalStyles = (printSettings: PrinterConfig & { paperSize: strin
         border: 1px solid #000 !important;
       }
       #printable-receipt .statement-transactions-table .statement-col-description {
-        width: 28% !important;
+        width: 30% !important;
         min-width: 0 !important;
-        max-width: 28% !important;
+        max-width: 30% !important;
         text-align: right !important;
         word-wrap: break-word !important;
         padding: 1px !important;
@@ -448,9 +448,9 @@ const generateThermalStyles = (printSettings: PrinterConfig & { paperSize: strin
         border: 1px solid #000 !important;
       }
       #printable-receipt .statement-transactions-table .statement-col-debit {
-        width: 12% !important;
+        width: 10% !important;
         min-width: 0 !important;
-        max-width: 12% !important;
+        max-width: 10% !important;
         text-align: right !important;
         font-family: 'Courier New', monospace !important;
         padding: 1px !important;
@@ -461,9 +461,9 @@ const generateThermalStyles = (printSettings: PrinterConfig & { paperSize: strin
         border: 1px solid #000 !important;
       }
       #printable-receipt .statement-transactions-table .statement-col-credit {
-        width: 12% !important;
+        width: 10% !important;
         min-width: 0 !important;
-        max-width: 12% !important;
+        max-width: 10% !important;
         text-align: right !important;
         font-family: 'Courier New', monospace !important;
         color: #000000 !important;
@@ -649,8 +649,8 @@ const generateThermalStyles = (printSettings: PrinterConfig & { paperSize: strin
           overflow: hidden !important;
         }
         #printable-receipt .statement-transactions-table .statement-col-description {
-          width: 28% !important;
-          max-width: 28% !important;
+          width: 30% !important;
+          max-width: 30% !important;
           text-align: right !important;
           padding: 1px !important;
           font-size: ${Math.max(tableFontSize - 2, 7)}px !important;
@@ -658,16 +658,16 @@ const generateThermalStyles = (printSettings: PrinterConfig & { paperSize: strin
           overflow-wrap: break-word !important;
         }
         #printable-receipt .statement-transactions-table .statement-col-debit {
-          width: 12% !important;
-          max-width: 12% !important;
+          width: 10% !important;
+          max-width: 10% !important;
           text-align: right !important;
           padding: 1px !important;
           font-size: ${Math.max(tableFontSize - 2, 7)}px !important;
           overflow: hidden !important;
         }
         #printable-receipt .statement-transactions-table .statement-col-credit {
-          width: 12% !important;
-          max-width: 12% !important;
+          width: 10% !important;
+          max-width: 10% !important;
           text-align: right !important;
           padding: 1px !important;
           font-size: ${Math.max(tableFontSize - 2, 7)}px !important;
@@ -981,15 +981,15 @@ const generateA4Styles = (printSettings: PrinterConfig & { paperSize: string; pa
         word-wrap: break-word !important;
       }
       #printable-receipt .statement-transactions-table .statement-col-debit {
-        width: 15% !important;
-        min-width: 100px !important;
+        width: 12% !important;
+        min-width: 80px !important;
         text-align: right !important;
         font-family: 'Courier New', monospace !important;
         white-space: nowrap !important;
       }
       #printable-receipt .statement-transactions-table .statement-col-credit {
-        width: 15% !important;
-        min-width: 100px !important;
+        width: 12% !important;
+        min-width: 80px !important;
         text-align: right !important;
         font-family: 'Courier New', monospace !important;
         white-space: nowrap !important;

@@ -731,6 +731,23 @@ const AddPaymentModal: React.FC<{
     )
 };
 
+// Helper function to format numbers for statement columns (remove .00 for whole numbers, keep decimals)
+const formatStatementNumber = (value: number, formatCurrencyFn: (val: number, options?: { minimumFractionDigits?: number; maximumFractionDigits?: number; showSymbol?: boolean }) => string): string => {
+    if (value === 0) return '-';
+    // Check if value is a whole number (within small tolerance for floating point)
+    const isWholeNumber = Math.abs(value % 1) < 0.001;
+    if (isWholeNumber) {
+        // Format without decimals (e.g., 5.00 -> 5)
+        return formatCurrencyFn(value, { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+    }
+    // Format with decimals, but allow removal of trailing zeros
+    // First format with max 2 decimals
+    const formatted = formatCurrencyFn(value, { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+    // Remove trailing zeros after decimal point (e.g., "5.50 ر.س" -> "5.5 ر.س", "5.00 ر.س" -> "5 ر.س")
+    // Handle both "number symbol" and "symbol number" formats
+    return formatted.replace(/(\d+)\.0+(\s|$)/, '$1$2').replace(/(\d+\.\d*?)0+(\s|$)/, '$1$2');
+};
+
 const CustomerDetailsModal: React.FC<{
     summary: CustomerAccountSummary | null;
     sales: SaleTransaction[];
@@ -1070,8 +1087,8 @@ const CustomerDetailsModal: React.FC<{
                                          <tr key={i}>
                                              <td className="p-2 text-sm statement-col-date">{formatDate(t.date)}</td>
                                              <td className="p-2 text-sm statement-col-description">{t.description}</td>
-                                             <td className="p-2 text-sm text-right font-mono statement-col-debit">{t.debit > 0 ? formatCurrency(t.debit) : '-'}</td>
-                                             <td className="p-2 text-sm text-right font-mono statement-col-credit print-text-black">{t.credit > 0 ? formatCurrency(t.credit) : '-'}</td>
+                                             <td className="p-2 text-sm text-right font-mono statement-col-debit">{t.debit > 0 ? formatStatementNumber(t.debit, (val) => formatCurrency(val, { minimumFractionDigits: 0, maximumFractionDigits: 2 })) : '-'}</td>
+                                             <td className="p-2 text-sm text-right font-mono statement-col-credit print-text-black">{t.credit > 0 ? formatStatementNumber(t.credit, (val) => formatCurrency(val, { minimumFractionDigits: 0, maximumFractionDigits: 2 })) : '-'}</td>
                                              <td className="p-2 text-sm text-right font-mono font-semibold statement-col-balance">{formatCurrency(t.balance)}</td>
                                          </tr>
                                      ))}
