@@ -411,39 +411,98 @@ const generateThermalStyles = (printSettings: PrinterConfig & { paperSize: strin
         font-weight: 900 !important;
       }
       
-      /* Statement table column styles for thermal printers */
+      /* Statement table column styles for thermal printers - Optimized for narrow paper (58mm/80mm) */
       #printable-receipt .statement-transactions-table {
         width: 100% !important;
+        max-width: 100% !important;
         table-layout: fixed !important;
+        font-size: ${Math.max(tableFontSize - 2, 7)}px !important;
+        border-collapse: collapse !important;
+        border-spacing: 0 !important;
+        margin: 4px 0 !important;
       }
+      /* Compact column widths for thermal printers - all 5 columns must fit: Date(12%) + Description(28%) + Debit(12%) + Credit(12%) + Balance(18%) = 82% (leaving room for borders/padding) */
       #printable-receipt .statement-transactions-table .statement-col-date {
-        width: 15% !important;
+        width: 12% !important;
+        min-width: 0 !important;
+        max-width: 12% !important;
         text-align: right !important;
+        padding: 1px !important;
+        font-size: ${Math.max(tableFontSize - 2, 7)}px !important;
+        white-space: nowrap !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+        border: 1px solid #000 !important;
       }
       #printable-receipt .statement-transactions-table .statement-col-description {
-        width: 35% !important;
+        width: 28% !important;
+        min-width: 0 !important;
+        max-width: 28% !important;
         text-align: right !important;
         word-wrap: break-word !important;
+        padding: 1px !important;
+        font-size: ${Math.max(tableFontSize - 2, 7)}px !important;
+        overflow-wrap: break-word !important;
+        hyphens: auto !important;
+        line-height: 1.2 !important;
+        border: 1px solid #000 !important;
       }
       #printable-receipt .statement-transactions-table .statement-col-debit {
-        width: 15% !important;
+        width: 12% !important;
+        min-width: 0 !important;
+        max-width: 12% !important;
         text-align: right !important;
         font-family: 'Courier New', monospace !important;
+        padding: 1px !important;
+        font-size: ${Math.max(tableFontSize - 2, 7)}px !important;
+        white-space: nowrap !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+        border: 1px solid #000 !important;
       }
       #printable-receipt .statement-transactions-table .statement-col-credit {
-        width: 15% !important;
+        width: 12% !important;
+        min-width: 0 !important;
+        max-width: 12% !important;
         text-align: right !important;
         font-family: 'Courier New', monospace !important;
         color: #000000 !important;
+        padding: 1px !important;
+        font-size: ${Math.max(tableFontSize - 2, 7)}px !important;
+        white-space: nowrap !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+        border: 1px solid #000 !important;
       }
       #printable-receipt .statement-transactions-table .print-text-black {
         color: #000000 !important;
       }
       #printable-receipt .statement-transactions-table .statement-col-balance {
-        width: 20% !important;
+        width: 18% !important;
+        min-width: 0 !important;
+        max-width: 18% !important;
         text-align: right !important;
         font-family: 'Courier New', monospace !important;
         font-weight: 600 !important;
+        padding: 1px !important;
+        font-size: ${Math.max(tableFontSize - 2, 7)}px !important;
+        white-space: nowrap !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+        border: 1px solid #000 !important;
+      }
+      /* Ensure table headers also use compact sizing for thermal printers */
+      #printable-receipt .statement-transactions-table th.statement-col-date,
+      #printable-receipt .statement-transactions-table th.statement-col-description,
+      #printable-receipt .statement-transactions-table th.statement-col-debit,
+      #printable-receipt .statement-transactions-table th.statement-col-credit,
+      #printable-receipt .statement-transactions-table th.statement-col-balance {
+        padding: 1px !important;
+        font-size: ${Math.max(tableFontSize - 2, 7)}px !important;
+        font-weight: 700 !important;
+        text-transform: none !important;
+        letter-spacing: 0 !important;
+        border: 1px solid #000 !important;
       }
       /* Invoice info section */
       #printable-receipt .invoice-info {
@@ -569,14 +628,64 @@ const generateThermalStyles = (printSettings: PrinterConfig & { paperSize: strin
         #printable-receipt .statement-table-container {
           max-height: none !important;
           overflow: visible !important;
+          width: 100% !important;
+          max-width: 100% !important;
         }
-        /* Statement table column alignment for thermal printers */
-        #printable-receipt .statement-transactions-table .statement-col-date,
-        #printable-receipt .statement-transactions-table .statement-col-description,
-        #printable-receipt .statement-transactions-table .statement-col-debit,
-        #printable-receipt .statement-transactions-table .statement-col-credit,
-        #printable-receipt .statement-transactions-table .statement-col-balance {
+        /* Statement table column alignment for thermal printers - Ensure all 5 columns fit */
+        #printable-receipt .statement-transactions-table {
+          width: 100% !important;
+          max-width: 100% !important;
+          table-layout: fixed !important;
+          font-size: ${Math.max(tableFontSize - 2, 7)}px !important;
+          border-collapse: collapse !important;
+          border-spacing: 0 !important;
+        }
+        #printable-receipt .statement-transactions-table .statement-col-date {
+          width: 12% !important;
+          max-width: 12% !important;
           text-align: right !important;
+          padding: 1px !important;
+          font-size: ${Math.max(tableFontSize - 2, 7)}px !important;
+          overflow: hidden !important;
+        }
+        #printable-receipt .statement-transactions-table .statement-col-description {
+          width: 28% !important;
+          max-width: 28% !important;
+          text-align: right !important;
+          padding: 1px !important;
+          font-size: ${Math.max(tableFontSize - 2, 7)}px !important;
+          word-wrap: break-word !important;
+          overflow-wrap: break-word !important;
+        }
+        #printable-receipt .statement-transactions-table .statement-col-debit {
+          width: 12% !important;
+          max-width: 12% !important;
+          text-align: right !important;
+          padding: 1px !important;
+          font-size: ${Math.max(tableFontSize - 2, 7)}px !important;
+          overflow: hidden !important;
+        }
+        #printable-receipt .statement-transactions-table .statement-col-credit {
+          width: 12% !important;
+          max-width: 12% !important;
+          text-align: right !important;
+          padding: 1px !important;
+          font-size: ${Math.max(tableFontSize - 2, 7)}px !important;
+          overflow: hidden !important;
+        }
+        #printable-receipt .statement-transactions-table .statement-col-balance {
+          width: 18% !important;
+          max-width: 18% !important;
+          text-align: right !important;
+          padding: 1px !important;
+          font-size: ${Math.max(tableFontSize - 2, 7)}px !important;
+          overflow: hidden !important;
+        }
+        /* Ensure table headers fit */
+        #printable-receipt .statement-transactions-table th {
+          padding: 1px !important;
+          font-size: ${Math.max(tableFontSize - 2, 7)}px !important;
+          font-weight: 700 !important;
         }
         /* Customer Statement - Ensure distinct from Invoice in print */
         #printable-receipt.customer-statement-print {
