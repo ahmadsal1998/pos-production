@@ -29,11 +29,9 @@ const getPrintSettings = (): PrinterConfig & {
 } => {
   const settings = loadSettings();
   
-  // Try to get printer configuration first (smart mode)
-  const printerConfig = getPrintSettingsFromConfig(settings);
-  
   // If printer type is explicitly set, use the configuration
   if (settings && (settings as any).printerType) {
+    const printerConfig = getPrintSettingsFromConfig(settings);
     return {
       ...printerConfig,
       paperSize: printerConfig.paperSize,
@@ -50,20 +48,24 @@ const getPrintSettings = (): PrinterConfig & {
     };
   }
   
-  // Fallback to manual settings if printer type not set
+  // Use manual settings if printer type not set
+  // Get default config for fallback values only
+  const defaultConfig = getPrintSettingsFromConfig(null);
+  
   return {
-    ...printerConfig,
-    paperSize: settings?.printPaperSize || 'A4',
-    paperWidth: settings?.printPaperWidth || printerConfig.paperWidth,
-    paperHeight: settings?.printPaperHeight || printerConfig.paperHeight,
-    marginTop: settings?.printMarginTop ?? printerConfig.marginTop,
-    marginBottom: settings?.printMarginBottom ?? printerConfig.marginBottom,
-    marginLeft: settings?.printMarginLeft ?? printerConfig.marginLeft,
-    marginRight: settings?.printMarginRight ?? printerConfig.marginRight,
-    fontSize: settings?.printFontSize ?? printerConfig.fontSize,
-    tableFontSize: settings?.printTableFontSize ?? printerConfig.tableFontSize,
-    showBorders: settings?.printShowBorders ?? printerConfig.showBorders,
-    compactMode: settings?.printCompactMode ?? printerConfig.compactMode,
+    ...defaultConfig,
+    // Use saved settings with proper fallbacks - ensure we use saved values if they exist
+    paperSize: settings?.printPaperSize || defaultConfig.paperSize,
+    paperWidth: settings?.printPaperWidth ?? defaultConfig.paperWidth,
+    paperHeight: settings?.printPaperHeight ?? defaultConfig.paperHeight,
+    marginTop: settings?.printMarginTop ?? defaultConfig.marginTop,
+    marginBottom: settings?.printMarginBottom ?? defaultConfig.marginBottom,
+    marginLeft: settings?.printMarginLeft ?? defaultConfig.marginLeft,
+    marginRight: settings?.printMarginRight ?? defaultConfig.marginRight,
+    fontSize: settings?.printFontSize ?? defaultConfig.fontSize,
+    tableFontSize: settings?.printTableFontSize ?? defaultConfig.tableFontSize,
+    showBorders: settings?.printShowBorders ?? defaultConfig.showBorders,
+    compactMode: settings?.printCompactMode ?? defaultConfig.compactMode,
   };
 };
 
@@ -233,7 +235,7 @@ const generateThermalStyles = (printSettings: PrinterConfig & { paperSize: strin
         width: ${paperWidth}mm !important;
         max-width: ${paperWidth}mm !important;
         margin: 0 auto;
-        padding: 8px 4px !important;
+        padding: 4px 2px !important;
         background: white;
         border-radius: 0 !important;
         overflow: visible !important;
@@ -292,8 +294,8 @@ const generateThermalStyles = (printSettings: PrinterConfig & { paperSize: strin
       #printable-receipt > div.text-center:first-of-type,
       #printable-receipt .text-center.mb-6,
       #printable-receipt .text-center.mb-8 {
-        margin-bottom: 12px !important;
-        padding-bottom: 8px !important;
+        margin-bottom: 6px !important;
+        padding-bottom: 4px !important;
         border-bottom: 1px solid #000 !important;
         text-align: center !important;
       }
@@ -359,9 +361,9 @@ const generateThermalStyles = (printSettings: PrinterConfig & { paperSize: strin
       }
       /* Invoice info section */
       #printable-receipt .invoice-info {
-        padding: 8px 0 !important;
+        padding: 4px 0 !important;
         border-bottom: 1px dashed #000 !important;
-        margin-bottom: 12px !important;
+        margin-bottom: 6px !important;
       }
       #printable-receipt .invoice-info .grid {
         display: block !important;
@@ -388,8 +390,8 @@ const generateThermalStyles = (printSettings: PrinterConfig & { paperSize: strin
       }
       /* Summary section */
       #printable-receipt .receipt-summary {
-        margin-top: 12px !important;
-        padding-top: 12px !important;
+        margin-top: 6px !important;
+        padding-top: 6px !important;
         border-top: 1px dashed #000 !important;
       }
       #printable-receipt .receipt-summary > div {
@@ -428,20 +430,12 @@ const generateThermalStyles = (printSettings: PrinterConfig & { paperSize: strin
         font-size: ${Math.max(fontSize + 2, 14)}px !important;
         font-weight: 900 !important;
       }
-      /* Footer */
+      /* Footer - hidden in print */
       #printable-receipt .receipt-footer {
-        text-align: center !important;
-        margin-top: 16px !important;
-        padding-top: 12px !important;
-        border-top: 1px dashed #000 !important;
-        font-size: ${Math.max(fontSize - 2, 8)}px !important;
-        font-weight: 600 !important;
-        color: #000 !important;
+        display: none !important;
       }
       #printable-receipt .receipt-footer p:last-child {
-        font-size: ${Math.max(fontSize - 3, 7)}px !important;
-        color: #000 !important;
-        margin-top: 4px !important;
+        display: none !important;
       }
       /* Force all text to be black */
       #printable-receipt,
@@ -540,7 +534,7 @@ const generateA4Styles = (printSettings: PrinterConfig & { paperSize: string; pa
         max-width: 100% !important;
         width: 100% !important;
         margin: 0 auto;
-        padding: ${printSettings.compactMode ? '20px' : '32px'} !important;
+        padding: ${printSettings.compactMode ? '8px' : '12px'} !important;
         background: white;
         page-break-inside: avoid;
         border-radius: 12px !important;
@@ -600,8 +594,8 @@ const generateA4Styles = (printSettings: PrinterConfig & { paperSize: string; pa
       #printable-receipt > div.text-center:first-of-type,
       #printable-receipt .text-center.mb-6,
       #printable-receipt .text-center.mb-8 {
-        margin-bottom: ${printSettings.compactMode ? '24px' : '32px'} !important;
-        padding-bottom: ${printSettings.compactMode ? '20px' : '24px'} !important;
+        margin-bottom: ${printSettings.compactMode ? '8px' : '12px'} !important;
+        padding-bottom: ${printSettings.compactMode ? '6px' : '8px'} !important;
         border-bottom: 3px solid #e5e7eb !important;
         text-align: center !important;
       }
@@ -707,8 +701,8 @@ const generateA4Styles = (printSettings: PrinterConfig & { paperSize: string; pa
         text-align: center !important;
       }
       #printable-receipt .receipt-summary {
-        margin-top: ${summaryMargin} !important;
-        padding-top: ${summaryMargin} !important;
+        margin-top: ${printSettings.compactMode ? '8px' : '12px'} !important;
+        padding-top: ${printSettings.compactMode ? '8px' : '12px'} !important;
         border-top: 2px dashed #e5e7eb !important;
         page-break-inside: avoid;
       }
@@ -754,9 +748,9 @@ const generateA4Styles = (printSettings: PrinterConfig & { paperSize: string; pa
         letter-spacing: -0.5px !important;
       }
       #printable-receipt .invoice-info {
-        padding: ${printSettings.compactMode ? '16px 0' : '20px 0'} !important;
+        padding: ${printSettings.compactMode ? '6px 0' : '8px 0'} !important;
         border-bottom: 2px dashed #e5e7eb !important;
-        margin-bottom: ${printSettings.compactMode ? '20px' : '24px'} !important;
+        margin-bottom: ${printSettings.compactMode ? '8px' : '12px'} !important;
         page-break-inside: avoid;
       }
       #printable-receipt .invoice-info .grid {
@@ -784,21 +778,12 @@ const generateA4Styles = (printSettings: PrinterConfig & { paperSize: string; pa
         color: #000000 !important;
         line-height: 1.5;
       }
+      /* Footer - hidden in print */
       #printable-receipt .receipt-footer {
-        text-align: center !important;
-        margin-top: ${printSettings.compactMode ? '32px' : '40px'} !important;
-        padding-top: ${printSettings.compactMode ? '24px' : '24px'} !important;
-        border-top: 1px dashed #e5e7eb !important;
-        font-size: ${Math.max(printSettings.compactMode ? 11 : 12, 11)}px !important;
-        font-weight: 600 !important;
-        color: #9ca3af !important;
-        page-break-inside: avoid;
-        letter-spacing: 0.5px !important;
+        display: none !important;
       }
       #printable-receipt .receipt-footer p:last-child {
-        font-size: ${Math.max(printSettings.compactMode ? 9 : 10, 9)}px !important;
-        color: #d1d5db !important;
-        margin-top: 8px !important;
+        display: none !important;
       }
       #printable-receipt {
         color: #000000 !important;
@@ -836,7 +821,7 @@ const generateA4Styles = (printSettings: PrinterConfig & { paperSize: string; pa
           max-width: 100% !important;
           width: 100% !important;
           margin: 0 !important;
-          padding: ${printSettings.compactMode ? '12px' : '16px'} !important;
+          padding: ${printSettings.compactMode ? '8px' : '12px'} !important;
           background: white !important;
         }
         .print-hidden {
@@ -996,6 +981,10 @@ const getPrintableContent = (elementId: string): string => {
   // Clone the element to avoid modifying the original
   const clone = element.cloneNode(true) as HTMLElement;
   
+  // Remove receipt footer elements (site name, etc.)
+  const footerElements = clone.querySelectorAll('.receipt-footer');
+  footerElements.forEach(el => el.remove());
+  
   // Process the cloned element to remove currency symbols only from table cells
   removeCurrencySymbolsFromTable(clone);
   
@@ -1019,7 +1008,7 @@ const getPrintableContent = (elementId: string): string => {
     <head>
       <meta charset="UTF-8">
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>Print Receipt</title>
+      <title></title>
       ${styleContent}
     </head>
     <body>
