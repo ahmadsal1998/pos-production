@@ -142,6 +142,19 @@ logos/
 3. Check Firebase Storage to see if the file was uploaded
 4. Verify CORS settings if accessing from a different domain
 
+### Issue: CORS error in production (Access to XMLHttpRequest has been blocked)
+
+**Solution**: 
+- This is a common issue when deploying to production (Vercel, Netlify, etc.)
+- See **FIREBASE_CORS_FIX.md** for detailed instructions
+- Main causes:
+  1. Missing `VITE_FIREBASE_STORAGE_BUCKET` environment variable (causes `/b//o` URL pattern)
+  2. Firebase Storage CORS not configured for your production domain
+- Quick fix:
+  1. Set all `VITE_FIREBASE_*` environment variables in your deployment platform
+  2. Configure CORS using gcloud CLI: `gsutil cors set cors.json gs://YOUR_BUCKET`
+  3. Redeploy your application
+
 ### Issue: Upload fails with "Permission denied"
 
 **Solution**:
