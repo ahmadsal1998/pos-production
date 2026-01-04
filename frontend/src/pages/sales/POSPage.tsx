@@ -804,6 +804,9 @@ const POSPage: React.FC = () => {
             return;
         }
         
+        // Store storeId in a variable to ensure TypeScript knows it's a string
+        const storeId = user.storeId;
+        
         const initializeInvoiceNumber = async () => {
             // Double-check to prevent race conditions
             if (invoiceNumberInitializedRef.current) {
@@ -812,7 +815,7 @@ const POSPage: React.FC = () => {
             
             try {
                 // HYBRID INVOICE COUNTER: Initialize local counter from backend
-                await invoiceCounterService.initialize(user.storeId);
+                await invoiceCounterService.initialize(storeId);
                 
                 // Get the current invoice number from local counter (without incrementing)
                 const currentInvoiceNumber = invoiceCounterService.getCurrentInvoiceNumber();
@@ -3454,71 +3457,85 @@ const POSPage: React.FC = () => {
         
         if (currentInvoice.items.length === 0) return;
 
-        if (selectedPaymentMethod === 'Credit' && !currentInvoice.customer) {
-            showToast(AR_LABELS.selectRegisteredCustomerForCredit, 'error');
-            return;
-        }
+        // Set processing state immediately to prevent duplicate clicks
+        setIsProcessingPayment(true);
 
-        if (selectedPaymentMethod === 'Credit' && creditPaidAmount < 0) {
-            showToast('المبلغ المدفوع لا يمكن أن يكون سالباً.', 'error');
-            return;
-        }
+        try {
+            if (selectedPaymentMethod === 'Credit' && !currentInvoice.customer) {
+                showToast(AR_LABELS.selectRegisteredCustomerForCredit, 'error');
+                return;
+            }
 
-        if (selectedPaymentMethod === 'Credit' && !isValidHalfUnitIncrement(creditPaidAmount)) {
-            setCreditPaidAmountError(HALF_UNIT_INCREMENT_ERROR);
-            return;
-        }
+            if (selectedPaymentMethod === 'Credit' && creditPaidAmount < 0) {
+                showToast('المبلغ المدفوع لا يمكن أن يكون سالباً.', 'error');
+                return;
+            }
 
-        if (selectedPaymentMethod === 'Points' && !currentInvoice.customer) {
-            showToast('يرجى اختيار عميل مسجل لاستخدام النقاط', 'error');
-            return;
-        }
+            if (selectedPaymentMethod === 'Credit' && !isValidHalfUnitIncrement(creditPaidAmount)) {
+                setCreditPaidAmountError(HALF_UNIT_INCREMENT_ERROR);
+                return;
+            }
 
-        if (selectedPaymentMethod === 'Points') {
-            // Fetch balance directly from API to ensure we have the latest value
-            let currentBalance = customerPointsBalance;
-            if (currentInvoice.customer && currentInvoice.customer.id !== 'walk-in-customer') {
-                try {
-                    const response = await pointsApi.getCustomerPoints({
-                        customerId: currentInvoice.customer.id,
-                        phone: currentInvoice.customer.phone,
-                    });
-                    if (response.data.success && response.data.data.balance) {
-                        currentBalance = response.data.data.balance.availablePoints || 0;
-                        // Update state for UI
-                        setCustomerPointsBalance(currentBalance);
-                    } else {
-                        currentBalance = 0;
-                        setCustomerPointsBalance(0);
+            if (selectedPaymentMethod === 'Points' && !currentInvoice.customer) {
+                showToast('يرجى اختيار عميل مسجل لاستخدام النقاط', 'error');
+                return;
+            }
+
+            if (selectedPaymentMethod === 'Points') {
+                // Fetch balance directly from API to ensure we have the latest value
+                let currentBalance = customerPointsBalance;
+                if (currentInvoice.customer && currentInvoice.customer.id !== 'walk-in-customer') {
+                    try {
+                        const response = await pointsApi.getCustomerPoints({
+                            customerId: currentInvoice.customer.id,
+                            phone: currentInvoice.customer.phone,
+                        });
+                        if (response.data.success && response.data.data.balance) {
+                            currentBalance = response.data.data.balance.availablePoints || 0;
+                            // Update state for UI
+                            setCustomerPointsBalance(currentBalance);
+                        } else {
+                            currentBalance = 0;
+                            setCustomerPointsBalance(0);
+                        }
+                    } catch (error: any) {
+                        console.error('Failed to fetch customer points:', error);
+                        // If we can't fetch, use the current state value
+                        currentBalance = customerPointsBalance;
                     }
-                } catch (error: any) {
-                    console.error('Failed to fetch customer points:', error);
-                    // If we can't fetch, use the current state value
-                    currentBalance = customerPointsBalance;
+                }
+                
+                // Check balance (only disable if we know for sure it's 0 or less)
+                if (currentBalance !== null && currentBalance <= 0) {
+                    showToast('العميل لا يمتلك نقاط كافية', 'error');
+                    return;
+                }
+                
+                if (pointsToRedeem <= 0) {
+                    showToast('يرجى إدخال عدد النقاط المراد استخدامها', 'error');
+                    return;
+                }
+                
+                // Validate that points to redeem don't exceed available balance
+                if (currentBalance !== null && pointsToRedeem > currentBalance) {
+                    showToast(`عدد النقاط المراد استخدامها (${pointsToRedeem}) يتجاوز النقاط المتاحة (${currentBalance})`, 'error');
+                    return;
                 }
             }
-            
-            // Check balance (only disable if we know for sure it's 0 or less)
-            if (currentBalance !== null && currentBalance <= 0) {
-                showToast('العميل لا يمتلك نقاط كافية', 'error');
-                return;
-            }
-            
-            if (pointsToRedeem <= 0) {
-                showToast('يرجى إدخال عدد النقاط المراد استخدامها', 'error');
-                return;
-            }
-            
-            // Validate that points to redeem don't exceed available balance
-            if (currentBalance !== null && pointsToRedeem > currentBalance) {
-                showToast(`عدد النقاط المراد استخدامها (${pointsToRedeem}) يتجاوز النقاط المتاحة (${currentBalance})`, 'error');
-                return;
-            }
-        }
 
-        // For all payment methods (Cash, Credit, Card, Points), proceed directly
-        // Card payments are handled without terminal integration
-        finalizeSaleWithoutTerminal();
+            // For all payment methods (Cash, Credit, Card, Points), proceed directly
+            // Card payments are handled without terminal integration
+            await finalizeSaleWithoutTerminal();
+        } catch (error: any) {
+            // Handle any unexpected errors
+            console.error('Error in handleFinalizePayment:', error);
+            showToast(`حدث خطأ أثناء معالجة الدفع: ${error?.message || 'خطأ غير معروف'}`, 'error');
+        } finally {
+            // Reset processing state after sale is enqueued (sale is processed in background)
+            // The sale is immediately shown as completed in the UI, so we can re-enable the button
+            // This ensures the button is re-enabled even if finalizeSaleWithoutTerminal returns early or throws
+            setIsProcessingPayment(false);
+        }
     };
 
     // Keyboard shortcuts: F1 to trigger confirm payment, F2 to start new sale
@@ -3577,6 +3594,22 @@ const POSPage: React.FC = () => {
             window.removeEventListener('keydown', handleKeyDown);
         };
     }, [saleCompleted, currentInvoice.items.length, isProcessingPayment, handleFinalizePayment, startNewSale]);
+
+    // Prevent page refresh/navigation during processing
+    useEffect(() => {
+        const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+            if (isProcessingPayment) {
+                e.preventDefault();
+                e.returnValue = ''; // Required for Chrome
+                return ''; // Required for Safari
+            }
+        };
+
+        window.addEventListener('beforeunload', handleBeforeUnload);
+        return () => {
+            window.removeEventListener('beforeunload', handleBeforeUnload);
+        };
+    }, [isProcessingPayment]);
 
     // Handle Re-Sale: Copy items from conflicting invoice to cart with new invoice number
     const handleReSale = useCallback(async () => {
@@ -5542,12 +5575,37 @@ const POSPage: React.FC = () => {
     
     return (
         <div ref={posContainerRef} className="relative h-screen overflow-hidden">
+            {/* Full-page loading overlay during processing */}
+            {isProcessingPayment && (
+                <div className="fixed inset-0 bg-black/70 dark:bg-black/80 z-[9999] flex items-center justify-center backdrop-blur-sm">
+                    <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl p-8 sm:p-10 max-w-md mx-4 text-center">
+                        <div className="flex flex-col items-center gap-4">
+                            <svg className="animate-spin h-12 w-12 text-orange-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                            </svg>
+                            <div className="text-right w-full">
+                                <h3 className="text-xl sm:text-2xl font-bold text-gray-900 dark:text-gray-100 mb-2">
+                                    جاري المعالجة...
+                                </h3>
+                                <p className="text-sm sm:text-base text-gray-600 dark:text-gray-400">
+                                    يرجى الانتظار حتى اكتمال العملية
+                                </p>
+                                <p className="text-xs text-gray-500 dark:text-gray-500 mt-2">
+                                    لا تغلق الصفحة أو تحدثها
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {/* Modern Animated Background */}
             <div className="absolute inset-0 bg-gradient-to-br from-slate-50 via-orange-50/20 to-amber-100/30 dark:from-slate-950 dark:via-orange-950/20 dark:to-amber-950/30" />
             <div className="absolute -top-40 -right-40 h-80 w-80 rounded-full bg-gradient-to-br from-orange-400/15 to-amber-400/15 blur-3xl animate-pulse" />
             <div className="absolute -bottom-40 -left-40 h-80 w-80 rounded-full bg-gradient-to-br from-rose-400/15 to-orange-400/15 blur-3xl animate-pulse" style={{ animationDelay: '2s' }} />
             
-            <div className="relative w-full h-full flex flex-col px-2 sm:px-4 lg:px-6 py-2 sm:py-3 lg:py-4 overflow-hidden">
+            <div className={`relative w-full h-full flex flex-col px-2 sm:px-4 lg:px-6 py-2 sm:py-3 lg:py-4 overflow-hidden ${isProcessingPayment ? 'pointer-events-none' : ''}`}>
                 {/* Suspended Invoices Horizontal Tabs - Above main grid */}
                 {heldInvoices.length > 0 && (
                     <div className="flex-shrink-0 mb-1 sm:mb-1.5 lg:mb-2 w-full">
@@ -6359,11 +6417,16 @@ const POSPage: React.FC = () => {
                                         ref={confirmPaymentButtonRef}
                                         onClick={handleFinalizePayment} 
                                         disabled={currentInvoice.items.length === 0 || isProcessingPayment || hasUnsyncedSales} 
-                                        className="w-full px-4 sm:px-6 md:px-7 lg:px-8 py-3 sm:py-4 md:py-4.5 lg:py-5 text-base sm:text-lg md:text-xl font-bold text-white bg-gradient-to-r from-green-500 via-emerald-500 to-green-600 rounded-xl hover:from-green-600 hover:via-emerald-600 hover:to-green-700 disabled:from-gray-400 disabled:via-gray-400 disabled:to-gray-500 dark:disabled:from-gray-600 dark:disabled:via-gray-600 dark:disabled:to-gray-700 shadow-2xl hover:shadow-3xl hover:scale-[1.02] transition-all duration-200 disabled:cursor-not-allowed disabled:scale-100"
+                                        className="w-full px-4 sm:px-6 md:px-7 lg:px-8 py-3 sm:py-4 md:py-4.5 lg:py-5 text-base sm:text-lg md:text-xl font-bold text-white bg-gradient-to-r from-green-500 via-emerald-500 to-green-600 rounded-xl hover:from-green-600 hover:via-emerald-600 hover:to-green-700 disabled:from-gray-400 disabled:via-gray-400 disabled:to-gray-500 dark:disabled:from-gray-600 dark:disabled:via-gray-600 dark:disabled:to-gray-700 shadow-2xl hover:shadow-3xl hover:scale-[1.02] transition-all duration-200 disabled:cursor-not-allowed disabled:scale-100 flex items-center justify-center gap-2"
                                         title={hasUnsyncedSales ? 'لا يمكن تأكيد الدفع: يوجد فواتير مكررة تحتاج للمراجعة. يرجى التحقق من الفواتير المحفوظة وحذف المكررة.' : ''}
                                     >
-                                        {/* HIDDEN: Processing message removed - button stays disabled but shows normal text */}
-                                        {hasUnsyncedSales ? 'فاتورة مكررة - يرجى المراجعة' : AR_LABELS.confirmPayment}
+                                        {isProcessingPayment && (
+                                            <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                            </svg>
+                                        )}
+                                        {hasUnsyncedSales ? 'فاتورة مكررة - يرجى المراجعة' : (isProcessingPayment ? 'جاري المعالجة...' : AR_LABELS.confirmPayment)}
                                     </button>
                                 </div>
                             </div>
