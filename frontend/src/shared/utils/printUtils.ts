@@ -348,6 +348,8 @@ const generateThermalStyles = (printSettings: PrinterConfig & { paperSize: strin
         overflow-wrap: break-word;
         line-height: 1.4;
         background-color: white !important;
+        height: auto !important;
+        max-height: none !important;
       }
       #printable-receipt table td:first-child,
       #printable-receipt table th:first-child {
@@ -2176,6 +2178,12 @@ const generateUniversalInvoiceStyles = (printSettings: ReturnType<typeof getPrin
         width: 100% !important;
       }
       
+      /* Table layout for 58mm thermal - fixed layout but allow cell wrapping */
+      .width-58mm table {
+        table-layout: fixed !important;
+        width: 100% !important;
+      }
+      
       /* Table columns for 58mm thermal */
       .width-58mm .col-index {
         width: 6% !important;
@@ -2183,7 +2191,7 @@ const generateUniversalInvoiceStyles = (printSettings: ReturnType<typeof getPrin
         text-align: center !important;
       }
       .width-58mm .col-name { 
-        width: 38% !important; 
+        width: 38% !important;
         font-size: 0.85em !important; 
         text-align: right !important;
         white-space: normal !important;
@@ -2192,24 +2200,29 @@ const generateUniversalInvoiceStyles = (printSettings: ReturnType<typeof getPrin
         hyphens: auto !important;
         line-height: 1.3 !important;
         vertical-align: top !important;
+        padding: 4px 2px !important;
+        overflow: visible !important;
       }
       .width-58mm .col-qty { 
-        width: 10% !important; 
+        width: 10% !important;
         font-size: 0.85em !important; 
         text-align: center !important;
         vertical-align: top !important;
+        white-space: nowrap !important;
       }
       .width-58mm .col-unit-price { 
-        width: 23% !important; 
+        width: 23% !important;
         font-size: 0.85em !important; 
         text-align: right !important;
         vertical-align: top !important;
+        white-space: nowrap !important;
       }
       .width-58mm .col-total { 
-        width: 23% !important; 
+        width: 23% !important;
         font-size: 0.85em !important; 
         text-align: right !important;
         vertical-align: top !important;
+        white-space: nowrap !important;
       }
       
       /* Ensure headers match data alignment for 58mm */
@@ -2348,13 +2361,19 @@ const generateUniversalInvoiceStyles = (printSettings: ReturnType<typeof getPrin
         margin-bottom: 4px !important;
       }
       
+      /* Table layout for 80mm thermal - fixed layout but allow cell wrapping */
+      .width-80mm table {
+        table-layout: fixed !important;
+        width: 100% !important;
+      }
+      
       /* Table columns for 80mm thermal */
       .width-80mm .col-index {
         width: 5% !important;
         text-align: center !important;
       }
       .width-80mm .col-name { 
-        width: 40% !important; 
+        width: 40% !important;
         text-align: right !important;
         white-space: normal !important;
         word-wrap: break-word !important;
@@ -2362,21 +2381,26 @@ const generateUniversalInvoiceStyles = (printSettings: ReturnType<typeof getPrin
         hyphens: auto !important;
         line-height: 1.3 !important;
         vertical-align: top !important;
+        padding: 4px 2px !important;
+        overflow: visible !important;
       }
       .width-80mm .col-qty { 
-        width: 11% !important; 
+        width: 11% !important;
         text-align: center !important;
         vertical-align: top !important;
+        white-space: nowrap !important;
       }
       .width-80mm .col-unit-price { 
-        width: 22% !important; 
+        width: 22% !important;
         text-align: right !important;
         vertical-align: top !important;
+        white-space: nowrap !important;
       }
       .width-80mm .col-total { 
-        width: 22% !important; 
+        width: 22% !important;
         text-align: right !important;
         vertical-align: top !important;
+        white-space: nowrap !important;
       }
       
       /* Ensure headers match data alignment for 80mm */
@@ -2569,6 +2593,65 @@ const generateUniversalInvoiceStyles = (printSettings: ReturnType<typeof getPrin
         th.col-total,
         td.col-total {
           text-align: right !important;
+        }
+        
+        /* Thermal printer specific print styles - ensure wrapping works */
+        .width-58mm table,
+        .width-80mm table {
+          table-layout: fixed !important;
+          width: 100% !important;
+        }
+        
+        /* 58mm thermal print - ensure text wrapping */
+        .width-58mm .col-name {
+          white-space: normal !important;
+          word-wrap: break-word !important;
+          overflow-wrap: break-word !important;
+          hyphens: auto !important;
+          line-height: 1.3 !important;
+          vertical-align: top !important;
+          padding: 4px 2px !important;
+          overflow: visible !important;
+          height: auto !important;
+        }
+        
+        .width-58mm .col-qty,
+        .width-58mm .col-unit-price,
+        .width-58mm .col-total {
+          vertical-align: top !important;
+          white-space: nowrap !important;
+        }
+        
+        /* 80mm thermal print - ensure text wrapping */
+        .width-80mm .col-name {
+          white-space: normal !important;
+          word-wrap: break-word !important;
+          overflow-wrap: break-word !important;
+          hyphens: auto !important;
+          line-height: 1.3 !important;
+          vertical-align: top !important;
+          padding: 4px 2px !important;
+          overflow: visible !important;
+          height: auto !important;
+        }
+        
+        .width-80mm .col-qty,
+        .width-80mm .col-unit-price,
+        .width-80mm .col-total {
+          vertical-align: top !important;
+          white-space: nowrap !important;
+        }
+        
+        /* Ensure table rows can expand vertically for wrapped content */
+        .width-58mm table tbody tr,
+        .width-80mm table tbody tr {
+          height: auto !important;
+        }
+        
+        .width-58mm table td,
+        .width-80mm table td {
+          height: auto !important;
+          max-height: none !important;
         }
         
         /* Remove any page breaks that create empty spaces */
