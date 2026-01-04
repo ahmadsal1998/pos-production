@@ -45,6 +45,7 @@ const Settings_1 = __importDefault(require("../models/Settings"));
 const businessDate_1 = require("../utils/businessDate");
 const logger_1 = require("../utils/logger");
 const Sequence_1 = __importDefault(require("../models/Sequence"));
+const Store_1 = __importDefault(require("../models/Store"));
 /**
  * Helper function to get the current max invoice number from existing sales
  * Used to initialize or sync the sequence counter
@@ -575,8 +576,7 @@ exports.getSales = (0, error_middleware_1.asyncHandler)(async (req, res) => {
     if (!modelStoreId) {
         // For admin querying all stores, we still need a storeId to get the model
         // Use the first available store or a default
-        const Store = (await Promise.resolve().then(() => __importStar(require('../models/Store')))).default;
-        const firstStore = await Store.findOne().lean();
+        const firstStore = await Store_1.default.findOne().lean();
         if (!firstStore) {
             return res.status(400).json({
                 success: false,
@@ -844,8 +844,7 @@ exports.getSalesSummary = (0, error_middleware_1.asyncHandler)(async (req, res) 
     // Get unified Sale model
     let modelStoreId = userStoreId || targetStoreId;
     if (!modelStoreId) {
-        const Store = (await Promise.resolve().then(() => __importStar(require('../models/Store')))).default;
-        const firstStore = await Store.findOne().lean();
+        const firstStore = await Store_1.default.findOne().lean();
         if (!firstStore) {
             return res.status(400).json({
                 success: false,
@@ -1564,8 +1563,7 @@ exports.getPublicInvoice = (0, error_middleware_1.asyncHandler)(async (req, res)
         }
         else {
             // Otherwise, get model from first available store
-            const Store = (await Promise.resolve().then(() => __importStar(require('../models/Store')))).default;
-            const firstStore = await Store.findOne().lean();
+            const firstStore = await Store_1.default.findOne().lean();
             if (!firstStore) {
                 return res.status(400).json({
                     success: false,
