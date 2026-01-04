@@ -9,6 +9,7 @@ import Settings from '../models/Settings';
 import { getBusinessDateFilterRange } from '../utils/businessDate';
 import { log } from '../utils/logger';
 import Sequence, { ISequence } from '../models/Sequence';
+import Store from '../models/Store';
 
 /**
  * Helper function to get the current max invoice number from existing sales
@@ -629,7 +630,6 @@ export const getSales = asyncHandler(async (req: AuthenticatedRequest, res: Resp
   if (!modelStoreId) {
     // For admin querying all stores, we still need a storeId to get the model
     // Use the first available store or a default
-    const Store = (await import('../models/Store')).default;
     const firstStore = await Store.findOne().lean();
     if (!firstStore) {
       return res.status(400).json({
@@ -929,7 +929,6 @@ export const getSalesSummary = asyncHandler(async (req: AuthenticatedRequest, re
   // Get unified Sale model
   let modelStoreId = userStoreId || targetStoreId;
   if (!modelStoreId) {
-    const Store = (await import('../models/Store')).default;
     const firstStore = await Store.findOne().lean();
     if (!firstStore) {
       return res.status(400).json({
@@ -1755,7 +1754,6 @@ export const getPublicInvoice = asyncHandler(async (req: Request, res: Response)
       Sale = await getSaleModelForStore(storeId.toLowerCase().trim());
     } else {
       // Otherwise, get model from first available store
-      const Store = (await import('../models/Store')).default;
       const firstStore = await Store.findOne().lean();
       if (!firstStore) {
         return res.status(400).json({

@@ -21,6 +21,7 @@ import { customersDB } from '@/lib/db/customersDB';
 import { salesSync } from '@/lib/sync/salesSync';
 import { salesDB } from '@/lib/db/salesDB';
 import { inventorySync } from '@/lib/sync/inventorySync';
+import { saleQueueService, IsolatedSaleContext, SaleLifecycleState } from '@/lib/saleQueue/saleQueueService';
 import { ProductNotFoundModal } from '@/shared/components/ui/ProductNotFoundModal';
 import { ReSaleModal } from '@/shared/components/ui/ReSaleModal';
 import { useConfirmDialog } from '@/shared/contexts/ConfirmDialogContext';
@@ -280,6 +281,10 @@ const POSPage: React.FC = () => {
     const [toastMessage, setToastMessage] = useState<string | null>(null); // Toast notification message
     const [toastType, setToastType] = useState<'info' | 'error' | 'success'>('info'); // Toast type
     const [unsyncedSalesCount, setUnsyncedSalesCount] = useState<number>(0); // Count of sales pending sync
+    
+    // Queue status for sale processing
+    const [queueLength, setQueueLength] = useState<number>(0);
+    const [queueProcessing, setQueueProcessing] = useState<boolean>(false);
 
     // Show toast notification
     const showToast = useCallback((message: string, type: 'info' | 'error' | 'success' = 'info') => {
@@ -737,6 +742,21 @@ const POSPage: React.FC = () => {
             return 'INV-1';
         }
     }, [user?.storeId]);
+
+    // Subscribe to queue status updates
+    useEffect(() => {
+        const unsubscribe = saleQueueService.subscribe((length, processing) => {
+            setQueueLength(length);
+            setQueueProcessing(processing);
+        });
+        
+        // Get initial status
+        const status = saleQueueService.getQueueStatus();
+        setQueueLength(status.queueLength);
+        setQueueProcessing(status.processing);
+        
+        return unsubscribe;
+    }, []);
 
     // CRITICAL: Pre-fetch next invoice number for immediate use in new sales
     // This function fetches and caches the next invoice number
@@ -2082,22 +2102,10 @@ const POSPage: React.FC = () => {
     }, []);
 
     const handleAddProduct = async (product: POSProduct, unit = 'قطعة', unitPriceOverride?: number, conversionFactorOverride?: number, piecesPerUnitOverride?: number, useServerStockCheck = false) => {
-        // CRITICAL FIX: If payment is being processed, queue the product to be added after processing completes
-        // This prevents products from being lost when scanned during transaction processing
-        if (isProcessingPayment) {
-            console.log('[POS] Payment processing in progress, queuing product for later:', product.name);
-            queuedProductsRef.current.push({
-                product,
-                unit,
-                unitPriceOverride,
-                conversionFactorOverride,
-                piecesPerUnitOverride,
-                useServerStockCheck,
-            });
-            return; // Exit early - product will be added when processing completes
-        }
+        // QUEUE-BASED MODEL: No strict lock needed - new cart is created immediately after queueing
+        // Products can be added to the new cart right away
         
-        // CRITICAL FIX: If sale is completed, start a new sale first to ensure the product is added to a fresh cart
+        // If sale is completed, start a new sale first to ensure the product is added to a fresh cart
         // This prevents products scanned immediately after sale confirmation from being lost
         if (saleCompleted && startNewSaleRef.current) {
             console.log('[POS] Sale completed detected, starting new sale before adding product');
@@ -3023,20 +3031,13 @@ const POSPage: React.FC = () => {
     };
     
     const startNewSale = async () => {
-        // CRITICAL: If previous sale is still processing, queue this operation
-        if (isProcessingPayment || isSubmittingInvoiceRef.current) {
-            console.warn('[POS] Previous sale still processing. New sale will start after processing completes.');
-            // Mark that user requested new sale - it will be started automatically after processing
-            pendingNewSaleRef.current = true;
-            return;
-        }
+        // QUEUE-BASED MODEL: No strict lock needed - queue handles sequential processing
+        // Users can start new sales immediately while previous sales are being processed
         
         // Clear pending flag since we're starting the sale now
         pendingNewSaleRef.current = false;
         
-        // Reset submission flag when starting new sale
-        isSubmittingInvoiceRef.current = false;
-        lockedInvoiceNumberRef.current = null;
+        // Reset sale state when starting new sale
         setSaleCompleted(false);
         setCompletedInvoice(null); // Clear completed invoice when starting new sale
         
@@ -3593,6 +3594,11 @@ const POSPage: React.FC = () => {
             // F2 key: Trigger the "start new sale" button (only when on sale completed/receipt screen)
             if (e.key === 'F2') {
                 e.preventDefault();
+                // CRITICAL: Block F2 shortcut if sale is processing
+                if (isProcessingPayment || isSubmittingInvoiceRef.current) {
+                    console.warn('[POS] ⚠️ BLOCKED: Cannot start new sale while processing');
+                    return;
+                }
                 const newSaleButton = startNewSaleButtonRef.current;
                 if (newSaleButton && !newSaleButton.disabled) {
                     newSaleButton.click();
@@ -3752,20 +3758,155 @@ const POSPage: React.FC = () => {
         }
     }, [conflictingInvoiceData, currentUserName, fetchNextInvoiceNumber, customers, products, normalizeProduct, showToast, getPiecesPerMainUnit, getUnitConversionFactor, calculateTotals]);
 
+    /**
+     * Helper function to prepare sale data for queue processing
+     * Extracted from finalizeSaleWithoutTerminal for queue integration
+     */
+    const prepareSaleData = useCallback(async (
+        invoice: POSInvoice,
+        invoiceNumber: string,
+        storeId: string
+    ): Promise<{
+        saleData: any;
+        paidAmount: number;
+        remainingAmount: number;
+        status: SaleStatus;
+        customerName: string;
+        customerId: string;
+        pointsRedeemed?: number;
+        pointsRedemptionValue?: number;
+    }> => {
+        const customerName = invoice.customer?.name || 'عميل نقدي';
+        const customerId = invoice.customer?.id || 'walk-in-customer';
+        
+        // Handle points redemption if Points payment method is selected
+        let pointsRedeemed = 0;
+        let pointsRedemptionValue = 0;
+        
+        if (selectedPaymentMethod === 'Points' && pointsToRedeem > 0 && invoice.customer && invoice.customer.id !== 'walk-in-customer') {
+            try {
+                // Redeem points before saving sale
+                const pointsResponse = await pointsApi.payWithPoints({
+                    customerId: invoice.customer.id,
+                    phone: invoice.customer.phone,
+                    points: pointsToRedeem,
+                    invoiceNumber: invoiceNumber,
+                    description: `Points redeemed for invoice ${invoiceNumber}`,
+                });
+                
+                if (pointsResponse.data.success) {
+                    pointsRedeemed = pointsToRedeem;
+                    pointsRedemptionValue = pointsResponse.data.data.transaction.pointsValue;
+                    // Update customer points balance
+                    const newBalance = pointsResponse.data.data.balance.availablePoints;
+                    setCustomerPointsBalance(newBalance);
+                    console.log(`✅ Points redeemed: ${pointsRedeemed}, Value: ${pointsRedemptionValue}, New balance: ${newBalance}`);
+                } else {
+                    throw new Error(pointsResponse.data.message || 'Failed to redeem points');
+                }
+            } catch (pointsError: any) {
+                console.error('❌ Failed to redeem points:', pointsError);
+                showToast(`فشل استبدال النقاط: ${pointsError?.response?.data?.message || pointsError?.message || 'خطأ غير معروف'}`, 'error');
+                // Continue with sale anyway
+            }
+        }
+        
+        // Calculate paid and remaining amounts based on payment method
+        let paidAmount = 0;
+        let remainingAmount = 0;
+        let status: SaleStatus = 'Paid';
+        
+        if (selectedPaymentMethod === 'Cash' || selectedPaymentMethod === 'Card') {
+            // Full payment for cash and card
+            paidAmount = invoice.grandTotal;
+            remainingAmount = 0;
+            status = 'Paid';
+        } else if (selectedPaymentMethod === 'Credit') {
+            // Credit payment - use the paid amount if specified
+            paidAmount = creditPaidAmount;
+            remainingAmount = invoice.grandTotal - creditPaidAmount;
+            
+            if (remainingAmount <= 0) {
+                status = 'Paid';
+                remainingAmount = 0;
+            } else if (paidAmount > 0) {
+                status = 'Partial';
+            } else {
+                status = 'Due';
+            }
+        } else if (selectedPaymentMethod === 'Points') {
+            // Points payment - calculate based on redeemed points value
+            paidAmount = pointsRedemptionValue;
+            remainingAmount = Math.max(0, invoice.grandTotal - pointsRedemptionValue);
+            
+            if (remainingAmount <= 0) {
+                status = 'Paid';
+                remainingAmount = 0;
+            } else {
+                status = 'Partial';
+                showToast(`تم استخدام النقاط. المبلغ المتبقي: ${formatCurrency(remainingAmount)}`, 'info');
+            }
+        }
+        
+        // Prepare sale data for IndexedDB and backend
+        const saleData = {
+            invoiceNumber: invoiceNumber,
+            storeId: storeId,
+            date: invoice.date instanceof Date 
+                ? invoice.date.toISOString() 
+                : new Date().toISOString(),
+            customerId: customerId !== 'walk-in-customer' ? customerId : undefined,
+            customerName: customerName,
+            items: invoice.items.map(item => {
+                // Use originalId from cart item if available, otherwise try to find product
+                let backendProductId: string;
+                if (item.originalId) {
+                    backendProductId = item.originalId;
+                } else {
+                    // Fallback: find product to get original backend ID
+                    const product = products.find(p => String(p.id) === String(item.productId));
+                    backendProductId = product?.originalId || String(item.productId);
+                }
+                return {
+                    productId: backendProductId,
+                    productName: item.name,
+                    quantity: item.quantity,
+                    unitPrice: item.unitPrice,
+                    totalPrice: item.total - (item.discount * item.quantity),
+                    unit: item.unit,
+                    discount: item.discount,
+                    conversionFactor: item.conversionFactor,
+                };
+            }),
+            subtotal: invoice.subtotal,
+            totalItemDiscount: invoice.totalItemDiscount,
+            invoiceDiscount: invoice.invoiceDiscount,
+            tax: invoice.tax,
+            total: invoice.grandTotal,
+            paidAmount: paidAmount,
+            remainingAmount: remainingAmount,
+            paymentMethod: selectedPaymentMethod.toLowerCase(),
+            status: status === 'Paid' ? 'completed' : status === 'Partial' ? 'partial_payment' : 'pending',
+            seller: invoice.cashier,
+        };
+        
+        return {
+            saleData,
+            paidAmount,
+            remainingAmount,
+            status,
+            customerName,
+            customerId,
+            pointsRedeemed,
+            pointsRedemptionValue,
+        };
+    }, [selectedPaymentMethod, pointsToRedeem, creditPaidAmount, products, formatCurrency, showToast, setCustomerPointsBalance]);
+
     const finalizeSaleWithoutTerminal = async () => {
-        // CRITICAL: Prevent duplicate submissions using ref (more reliable than state for race conditions)
-        if (isSubmittingInvoiceRef.current) {
-            console.warn('⚠️ Invoice submission already in progress (ref check), ignoring duplicate request');
-            return;
-        }
+        // QUEUE-BASED MODEL: No strict locking - allow multiple sales to be queued
+        // The queue service handles sequential processing
         
-        // Also check state as additional safeguard
-        if (isProcessingPayment) {
-            console.warn('⚠️ Invoice submission already in progress (state check), ignoring duplicate request');
-            return;
-        }
-        
-        // CRITICAL FIX: Copy cart IMMEDIATELY before any async operations
+        // CRITICAL: Copy cart IMMEDIATELY before any async operations
         // This ensures we have a snapshot of the cart that won't be affected by new sales
         const cartSnapshot: POSInvoice = {
             ...currentInvoice,
@@ -3785,60 +3926,70 @@ const POSPage: React.FC = () => {
             return;
         }
         
-        // PERFORMANCE FIX: Generate invoice number synchronously first (use current invoice ID as fallback)
-        // This allows us to show the receipt screen immediately without waiting for async operations
-        let lockedInvoiceNumber: string = cartSnapshot.id || 'INV-1';
-        if (!lockedInvoiceNumberRef.current) {
+        // Get storeId from user
+        const storeId = user?.storeId;
+        if (!storeId) {
+            showToast('معرف المتجر مطلوب لحفظ الفاتورة', 'error');
+            return;
+        }
+        
+        // Generate invoice number - use pre-fetched or current invoice ID
+        let invoiceNumber: string = cartSnapshot.id || 'INV-1';
+        if (nextInvoiceNumberRef.current) {
+            invoiceNumber = nextInvoiceNumberRef.current;
+            nextInvoiceNumberRef.current = null; // Clear it since we're using it
+        } else {
             // Try to extract number from current invoice ID for sequential numbering
             const currentMatch = cartSnapshot.id?.match(/^INV-(\d+)$/);
             if (currentMatch) {
-                const currentNum = parseInt(currentMatch[1], 10);
-                lockedInvoiceNumber = `INV-${currentNum}`;
+                invoiceNumber = cartSnapshot.id;
             }
-            lockedInvoiceNumberRef.current = lockedInvoiceNumber;
-        } else {
-            lockedInvoiceNumber = lockedInvoiceNumberRef.current;
         }
         
-        // Update invoice with locked number
-        cartSnapshot.id = lockedInvoiceNumber;
+        // Update invoice with invoice number
+        cartSnapshot.id = invoiceNumber;
         
-        // CRITICAL FIX: Create new independent cart IMMEDIATELY
-        // This ensures the new sale has its own cart that won't be affected by background processing
-        const nextInvoiceNumber = nextInvoiceNumberRef.current || (() => {
-            // Calculate locally if pre-fetched number not available
-            const match = lockedInvoiceNumber.match(/^INV-(\d+)$/);
-            return match ? `INV-${parseInt(match[1], 10) + 1}` : 'INV-1';
-        })();
+        // QUEUE-BASED MODEL: Create isolated sale context with UUID
+        const saleId = saleQueueService.generateSaleId();
+        const isolatedContext: IsolatedSaleContext = {
+            saleId,
+            invoiceNumber,
+            cart: cartSnapshot,
+            storeId,
+            createdAt: Date.now(),
+            state: 'CREATED',
+        };
         
-        // Clear pre-fetched number since we're using it
-        if (nextInvoiceNumberRef.current === nextInvoiceNumber) {
-            nextInvoiceNumberRef.current = null;
+        console.log(`[POS] Created isolated sale context: ${saleId} for invoice ${invoiceNumber}`);
+        
+        // Prepare sale data (includes points redemption if needed)
+        let saleData: any;
+        let paidAmount: number;
+        let remainingAmount: number;
+        let status: SaleStatus;
+        let customerName: string;
+        let customerId: string;
+        
+        try {
+            const prepared = await prepareSaleData(cartSnapshot, invoiceNumber, storeId);
+            saleData = prepared.saleData;
+            paidAmount = prepared.paidAmount;
+            remainingAmount = prepared.remainingAmount;
+            status = prepared.status;
+            customerName = prepared.customerName;
+            customerId = prepared.customerId;
+        } catch (error: any) {
+            console.error('❌ Failed to prepare sale data:', error);
+            showToast(`فشل في إعداد بيانات الفاتورة: ${error?.message || 'خطأ غير معروف'}`, 'error');
+            return;
         }
-        
-        // Create new empty cart immediately
-        const newEmptyInvoice = generateNewInvoice(currentUserName, nextInvoiceNumber);
-        setCurrentInvoice(newEmptyInvoice);
-        console.log(`[POS] Created new independent cart immediately: ${nextInvoiceNumber}`);
-        
-        // Pre-fetch next invoice number for upcoming sale
-        preFetchNextInvoiceNumber().catch(error => {
-            console.warn('[POS] Failed to pre-fetch next invoice number:', error);
-        });
-        
-        // Mark as submitting immediately to prevent race conditions
-        isSubmittingInvoiceRef.current = true;
-        
-        // Show immediate feedback
-        setIsProcessingPayment(true);
         
         // Use cartSnapshot for all processing (not currentInvoice)
         const finalInvoice = cartSnapshot;
         
-        // CRITICAL: Only update stock for products in the invoice items
-        // Use cartSnapshot (finalInvoice) items, NOT currentInvoice.items
+        // QUEUE-BASED MODEL: Use cartSnapshot items for stock updates
         // This ensures we process the correct items even if user starts a new sale
-        const invoiceItems = finalInvoice.items || [];
+        const invoiceItems = cartSnapshot.items || [];
         
         if (invoiceItems.length === 0) {
             console.warn('No items in invoice, skipping stock update');
@@ -3918,85 +4069,92 @@ const POSPage: React.FC = () => {
             return newProducts;
         });
         
-        // PERFORMANCE FIX: Mark sale as completed IMMEDIATELY and synchronously BEFORE any async operations
-        // This ensures the receipt screen appears instantly without waiting for network requests
-        console.log('Sale Finalized:', finalInvoice);
+        // QUEUE-BASED MODEL: Mark sale as completed IMMEDIATELY and show receipt
+        // The sale will be processed by the queue in the background
+        console.log('Sale Finalized (queued):', cartSnapshot);
         
         // Store completed invoice for receipt display
-        setCompletedInvoice(finalInvoice);
+        setCompletedInvoice(cartSnapshot);
         setSaleCompleted(true);
         
-        // CRITICAL FIX: Calculate next invoice number locally from locked number
-        // This ensures we have the next number ready immediately without waiting for backend
-        // The pre-fetch from backend will happen AFTER the sale is saved
-        const currentMatch = lockedInvoiceNumber?.match(/^INV-(\d+)$/);
+        // QUEUE-BASED MODEL: Create new cart IMMEDIATELY after queueing
+        // This allows user to start next sale while current sale is being processed
+        const currentMatch = invoiceNumber.match(/^INV-(\d+)$/);
+        let nextInvoiceNumber: string;
         if (currentMatch) {
             const currentNum = parseInt(currentMatch[1], 10);
-            const nextLocalNumber = `INV-${currentNum + 1}`;
-            // Pre-fetch this number immediately for the next sale
-            nextInvoiceNumberRef.current = nextLocalNumber;
-            console.log(`[POS] Pre-calculated next invoice number locally: ${nextLocalNumber}`);
+            nextInvoiceNumber = `INV-${currentNum + 1}`;
+        } else {
+            nextInvoiceNumber = 'INV-1';
         }
         
-        // CRITICAL FIX: Fetch and update invoice number asynchronously in background
-        // The receipt will show the current invoice ID, which will be updated if needed
-        // NOTE: Pre-fetch of next number happens AFTER sale is saved (see finally block)
-        Promise.resolve().then(async () => {
-            try {
-                // Get next sequential invoice number (incrementing) when completing sale
-                // This ensures proper sequential numbering
-                const fetchedInvoiceNumber = await fetchNextInvoiceNumber();
-                
-                // Only update if different from current locked number
-                if (fetchedInvoiceNumber !== lockedInvoiceNumber) {
-                    lockedInvoiceNumber = fetchedInvoiceNumber;
-                    lockedInvoiceNumberRef.current = lockedInvoiceNumber;
-                    
-                    // Update the completed invoice with the correct number
-                    setCompletedInvoice(prev => prev ? { ...prev, id: lockedInvoiceNumber } : null);
-                    
-                    // Update the final invoice for sync
-                    finalInvoice.id = lockedInvoiceNumber;
-                    console.log(`[POS] Updated invoice number to: ${lockedInvoiceNumber}`);
-                    
-                    // Update pre-fetched number based on fetched number
-                    const fetchedMatch = lockedInvoiceNumber.match(/^INV-(\d+)$/);
-                    if (fetchedMatch) {
-                        const fetchedNum = parseInt(fetchedMatch[1], 10);
-                        const nextFromFetched = `INV-${fetchedNum + 1}`;
-                        nextInvoiceNumberRef.current = nextFromFetched;
-                        console.log(`[POS] Updated pre-fetched number based on fetched: ${nextFromFetched}`);
-                    }
-                }
-            } catch (error) {
-                console.error('Failed to fetch next invoice number, using fallback:', error);
-                // Fallback: generate sequential number from current invoice number
-                const currentMatch = lockedInvoiceNumber?.match(/^INV-(\d+)$/);
-                if (currentMatch) {
-                    const currentNum = parseInt(currentMatch[1], 10);
-                    const fallbackNumber = `INV-${currentNum + 1}`;
-                    lockedInvoiceNumber = fallbackNumber;
-                    lockedInvoiceNumberRef.current = lockedInvoiceNumber;
-                    finalInvoice.id = lockedInvoiceNumber;
-                    setCompletedInvoice(prev => prev ? { ...prev, id: lockedInvoiceNumber } : null);
-                    console.log(`[POS] Using fallback invoice number: ${lockedInvoiceNumber}`);
-                    
-                    // Pre-fetch next number using fallback calculation
-                    const nextFallbackNumber = `INV-${currentNum + 2}`;
-                    nextInvoiceNumberRef.current = nextFallbackNumber;
-                }
-            }
-        }).catch(error => {
-            console.error('Error fetching invoice number in background:', error);
+        // Pre-fetch next invoice number for upcoming sale
+        nextInvoiceNumberRef.current = nextInvoiceNumber;
+        preFetchNextInvoiceNumber().catch(error => {
+            console.warn('[POS] Failed to pre-fetch next invoice number:', error);
         });
         
-        console.log(`[POS] Starting invoice submission with locked invoice number: ${lockedInvoiceNumber}`);
+        // Create new empty cart immediately
+        const newEmptyInvoice = generateNewInvoice(currentUserName, nextInvoiceNumber);
+        setCurrentInvoice(newEmptyInvoice);
+        console.log(`[POS] Created new cart immediately after queueing: ${nextInvoiceNumber}`);
         
-        // CRITICAL FIX: Don't create new invoice immediately - wait until processing completes
-        // This prevents clearing the cart before queued products are processed
-        // The new invoice will be created in the finally block after queued products are added
+        // QUEUE-BASED MODEL: Enqueue sale for sequential processing
+        console.log(`[POS] Enqueueing sale ${saleId} with invoice number: ${invoiceNumber}`);
         
-        // NOTE: Keep isProcessingPayment true until sale sync completes to prevent duplicate submissions
+        // Enqueue the sale - it will be processed sequentially by the queue service
+        saleQueueService.enqueueSale(isolatedContext, saleData).then((result) => {
+            if (result.success) {
+                console.log(`✅ Sale ${saleId} processed successfully (backend ID: ${result.backendId})`);
+                
+                // Update completed invoice with backend ID if available
+                if (result.backendId) {
+                    setCompletedInvoice(prev => prev ? { ...prev, id: invoiceNumber } : null);
+                }
+                
+                // Save to localStorage as backup
+                try {
+                    const saleTransaction: SaleTransaction = {
+                        id: invoiceNumber,
+                        date: cartSnapshot.date instanceof Date 
+                            ? cartSnapshot.date.toISOString() 
+                            : new Date().toISOString(),
+                        customerName: customerName,
+                        customerId: customerId,
+                        totalAmount: cartSnapshot.grandTotal,
+                        paidAmount: paidAmount,
+                        remainingAmount: remainingAmount,
+                        paymentMethod: selectedPaymentMethod as SalePaymentMethod,
+                        status: status,
+                        seller: cartSnapshot.cashier,
+                        items: cartSnapshot.items.map(item => ({
+                            productId: item.productId,
+                            name: item.name,
+                            unit: item.unit,
+                            quantity: item.quantity,
+                            unitPrice: item.unitPrice,
+                            total: item.total,
+                            discount: item.discount,
+                            conversionFactor: item.conversionFactor,
+                        })),
+                        subtotal: cartSnapshot.subtotal,
+                        totalItemDiscount: cartSnapshot.totalItemDiscount,
+                        invoiceDiscount: cartSnapshot.invoiceDiscount,
+                        tax: cartSnapshot.tax,
+                    };
+                    saveSale(saleTransaction);
+                    console.log('✅ Sale transaction saved to localStorage (backup):', saleTransaction);
+                } catch (localStorageError) {
+                    console.error('❌ Failed to save sale to localStorage:', localStorageError);
+                }
+            } else {
+                console.error(`❌ Sale ${saleId} failed:`, result.error);
+                showToast(`فشل في حفظ الفاتورة: ${result.error || 'خطأ غير معروف'}`, 'error');
+            }
+        }).catch((error) => {
+            console.error(`❌ Error processing sale ${saleId}:`, error);
+            showToast(`فشل في معالجة الفاتورة: ${error?.message || 'خطأ غير معروف'}`, 'error');
+        });
         
         // PERFORMANCE FIX: Move all heavy operations to background (non-blocking)
         // Stock updates, sale sync, and product sync all run in background
@@ -4571,25 +4729,26 @@ const POSPage: React.FC = () => {
                         });
                     }
                     
-                    // CRITICAL FIX: Cart was already cleared when sale was confirmed
-                    // Only verify that the current cart doesn't belong to the old invoice
-                    // If it does (shouldn't happen), clear it - but this is defensive only
-                    setCurrentInvoice(prev => {
-                        // Only clear if cart still belongs to the old invoice (shouldn't happen)
-                        if (prev.id === invoiceNumberToUse && prev.items && prev.items.length > 0) {
-                            console.warn('⚠️ Cart still belongs to old invoice, clearing now (defensive check)');
-                            // Use pre-fetched number or calculate locally
-                            const nextNum = nextInvoiceNumberRef.current || (() => {
-                                const match = invoiceNumberToUse.match(/^INV-(\d+)$/);
-                                return match ? `INV-${parseInt(match[1], 10) + 1}` : 'INV-1';
-                            })();
-                            if (nextInvoiceNumberRef.current === nextNum) {
-                                nextInvoiceNumberRef.current = null;
-                            }
-                            return generateNewInvoice(currentUserName, nextNum);
-                        }
-                        // Cart is already for a new sale - don't touch it
-                        return prev;
+                    // CRITICAL FIX: Create new cart AFTER sale is successfully saved
+                    // This ensures cart isolation - only create new cart when previous sale is fully persisted
+                    const nextInvoiceNumber = nextInvoiceNumberRef.current || (() => {
+                        const match = invoiceNumberToUse.match(/^INV-(\d+)$/);
+                        return match ? `INV-${parseInt(match[1], 10) + 1}` : 'INV-1';
+                    })();
+                    
+                    // Clear pre-fetched number since we're using it
+                    if (nextInvoiceNumberRef.current === nextInvoiceNumber) {
+                        nextInvoiceNumberRef.current = null;
+                    }
+                    
+                    // Create new empty cart now that sale is saved
+                    const newEmptyInvoice = generateNewInvoice(currentUserName, nextInvoiceNumber);
+                    setCurrentInvoice(newEmptyInvoice);
+                    console.log(`[POS] Created new cart after sale saved: ${nextInvoiceNumber}`);
+                    
+                    // Pre-fetch next invoice number for upcoming sale
+                    preFetchNextInvoiceNumber().catch(error => {
+                        console.warn('[POS] Failed to pre-fetch next invoice number:', error);
                     });
                     
                     // Show warning if sync had errors but sale was saved locally
@@ -4600,22 +4759,20 @@ const POSPage: React.FC = () => {
                     // Sale was saved to localStorage at least, log warning
                     console.warn('⚠️ Sale saved to localStorage only, IndexedDB save may have failed:', syncResult?.error);
                     
-                    // CRITICAL FIX: Cart was already cleared when sale was confirmed
-                    // Only verify that the current cart doesn't belong to the old invoice (defensive check)
-                    setCurrentInvoice(prev => {
-                        if (prev.id === invoiceNumberToUse && prev.items && prev.items.length > 0) {
-                            console.warn('⚠️ Cart still belongs to old invoice (sync failed), clearing now (defensive check)');
-                            const nextNum = nextInvoiceNumberRef.current || (() => {
-                                const match = invoiceNumberToUse.match(/^INV-(\d+)$/);
-                                return match ? `INV-${parseInt(match[1], 10) + 1}` : 'INV-1';
-                            })();
-                            if (nextInvoiceNumberRef.current === nextNum) {
-                                nextInvoiceNumberRef.current = null;
-                            }
-                            return generateNewInvoice(currentUserName, nextNum);
-                        }
-                        return prev;
-                    });
+                    // CRITICAL FIX: Create new cart even if sync failed (sale was saved to localStorage)
+                    // This ensures user can continue working even if backend sync fails
+                    const nextInvoiceNumber = nextInvoiceNumberRef.current || (() => {
+                        const match = invoiceNumberToUse.match(/^INV-(\d+)$/);
+                        return match ? `INV-${parseInt(match[1], 10) + 1}` : 'INV-1';
+                    })();
+                    
+                    if (nextInvoiceNumberRef.current === nextInvoiceNumber) {
+                        nextInvoiceNumberRef.current = null;
+                    }
+                    
+                    const newEmptyInvoice = generateNewInvoice(currentUserName, nextInvoiceNumber);
+                    setCurrentInvoice(newEmptyInvoice);
+                    console.log(`[POS] Created new cart after sale save (sync failed): ${nextInvoiceNumber}`);
                 }
             } catch (error: any) {
                 // On error, log it - sale will be retried by the periodic sync service
@@ -5349,12 +5506,37 @@ const POSPage: React.FC = () => {
                             </div>
                         </div>
                     )} */}
+                    {/* Queue Status Indicator */}
+                    {(queueLength > 0 || queueProcessing) && (
+                        <div className="mb-2 sm:mb-3 print-hidden w-full flex justify-center">
+                            <div className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-md text-xs sm:text-sm font-medium ${
+                                queueProcessing 
+                                    ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300' 
+                                    : 'bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-300'
+                            }`}>
+                                {queueProcessing && (
+                                    <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                    </svg>
+                                )}
+                                <span>
+                                    {queueProcessing 
+                                        ? `جاري معالجة فاتورة... (${queueLength} في الانتظار)`
+                                        : `${queueLength} فاتورة في الانتظار`
+                                    }
+                                </span>
+                            </div>
+                        </div>
+                    )}
+                    
                     {/* Buttons above invoice */}
                     <div className="flex flex-row gap-2 sm:gap-3 mb-4 sm:mb-6 print-hidden w-full justify-center">
                         <button 
                             ref={startNewSaleButtonRef}
-                            onClick={startNewSale} 
-                            className="inline-flex items-center justify-center px-3 sm:px-4 py-2 text-xs sm:text-sm font-medium rounded-md shadow-sm text-white bg-orange-500 hover:bg-orange-600 transition-colors"
+                            onClick={startNewSale}
+                            disabled={false}
+                            className="inline-flex items-center justify-center px-3 sm:px-4 py-2 text-xs sm:text-sm font-medium rounded-md shadow-sm text-white bg-orange-500 hover:bg-orange-600 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
                         >
                             <PlusIcon className="h-4 w-4 ml-1.5" />
                             <span>{AR_LABELS.startNewSale}</span>

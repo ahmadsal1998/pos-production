@@ -51,7 +51,27 @@ const PublicInvoicePage: React.FC = () => {
         
         if (data.success && data.data && data.data.sale) {
           console.log('[PublicInvoicePage] Invoice found:', data.data.sale.invoiceNumber);
-          setInvoice(data.data.sale);
+          console.log('[PublicInvoicePage] Raw items:', data.data.sale.items);
+          // Map backend sale to frontend SaleTransaction format
+          const mappedSale: SaleTransaction = {
+            ...data.data.sale,
+            items: Array.isArray(data.data.sale.items) ? data.data.sale.items.map((item: any) => {
+              const mappedItem = {
+                productId: typeof item.productId === 'string' ? parseInt(item.productId) || 0 : item.productId || 0,
+                name: item.productName || item.name || 'منتج غير معروف',
+                unit: item.unit || 'قطعة',
+                quantity: item.quantity || 0,
+                unitPrice: item.unitPrice || 0,
+                total: item.totalPrice || item.total || 0,
+                discount: item.discount || 0,
+                conversionFactor: item.conversionFactor,
+              };
+              console.log('[PublicInvoicePage] Mapped item:', { original: item, mapped: mappedItem });
+              return mappedItem;
+            }) : [],
+          };
+          console.log('[PublicInvoicePage] Mapped sale:', mappedSale);
+          setInvoice(mappedSale);
         } else {
           setError('الفاتورة غير موجودة');
         }
@@ -127,19 +147,23 @@ const PublicInvoicePage: React.FC = () => {
               </thead>
               <tbody>
                 {invoice.items?.map((item, idx) => {
+                  // Use the item name (mapped from productName)
+                  const itemName = item.name || '';
                   const itemUnitPrice = isReturn ? -Math.abs(item.unitPrice || 0) : (item.unitPrice || 0);
+                  // totalPrice from backend already includes discount, so use it directly
+                  // For returns, make it negative
                   const itemTotal = isReturn 
-                    ? -Math.abs((item.total || 0) - (item.discount || 0) * (item.quantity || 0))
-                    : (item.total || 0) - (item.discount || 0) * (item.quantity || 0);
+                    ? -Math.abs(item.total || 0)
+                    : (item.total || 0);
                   
                   return (
                     <tr key={idx} className="border-b border-gray-200 dark:border-gray-700">
-                      <td className="py-3 px-4 text-right font-medium">{item.name}</td>
-                      <td className="py-3 px-4 text-center">{Math.abs(item.quantity || 0)}</td>
-                      <td className={`py-3 px-4 text-center ${isReturn ? 'text-red-600 dark:text-red-400' : ''}`}>
+                      <td className="py-3 px-4 text-right font-medium text-gray-900 dark:text-gray-100">{itemName}</td>
+                      <td className="py-3 px-4 text-center text-gray-700 dark:text-gray-300">{Math.abs(item.quantity || 0)}</td>
+                      <td className={`py-3 px-4 text-center ${isReturn ? 'text-red-600 dark:text-red-400' : 'text-gray-700 dark:text-gray-300'}`}>
                         {formatCurrency(itemUnitPrice)}
                       </td>
-                      <td className={`py-3 px-4 text-center font-semibold ${isReturn ? 'text-red-600 dark:text-red-400' : ''}`}>
+                      <td className={`py-3 px-4 text-center font-semibold ${isReturn ? 'text-red-600 dark:text-red-400' : 'text-gray-900 dark:text-gray-100'}`}>
                         {formatCurrency(itemTotal)}
                       </td>
                     </tr>
