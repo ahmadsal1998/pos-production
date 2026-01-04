@@ -1179,7 +1179,7 @@ const CustomerDetailsModal: React.FC<{
                             <table className="min-w-full statement-transactions-table" title="Customer Statement Table - Distinct from Invoice Layout - Only shows transaction summaries, NOT full invoice details">
                                  <thead className="bg-gray-50 dark:bg-gray-700/50 sticky top-0">
                                     <tr>
-                                        <th className="p-2 text-xs font-medium uppercase text-right statement-col-date">{AR_LABELS.date}</th>
+                                        <th className="p-2 text-xs font-medium uppercase text-right statement-col-date print-hidden">{AR_LABELS.date}</th>
                                         <th className="p-2 text-xs font-medium uppercase text-right statement-col-description">{AR_LABELS.description}</th>
                                         <th className="p-2 text-xs font-medium uppercase text-right statement-col-amount">{AR_LABELS.amount}</th>
                                         <th className="p-2 text-xs font-medium uppercase text-right statement-col-balance">{AR_LABELS.balance}</th>
@@ -1194,9 +1194,12 @@ const CustomerDetailsModal: React.FC<{
                                              : '-';
                                          return (
                                              <tr key={i}>
-                                                 <td className="p-2 text-sm statement-col-date">{formatDate(t.date)}</td>
-                                                 <td className="p-2 text-sm statement-col-description">{renderDescriptionWithInvoiceLink(t)}</td>
-                                                 <td className="p-2 text-sm text-right font-mono statement-col-amount print-text-black">
+                                                 <td className="p-2 text-sm statement-col-date print-hidden">{formatDate(t.date)}</td>
+                                                 <td className="p-2 text-sm statement-col-description">
+                                                     <div>{renderDescriptionWithInvoiceLink(t)}</div>
+                                                     <div className="text-xs text-gray-500 dark:text-gray-400 mt-1 print:text-black">{formatDate(t.date)}</div>
+                                                 </td>
+                                                 <td className="p-2 text-sm text-right font-mono statement-col-amount print-text-black text-gray-900 dark:text-gray-100">
                                                      {amountDisplay}
                                                  </td>
                                                  <td className="p-2 text-sm text-right font-mono font-semibold statement-col-balance">{formatCurrency(t.balance)}</td>
