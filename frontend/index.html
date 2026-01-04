@@ -68,6 +68,7 @@
         }
         #printable-receipt table {
           width: 100% !important;
+          table-layout: fixed !important;
           border-collapse: collapse !important;
           border: 2px solid #000000 !important;
           font-size: 11px !important;
@@ -75,12 +76,30 @@
         #printable-receipt table th,
         #printable-receipt table td {
           padding: 8px 6px !important;
-          word-wrap: break-word;
+          word-wrap: break-word !important;
+          word-break: break-all !important;
+          white-space: normal !important;
+          vertical-align: top !important;
           overflow-wrap: break-word;
           border: 1px solid #000000 !important;
           color: #000000 !important;
           background-color: transparent !important;
           background: transparent !important;
+        }
+        /* Column width classes for invoice tables */
+        #printable-receipt table .col-description,
+        #printable-receipt table .col-name {
+          width: 45% !important;
+        }
+        #printable-receipt table .col-qty {
+          width: 15% !important;
+        }
+        #printable-receipt table .col-price,
+        #printable-receipt table .col-unit-price {
+          width: 20% !important;
+        }
+        #printable-receipt table .col-total {
+          width: 20% !important;
         }
         #printable-receipt table th {
           background-color: transparent !important;

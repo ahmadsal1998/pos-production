@@ -334,7 +334,10 @@ const generateThermalStyles = (printSettings: PrinterConfig & { paperSize: strin
         font-size: ${tableFontSize}px !important;
         text-transform: uppercase !important;
         letter-spacing: 0.3px !important;
-        word-wrap: break-word;
+        word-wrap: break-word !important;
+        word-break: break-all !important;
+        white-space: normal !important;
+        vertical-align: top !important;
         overflow-wrap: break-word;
         background-color: #ffffff !important;
       }
@@ -344,12 +347,30 @@ const generateThermalStyles = (printSettings: PrinterConfig & { paperSize: strin
         text-align: center !important;
         font-size: ${tableFontSize}px !important;
         color: #000000 !important;
-        word-wrap: break-word;
+        word-wrap: break-word !important;
+        word-break: break-all !important;
+        white-space: normal !important;
+        vertical-align: top !important;
         overflow-wrap: break-word;
         line-height: 1.4;
         background-color: white !important;
         height: auto !important;
         max-height: none !important;
+      }
+      /* Column width classes for invoice tables */
+      #printable-receipt table .col-description,
+      #printable-receipt table .col-name {
+        width: 45% !important;
+      }
+      #printable-receipt table .col-qty {
+        width: 15% !important;
+      }
+      #printable-receipt table .col-price,
+      #printable-receipt table .col-unit-price {
+        width: 20% !important;
+      }
+      #printable-receipt table .col-total {
+        width: 20% !important;
       }
       #printable-receipt table td:first-child,
       #printable-receipt table th:first-child {
@@ -830,7 +851,7 @@ const generateA4Styles = (printSettings: PrinterConfig & { paperSize: string; pa
         margin: ${tableMargin} !important;
         font-size: ${minTableFontSize}px !important;
         background: white !important;
-        table-layout: auto;
+        table-layout: fixed !important;
         page-break-inside: auto;
         border: 1px solid #000000 !important;
       }
@@ -852,7 +873,10 @@ const generateA4Styles = (printSettings: PrinterConfig & { paperSize: string; pa
         font-size: ${Math.max(minTableFontSize - 1, 10)}px !important;
         text-transform: uppercase !important;
         letter-spacing: 0.5px !important;
-        word-wrap: break-word;
+        word-wrap: break-word !important;
+        word-break: break-all !important;
+        white-space: normal !important;
+        vertical-align: top !important;
         overflow-wrap: break-word;
         hyphens: auto;
         min-width: 0;
@@ -865,12 +889,30 @@ const generateA4Styles = (printSettings: PrinterConfig & { paperSize: string; pa
         text-align: center !important;
         font-size: ${minTableFontSize}px !important;
         color: #000000 !important;
-        word-wrap: break-word;
+        word-wrap: break-word !important;
+        word-break: break-all !important;
+        white-space: normal !important;
+        vertical-align: top !important;
         overflow-wrap: break-word;
         hyphens: auto;
         min-width: 0;
         line-height: 1.6;
         background-color: white !important;
+      }
+      /* Column width classes for invoice tables */
+      #printable-receipt table .col-description,
+      #printable-receipt table .col-name {
+        width: 45% !important;
+      }
+      #printable-receipt table .col-qty {
+        width: 15% !important;
+      }
+      #printable-receipt table .col-price,
+      #printable-receipt table .col-unit-price {
+        width: 20% !important;
+      }
+      #printable-receipt table .col-total {
+        width: 20% !important;
       }
       #printable-receipt table td:first-child {
         font-weight: 600 !important;
