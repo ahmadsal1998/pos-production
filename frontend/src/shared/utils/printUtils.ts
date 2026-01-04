@@ -1973,6 +1973,7 @@ const generateUniversalInvoiceStyles = (printSettings: ReturnType<typeof getPrin
       ------------------------------------- */
       table {
         width: 100%;
+        table-layout: fixed;
         border-collapse: collapse;
         margin-bottom: 15px;
         border: 1px solid #000;
@@ -1985,6 +1986,10 @@ const generateUniversalInvoiceStyles = (printSettings: ReturnType<typeof getPrin
         font-weight: bold;
         border: 1px solid #000;
         color: #000;
+        word-wrap: break-word;
+        word-break: break-all;
+        white-space: normal;
+        vertical-align: top;
       }
       
       td {
@@ -1992,6 +1997,10 @@ const generateUniversalInvoiceStyles = (printSettings: ReturnType<typeof getPrin
         border: 1px solid #000;
         font-size: 0.9em;
         color: #000;
+        word-wrap: break-word;
+        word-break: break-all;
+        white-space: normal;
+        vertical-align: top;
       }
       
       /* Column alignment - consistent for headers and data */
@@ -2006,9 +2015,10 @@ const generateUniversalInvoiceStyles = (printSettings: ReturnType<typeof getPrin
         width: 45%; 
         color: #000; 
         text-align: right; /* RTL: Arabic text right-aligned */
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
+        white-space: normal;
+        word-wrap: break-word;
+        word-break: break-all;
+        overflow-wrap: break-word;
       }
       
       .col-qty { 
@@ -2238,6 +2248,7 @@ const generateUniversalInvoiceStyles = (printSettings: ReturnType<typeof getPrin
         text-align: right !important;
         white-space: normal !important;
         word-wrap: break-word !important;
+        word-break: break-all !important;
         overflow-wrap: break-word !important;
         hyphens: auto !important;
         line-height: 1.3 !important;
@@ -2419,6 +2430,7 @@ const generateUniversalInvoiceStyles = (printSettings: ReturnType<typeof getPrin
         text-align: right !important;
         white-space: normal !important;
         word-wrap: break-word !important;
+        word-break: break-all !important;
         overflow-wrap: break-word !important;
         hyphens: auto !important;
         line-height: 1.3 !important;
@@ -2605,6 +2617,20 @@ const generateUniversalInvoiceStyles = (printSettings: ReturnType<typeof getPrin
           color: #000 !important;
         }
         
+        /* Table layout fixes for thermal printers */
+        table {
+          table-layout: fixed !important;
+          width: 100% !important;
+        }
+        
+        table td,
+        table th {
+          word-wrap: break-word !important;
+          word-break: break-all !important;
+          white-space: normal !important;
+          vertical-align: top !important;
+        }
+        
         /* Ensure all labels and text are black */
         .invoice-meta,
         .invoice-meta *,
@@ -2620,6 +2646,8 @@ const generateUniversalInvoiceStyles = (printSettings: ReturnType<typeof getPrin
         th.col-name,
         td.col-name {
           text-align: right !important;
+          white-space: normal !important;
+          word-break: break-all !important;
         }
         
         th.col-qty,
