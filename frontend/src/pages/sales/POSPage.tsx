@@ -22,6 +22,7 @@ import { salesSync } from '@/lib/sync/salesSync';
 import { salesDB } from '@/lib/db/salesDB';
 import { inventorySync } from '@/lib/sync/inventorySync';
 import { saleQueueService, IsolatedSaleContext, SaleLifecycleState } from '@/lib/saleQueue/saleQueueService';
+import { invoiceCounterService } from '@/lib/invoiceCounter/invoiceCounterService';
 import { ProductNotFoundModal } from '@/shared/components/ui/ProductNotFoundModal';
 import { ReSaleModal } from '@/shared/components/ui/ReSaleModal';
 import { useConfirmDialog } from '@/shared/contexts/ConfirmDialogContext';
@@ -796,10 +797,10 @@ const POSPage: React.FC = () => {
         }
     }, [fetchNextInvoiceNumber, fetchCurrentInvoiceNumber]);
 
-    // Fetch initial invoice number on mount (only once)
+    // Initialize invoice counter and fetch initial invoice number on mount (only once)
     useEffect(() => {
         // Prevent re-initialization if already initialized or if component is unmounting
-        if (invoiceNumberInitializedRef.current || !isMountedRef.current) {
+        if (invoiceNumberInitializedRef.current || !isMountedRef.current || !user?.storeId) {
             return;
         }
         
@@ -810,27 +811,26 @@ const POSPage: React.FC = () => {
             }
             
             try {
-                // Use fetchCurrentInvoiceNumber (non-incrementing) for page load
-                const currentInvoiceNumber = await fetchCurrentInvoiceNumber();
+                // HYBRID INVOICE COUNTER: Initialize local counter from backend
+                await invoiceCounterService.initialize(user.storeId);
+                
+                // Get the current invoice number from local counter (without incrementing)
+                const currentInvoiceNumber = invoiceCounterService.getCurrentInvoiceNumber();
+                
                 // Only update if component is still mounted and not already initialized
                 if (isMountedRef.current && !invoiceNumberInitializedRef.current) {
                     invoiceNumberInitializedRef.current = true;
                     setCurrentInvoice(inv => ({ ...inv, id: currentInvoiceNumber }));
-                    
-                    // CRITICAL: Pre-fetch the next invoice number immediately after initialization
-                    // This ensures it's ready when user starts the first sale
-                    preFetchNextInvoiceNumber().catch(error => {
-                        console.error('[POS] Failed to pre-fetch next invoice number on mount:', error);
-                    });
+                    console.log(`[POS] Initialized invoice counter with: ${currentInvoiceNumber}`);
                 }
             } catch (error) {
-                console.error('Failed to initialize invoice number:', error);
+                console.error('Failed to initialize invoice counter:', error);
                 // Mark as initialized even on error to prevent retry loops
                 invoiceNumberInitializedRef.current = true;
             }
         };
         initializeInvoiceNumber();
-    }, [fetchCurrentInvoiceNumber, preFetchNextInvoiceNumber]); // Include dependencies
+    }, [user?.storeId]); // Initialize when storeId is available
 
     // Initialize sales sync service on mount
     useEffect(() => {
@@ -2943,18 +2943,11 @@ const POSPage: React.FC = () => {
             return updated;
         });
         
-        // Get sequential invoice number for new invoice (non-incrementing, for display only)
-        try {
-            const nextInvoiceNumber = await fetchCurrentInvoiceNumber();
-            setCurrentInvoice(generateNewInvoice(currentUserName, nextInvoiceNumber));
-            console.log(`[POS] Invoice ${invoiceToHold.id} suspended. New invoice ${nextInvoiceNumber} created.`);
-        } catch (error) {
-            console.error('Failed to fetch invoice number for new sale after hold, using fallback:', error);
-            // Fallback: use INV-1 if fetch fails
-            const fallbackNumber = 'INV-1';
-            setCurrentInvoice(generateNewInvoice(currentUserName, fallbackNumber));
-            console.log(`[POS] Invoice ${invoiceToHold.id} suspended. New invoice ${fallbackNumber} created (fallback).`);
-        }
+        // HYBRID INVOICE COUNTER: Get current invoice number for new cart display
+        // (this is the next number that will be used when the sale is finalized)
+        const nextInvoiceNumber = invoiceCounterService.getCurrentInvoiceNumber();
+        setCurrentInvoice(generateNewInvoice(currentUserName, nextInvoiceNumber));
+        console.log(`[POS] Invoice ${invoiceToHold.id} suspended. New invoice ${nextInvoiceNumber} created.`);
     };
 
     const handleRestoreSale = async (heldKey: string) => {
@@ -2971,16 +2964,9 @@ const POSPage: React.FC = () => {
         
         const invoiceToRestore = heldInvoices.find(inv => inv.heldKey === heldKey);
         if (invoiceToRestore) {
-            // Get sequential invoice number when restoring a suspended invoice
+            // HYBRID INVOICE COUNTER: Get current invoice number for restored invoice
             // This prevents conflicts when the suspended invoice is completed and synced
-            let newInvoiceNumber: string;
-            try {
-                newInvoiceNumber = await fetchCurrentInvoiceNumber();
-            } catch (error) {
-                console.error('Failed to fetch invoice number for restored sale, using fallback:', error);
-                // Fallback: use INV-1 if fetch fails
-                newInvoiceNumber = 'INV-1';
-            }
+            const newInvoiceNumber = invoiceCounterService.getCurrentInvoiceNumber();
             
             // Create a deep copy when restoring to prevent reference issues
             // IMPORTANT: Assign the new invoice number to avoid conflicts
@@ -3041,39 +3027,12 @@ const POSPage: React.FC = () => {
         setSaleCompleted(false);
         setCompletedInvoice(null); // Clear completed invoice when starting new sale
         
-        // CRITICAL FIX: Use pre-fetched invoice number synchronously (no async wait)
-        // This ensures immediate invoice number availability for new sales
-        let nextInvoiceNumber: string;
-        
-        if (nextInvoiceNumberRef.current) {
-            // Use pre-fetched number immediately
-            nextInvoiceNumber = nextInvoiceNumberRef.current;
-            nextInvoiceNumberRef.current = null; // Clear it since we're using it
-            console.log(`[POS] Started new sale with pre-fetched invoice number: ${nextInvoiceNumber}`);
-            
-            // Pre-fetch the next invoice number in background for the upcoming sale
-            preFetchNextInvoiceNumber().catch(error => {
-                console.error('[POS] Failed to pre-fetch next invoice number after starting sale:', error);
-            });
-        } else {
-            // Fallback: fetch synchronously if pre-fetched number not available
-            console.warn('[POS] Pre-fetched invoice number not available, fetching now...');
-            try {
-                nextInvoiceNumber = await fetchCurrentInvoiceNumber();
-                console.log(`[POS] Started new sale with fetched invoice number: ${nextInvoiceNumber}`);
-                
-                // Pre-fetch the next invoice number in background
-                preFetchNextInvoiceNumber().catch(error => {
-                    console.error('[POS] Failed to pre-fetch next invoice number:', error);
-                });
-            } catch (error) {
-                console.error('Failed to fetch invoice number, using fallback:', error);
-                // Fallback: use INV-1 if fetch fails
-                nextInvoiceNumber = 'INV-1';
-            }
-        }
+        // HYBRID INVOICE COUNTER: Get current invoice number for new cart display
+        // (this is the next number that will be used when the sale is finalized)
+        const nextInvoiceNumber = invoiceCounterService.getCurrentInvoiceNumber();
         
         setCurrentInvoice(generateNewInvoice(currentUserName, nextInvoiceNumber));
+        console.log(`[POS] Started new sale with invoice number: ${nextInvoiceNumber}`);
         
         setSelectedPaymentMethod('Cash');
         setCreditPaidAmount(0);
@@ -3185,7 +3144,8 @@ const POSPage: React.FC = () => {
         setIsProcessingPayment(false); // Clear loading state immediately
         
         // CRITICAL FIX: Clear cart immediately after return completion to prevent items from reappearing
-        const nextInvoiceNumber = await fetchNextInvoiceNumber();
+        // HYBRID INVOICE COUNTER: Get current invoice number for new cart display
+        const nextInvoiceNumber = invoiceCounterService.getCurrentInvoiceNumber();
         const newEmptyInvoice = generateNewInvoice(currentUserName, nextInvoiceNumber);
         setCurrentInvoice(newEmptyInvoice);
         
@@ -3626,8 +3586,8 @@ const POSPage: React.FC = () => {
         }
 
         try {
-            // Generate a new invoice number
-            const nextInvoiceNumber = await fetchNextInvoiceNumber();
+            // HYBRID INVOICE COUNTER: Get next invoice number for re-sale
+            const nextInvoiceNumber = invoiceCounterService.getNextInvoiceNumber();
             
             // Prepare cart items from the conflicting invoice
             const cartItems: POSCartItem[] = [];
@@ -3933,18 +3893,9 @@ const POSPage: React.FC = () => {
             return;
         }
         
-        // Generate invoice number - use pre-fetched or current invoice ID
-        let invoiceNumber: string = cartSnapshot.id || 'INV-1';
-        if (nextInvoiceNumberRef.current) {
-            invoiceNumber = nextInvoiceNumberRef.current;
-            nextInvoiceNumberRef.current = null; // Clear it since we're using it
-        } else {
-            // Try to extract number from current invoice ID for sequential numbering
-            const currentMatch = cartSnapshot.id?.match(/^INV-(\d+)$/);
-            if (currentMatch) {
-                invoiceNumber = cartSnapshot.id;
-            }
-        }
+        // HYBRID INVOICE COUNTER: Get next invoice number immediately from local counter
+        // This ensures immediate invoice number assignment even for pending/hold sales
+        const invoiceNumber = invoiceCounterService.getNextInvoiceNumber();
         
         // Update invoice with invoice number
         cartSnapshot.id = invoiceNumber;
@@ -4079,20 +4030,9 @@ const POSPage: React.FC = () => {
         
         // QUEUE-BASED MODEL: Create new cart IMMEDIATELY after queueing
         // This allows user to start next sale while current sale is being processed
-        const currentMatch = invoiceNumber.match(/^INV-(\d+)$/);
-        let nextInvoiceNumber: string;
-        if (currentMatch) {
-            const currentNum = parseInt(currentMatch[1], 10);
-            nextInvoiceNumber = `INV-${currentNum + 1}`;
-        } else {
-            nextInvoiceNumber = 'INV-1';
-        }
-        
-        // Pre-fetch next invoice number for upcoming sale
-        nextInvoiceNumberRef.current = nextInvoiceNumber;
-        preFetchNextInvoiceNumber().catch(error => {
-            console.warn('[POS] Failed to pre-fetch next invoice number:', error);
-        });
+        // HYBRID INVOICE COUNTER: Get current invoice number for new cart display
+        // (counter was already incremented when we got the invoice number for this sale)
+        const nextInvoiceNumber = invoiceCounterService.getCurrentInvoiceNumber();
         
         // Create new empty cart immediately
         const newEmptyInvoice = generateNewInvoice(currentUserName, nextInvoiceNumber);
