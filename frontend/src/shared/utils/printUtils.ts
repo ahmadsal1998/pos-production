@@ -2178,32 +2178,38 @@ const generateUniversalInvoiceStyles = (printSettings: ReturnType<typeof getPrin
       
       /* Table columns for 58mm thermal */
       .width-58mm .col-index {
-        width: 8% !important;
+        width: 6% !important;
         font-size: 0.85em !important;
         text-align: center !important;
       }
       .width-58mm .col-name { 
-        width: 40% !important; 
+        width: 38% !important; 
         font-size: 0.85em !important; 
         text-align: right !important;
-        white-space: nowrap !important;
-        overflow: hidden !important;
-        text-overflow: ellipsis !important;
+        white-space: normal !important;
+        word-wrap: break-word !important;
+        overflow-wrap: break-word !important;
+        hyphens: auto !important;
+        line-height: 1.3 !important;
+        vertical-align: top !important;
       }
       .width-58mm .col-qty { 
-        width: 8% !important; 
+        width: 10% !important; 
         font-size: 0.85em !important; 
         text-align: center !important;
+        vertical-align: top !important;
       }
       .width-58mm .col-unit-price { 
-        width: 22% !important; 
+        width: 23% !important; 
         font-size: 0.85em !important; 
         text-align: right !important;
+        vertical-align: top !important;
       }
       .width-58mm .col-total { 
-        width: 22% !important; 
+        width: 23% !important; 
         font-size: 0.85em !important; 
         text-align: right !important;
+        vertical-align: top !important;
       }
       
       /* Ensure headers match data alignment for 58mm */
@@ -2344,27 +2350,33 @@ const generateUniversalInvoiceStyles = (printSettings: ReturnType<typeof getPrin
       
       /* Table columns for 80mm thermal */
       .width-80mm .col-index {
-        width: 6% !important;
+        width: 5% !important;
         text-align: center !important;
       }
       .width-80mm .col-name { 
-        width: 42% !important; 
+        width: 40% !important; 
         text-align: right !important;
-        white-space: nowrap !important;
-        overflow: hidden !important;
-        text-overflow: ellipsis !important;
+        white-space: normal !important;
+        word-wrap: break-word !important;
+        overflow-wrap: break-word !important;
+        hyphens: auto !important;
+        line-height: 1.3 !important;
+        vertical-align: top !important;
       }
       .width-80mm .col-qty { 
-        width: 10% !important; 
+        width: 11% !important; 
         text-align: center !important;
+        vertical-align: top !important;
       }
       .width-80mm .col-unit-price { 
-        width: 21% !important; 
+        width: 22% !important; 
         text-align: right !important;
+        vertical-align: top !important;
       }
       .width-80mm .col-total { 
-        width: 21% !important; 
+        width: 22% !important; 
         text-align: right !important;
+        vertical-align: top !important;
       }
       
       /* Ensure headers match data alignment for 80mm */
