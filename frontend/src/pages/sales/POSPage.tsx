@@ -3525,15 +3525,16 @@ const POSPage: React.FC = () => {
 
             // For all payment methods (Cash, Credit, Card, Points), proceed directly
             // Card payments are handled without terminal integration
+            // Wait for sale processing to complete before re-enabling the button
             await finalizeSaleWithoutTerminal();
         } catch (error: any) {
             // Handle any unexpected errors
             console.error('Error in handleFinalizePayment:', error);
             showToast(`حدث خطأ أثناء معالجة الدفع: ${error?.message || 'خطأ غير معروف'}`, 'error');
         } finally {
-            // Reset processing state after sale is enqueued (sale is processed in background)
-            // The sale is immediately shown as completed in the UI, so we can re-enable the button
-            // This ensures the button is re-enabled even if finalizeSaleWithoutTerminal returns early or throws
+            // CRITICAL FIX: Only reset processing state after sale is fully processed
+            // This ensures the "Start New Sale" button remains disabled until processing completes
+            // and prevents race conditions or duplicate invoices
             setIsProcessingPayment(false);
         }
     };
@@ -3571,8 +3572,8 @@ const POSPage: React.FC = () => {
             // F2 key: Trigger the "start new sale" button (only when on sale completed/receipt screen)
             if (e.key === 'F2') {
                 e.preventDefault();
-                // CRITICAL: Block F2 shortcut if sale is processing
-                if (isProcessingPayment || isSubmittingInvoiceRef.current) {
+                // CRITICAL: Block F2 shortcut if sale is processing or queue is processing
+                if (isProcessingPayment || isSubmittingInvoiceRef.current || queueProcessing) {
                     console.warn('[POS] ⚠️ BLOCKED: Cannot start new sale while processing');
                     return;
                 }
@@ -4076,7 +4077,8 @@ const POSPage: React.FC = () => {
         console.log(`[POS] Enqueueing sale ${saleId} with invoice number: ${invoiceNumber}`);
         
         // Enqueue the sale - it will be processed sequentially by the queue service
-        saleQueueService.enqueueSale(isolatedContext, saleData).then((result) => {
+        // Return the promise so caller can wait for processing to complete
+        return saleQueueService.enqueueSale(isolatedContext, saleData).then((result) => {
             if (result.success) {
                 console.log(`✅ Sale ${saleId} processed successfully (backend ID: ${result.backendId})`);
                 
@@ -4124,9 +4126,11 @@ const POSPage: React.FC = () => {
                 console.error(`❌ Sale ${saleId} failed:`, result.error);
                 showToast(`فشل في حفظ الفاتورة: ${result.error || 'خطأ غير معروف'}`, 'error');
             }
+            return result;
         }).catch((error) => {
             console.error(`❌ Error processing sale ${saleId}:`, error);
             showToast(`فشل في معالجة الفاتورة: ${error?.message || 'خطأ غير معروف'}`, 'error');
+            throw error;
         });
         
         // PERFORMANCE FIX: Move all heavy operations to background (non-blocking)
@@ -5508,11 +5512,17 @@ const POSPage: React.FC = () => {
                         <button 
                             ref={startNewSaleButtonRef}
                             onClick={startNewSale}
-                            disabled={false}
+                            disabled={isProcessingPayment || queueProcessing || isSubmittingInvoiceRef.current}
                             className="inline-flex items-center justify-center px-3 sm:px-4 py-2 text-xs sm:text-sm font-medium rounded-md shadow-sm text-white bg-orange-500 hover:bg-orange-600 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
                         >
-                            <PlusIcon className="h-4 w-4 ml-1.5" />
-                            <span>{AR_LABELS.startNewSale}</span>
+                            {(isProcessingPayment || queueProcessing) && (
+                                <svg className="animate-spin h-4 w-4 ml-1.5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                </svg>
+                            )}
+                            {!(isProcessingPayment || queueProcessing) && <PlusIcon className="h-4 w-4 ml-1.5" />}
+                            <span>{isProcessingPayment || queueProcessing ? 'جاري المعالجة...' : AR_LABELS.startNewSale}</span>
                         </button>
                         <button 
                             onClick={() => printReceipt('printable-receipt')} 
