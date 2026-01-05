@@ -381,6 +381,7 @@ const POSPage: React.FC = () => {
     const [creditPaidAmount, setCreditPaidAmount] = useState(0);
     const [creditPaidAmountError, setCreditPaidAmountError] = useState<string | null>(null);
     const [isProcessingPayment, setIsProcessingPayment] = useState(false); // Track payment processing state
+    const [isProcessingReturn, setIsProcessingReturn] = useState(false); // Track return processing state
     const [hasUnsyncedSales, setHasUnsyncedSales] = useState(false); // Track if there are unsynced sales (sales under review)
     // Points redemption state
     const [pointsToRedeem, setPointsToRedeem] = useState(0);
@@ -3067,34 +3068,54 @@ const POSPage: React.FC = () => {
     };
     
     const handleReturn = async () => {
+        // Prevent duplicate submissions
+        if (isProcessingReturn || isProcessingPayment) {
+            console.warn('⚠️ Return processing already in progress, ignoring duplicate request');
+            return;
+        }
+        
         if (currentInvoice.items.length === 0) {
             showToast('يرجى إضافة منتجات للإرجاع', 'info');
             return;
         }
         
-        // Fetch next invoice number for return (returns use same sequential format)
-        const nextInvoiceNumber = await fetchNextInvoiceNumber();
+        // Set processing state immediately to prevent duplicate clicks
+        setIsProcessingReturn(true);
         
-        // Create a return invoice with current cart items
-        const returnInvoice = generateNewInvoice(currentUserName, nextInvoiceNumber, true);
-        returnInvoice.customer = currentInvoice.customer;
-        
-        // Copy items to return invoice (quantities will be positive for returns)
-        returnInvoice.items = currentInvoice.items.map(item => ({
-            ...item,
-            quantity: Math.abs(item.quantity), // Ensure positive quantity for returns
-            total: Math.abs(item.total), // Ensure positive total for returns
-        }));
-        
-        // Recalculate totals for return invoice
-        const totals = calculateTotals(returnInvoice.items, returnInvoice.invoiceDiscount);
-        returnInvoice.subtotal = totals.subtotal;
-        returnInvoice.totalItemDiscount = totals.totalItemDiscount;
-        returnInvoice.tax = totals.tax;
-        returnInvoice.grandTotal = totals.grandTotal;
-        
-        // Process the return
-        processReturnInvoice(returnInvoice);
+        try {
+            // Fetch next invoice number for return (returns use same sequential format)
+            const nextInvoiceNumber = await fetchNextInvoiceNumber();
+            
+            // Create a return invoice with current cart items
+            const returnInvoice = generateNewInvoice(currentUserName, nextInvoiceNumber, true);
+            returnInvoice.customer = currentInvoice.customer;
+            
+            // Copy items to return invoice (quantities will be positive for returns)
+            returnInvoice.items = currentInvoice.items.map(item => ({
+                ...item,
+                quantity: Math.abs(item.quantity), // Ensure positive quantity for returns
+                total: Math.abs(item.total), // Ensure positive total for returns
+            }));
+            
+            // Recalculate totals for return invoice
+            const totals = calculateTotals(returnInvoice.items, returnInvoice.invoiceDiscount);
+            returnInvoice.subtotal = totals.subtotal;
+            returnInvoice.totalItemDiscount = totals.totalItemDiscount;
+            returnInvoice.tax = totals.tax;
+            returnInvoice.grandTotal = totals.grandTotal;
+            
+            // Process the return - await to ensure processing completes
+            await processReturnInvoice(returnInvoice);
+        } catch (error: any) {
+            // Handle any unexpected errors
+            console.error('Error in handleReturn:', error);
+            showToast(`حدث خطأ أثناء معالجة الإرجاع: ${error?.message || 'خطأ غير معروف'}`, 'error');
+        } finally {
+            // CRITICAL FIX: Only reset processing state after return is fully processed
+            // This ensures the button remains disabled until processing completes
+            // and prevents duplicate returns or inconsistent state
+            setIsProcessingReturn(false);
+        }
     }
     
     const processReturnInvoice = async (returnInvoice: POSInvoice) => {
@@ -3153,6 +3174,9 @@ const POSPage: React.FC = () => {
         setCurrentInvoice(newEmptyInvoice);
         
         // PERFORMANCE FIX: Move all heavy operations to background (non-blocking)
+        // Critical processing is complete (saleCompleted is set, cart is cleared)
+        // Background operations continue asynchronously but don't block the UI
+        // Since this function is async, it returns a resolved promise automatically
         // Stock updates, sale sync, and product sync all run in background
         
         // Background task: Update stock in backend (non-blocking)
@@ -5586,7 +5610,7 @@ const POSPage: React.FC = () => {
     return (
         <div ref={posContainerRef} className="relative h-screen overflow-hidden">
             {/* Full-page loading overlay during processing */}
-            {isProcessingPayment && (
+            {(isProcessingPayment || isProcessingReturn) && (
                 <div className="fixed inset-0 bg-black/70 dark:bg-black/80 z-[9999] flex items-center justify-center backdrop-blur-sm">
                     <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl p-8 sm:p-10 max-w-md mx-4 text-center">
                         <div className="flex flex-col items-center gap-4">
@@ -5596,7 +5620,7 @@ const POSPage: React.FC = () => {
                             </svg>
                             <div className="text-right w-full">
                                 <h3 className="text-xl sm:text-2xl font-bold text-gray-900 dark:text-gray-100 mb-2">
-                                    جاري المعالجة...
+                                    {isProcessingReturn ? 'جاري معالجة الإرجاع...' : 'جاري المعالجة...'}
                                 </h3>
                                 <p className="text-sm sm:text-base text-gray-600 dark:text-gray-400">
                                     يرجى الانتظار حتى اكتمال العملية
@@ -6417,10 +6441,16 @@ const POSPage: React.FC = () => {
                                         </div>
                                         <button 
                                             onClick={handleReturn} 
-                                            disabled={currentInvoice.items.length === 0} 
-                                            className="flex-1 px-2.5 sm:px-3 md:px-3.5 lg:px-4 py-1.5 sm:py-2 md:py-2.5 text-xs sm:text-sm font-bold text-white bg-gradient-to-r from-red-500 via-rose-500 to-red-600 rounded-lg hover:from-red-600 hover:via-rose-600 hover:to-red-700 disabled:from-gray-400 disabled:via-gray-400 disabled:to-gray-500 dark:disabled:from-gray-600 dark:disabled:via-gray-600 dark:disabled:to-gray-700 shadow-lg hover:shadow-xl hover:scale-[1.02] transition-all duration-200 disabled:cursor-not-allowed disabled:scale-100"
+                                            disabled={currentInvoice.items.length === 0 || isProcessingReturn || isProcessingPayment} 
+                                            className="flex-1 px-2.5 sm:px-3 md:px-3.5 lg:px-4 py-1.5 sm:py-2 md:py-2.5 text-xs sm:text-sm font-bold text-white bg-gradient-to-r from-red-500 via-rose-500 to-red-600 rounded-lg hover:from-red-600 hover:via-rose-600 hover:to-red-700 disabled:from-gray-400 disabled:via-gray-400 disabled:to-gray-500 dark:disabled:from-gray-600 dark:disabled:via-gray-600 dark:disabled:to-gray-700 shadow-lg hover:shadow-xl hover:scale-[1.02] transition-all duration-200 disabled:cursor-not-allowed disabled:scale-100 flex items-center justify-center gap-2"
                                         >
-                                            {AR_LABELS.returnProduct}
+                                            {isProcessingReturn && (
+                                                <svg className="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                                </svg>
+                                            )}
+                                            {isProcessingReturn ? 'جاري المعالجة...' : AR_LABELS.returnProduct}
                                         </button>
                                     </div>
                                     <button 
