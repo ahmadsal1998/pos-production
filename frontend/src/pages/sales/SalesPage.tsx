@@ -6,6 +6,7 @@ import { AR_LABELS, UUID, SearchIcon, PlusIcon, EditIcon, DeleteIcon, PrintIcon,
 import { GridViewIcon, TableViewIcon } from '@/shared/constants/routes';
 import { AnimatedNumber } from '@/shared/components/ui/AnimatedNumber';
 import CustomDropdown from '@/shared/components/ui/CustomDropdown/CustomDropdown';
+import { useDropdown } from '@/shared/contexts/DropdownContext';
 import { MetricCard } from '@/shared/components';
 import { formatDate } from '@/shared/utils';
 import { customersApi, salesApi, ApiError, storeSettingsApi, productsApi, usersApi } from '@/lib/api/client';
@@ -517,14 +518,14 @@ const SaleDetailsModal: React.FC<{ sale: SaleTransaction | null, onClose: () => 
     );
 };
 
-type BalanceOperation = 'addBalance' | 'addDebt' | 'payDebt' | 'deductBalance';
+type VoucherType = 'journalVoucher' | 'receiptVoucher';
 
 const AddPaymentModal: React.FC<{
     customerSummary: CustomerAccountSummary | null;
     onClose: () => void;
     onSave: (payment: CustomerPayment) => void;
 }> = ({ customerSummary, onClose, onSave }) => {
-    const [operation, setOperation] = useState<BalanceOperation | null>(null);
+    const [voucherType, setVoucherType] = useState<VoucherType | null>(null);
     const [amount, setAmount] = useState(0);
     const [method, setMethod] = useState<'Cash' | 'Bank Transfer' | 'Cheque'>('Cash');
     const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
@@ -536,72 +537,26 @@ const AddPaymentModal: React.FC<{
             setDate(new Date().toISOString().split('T')[0]);
             setMethod('Cash');
             setNotes('');
-            setOperation(null); // Reset operation when customer changes
+            setVoucherType(null); // Reset voucher type when customer changes
         }
     }, [customerSummary]);
     
     if (!customerSummary) return null;
 
-    // Determine available operations based on balance
-    const getAvailableOperations = (): BalanceOperation[] => {
-        const balance = customerSummary.balance;
-        
-        if (balance === 0 || balance === null || balance === undefined) {
-            // Zero or new customer: can add balance or add debt
-            return ['addBalance', 'addDebt'];
-        } else if (balance > 0) {
-            // Positive balance (customer owes): can add balance or deduct from balance
-            return ['addBalance', 'deductBalance'];
-        } else {
-            // Negative balance (debt): can pay debt or add more debt
-            return ['payDebt', 'addDebt'];
-        }
-    };
-
-    const availableOperations = getAvailableOperations();
-
-    const getOperationLabel = (op: BalanceOperation): string => {
-        const balance = customerSummary.balance;
-        
-        // For negative balance (debt), use debt-related terms
-        if (balance < 0) {
-            switch (op) {
-                case 'payDebt':
-                    return AR_LABELS.payDebt;
-                case 'addDebt':
-                    return AR_LABELS.addDebt;
-                default:
-                    return '';
-            }
-        }
-        // For positive balance, use balance-related terms
-        else if (balance > 0) {
-            switch (op) {
-                case 'addBalance':
-                    return AR_LABELS.addBalance;
-                case 'deductBalance':
-                    return AR_LABELS.deductBalance;
-                default:
-                    return '';
-            }
-        }
-        // For zero balance, show appropriate terms
-        else {
-            switch (op) {
-                case 'addBalance':
-                    return AR_LABELS.addBalance;
-                case 'addDebt':
-                    // For zero balance, "Add Debt" is shown as "Deduct from Balance"
-                    return AR_LABELS.deductBalance;
-                default:
-                    return '';
-            }
+    const getVoucherLabel = (type: VoucherType): string => {
+        switch (type) {
+            case 'journalVoucher':
+                return AR_LABELS.journalVoucher;
+            case 'receiptVoucher':
+                return AR_LABELS.receiptVoucher;
+            default:
+                return '';
         }
     };
 
     const handleSave = () => {
-        if (!operation) {
-            alert('يرجى اختيار نوع العملية.');
+        if (!voucherType) {
+            alert('يرجى اختيار نوع السند.');
             return;
         }
 
@@ -610,14 +565,14 @@ const AddPaymentModal: React.FC<{
             return;
         }
 
-        // Determine the payment amount based on operation
-        // For addBalance and payDebt: positive amount (increases customer credit)
-        // For addDebt and deductBalance: negative amount (increases customer debt)
+        // Determine the payment amount based on voucher type
+        // Journal Voucher (سند قيد): negative amount (increases customer debt)
+        // Receipt Voucher (سند قبض): positive amount (decreases customer debt / payment from customer)
         let paymentAmount: number;
-        if (operation === 'addBalance' || operation === 'payDebt') {
-            paymentAmount = amount; // Positive
+        if (voucherType === 'receiptVoucher') {
+            paymentAmount = amount; // Positive (payment from customer)
         } else {
-            paymentAmount = -amount; // Negative
+            paymentAmount = -amount; // Negative (debt from customer)
         }
 
         onSave({
@@ -630,40 +585,28 @@ const AddPaymentModal: React.FC<{
         });
     };
 
-    // If operation not selected, show operation selection
-    if (!operation) {
+    // If voucher type not selected, show voucher selection
+    if (!voucherType) {
         return (
             <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4" onClick={onClose}>
                 <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-md text-right" onClick={e => e.stopPropagation()}>
                     <div className="p-6 space-y-4">
                         <h2 className="text-xl font-bold text-gray-900 dark:text-gray-100">
-                            {customerSummary.balance === 0 || customerSummary.balance === null || customerSummary.balance === undefined
-                                ? 'اختر العملية'
-                                : `العمليات المتاحة لـ ${customerSummary.customerName}`}
+                            اختر نوع السند لـ {customerSummary.customerName}
                         </h2>
                         <div className="space-y-2">
-                            {availableOperations.map((op) => {
-                                // Determine button color based on operation type and balance state
-                                const balance = customerSummary.balance;
-                                const isPositiveAction = op === 'addBalance' || op === 'payDebt';
-                                
-                                // For negative balance: payDebt is green, addDebt is red
-                                // For positive balance: addBalance is green, deductBalance is red
-                                // For zero balance: addBalance is green, addDebt (shown as deductBalance) is red
-                                const buttonClasses = isPositiveAction
-                                    ? "w-full px-4 py-3 bg-green-500 hover:bg-green-600 dark:bg-green-600 dark:hover:bg-green-700 text-white rounded-md text-right font-medium transition-all duration-300 shadow-md hover:shadow-lg"
-                                    : "w-full px-4 py-3 bg-red-500 hover:bg-red-600 dark:bg-red-600 dark:hover:bg-red-700 text-white rounded-md text-right font-medium transition-all duration-300 shadow-md hover:shadow-lg";
-                                
-                                return (
-                                    <button
-                                        key={op}
-                                        onClick={() => setOperation(op)}
-                                        className={buttonClasses}
-                                    >
-                                        {getOperationLabel(op)}
-                                    </button>
-                                );
-                            })}
+                            <button
+                                onClick={() => setVoucherType('receiptVoucher')}
+                                className="w-full px-4 py-3 bg-green-500 hover:bg-green-600 dark:bg-green-600 dark:hover:bg-green-700 text-white rounded-md text-right font-medium transition-all duration-300 shadow-md hover:shadow-lg"
+                            >
+                                {AR_LABELS.receiptVoucher}
+                            </button>
+                            <button
+                                onClick={() => setVoucherType('journalVoucher')}
+                                className="w-full px-4 py-3 bg-red-500 hover:bg-red-600 dark:bg-red-600 dark:hover:bg-red-700 text-white rounded-md text-right font-medium transition-all duration-300 shadow-md hover:shadow-lg"
+                            >
+                                {AR_LABELS.journalVoucher}
+                            </button>
                         </div>
                     </div>
                     <div className="flex justify-start space-x-4 space-x-reverse p-4 bg-gray-50 dark:bg-gray-800/50 border-t dark:border-gray-700 rounded-b-lg">
@@ -674,15 +617,15 @@ const AddPaymentModal: React.FC<{
         );
     }
 
-    // Show form for selected operation
+    // Show form for selected voucher type
     return (
         <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4" onClick={onClose}>
             <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-md text-right" onClick={e => e.stopPropagation()}>
                 <div className="p-6 space-y-4">
                     <div className="flex items-center justify-between mb-2">
-                        <h2 className="text-xl font-bold text-gray-900 dark:text-gray-100">{getOperationLabel(operation)} لـ {customerSummary.customerName}</h2>
+                        <h2 className="text-xl font-bold text-gray-900 dark:text-gray-100">{getVoucherLabel(voucherType)} لـ {customerSummary.customerName}</h2>
                         <button 
-                            onClick={() => setOperation(null)}
+                            onClick={() => setVoucherType(null)}
                             className="text-sm text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
                         >
                             ← رجوع
@@ -761,6 +704,8 @@ const CustomerDetailsModal: React.FC<{
     const [businessName, setBusinessName] = useState<string>('');
     const [allCustomerSales, setAllCustomerSales] = useState<SaleTransaction[]>([]);
     const [allCustomerPayments, setAllCustomerPayments] = useState<CustomerPayment[]>([]);
+    const [rawSalesData, setRawSalesData] = useState<any[]>([]); // Store raw API data to access createdAt
+    const [rawPaymentsData, setRawPaymentsData] = useState<any[]>([]); // Store raw API data to access createdAt
     const [isLoadingTransactions, setIsLoadingTransactions] = useState(false);
 
     // Prevent body scroll when modal is open and lock scroll position
@@ -804,6 +749,9 @@ const CustomerDetailsModal: React.FC<{
                     
                     const backendResponse = salesResponse.data as any;
                     if (backendResponse?.success && Array.isArray(backendResponse.data?.sales)) {
+                        // Store raw sales data to access createdAt for entry date sorting
+                        setRawSalesData(backendResponse.data.sales);
+                        
                         const apiSales: SaleTransaction[] = backendResponse.data.sales.map((sale: any) => ({
                             id: sale.id || sale._id || sale.invoiceNumber,
                             invoiceNumber: sale.invoiceNumber || sale.id || sale._id,
@@ -825,11 +773,13 @@ const CustomerDetailsModal: React.FC<{
                         setAllCustomerSales(apiSales);
                     } else {
                         // Fallback to props if API fails
+                        setRawSalesData([]); // Clear raw data when using props
                         setAllCustomerSales(sales.filter(s => s.customerId === customerId));
                     }
                 } catch (salesError) {
                     console.warn('[CustomerDetailsModal] Error fetching all sales, using props:', salesError);
                     // Fallback to props if API fails
+                    setRawSalesData([]); // Clear raw data when using props
                     setAllCustomerSales(sales.filter(s => s.customerId === summary.customerId));
                 }
                 
@@ -841,6 +791,9 @@ const CustomerDetailsModal: React.FC<{
                     
                     const backendResponse = paymentsResponse.data as any;
                     if (backendResponse?.success && Array.isArray(backendResponse.data?.payments)) {
+                        // Store raw payments data to access createdAt for entry date sorting
+                        setRawPaymentsData(backendResponse.data.payments);
+                        
                         const apiPayments: CustomerPayment[] = backendResponse.data.payments.map((payment: any) => ({
                             id: payment.id || payment._id,
                             customerId: payment.customerId,
@@ -853,16 +806,20 @@ const CustomerDetailsModal: React.FC<{
                         setAllCustomerPayments(apiPayments);
                     } else {
                         // Fallback to props if API fails
+                        setRawPaymentsData([]); // Clear raw data when using props
                         setAllCustomerPayments(payments.filter(p => p.customerId === customerId));
                     }
                 } catch (paymentsError) {
                     console.warn('[CustomerDetailsModal] Error fetching all payments, using props:', paymentsError);
                     // Fallback to props if API fails
+                    setRawPaymentsData([]); // Clear raw data when using props
                     setAllCustomerPayments(payments.filter(p => p.customerId === summary.customerId));
                 }
             } catch (error) {
                 console.error('[CustomerDetailsModal] Error fetching transactions:', error);
                 // Fallback to props on error
+                setRawSalesData([]); // Clear raw data on error
+                setRawPaymentsData([]); // Clear raw data on error
                 setAllCustomerSales(sales.filter(s => s.customerId === summary.customerId));
                 setAllCustomerPayments(payments.filter(p => p.customerId === summary.customerId));
             } finally {
@@ -966,9 +923,24 @@ const CustomerDetailsModal: React.FC<{
                 // For returns, the amount should be negative (credit) instead of positive (debit)
                 const amount = Math.abs(s.totalAmount);
                 
+                // Get entry date for sorting - prefer createdAt (when transaction was entered) over date (transaction date)
+                // This ensures transactions are sorted by when they were actually entered into the system
+                // Try to find the raw sale data to get createdAt
+                const rawSale = rawSalesData.find(rs => {
+                    const rawId = rs.id || rs._id || rs.invoiceNumber;
+                    const saleId = s.id || s.invoiceNumber;
+                    return rawId === saleId || rawId === s.id || rawId === s.invoiceNumber;
+                });
+                // Use createdAt if available (entry date), otherwise use date (transaction date)
+                // createdAt is the actual entry date (when transaction was entered into system)
+                const entryDate = rawSale?.createdAt 
+                    ? (typeof rawSale.createdAt === 'string' ? rawSale.createdAt : rawSale.createdAt.toISOString())
+                    : (s.date || new Date().toISOString());
+                
                 // Return transaction summary ONLY - no invoice items included
                 return {
-                    date: s.date,
+                    date: s.date, // Display date (transaction date)
+                    entryDate: entryDate, // Entry date for sorting (when transaction was entered)
                     type: isReturn ? 'return' as const : 'purchase' as const,
                     description,
                     invoiceNumber: s.invoiceNumber || s.id || null,
@@ -989,15 +961,15 @@ const CustomerDetailsModal: React.FC<{
                 // Create appropriate description based on amount and method
                 let description = '';
                 if (isCredit) {
-                    // Positive amount: payment received or balance payment
+                    // Positive amount: Receipt Voucher (سند قبض) - payment from customer
                     if (p.invoiceId) {
-                        description = `${AR_LABELS.paymentReceived} - ${p.method} (${AR_LABELS.invoice} #${p.invoiceId})`;
+                        description = `${AR_LABELS.receiptVoucher} - ${p.method} (${AR_LABELS.invoice} #${p.invoiceId})`;
                     } else {
-                        description = `${AR_LABELS.paymentReceived} - ${p.method}`;
+                        description = `${AR_LABELS.receiptVoucher} - ${p.method}`;
                     }
                 } else {
-                    // Negative amount: debt addition or balance deduction
-                    description = `${AR_LABELS.addDebt} - ${p.method}`;
+                    // Negative amount: Journal Voucher (سند قيد) - debt from customer
+                    description = `${AR_LABELS.journalVoucher} - ${p.method}`;
                 }
                 
                 // Add notes if available
@@ -1005,8 +977,22 @@ const CustomerDetailsModal: React.FC<{
                     description += ` (${p.notes.trim()})`;
                 }
                 
+                // Get entry date for sorting - prefer createdAt (when transaction was entered) over date (transaction date)
+                // This ensures transactions are sorted by when they were actually entered into the system
+                // Try to find the raw payment data to get createdAt
+                const rawPayment = rawPaymentsData.find(rp => {
+                    const rawId = rp.id || rp._id;
+                    return rawId === p.id;
+                });
+                // Use createdAt if available (entry date), otherwise use date (transaction date)
+                // createdAt is the actual entry date (when transaction was entered into system)
+                const entryDate = rawPayment?.createdAt 
+                    ? (typeof rawPayment.createdAt === 'string' ? rawPayment.createdAt : rawPayment.createdAt.toISOString())
+                    : (p.date || new Date().toISOString());
+                
                 return {
-                    date: p.date,
+                    date: p.date, // Display date (transaction date)
+                    entryDate: entryDate, // Entry date for sorting (when transaction was entered)
                     type: isCredit ? 'payment' as const : 'debt' as const,
                     description,
                     invoiceNumber: p.invoiceId || null,
@@ -1015,16 +1001,98 @@ const CustomerDetailsModal: React.FC<{
                 };
             });
         
-        return [...customerSales, ...customerPayments]
-            .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
-            .reduce((acc, trans) => {
-                const prevBalance = acc.length > 0 ? acc[acc.length - 1].balance : 0;
-                const newBalance = prevBalance + trans.debit - trans.credit;
-                acc.push({ ...trans, balance: newBalance } as any);
-                return acc;
-            }, [] as any[]);
+        // CRITICAL: Sort transactions by ENTRY DATE in ascending order (oldest first, newest last)
+        // This ensures transactions are displayed in the order they were entered into the system
+        // from the first transaction entered to the last transaction entered
+        const allTransactions = [...customerSales, ...customerPayments];
+        
+        // Sort by entryDate (when transaction was entered) in ASCENDING order (oldest → newest)
+        const sortedTransactions = [...allTransactions].sort((a, b) => {
+            // Parse entry dates for comparison
+            let entryDateA: Date;
+            let entryDateB: Date;
+            
+            try {
+                const entryDateStrA = String(a.entryDate || a.date || '');
+                const entryDateStrB = String(b.entryDate || b.date || '');
+                
+                entryDateA = new Date(entryDateStrA);
+                entryDateB = new Date(entryDateStrB);
+            } catch (e) {
+                // If parsing fails, use epoch as fallback (will sort to beginning)
+                entryDateA = new Date(0);
+                entryDateB = new Date(0);
+            }
+            
+            // Get timestamps for comparison
+            const timeA = entryDateA.getTime();
+            const timeB = entryDateB.getTime();
+            
+            // Validate dates (handle invalid dates)
+            if (isNaN(timeA) || isNaN(timeB)) {
+                // If either date is invalid, put invalid dates at the end
+                if (isNaN(timeA) && isNaN(timeB)) return 0;
+                if (isNaN(timeA)) return 1;  // Invalid date goes to end
+                if (isNaN(timeB)) return -1; // Valid date comes first
+            }
+            
+            // PRIMARY SORT: By entry date (ascending - oldest first, newest last)
+            const dateComparison = timeA - timeB;
+            
+            // If entry dates are equal, use secondary sorting criteria for logical order
+            if (dateComparison === 0) {
+                // 1. Initial balance vouchers should appear first (they represent starting balance)
+                const aIsInitialBalance = a.description?.includes('رصيد أولي') || a.description?.includes('Initial Balance');
+                const bIsInitialBalance = b.description?.includes('رصيد أولي') || b.description?.includes('Initial Balance');
+                
+                if (aIsInitialBalance && !bIsInitialBalance) return -1; // a is initial balance, comes first
+                if (!aIsInitialBalance && bIsInitialBalance) return 1;  // b is initial balance, comes first
+                
+                // 2. For same entry date, prefer sales (purchases/returns) over payments
+                // This ensures sales appear before payments when entered on the same date
+                if ((a.type === 'purchase' || a.type === 'return') && (b.type === 'payment' || b.type === 'debt')) return -1;
+                if ((b.type === 'purchase' || b.type === 'return') && (a.type === 'payment' || a.type === 'debt')) return 1;
+                
+                // 3. For payments with same entry date, prefer Journal Voucher (debt) over Receipt Voucher (payment)
+                // This ensures debt transactions appear before payment transactions
+                if (a.type === 'debt' && b.type === 'payment') return -1; // Journal Voucher before Receipt Voucher
+                if (a.type === 'payment' && b.type === 'debt') return 1;  // Receipt Voucher after Journal Voucher
+                
+                // 4. For same type and date, sort by invoice number for deterministic order
+                if (a.invoiceNumber && b.invoiceNumber) {
+                    return a.invoiceNumber.localeCompare(b.invoiceNumber);
+                }
+                if (a.invoiceNumber) return -1;
+                if (b.invoiceNumber) return 1;
+                
+                // 5. If still equal, maintain original order (stable sort)
+                return 0;
+            }
+            
+            // Return the date comparison result (ascending: oldest first)
+            return dateComparison;
+        });
+        
+        // Calculate running balance starting from the oldest transaction (first entered)
+        // Start with initial balance of 0 - the first transaction will establish the correct starting balance
+        let startingBalance = 0;
+        
+        // Calculate running balance for each transaction in chronological order
+        const transactionsWithBalance = sortedTransactions.reduce((acc, trans) => {
+            // Get previous balance (startingBalance for first transaction, or last calculated balance)
+            const prevBalance = acc.length > 0 ? acc[acc.length - 1].balance : startingBalance;
+            // Calculate new balance: previous balance + debit - credit
+            // Debit increases balance (customer owes more), Credit decreases balance (customer paid)
+            const newBalance = prevBalance + trans.debit - trans.credit;
+            acc.push({ ...trans, balance: newBalance } as any);
+            return acc;
+        }, [] as any[]);
+        
+        // Return transactions in chronological order by entry date (oldest first, newest last)
+        // The first element is the oldest transaction (first entered), last element is newest (last entered)
+        return transactionsWithBalance;
 
-    }, [summary?.customerId, allCustomerSales, allCustomerPayments, sales, payments]);
+    }, [summary?.customerId, allCustomerSales, allCustomerPayments, rawSalesData, rawPaymentsData, sales, payments]);
 
     // Helper function to render description with clickable invoice numbers
     const renderDescriptionWithInvoiceLink = (transaction: any) => {
@@ -1142,15 +1210,19 @@ const CustomerDetailsModal: React.FC<{
                             <p className="text-sm text-gray-600 dark:text-gray-400 mt-2">{AR_LABELS.date}: {formatDate(new Date().toISOString())}</p>
                         </div>
                         <div className="text-left text-sm print-hidden">
-                            <p><strong>{AR_LABELS.totalSales}:</strong> {formatCurrency(summary.totalSales)}</p>
+                            <p><strong>{AR_LABELS.totalDebt}:</strong> {formatCurrency(summary.totalSales)}</p>
                             <p><strong>{AR_LABELS.totalPayments}:</strong> {formatCurrency(summary.totalPaid)}</p>
-                            <p className="font-bold text-lg">{AR_LABELS.balance}: <span className={summary.balance > 0 ? 'text-red-600' : 'text-green-600'}>{formatCurrency(summary.balance)}</span></p>
+                            <p className="font-bold text-lg">{AR_LABELS.balance}: <span className={summary.balance > 0 ? 'text-blue-600' : summary.balance < 0 ? 'text-red-600' : 'text-gray-600'}>
+                                {formatCurrency(Math.abs(summary.balance))}
+                                {summary.balance > 0 && ' (دائن)'}
+                                {summary.balance < 0 && ' (مدين)'}
+                            </span></p>
                         </div>
                     </div>
                     {/* Statement Summary - formatted for print - Distinct from Invoice Summary */}
                     <div className="statement-summary mb-4">
                         <div>
-                            <span>{AR_LABELS.totalSales}:</span>
+                            <span>{AR_LABELS.totalDebt}:</span>
                             <span>{formatCurrency(summary.totalSales)}</span>
                         </div>
                         <div>
@@ -1160,8 +1232,9 @@ const CustomerDetailsModal: React.FC<{
                         <div className="grand-total">
                             <span>{AR_LABELS.balance}:</span>
                             <span>
-                                {summary.balance > 0 ? 'عليه ' : summary.balance < 0 ? 'له ' : ''}
-                                {formatCurrency(summary.balance)}
+                                {formatCurrency(Math.abs(summary.balance))}
+                                {summary.balance > 0 && ' (دائن)'}
+                                {summary.balance < 0 && ' (مدين)'}
                             </span>
                         </div>
                     </div>
@@ -1179,30 +1252,35 @@ const CustomerDetailsModal: React.FC<{
                             <table className="min-w-full statement-transactions-table" title="Customer Statement Table - Distinct from Invoice Layout - Only shows transaction summaries, NOT full invoice details">
                                  <thead className="bg-gray-50 dark:bg-gray-700/50 sticky top-0">
                                     <tr>
-                                        <th className="p-2 text-xs font-medium uppercase text-right statement-col-date print-hidden">{AR_LABELS.date}</th>
+                                        <th className="p-2 text-xs font-medium uppercase text-right statement-col-date print-text-black text-gray-900 dark:text-gray-100">{AR_LABELS.date}</th>
                                         <th className="p-2 text-xs font-medium uppercase text-right statement-col-description">{AR_LABELS.description}</th>
-                                        <th className="p-2 text-xs font-medium uppercase text-right statement-col-amount">{AR_LABELS.amount}</th>
+                                        <th className="p-2 text-xs font-medium uppercase text-right statement-col-debit">{AR_LABELS.debit}</th>
+                                        <th className="p-2 text-xs font-medium uppercase text-right statement-col-credit">{AR_LABELS.creditTerm}</th>
                                         <th className="p-2 text-xs font-medium uppercase text-right statement-col-balance">{AR_LABELS.balance}</th>
                                     </tr>
                                 </thead>
                                  <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
                                      {transactions.map((t, i) => {
-                                         // Calculate amount: positive for debits, negative for credits
-                                         const amount = t.debit > 0 ? t.debit : (t.credit > 0 ? -t.credit : 0);
-                                         const amountDisplay = amount !== 0 
-                                             ? (amount > 0 ? '+' : '-') + formatStatementNumber(Math.abs(amount), (val) => formatCurrency(val, { minimumFractionDigits: 0, maximumFractionDigits: 2, showSymbol: false }))
+                                         // Display debit and credit as separate positive values
+                                         const debitDisplay = t.debit > 0 
+                                             ? formatStatementNumber(t.debit, (val) => formatCurrency(val, { minimumFractionDigits: 0, maximumFractionDigits: 2, showSymbol: false }))
+                                             : '-';
+                                         const creditDisplay = t.credit > 0 
+                                             ? formatStatementNumber(t.credit, (val) => formatCurrency(val, { minimumFractionDigits: 0, maximumFractionDigits: 2, showSymbol: false }))
                                              : '-';
                                          return (
                                              <tr key={i}>
-                                                 <td className="p-2 text-sm statement-col-date print-hidden">{formatDate(t.date)}</td>
+                                                 <td className="p-2 text-sm text-right statement-col-date print-text-black text-gray-900 dark:text-gray-100 font-medium">{formatDate(t.date)}</td>
                                                  <td className="p-2 text-sm statement-col-description">
                                                      <div>{renderDescriptionWithInvoiceLink(t)}</div>
-                                                     <div className="text-xs text-gray-500 dark:text-gray-400 mt-1 print:text-black">{formatDate(t.date)}</div>
                                                  </td>
-                                                 <td className="p-2 text-sm text-right font-mono statement-col-amount print-text-black text-gray-900 dark:text-gray-100">
-                                                     {amountDisplay}
+                                                 <td className="p-2 text-sm text-right font-mono statement-col-debit print-text-black text-gray-900 dark:text-gray-100">
+                                                     {debitDisplay}
                                                  </td>
-                                                 <td className="p-2 text-sm text-right font-mono font-semibold statement-col-balance">{formatCurrency(t.balance)}</td>
+                                                 <td className="p-2 text-sm text-right font-mono statement-col-credit print-text-black text-gray-900 dark:text-gray-100">
+                                                     {creditDisplay}
+                                                 </td>
+                                                 <td className="p-2 text-sm text-right font-mono font-semibold statement-col-balance">{formatCurrency(Math.abs(t.balance))}</td>
                                              </tr>
                                          );
                                      })}
@@ -1212,8 +1290,22 @@ const CustomerDetailsModal: React.FC<{
                     </div>
                 </div>
                  <div className="flex justify-start space-x-4 space-x-reverse p-4 bg-gray-50 dark:bg-gray-800/50 border-t dark:border-gray-700 rounded-b-lg print-hidden flex-shrink-0">
-                    <button onClick={() => printReceipt('printable-receipt')} className="inline-flex items-center px-4 py-2 bg-blue-500 text-white rounded-md"><PrintIcon/><span className="mr-2">{AR_LABELS.printReceipt}</span></button>
-                    <button onClick={onClose} className="px-4 py-2 bg-gray-200 dark:bg-gray-600 text-gray-800 dark:text-gray-200 rounded-md">{AR_LABELS.cancel}</button>
+                    <button onClick={() => printReceipt('printable-receipt')} className="inline-flex items-center px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 transition-colors"><PrintIcon/><span className="mr-2">{AR_LABELS.printReceipt}</span></button>
+                    <button onClick={() => {
+                        const element = document.getElementById('printable-receipt');
+                        if (element) {
+                            element.classList.add('print-summary-only');
+                            printReceipt('printable-receipt');
+                            // Remove class after a short delay to restore normal view
+                            setTimeout(() => {
+                                element.classList.remove('print-summary-only');
+                            }, 1000);
+                        }
+                    }} className="inline-flex items-center px-4 py-2 bg-green-500 text-white rounded-md hover:bg-green-600 transition-colors">
+                        <PrintIcon/>
+                        <span className="mr-2">طباعة الملخص فقط</span>
+                    </button>
+                    <button onClick={onClose} className="px-4 py-2 bg-gray-200 dark:bg-gray-600 text-gray-800 dark:text-gray-200 rounded-md hover:bg-gray-300 dark:hover:bg-gray-500 transition-colors">{AR_LABELS.cancel}</button>
                 </div>
             </div>
         </>
@@ -1858,11 +1950,42 @@ const SalesPage: React.FC<SalesPageProps> = ({ setActivePath }) => {
                 console.log(`[Sales] Successfully loaded ${transformedCustomers.length} customers and stored in IndexedDB`);
                 setCustomers(transformedCustomers);
             } else {
-                // Error syncing
-                const errorMsg = syncResult.error || 'فشل تحميل قائمة العملاء';
-                setCustomersError(errorMsg);
-                console.error('[Sales] Failed to sync customers:', syncResult.error);
-                setCustomers([]);
+                // Error syncing - check if it's a cooldown error and fall back to IndexedDB
+                if (syncResult.error === 'Sync cooldown active') {
+                    console.log('[Sales] Sync cooldown active, falling back to IndexedDB...');
+                    try {
+                        const { customersDB } = await import('@/lib/db/customersDB');
+                        const dbCustomers = await customersDB.getAllCustomers();
+                        if (dbCustomers && dbCustomers.length > 0) {
+                            const transformedCustomers: Customer[] = dbCustomers.map((c: any) => ({
+                                id: c.id,
+                                name: c.name,
+                                phone: c.phone,
+                                previousBalance: c.previousBalance || 0,
+                                ...(c.address && { address: c.address }),
+                            }));
+                            console.log(`[Sales] Loaded ${transformedCustomers.length} customers from IndexedDB (cooldown fallback)`);
+                            setCustomers(transformedCustomers);
+                            // Don't set error for cooldown - it's expected behavior
+                            return;
+                        }
+                    } catch (dbError) {
+                        console.warn('[Sales] Error reading from IndexedDB during cooldown fallback:', dbError);
+                    }
+                }
+                // Only show error if it's not a cooldown or if IndexedDB fallback failed
+                if (syncResult.error !== 'Sync cooldown active') {
+                    const errorMsg = syncResult.error || 'فشل تحميل قائمة العملاء';
+                    setCustomersError(errorMsg);
+                    console.error('[Sales] Failed to sync customers:', syncResult.error);
+                } else {
+                    // Cooldown error but no IndexedDB data - this is rare, log but don't show error
+                    console.warn('[Sales] Sync cooldown active and no cached data available');
+                }
+                // Only clear customers if we truly have no data
+                if (!syncResult.customers || syncResult.customers.length === 0) {
+                    setCustomers([]);
+                }
             }
         } catch (err: any) {
             const apiError = err as ApiError;
@@ -3485,7 +3608,7 @@ const ReportsView: React.FC<{ sales: SaleTransaction[], customers: Customer[], p
                 const totalPaid = filteredSales.reduce((sum, s) => sum + s.paidAmount, 0);
                 const totalRemaining = filteredSales.reduce((sum, s) => sum + s.remainingAmount, 0);
                 data = [
-                    { 'المؤشر': AR_LABELS.totalSales, 'القيمة': formatCurrency(totalSales) },
+                    { 'المؤشر': AR_LABELS.totalDebt, 'القيمة': formatCurrency(totalSales) },
                     { 'المؤشر': AR_LABELS.paid, 'القيمة': formatCurrency(totalPaid) },
                     { 'المؤشر': AR_LABELS.remaining, 'القيمة': formatCurrency(totalRemaining) },
                     { 'المؤشر': AR_LABELS.invoiceCount, 'القيمة': filteredSales.length },
@@ -3493,7 +3616,7 @@ const ReportsView: React.FC<{ sales: SaleTransaction[], customers: Customer[], p
                 break;
             }
             case 'customer': {
-                headers = [AR_LABELS.customerName, AR_LABELS.invoiceCount, AR_LABELS.totalSales, AR_LABELS.paid, AR_LABELS.remaining];
+                headers = [AR_LABELS.customerName, AR_LABELS.invoiceCount, AR_LABELS.totalDebt, AR_LABELS.paid, AR_LABELS.remaining];
                 // FIX: Explicitly type the accumulator's initial value in the reduce function to ensure correct type inference.
                 const byCustomer = filteredSales.reduce((acc, sale) => {
                     if (!acc[sale.customerId]) {
@@ -3510,7 +3633,7 @@ const ReportsView: React.FC<{ sales: SaleTransaction[], customers: Customer[], p
                 data = Object.values(byCustomer).map((c: { name: string; count: number; total: number; paid: number; remaining: number }) => ({
                     [AR_LABELS.customerName]: c.name,
                     [AR_LABELS.invoiceCount]: c.count,
-                    [AR_LABELS.totalSales]: formatCurrency(c.total),
+                    [AR_LABELS.totalDebt]: formatCurrency(c.total),
                     [AR_LABELS.paid]: formatCurrency(c.paid),
                     [AR_LABELS.remaining]: formatCurrency(c.remaining),
                 }));
@@ -3634,7 +3757,7 @@ const AddCustomerModal: React.FC<{
     const [errors, setErrors] = useState<{ phone?: string }>({});
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [showInitialBalanceStep, setShowInitialBalanceStep] = useState(false);
-    const [initialBalanceType, setInitialBalanceType] = useState<'balance' | 'debt' | null>(null);
+    const [initialBalanceType, setInitialBalanceType] = useState<'receipt' | 'journal' | null>(null);
     const [initialAmount, setInitialAmount] = useState(0);
 
     const handleBasicInfoSave = () => {
@@ -3665,8 +3788,11 @@ const AddCustomerModal: React.FC<{
             return;
         }
 
-        // Calculate previousBalance: positive for balance, negative for debt
-        const previousBalance = initialBalanceType === 'balance' ? initialAmount : -initialAmount;
+        // Calculate previousBalance:
+        // Journal Voucher (سند قيد) = debt from customer = positive previousBalance (customer owes money)
+        // Receipt Voucher (سند قبض) = payment from customer = negative previousBalance (customer has credit)
+        // Note: previousBalance > 0 means customer owes us, previousBalance < 0 means we owe customer (credit)
+        const previousBalance = initialBalanceType === 'journal' ? initialAmount : -initialAmount;
         await saveCustomer(previousBalance);
     };
 
@@ -3716,31 +3842,31 @@ const AddCustomerModal: React.FC<{
                         
                         <div className="space-y-2">
                             <button
-                                onClick={() => setInitialBalanceType('balance')}
+                                onClick={() => setInitialBalanceType('receipt')}
                                 className={`w-full px-4 py-3 rounded-md text-right font-medium transition-colors ${
-                                    initialBalanceType === 'balance'
+                                    initialBalanceType === 'receipt'
                                         ? 'bg-green-500 text-white'
                                         : 'bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200 hover:bg-gray-300 dark:hover:bg-gray-600'
                                 }`}
                             >
-                                {AR_LABELS.addBalance}
+                                {AR_LABELS.receiptVoucher}
                             </button>
                             <button
-                                onClick={() => setInitialBalanceType('debt')}
+                                onClick={() => setInitialBalanceType('journal')}
                                 className={`w-full px-4 py-3 rounded-md text-right font-medium transition-colors ${
-                                    initialBalanceType === 'debt'
+                                    initialBalanceType === 'journal'
                                         ? 'bg-red-500 text-white'
                                         : 'bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200 hover:bg-gray-300 dark:hover:bg-gray-600'
                                 }`}
                             >
-                                {AR_LABELS.addDebt}
+                                {AR_LABELS.journalVoucher}
                             </button>
                         </div>
 
                         {initialBalanceType && (
                             <div>
                                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                                    {initialBalanceType === 'balance' ? AR_LABELS.addBalance : AR_LABELS.addDebt}
+                                    {initialBalanceType === 'receipt' ? AR_LABELS.receiptVoucher : AR_LABELS.journalVoucher}
                                 </label>
                                 <input 
                                     type="number" 
@@ -3999,26 +4125,54 @@ const CustomerGridCard: React.FC<{
             
             <div className="space-y-2 mb-4">
                 <div className="flex justify-between text-sm">
-                    <span className="text-gray-600 dark:text-gray-400">{AR_LABELS.balance}:</span>
-                    <span className={`font-semibold ${summary && summary.balance > 0 ? 'text-red-600' : 'text-green-600'}`}>
-                        {summary ? formatCurrency(summary.balance) : formatCurrency(0)}
-                    </span>
-                </div>
-                <div className="flex justify-between text-sm">
-                    <span className="text-gray-600 dark:text-gray-400">{AR_LABELS.totalSales}:</span>
+                    <span className="text-gray-600 dark:text-gray-400">{AR_LABELS.totalDebt}:</span>
                     <span className="font-semibold text-gray-900 dark:text-gray-100">
                         {summary ? formatCurrency(summary.totalSales) : formatCurrency(0)}
                     </span>
                 </div>
-                <div className="flex justify-between items-center text-sm py-2 px-3 bg-green-50 dark:bg-green-900/20 rounded-lg border border-green-200 dark:border-green-800">
-                    <span className="text-gray-700 dark:text-gray-300 font-medium flex items-center gap-1.5">
-                        <span className="inline-flex items-center justify-center w-5 h-5 bg-green-200 dark:bg-green-800 rounded-full">
-                            <span className="text-green-700 dark:text-green-400 text-xs font-bold">$</span>
-                        </span>
-                        {AR_LABELS.totalPayments}:
-                    </span>
-                    <span className="font-bold text-green-700 dark:text-green-400 text-base">
+                <div className="flex justify-between text-sm">
+                    <span className="text-gray-600 dark:text-gray-400">{AR_LABELS.totalPayments}:</span>
+                    <span className="font-semibold text-gray-900 dark:text-gray-100">
                         {summary ? formatCurrency(summary.totalPaid) : formatCurrency(0)}
+                    </span>
+                </div>
+                <div className={`flex justify-between items-center text-sm py-2 px-3 rounded-lg border ${
+                    summary && summary.balance > 0 
+                        ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800' 
+                        : summary && summary.balance < 0
+                        ? 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800'
+                        : 'bg-gray-50 dark:bg-gray-800 border-gray-200 dark:border-gray-700'
+                }`}>
+                    <span className="text-gray-700 dark:text-gray-300 font-medium flex items-center gap-1.5">
+                        {summary && summary.balance > 0 ? (
+                            <span className="inline-flex items-center justify-center w-5 h-5 bg-blue-200 dark:bg-blue-800 rounded-full" title="العميل له رصيد دائن">
+                                <span className="text-blue-700 dark:text-blue-400 text-xs font-bold">+</span>
+                            </span>
+                        ) : summary && summary.balance < 0 ? (
+                            <span className="inline-flex items-center justify-center w-5 h-5 bg-red-200 dark:bg-red-800 rounded-full" title="العميل مدين">
+                                <span className="text-red-700 dark:text-red-400 text-xs font-bold">-</span>
+                            </span>
+                        ) : (
+                            <span className="inline-flex items-center justify-center w-5 h-5 bg-gray-200 dark:bg-gray-700 rounded-full" title="لا يوجد رصيد">
+                                <span className="text-gray-500 dark:text-gray-400 text-xs font-bold">$</span>
+                            </span>
+                        )}
+                        {AR_LABELS.balance}:
+                    </span>
+                    <span className={`font-bold text-base ${
+                        summary && summary.balance > 0 
+                            ? 'text-blue-700 dark:text-blue-400' 
+                            : summary && summary.balance < 0
+                            ? 'text-red-700 dark:text-red-400'
+                            : 'text-gray-700 dark:text-gray-300'
+                    }`}>
+                        {summary ? formatCurrency(Math.abs(summary.balance)) : formatCurrency(0)}
+                        {summary && summary.balance > 0 && (
+                            <span className="text-xs ml-1 text-blue-600 dark:text-blue-400">(دائن)</span>
+                        )}
+                        {summary && summary.balance < 0 && (
+                            <span className="text-xs ml-1 text-red-600 dark:text-red-400">(مدين)</span>
+                        )}
                     </span>
                 </div>
                 {summary?.lastPaymentDate && (
@@ -4069,6 +4223,210 @@ const CustomerGridCard: React.FC<{
     );
 };
 
+// Multi-select balance filter component
+const BalanceFilterDropdown: React.FC<{
+    value: { debtor: boolean; creditor: boolean };
+    onChange: (value: { debtor: boolean; creditor: boolean }) => void;
+    className?: string;
+}> = ({ value, onChange, className = '' }) => {
+    const dropdownId = useMemo(() => `balance-filter-dropdown-${Math.random().toString(36).substr(2, 9)}`, []);
+    const { openDropdownId, setOpenDropdownId, closeAllDropdowns } = useDropdown();
+    const [position, setPosition] = useState<'bottom' | 'top'>('bottom');
+    const [alignment, setAlignment] = useState<'left' | 'right'>('left');
+    const [menuPosition, setMenuPosition] = useState({ top: 0, left: 0, width: 0 });
+    const buttonRef = useRef<HTMLButtonElement>(null);
+    
+    const isOpen = openDropdownId === dropdownId;
+    
+    const handleToggle = () => {
+        if (isOpen) {
+            closeAllDropdowns();
+        } else {
+            closeAllDropdowns();
+            setOpenDropdownId(dropdownId);
+        }
+    };
+    
+    const handleCheckboxChange = (type: 'debtor' | 'creditor', checked: boolean) => {
+        onChange({
+            ...value,
+            [type]: checked,
+        });
+    };
+    
+    // Calculate position based on viewport
+    const updatePosition = () => {
+        if (!buttonRef.current) return;
+        
+        const buttonRect = buttonRef.current.getBoundingClientRect();
+        const viewportHeight = window.innerHeight;
+        const spaceBelow = viewportHeight - buttonRect.bottom;
+        const spaceAbove = buttonRect.top;
+        
+        const estimatedDropdownHeight = 120; // Approximate height for 2 checkboxes
+        
+        let localPosition: 'bottom' | 'top' = 'bottom';
+        if (spaceBelow < estimatedDropdownHeight + 20 && spaceAbove > spaceBelow && spaceAbove >= estimatedDropdownHeight + 20) {
+            localPosition = 'top';
+        }
+        
+        setPosition(localPosition);
+        
+        // Calculate horizontal alignment
+        const viewportWidth = window.innerWidth;
+        const spaceLeft = buttonRect.left;
+        const spaceRight = viewportWidth - buttonRect.right;
+        const localAlignment = spaceRight < 50 ? 'right' : 'left';
+        setAlignment(localAlignment);
+        
+        // Calculate absolute position
+        const freshButtonRect = buttonRef.current.getBoundingClientRect();
+        const buttonWidth = freshButtonRect.width;
+        let top = 0;
+        let left = 0;
+        
+        if (localPosition === 'top') {
+            top = freshButtonRect.top - estimatedDropdownHeight - 4;
+        } else {
+            top = freshButtonRect.bottom + 4;
+        }
+        
+        if (localAlignment === 'right') {
+            left = freshButtonRect.right - buttonWidth;
+        } else {
+            left = freshButtonRect.left;
+        }
+        
+        setMenuPosition({ top, left, width: buttonWidth });
+    };
+    
+    useEffect(() => {
+        if (isOpen) {
+            requestAnimationFrame(() => {
+                updatePosition();
+            });
+            const handleResize = () => updatePosition();
+            const handleScroll = () => updatePosition();
+            const handleClickOutside = (e: MouseEvent | TouchEvent) => {
+                const target = e.target as HTMLElement;
+                if (!buttonRef.current || buttonRef.current.contains(target)) {
+                    return;
+                }
+                const menuElement = document.querySelector(`[data-dropdown-menu-id="${dropdownId}"]`);
+                if (!menuElement || !menuElement.contains(target)) {
+                    closeAllDropdowns();
+                }
+            };
+            window.addEventListener('resize', handleResize);
+            window.addEventListener('scroll', handleScroll, true);
+            document.addEventListener('mousedown', handleClickOutside);
+            document.addEventListener('touchstart', handleClickOutside);
+            return () => {
+                window.removeEventListener('resize', handleResize);
+                window.removeEventListener('scroll', handleScroll, true);
+                document.removeEventListener('mousedown', handleClickOutside);
+                document.removeEventListener('touchstart', handleClickOutside);
+            };
+        }
+    }, [isOpen, dropdownId, closeAllDropdowns]);
+    
+    // Get display label
+    const getDisplayLabel = () => {
+        if (value.debtor && value.creditor) {
+            return AR_LABELS.allCustomers;
+        } else if (value.debtor) {
+            return AR_LABELS.debtorCustomers;
+        } else if (value.creditor) {
+            return AR_LABELS.creditorCustomers;
+        } else {
+            return 'لا يوجد';
+        }
+    };
+    
+    return (
+        <div className={`relative ${className}`}>
+            <button
+                ref={buttonRef}
+                type="button"
+                data-dropdown-id={dropdownId}
+                onClick={handleToggle}
+                className={`
+                    relative w-full rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-4 py-3 text-sm font-medium shadow-sm backdrop-blur-xl 
+                    transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-orange-500/50 focus:border-orange-500
+                    cursor-pointer hover:shadow-md hover:border-slate-400 dark:hover:border-slate-500
+                    ${isOpen ? 'ring-2 ring-orange-500/50 border-orange-500 shadow-md' : ''}
+                `}
+                aria-haspopup="listbox"
+                aria-expanded={isOpen}
+                aria-label="فلتر الرصيد"
+            >
+                <div className="flex items-center justify-between">
+                    <span className="truncate text-right">
+                        {getDisplayLabel()}
+                    </span>
+                    <svg
+                        className={`ml-2 h-4 w-4 transition-transform duration-200 flex-shrink-0 ${
+                            isOpen ? 'rotate-180' : ''
+                        }`}
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                    >
+                        <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M19 9l-7 7-7-7"
+                        />
+                    </svg>
+                </div>
+            </button>
+            
+            {isOpen && typeof window !== 'undefined' && createPortal(
+                <div
+                    data-dropdown-menu-id={dropdownId}
+                    className="fixed z-[9999] rounded-xl border border-slate-300 dark:border-slate-600 bg-white/95 shadow-xl backdrop-blur-xl 
+                      dark:bg-slate-800/95
+                      overflow-hidden animate-in fade-in zoom-in-95 duration-200"
+                    style={{
+                        top: `${menuPosition.top}px`,
+                        left: `${menuPosition.left}px`,
+                        width: `${menuPosition.width}px`,
+                    }}
+                    role="listbox"
+                    onClick={(e) => e.stopPropagation()}
+                    onMouseDown={(e) => e.stopPropagation()}
+                    onTouchStart={(e) => e.stopPropagation()}
+                >
+                    <div className="p-2">
+                        <label className="flex items-center px-3 py-2.5 text-right text-sm cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors">
+                            <input
+                                type="checkbox"
+                                checked={value.debtor}
+                                onChange={(e) => handleCheckboxChange('debtor', e.target.checked)}
+                                className="ml-3 h-4 w-4 text-orange-600 focus:ring-orange-500 border-slate-300 rounded cursor-pointer"
+                                onClick={(e) => e.stopPropagation()}
+                            />
+                            <span className="flex-1">{AR_LABELS.debtorCustomers}</span>
+                        </label>
+                        <label className="flex items-center px-3 py-2.5 text-right text-sm cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors">
+                            <input
+                                type="checkbox"
+                                checked={value.creditor}
+                                onChange={(e) => handleCheckboxChange('creditor', e.target.checked)}
+                                className="ml-3 h-4 w-4 text-orange-600 focus:ring-orange-500 border-slate-300 rounded cursor-pointer"
+                                onClick={(e) => e.stopPropagation()}
+                            />
+                            <span className="flex-1">{AR_LABELS.creditorCustomers}</span>
+                        </label>
+                    </div>
+                </div>,
+                document.body
+            )}
+        </div>
+    );
+};
+
 const CustomerAccountsView: React.FC<{
     sales: SaleTransaction[];
     customers: Customer[];
@@ -4086,12 +4444,12 @@ const CustomerAccountsView: React.FC<{
     const currentUserName = user?.fullName || user?.username || 'Unknown';
     const confirmDialog = useConfirmDialog();
     const [searchTerm, setSearchTerm] = useState('');
-    const [balanceFilter, setBalanceFilter] = useState('all'); // 'all', 'has_balance', 'no_balance'
+    const [balanceFilter, setBalanceFilter] = useState<{ debtor: boolean; creditor: boolean }>({ debtor: true, creditor: true }); // Both selected by default
     const [paymentModalTarget, setPaymentModalTarget] = useState<CustomerAccountSummary | null>(null);
     const [statementModalTarget, setStatementModalTarget] = useState<CustomerAccountSummary | null>(null);
     const [showAddCustomerModal, setShowAddCustomerModal] = useState(false);
     const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
-    const [sortField, setSortField] = useState<'name' | 'phone' | 'balance' | 'totalSales'>('name');
+    const [sortField, setSortField] = useState<'name' | 'phone' | 'balance' | 'totalSales' | 'totalPayments'>('name');
     const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
     const { viewMode, setViewMode } = useResponsiveViewMode('customerAccounts', 'table', 'grid');
     const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -4204,25 +4562,24 @@ const CustomerAccountsView: React.FC<{
         setDateRange({ start, end });
     }, [dateRange]);
 
-    // Get filtered payments based on date range (using business dates)
+    // Get filtered payments based on date range (using simple date comparison for payments)
     const filteredPayments = useMemo(() => {
         if (!dateRange.start || !dateRange.end) return payments;
-        
-        const businessDayStartTime = getBusinessDayStartTime();
-        const timezone = getBusinessDayTimezone();
-        const timeStr = businessDayStartTime.hours.toString().padStart(2, '0') + ':' + businessDayStartTime.minutes.toString().padStart(2, '0');
-        const { start, end } = getBusinessDateFilterRange(
-            dateRange.start || null,
-            dateRange.end || null,
-            timeStr,
-            timezone
-        );
 
-        if (!start || !end) return payments;
+        // For payments, use simple date comparison (date only, ignoring time)
+        // Payments are typically recorded with just a date, not a full timestamp
+        const startDateStr = dateRange.start;
+        const endDateStr = dateRange.end;
 
         return payments.filter(payment => {
+            if (!payment.date) return false;
+            
+            // Convert payment date to date string (YYYY-MM-DD) for comparison
             const paymentDate = new Date(payment.date);
-            return paymentDate >= start && paymentDate <= end;
+            const paymentDateStr = paymentDate.toISOString().split('T')[0];
+            
+            // Simple string comparison for dates (YYYY-MM-DD format)
+            return paymentDateStr >= startDateStr && paymentDateStr <= endDateStr;
         });
     }, [payments, dateRange]);
 
@@ -4234,25 +4591,54 @@ const CustomerAccountsView: React.FC<{
             const customerSales = salesForCalculation.filter(s => s.customerId === customer.id);
             const customerPayments = payments.filter(p => p.customerId === customer.id);
 
-            // Calculate total sales (sum of all invoice totals)
-            const totalSales = customerSales.reduce((sum, s) => sum + s.totalAmount, 0);
+            // Calculate total sales (purchases) - sum of all invoice totals
+            const totalPurchases = customerSales.reduce((sum, s) => sum + Math.abs(s.totalAmount), 0);
+            
+            // Calculate Journal Vouchers (سند قيد) - negative payments that increase debt
+            // These are payments with negative amounts, we sum their absolute values as positive
+            const journalVouchers = customerPayments
+                .filter(p => p.amount < 0) // Only negative payments (Journal Vouchers)
+                .reduce((sum, p) => sum + Math.abs(p.amount), 0);
+            
+            // Total Sales = Purchases + Journal Vouchers (both as positive values)
+            const totalSales = totalPurchases + journalVouchers;
             
             // Calculate total paid amount:
             // 1. Sum of paidAmount from sales (paid at time of sale)
-            // 2. Plus all payments made via the payment system
+            // 2. Plus ALL receipt vouchers (positive payments from customer, INCLUDING initial balance payments)
             const totalPaidAtSale = customerSales.reduce((sum, s) => sum + s.paidAmount, 0);
-            const totalPaidViaPayments = customerPayments.reduce((sum, p) => sum + p.amount, 0);
-            const totalPaid = totalPaidAtSale + totalPaidViaPayments;
+            // Include ALL receipt vouchers (positive amounts) in total payments, including initial balance
+            const receiptVouchers = customerPayments
+                .filter(p => p.amount > 0) // All positive payments (receipt vouchers), including initial balance
+                .reduce((sum, p) => sum + p.amount, 0);
+            const totalPaid = totalPaidAtSale + receiptVouchers;
             
             // Calculate balance:
-            // previousBalance + sum(remainingAmount from sales) - sum(payments via payment system)
-            // remainingAmount already accounts for paidAmount at sale time
+            // Balance represents: positive = customer has credit (we owe them), negative = customer owes us
+            // Receipt Vouchers (positive) = customer paid us = increases credit (positive balance)
+            // Journal Vouchers (negative) = customer owes us = increases debt (negative balance)
+            // Sales remaining amounts = customer owes us = increases debt (negative balance)
             const totalRemainingFromSales = customerSales.reduce((sum, s) => sum + s.remainingAmount, 0);
             const previousBalance = customer.previousBalance || 0;
             
-            // Balance = previous balance + outstanding amounts from sales - additional payments
-            // Note: remainingAmount already accounts for paidAmount at sale time, so we only subtract payments made via payment system
-            const balance = previousBalance + totalRemainingFromSales - totalPaidViaPayments;
+            // Note: previousBalance convention is:
+            // - Positive = customer owes us (journal voucher initial)
+            // - Negative = customer has credit (receipt voucher initial)
+            // We need to convert this to our convention where positive = credit, negative = debt
+            
+            // Calculate payment contributions separately:
+            // Receipt vouchers (positive) increase credit (add to balance)
+            // Journal vouchers (negative) increase debt (subtract from balance)
+            const receiptVouchersTotal = customerPayments
+                .filter(p => p.amount > 0 && (!p.notes || !p.notes.includes('رصيد أولي')))
+                .reduce((sum, p) => sum + p.amount, 0);
+            const journalVouchersTotal = customerPayments
+                .filter(p => p.amount < 0 && (!p.notes || !p.notes.includes('رصيد أولي')))
+                .reduce((sum, p) => sum + Math.abs(p.amount), 0);
+            
+            // Balance = -previousBalance (convert convention) + receipt vouchers (credit) - journal vouchers (debt) - remaining from sales (debt)
+            // Positive balance = customer has credit, Negative balance = customer owes us
+            const balance = -previousBalance + receiptVouchersTotal - journalVouchersTotal - totalRemainingFromSales;
             
             const lastPayment = customerPayments.sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0];
 
@@ -4280,11 +4666,29 @@ const CustomerAccountsView: React.FC<{
             if (!matchesSearch) return false;
             
             // Apply balance filter using summaries
+            // Positive balance = customer has credit (we owe them) = creditor
+            // Negative balance = customer owes us = debtor
             const summary = customerSummaries.find(s => s.customerId === customer.id);
-            if (balanceFilter === 'has_balance' && summary) return summary.balance > 0;
-            if (balanceFilter === 'no_balance' && summary) return summary.balance <= 0;
+            if (!summary) return false;
             
-            return true;
+            const balance = summary.balance || 0;
+            const isDebtor = balance < 0; // Customer owes us
+            const isCreditor = balance > 0; // We owe customer
+            
+            // If neither debtor nor creditor is selected, show nothing
+            if (!balanceFilter.debtor && !balanceFilter.creditor) return false;
+            
+            // If both are selected, show all
+            if (balanceFilter.debtor && balanceFilter.creditor) return true;
+            
+            // If only debtor is selected, show only debtors
+            if (balanceFilter.debtor && !balanceFilter.creditor) return isDebtor;
+            
+            // If only creditor is selected, show only creditors
+            if (!balanceFilter.debtor && balanceFilter.creditor) return isCreditor;
+            
+            // If balance is zero, show only if both filters are selected (handled above)
+            return false;
         });
 
         // Sort customers
@@ -4312,6 +4716,12 @@ const CustomerAccountsView: React.FC<{
                     const bSales = customerSummaries.find(s => s.customerId === b.id);
                     aValue = aSales?.totalSales || 0;
                     bValue = bSales?.totalSales || 0;
+                    break;
+                case 'totalPayments':
+                    const aPayments = customerSummaries.find(s => s.customerId === a.id);
+                    const bPayments = customerSummaries.find(s => s.customerId === b.id);
+                    aValue = aPayments?.totalPaid || 0;
+                    bValue = bPayments?.totalPaid || 0;
                     break;
                 default:
                     aValue = a.name.toLowerCase();
@@ -4354,29 +4764,45 @@ const CustomerAccountsView: React.FC<{
         // Total number of customers
         const totalCustomers = customers.length;
 
-        // Total due amount (sum of all customer debts)
+        // Total due amount (sum of all customer debts - negative balances mean customer owes us)
         const totalDueAmount = customerSummaries.reduce((sum, summary) => {
+            return sum + (summary.balance < 0 ? Math.abs(summary.balance) : 0);
+        }, 0);
+
+        // Total credit amount (sum of all customer credits - positive balances mean we owe them)
+        const totalCreditAmount = customerSummaries.reduce((sum, summary) => {
             return sum + (summary.balance > 0 ? summary.balance : 0);
         }, 0);
 
-        // Number of customers with outstanding debt (based on current filters)
+        // Number of customers with outstanding debt (based on current filters - negative balance means customer owes us)
         const customersWithDebt = filteredAndSortedCustomers.filter(customer => {
             const summary = customerSummaries.find(s => s.customerId === customer.id);
-            return summary && summary.balance > 0;
+            return summary && summary.balance < 0;
         }).length;
 
         // Number of payments (based on date filter)
         const numberOfPayments = filteredPayments.length;
+
+        // Calculate receipt vouchers (positive payments only) - includes initial balance payments
+        // Filter for positive amounts (receipt vouchers) - this includes all receipt vouchers including initial balance
+        const receiptVouchers = filteredPayments.filter(p => {
+            // Ensure we have a valid payment with positive amount
+            return p && typeof p.amount === 'number' && p.amount > 0;
+        });
+        const receiptVoucherCount = receiptVouchers.length;
+        const receiptVoucherTotal = receiptVouchers.reduce((sum, p) => sum + (p.amount || 0), 0);
 
         return {
             totalCustomers,
             totalDueAmount,
             customersWithDebt,
             numberOfPayments,
+            receiptVoucherCount,
+            receiptVoucherTotal,
         };
-    }, [customers.length, customerSummaries, filteredAndSortedCustomers, filteredPayments.length]);
+    }, [customers.length, customerSummaries, filteredAndSortedCustomers, filteredPayments]);
 
-    const handleSort = (field: 'name' | 'phone' | 'balance' | 'totalSales') => {
+    const handleSort = (field: 'name' | 'phone' | 'balance' | 'totalSales' | 'totalPayments') => {
         if (sortField === field) {
             setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
         } else {
@@ -4385,7 +4811,7 @@ const CustomerAccountsView: React.FC<{
         }
     };
 
-    const SortIcon = ({ field }: { field: 'name' | 'phone' | 'balance' | 'totalSales' }) => {
+    const SortIcon = ({ field }: { field: 'name' | 'phone' | 'balance' | 'totalSales' | 'totalPayments' }) => {
         if (sortField !== field) return null;
         return sortDirection === 'asc' ? '↑' : '↓';
     };
@@ -4573,7 +4999,7 @@ const CustomerAccountsView: React.FC<{
     return (
         <div className="space-y-4">
             {/* Statistics Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-6">
                 <MetricCard 
                     id={1} 
                     title="إجمالي عدد العملاء" 
@@ -4592,19 +5018,27 @@ const CustomerAccountsView: React.FC<{
                 />
                 <MetricCard 
                     id={3} 
-                    title={`عدد العملاء ذوي الدين ${balanceFilter === 'has_balance' ? '(مفلتر)' : ''}`}
+                    title={`عدد العملاء ذوي الدين ${balanceFilter.debtor && !balanceFilter.creditor ? '(مفلتر)' : ''}`}
                     value={statistics.customersWithDebt.toString()} 
                     icon={<div className="w-6 h-6 bg-orange-500 rounded"></div>} 
                     bgColor="bg-orange-100" 
                     valueColor="text-orange-600" 
                 />
                 <MetricCard 
-                    id={4} 
-                    title={`عدد المدفوعات ${getFilterLabelSuffix()}`}
-                    value={statistics.numberOfPayments.toString()} 
-                    icon={<div className="w-6 h-6 bg-green-500 rounded"></div>} 
-                    bgColor="bg-green-100" 
-                    valueColor="text-green-600" 
+                    id={5} 
+                    title={`عدد سندات القبض ${getFilterLabelSuffix()}`}
+                    value={statistics.receiptVoucherCount.toString()} 
+                    icon={<div className="w-6 h-6 bg-emerald-500 rounded"></div>} 
+                    bgColor="bg-emerald-100" 
+                    valueColor="text-emerald-600" 
+                />
+                <MetricCard 
+                    id={6} 
+                    title={`إجمالي سندات القبض ${getFilterLabelSuffix()}`}
+                    value={formatCurrency(statistics.receiptVoucherTotal)} 
+                    icon={<div className="w-6 h-6 bg-teal-500 rounded"></div>} 
+                    bgColor="bg-teal-100" 
+                    valueColor="text-teal-600" 
                 />
             </div>
 
@@ -4727,16 +5161,9 @@ const CustomerAccountsView: React.FC<{
                         <PlusIcon className="h-5 w-5 ml-2" />
                         <span>{AR_LABELS.addNewCustomer}</span>
                     </button>
-                    <CustomDropdown
-                        id="balance-filter-dropdown"
+                    <BalanceFilterDropdown
                         value={balanceFilter}
-                        onChange={(value) => setBalanceFilter(value)}
-                        options={[
-                            { value: 'all', label: AR_LABELS.allCustomers },
-                            { value: 'has_balance', label: AR_LABELS.hasBalance },
-                            { value: 'no_balance', label: AR_LABELS.noBalance }
-                        ]}
-                        placeholder={AR_LABELS.allCustomers}
+                        onChange={setBalanceFilter}
                         className="w-full sm:w-auto"
                     />
                     <CustomDropdown
@@ -4842,16 +5269,20 @@ const CustomerAccountsView: React.FC<{
                                     onClick={() => handleSort('totalSales')}
                                 >
                                     <div className="flex items-center justify-end gap-2">
-                                        {AR_LABELS.totalSales}
+                                        {AR_LABELS.totalDebt}
                                         <span className="text-xs"><SortIcon field="totalSales" /></span>
                                     </div>
                                 </th>
-                                <th className="px-6 py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
-                                    <div className="flex items-center justify-end gap-1.5">
+                                <th 
+                                    className="px-6 py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-600 select-none"
+                                    onClick={() => handleSort('totalPayments')}
+                                >
+                                    <div className="flex items-center justify-end gap-2">
                                         <span className="inline-flex items-center justify-center w-4 h-4 bg-green-100 dark:bg-green-900/30 rounded-full">
                                             <span className="text-green-600 dark:text-green-400 text-[10px]">$</span>
                                         </span>
                                         {AR_LABELS.totalPayments}
+                                        <span className="text-xs"><SortIcon field="totalPayments" /></span>
                                     </div>
                                 </th>
                                 <th className="px-6 py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">{AR_LABELS.lastPayment}</th>
@@ -4877,9 +5308,15 @@ const CustomerAccountsView: React.FC<{
                                 <td className="px-6 py-4 whitespace-nowrap text-sm font-bold">
                                             {summary ? (
                                                 summary.balance > 0 ? (
-                                                    <span className="text-red-600">{formatCurrency(summary.balance)}</span>
+                                                    <span className="text-blue-600 dark:text-blue-400" title="العميل له رصيد دائن">
+                                                        {formatCurrency(Math.abs(summary.balance))} (دائن)
+                                                    </span>
+                                                ) : summary.balance < 0 ? (
+                                                    <span className="text-red-600 dark:text-red-400" title="العميل مدين">
+                                                        {formatCurrency(Math.abs(summary.balance))} (مدين)
+                                                    </span>
                                                 ) : (
-                                                    <span className="text-green-600">{formatCurrency(summary.balance)}</span>
+                                                    <span className="text-gray-600 dark:text-gray-400">{formatCurrency(0)}</span>
                                                 )
                                             ) : (
                                                 <span className="text-gray-400">{formatCurrency(0)}</span>

@@ -3,6 +3,7 @@ import { persist } from 'zustand/middleware';
 import axios from 'axios';
 import { cleanupAllIndexedDB } from '../../lib/db/indexedDBCleanup';
 import { productSync } from '../../lib/sync/productSync';
+import { customerSync } from '../../lib/sync/customerSync';
 
 // Auth types
 export interface User {
@@ -95,25 +96,47 @@ export const useAuthStore = create<AuthState>()(
             return;
           }
 
-          // CRITICAL: Sync ALL products to IndexedDB on login for store users
-          // This ensures barcode scanning works instantly without API calls
+          // CRITICAL: Sync ALL products and customers to IndexedDB on login for store users
+          // This ensures barcode scanning and customer lookup work instantly without API calls
           if (user?.storeId) {
-            console.log('[Auth] Starting product sync to IndexedDB on login...');
+            console.log('[Auth] Starting product and customer sync to IndexedDB on login...');
+            
+            // Sync products
             try {
               // Force full refresh to ensure all products are synced
-              const syncResult = await productSync.syncProducts({ 
+              const productSyncResult = await productSync.syncProducts({ 
                 forceRefresh: true 
               });
               
-              if (syncResult.success) {
-                console.log(`[Auth] ✅ Product sync completed: ${syncResult.syncedCount} products synced to IndexedDB`);
+              if (productSyncResult.success) {
+                console.log(`[Auth] ✅ Product sync completed: ${productSyncResult.syncedCount} products synced to IndexedDB`);
               } else {
-                console.error(`[Auth] ⚠️ Product sync failed: ${syncResult.error}`);
+                console.error(`[Auth] ⚠️ Product sync failed: ${productSyncResult.error}`);
                 // Don't block login if sync fails, but log the error
                 // The system will try to sync again when POS page loads
               }
             } catch (syncError) {
               console.error('[Auth] Error during product sync on login:', syncError);
+              // Don't block login if sync fails - user can still use the system
+              // Sync will retry when POS page loads
+            }
+
+            // Sync customers
+            try {
+              // Force full refresh to ensure all customers are synced
+              const customerSyncResult = await customerSync.syncCustomers({ 
+                forceRefresh: true 
+              });
+              
+              if (customerSyncResult.success) {
+                console.log(`[Auth] ✅ Customer sync completed: ${customerSyncResult.syncedCount} customers synced to IndexedDB`);
+              } else {
+                console.error(`[Auth] ⚠️ Customer sync failed: ${customerSyncResult.error}`);
+                // Don't block login if sync fails, but log the error
+                // The system will try to sync again when POS page loads
+              }
+            } catch (syncError) {
+              console.error('[Auth] Error during customer sync on login:', syncError);
               // Don't block login if sync fails - user can still use the system
               // Sync will retry when POS page loads
             }

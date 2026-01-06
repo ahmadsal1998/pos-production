@@ -82,22 +82,17 @@ class CustomerSyncManager {
     const now = Date.now();
     // Create and register the in-flight promise BEFORE any await to avoid races.
     const syncPromise: Promise<CustomerSyncResult> = (async () => {
-      // Check cooldown
-      if (!forceRefresh && now - this.lastSyncTime < this.SYNC_COOLDOWN) {
-        console.log('[CustomerSync] Sync cooldown active, skipping...');
-        return {
-          success: false,
-          syncedCount: 0,
-          error: 'Sync cooldown active',
-        };
-      }
-
       // Check IndexedDB first (unless force refresh)
+      // This ensures we return cached data even if cooldown is active
       if (!forceRefresh) {
         try {
           const dbCustomers = await customersDB.getAllCustomers();
           if (dbCustomers && dbCustomers.length > 0) {
             // IndexedDB has customers, return them
+            // Check cooldown - if active, just return cached data without error
+            if (now - this.lastSyncTime < this.SYNC_COOLDOWN) {
+              console.log('[CustomerSync] Sync cooldown active, returning cached data from IndexedDB');
+            }
             return {
               success: true,
               syncedCount: dbCustomers.length,
@@ -107,6 +102,16 @@ class CustomerSyncManager {
         } catch (error) {
           console.warn('[CustomerSync] Error reading from IndexedDB, will fetch from server:', error);
         }
+      }
+
+      // Check cooldown before fetching from server
+      if (!forceRefresh && now - this.lastSyncTime < this.SYNC_COOLDOWN) {
+        console.log('[CustomerSync] Sync cooldown active and no cached data, returning error');
+        return {
+          success: false,
+          syncedCount: 0,
+          error: 'Sync cooldown active',
+        };
       }
 
       this.lastSyncTime = now;

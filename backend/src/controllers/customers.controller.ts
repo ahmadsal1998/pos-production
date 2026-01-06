@@ -27,8 +27,8 @@ export const validateCreateCustomer = [
     .withMessage('Address cannot exceed 500 characters'),
   body('previousBalance')
     .optional({ nullable: true })
-    .isFloat({ min: 0 })
-    .withMessage('Previous balance must be a non-negative number'),
+    .isFloat()
+    .withMessage('Previous balance must be a valid number'),
 ];
 
 export const createCustomer = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
@@ -94,6 +94,37 @@ export const createCustomer = asyncHandler(async (req: AuthenticatedRequest, res
       address: address?.trim() || undefined,
       previousBalance: previousBalance || 0,
     });
+
+    // If initial balance is set, create a payment record to track it in the statement
+    if (previousBalance && previousBalance !== 0) {
+      try {
+        const CustomerPayment = await getCustomerPaymentModelForStore(storeId);
+        
+        // Determine voucher type and payment amount:
+        // Journal Voucher (سند قيد): previousBalance is positive (customer owes) → payment amount should be negative (debt transaction)
+        // Receipt Voucher (سند قبض): previousBalance is negative (customer has credit) → payment amount should be positive (payment transaction)
+        // The payment amount sign is opposite to previousBalance because:
+        // - previousBalance > 0 means customer owes (debt) → transaction should be negative (debit)
+        // - previousBalance < 0 means customer has credit → transaction should be positive (credit)
+        const isJournalVoucher = previousBalance > 0;
+        const paymentAmount = isJournalVoucher ? -Math.abs(previousBalance) : Math.abs(previousBalance);
+        const voucherType = isJournalVoucher ? 'Journal Voucher' : 'Receipt Voucher';
+        
+        await CustomerPayment.create({
+          customerId: (customer._id as mongoose.Types.ObjectId).toString(),
+          storeId: normalizedStoreId,
+          date: customer.createdAt, // Use customer creation date
+          amount: paymentAmount, // Negative for Journal Voucher, positive for Receipt Voucher
+          method: 'Cash', // Default method for initial balance
+          invoiceId: null,
+          notes: `رصيد أولي - ${isJournalVoucher ? 'سند قيد' : 'سند قبض'}`,
+        });
+      } catch (paymentError: any) {
+        // Log error but don't fail customer creation if payment record creation fails
+        log.error('Error creating initial balance payment record', paymentError);
+        // Continue with customer creation even if payment record fails
+      }
+    }
 
     res.status(201).json({
       success: true,
@@ -286,8 +317,8 @@ export const validateUpdateCustomer = [
     .withMessage('Address cannot exceed 500 characters'),
   body('previousBalance')
     .optional({ nullable: true })
-    .isFloat({ min: 0 })
-    .withMessage('Previous balance must be a non-negative number'),
+    .isFloat()
+    .withMessage('Previous balance must be a valid number'),
 ];
 
 export const updateCustomer = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {

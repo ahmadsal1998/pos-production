@@ -268,13 +268,22 @@ class CustomersDB {
   async searchCustomers(searchTerm: string): Promise<any[]> {
     await this.init();
     if (!this.db) {
+      console.warn('[CustomersDB] Database not initialized for search');
       return [];
     }
 
     const storeId = this.getStoreId();
     if (!storeId) {
+      console.warn('[CustomersDB] No storeId found for search');
       return [];
     }
+
+    // If search term is empty, return all customers
+    if (!searchTerm || !searchTerm.trim()) {
+      return this.getAllCustomers();
+    }
+
+    const searchLower = searchTerm.toLowerCase().trim();
 
     return new Promise((resolve, reject) => {
       const transaction = this.db!.transaction([this.storeName], 'readonly');
@@ -284,24 +293,29 @@ class CustomersDB {
 
       request.onsuccess = () => {
         const records = request.result as CustomerRecord[];
-        const searchLower = searchTerm.toLowerCase();
+        console.log(`[CustomersDB] Search found ${records.length} records for storeId: ${storeId}`);
         
         const customers = records
           .map((record) => record.customer)
           .filter((customer) => {
-            const name = (customer.name || '').toLowerCase();
-            const phone = (customer.phone || '').toLowerCase();
-            const address = (customer.address || '').toLowerCase();
+            const name = (customer.name || '').toLowerCase().trim();
+            const phone = (customer.phone || '').toLowerCase().trim();
+            const address = (customer.address || '').toLowerCase().trim();
             
-            return name.includes(searchLower) || 
-                   phone.includes(searchLower) || 
-                   address.includes(searchLower);
+            // Search in name, phone, or address
+            const matches = name.includes(searchLower) || 
+                           phone.includes(searchLower) || 
+                           address.includes(searchLower);
+            
+            return matches;
           });
         
+        console.log(`[CustomersDB] Search filtered to ${customers.length} customers matching "${searchTerm}"`);
         resolve(customers);
       };
 
       request.onerror = () => {
+        console.error('[CustomersDB] Error in search request:', request.error);
         reject(request.error);
       };
     });

@@ -446,6 +446,12 @@ const generateThermalStyles = (printSettings: PrinterConfig & { paperSize: strin
         /* Statement-specific styling - ensure it's distinct from invoices */
       }
       
+      /* Hide transaction table when printing summary only */
+      #printable-receipt.print-summary-only .statement-table-container,
+      #printable-receipt.print-summary-only .statement-transactions-table {
+        display: none !important;
+      }
+      
       /* Statement Summary - Different from Invoice Summary - compact for thermal */
       #printable-receipt.customer-statement-print .statement-summary {
         margin-top: 3px !important;
@@ -502,9 +508,15 @@ const generateThermalStyles = (printSettings: PrinterConfig & { paperSize: strin
         border-spacing: 0 !important;
         margin: 2px 0 !important;
       }
-      /* PRINT-ONLY: Hide date column in print (date is merged into description column) */
+      /* PRINT-ONLY: Show date column in print as first column */
       #printable-receipt .statement-transactions-table .statement-col-date {
-        display: none !important;
+        display: table-cell !important;
+        width: 15% !important;
+        min-width: 80px !important;
+        text-align: right !important;
+        color: #000000 !important;
+        font-weight: 500 !important;
+        padding: 1px 0.5mm !important;
       }
       /* PRINT-ONLY: Compact column widths for thermal printers - 3 columns: Description(40%) + Amount(30%) + Balance(30%) */
       #printable-receipt .statement-transactions-table .statement-col-description {
@@ -575,7 +587,13 @@ const generateThermalStyles = (printSettings: PrinterConfig & { paperSize: strin
       }
       /* Ensure table headers also use compact sizing for thermal printers */
       #printable-receipt .statement-transactions-table th.statement-col-date {
-        display: none !important;
+        display: table-cell !important;
+        width: 15% !important;
+        min-width: 80px !important;
+        text-align: right !important;
+        color: #000000 !important;
+        font-weight: 700 !important;
+        padding: 1px 0.5mm !important;
       }
       #printable-receipt .statement-transactions-table th.statement-col-description,
       #printable-receipt .statement-transactions-table th.statement-col-amount,
@@ -779,9 +797,15 @@ const generateThermalStyles = (printSettings: PrinterConfig & { paperSize: strin
           border-spacing: 0 !important;
           margin: 2px 0 !important;
         }
-        /* Hide date column in print (date is merged into description column) */
+        /* Show date column in print as first column */
         #printable-receipt .statement-transactions-table .statement-col-date {
-          display: none !important;
+          display: table-cell !important;
+          width: 15% !important;
+          min-width: 80px !important;
+          text-align: right !important;
+          color: #000000 !important;
+          font-weight: 500 !important;
+          padding: 1px 0.5mm !important;
         }
         #printable-receipt .statement-transactions-table .statement-col-description {
           width: 40% !important;
@@ -820,9 +844,15 @@ const generateThermalStyles = (printSettings: PrinterConfig & { paperSize: strin
           overflow: hidden !important;
           line-height: 1.0 !important;
         }
-        /* Ensure table headers fit - hide date column header */
+        /* Ensure table headers fit - show date column header */
         #printable-receipt .statement-transactions-table th.statement-col-date {
-          display: none !important;
+          display: table-cell !important;
+          width: 15% !important;
+          min-width: 80px !important;
+          text-align: right !important;
+          color: #000000 !important;
+          font-weight: 700 !important;
+          padding: 1px 0.5mm !important;
         }
         #printable-receipt .statement-transactions-table th {
           padding: 1px 0.5mm !important;
@@ -1080,6 +1110,12 @@ const generateA4Styles = (printSettings: PrinterConfig & { paperSize: string; pa
         /* Statement-specific styling - ensure it's distinct from invoices */
       }
       
+      /* Hide transaction table when printing summary only */
+      #printable-receipt.print-summary-only .statement-table-container,
+      #printable-receipt.print-summary-only .statement-transactions-table {
+        display: none !important;
+      }
+      
       /* Statement Summary for A4 - Different from Invoice Summary */
       #printable-receipt.customer-statement-print .statement-summary {
         margin-top: ${printSettings.compactMode ? '10px' : '14px'} !important;
@@ -1135,9 +1171,15 @@ const generateA4Styles = (printSettings: PrinterConfig & { paperSize: string; pa
         width: 100% !important;
         table-layout: fixed !important;
       }
-      /* Hide date column in print (date is merged into description column) */
+      /* Show date column in print as first column */
       #printable-receipt .statement-transactions-table .statement-col-date {
-        display: none !important;
+        display: table-cell !important;
+        width: 15% !important;
+        min-width: 80px !important;
+        text-align: right !important;
+        color: #000000 !important;
+        font-weight: 500 !important;
+        padding: 1px 0.5mm !important;
       }
       #printable-receipt .statement-transactions-table .statement-col-description {
         width: 45% !important;
@@ -1330,9 +1372,15 @@ const generateA4Styles = (printSettings: PrinterConfig & { paperSize: string; pa
         }
         /* PRINT-ONLY: Statement table column alignment for A4 printers */
         /* NOTE: These styles are injected into a print-only iframe and do NOT affect on-screen display */
-        /* Hide date column in print (date is merged into description column) */
+        /* Show date column in print as first column */
         #printable-receipt .statement-transactions-table .statement-col-date {
-          display: none !important;
+          display: table-cell !important;
+          width: 15% !important;
+          min-width: 80px !important;
+          text-align: right !important;
+          color: #000000 !important;
+          font-weight: 500 !important;
+          padding: 1px 0.5mm !important;
         }
         #printable-receipt .statement-transactions-table .statement-col-description {
           text-align: right !important;

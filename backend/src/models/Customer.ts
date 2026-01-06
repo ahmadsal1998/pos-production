@@ -36,7 +36,8 @@ const customerSchema = new Schema<CustomerDocument>(
     previousBalance: {
       type: Number,
       default: 0,
-      min: 0,
+      // Allow negative values for Journal Voucher (debt from customer)
+      // Positive values for Receipt Voucher (payment from customer)
     },
   },
   {

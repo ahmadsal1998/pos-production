@@ -96,9 +96,10 @@ const generateNewInvoice = (cashierName: string, invoiceNumber: string = 'INV-1'
 });
 
 // Helper function to filter out dummy/test customers
+// Only filters out customers that are clearly test/dummy entries, not legitimate customers with short names/phones
 const isDummyCustomer = (customer: Customer): boolean => {
-    const name = customer.name?.toLowerCase() || '';
-    const phone = customer.phone?.toLowerCase() || '';
+    const name = customer.name?.toLowerCase().trim() || '';
+    const phone = customer.phone?.toLowerCase().trim() || '';
     
     // Common patterns for dummy/test customers
     const dummyPatterns = [
@@ -106,22 +107,32 @@ const isDummyCustomer = (customer: Customer): boolean => {
         'اختبار', 'تجريبي', 'مثال', 'وهمي'
     ];
     
-    // Check if name or phone contains dummy patterns
+    // Check if name contains dummy patterns - this is the primary filter
     const isDummyName = dummyPatterns.some(pattern => name.includes(pattern));
     
-    // Only check phone length if phone exists and has content
-    // Don't filter out customers with no phone or very short phone if they have a valid name
-    const phoneDigits = phone.replace(/\D/g, '');
-    const isDummyPhone = phoneDigits.length > 0 && (
-        phoneDigits.length < 5 || 
-        /^(000|111|123|999)/.test(phoneDigits)
-    );
+    // If name contains dummy patterns, it's definitely a dummy customer
+    if (isDummyName) {
+        console.log('[POS] isDummyCustomer: TRUE (dummy name):', {
+            name: customer.name,
+            phone: customer.phone
+        });
+        return true;
+    }
     
-    const result = isDummyName || isDummyPhone;
+    // For phone number checks, be very lenient:
+    // Only filter if phone is clearly a test pattern (like 000, 111, 123, 999)
+    // Don't filter based on phone length alone - short phone numbers might be legitimate
+    const phoneDigits = phone.replace(/\D/g, '');
+    
+    // Only mark as dummy phone if it matches common test patterns
+    // Don't filter based on length - a customer with phone "1" might be legitimate
+    const isDummyPhone = phoneDigits.length > 0 && /^(000|111|123|999)/.test(phoneDigits);
+    
+    const result = isDummyPhone;
     
     // Debug log when a customer is identified as dummy
     if (result) {
-        console.log('[POS] isDummyCustomer: TRUE for:', {
+        console.log('[POS] isDummyCustomer: TRUE (dummy phone):', {
             name: customer.name,
             phone: customer.phone,
             isDummyName,
@@ -1828,14 +1839,69 @@ const POSPage: React.FC = () => {
         // Use IndexedDB search for fast local search
         const searchCustomersLocal = async () => {
             if (!isMountedRef.current) return;
+            
+            console.log('[POS] Starting customer search:', {
+                searchTerm: customerSearchTerm,
+                customersLoaded,
+                allCustomersCount: allCustomers.length,
+                customersCount: customers.length
+            });
+
+            // First, try client-side filter from allCustomers if available (fastest)
+            if (customersLoaded && allCustomers.length > 0) {
+                const searchLower = customerSearchTerm.toLowerCase().trim();
+                const filtered = allCustomers.filter(customer => {
+                    const name = (customer.name || '').toLowerCase();
+                    const phone = (customer.phone || '').toLowerCase();
+                    const address = (customer.address || '').toLowerCase();
+                    
+                    return name.includes(searchLower) || 
+                           phone.includes(searchLower) || 
+                           address.includes(searchLower);
+                });
+                
+                console.log('[POS] Client-side filter results:', {
+                    searchTerm: customerSearchTerm,
+                    totalCustomers: allCustomers.length,
+                    filteredCount: filtered.length,
+                    sampleResults: filtered.slice(0, 3).map(c => ({ id: c.id, name: c.name, phone: c.phone }))
+                });
+                
+                if (isMountedRef.current) {
+                    try {
+                        setCustomers(filtered);
+                        setServerCustomerSearchResults([]);
+                        return;
+                    } catch (error) {
+                        console.debug('[POS] State update skipped (component unmounted)');
+                    }
+                }
+            }
+
+            // If allCustomers is not available, try IndexedDB search
             try {
+                // Ensure IndexedDB is initialized
+                await customersDB.init();
+                
                 // Search in IndexedDB (fast, handles large datasets)
                 const searchResults = await customersDB.searchCustomers(customerSearchTerm);
+                
+                console.log('[POS] IndexedDB search results:', {
+                    searchTerm: customerSearchTerm,
+                    rawResultsCount: searchResults.length,
+                    sampleResults: searchResults.slice(0, 3).map((c: any) => ({ id: c.id, name: c.name, phone: c.phone }))
+                });
 
                 if (!isMountedRef.current) return;
 
                 // Transform and filter out dummy customers
                 const transformedCustomers: Customer[] = transformAndFilterCustomers(searchResults);
+                
+                console.log('[POS] After transformation:', {
+                    searchTerm: customerSearchTerm,
+                    transformedCount: transformedCustomers.length,
+                    sampleTransformed: transformedCustomers.slice(0, 3).map(c => ({ id: c.id, name: c.name, phone: c.phone }))
+                });
 
                 try {
                     setCustomers(transformedCustomers);
@@ -1847,28 +1913,65 @@ const POSPage: React.FC = () => {
             } catch (error) {
                 if (!isMountedRef.current) return;
                 console.error('[POS] Error searching customers in IndexedDB:', error);
+                console.error('[POS] Error details:', {
+                    message: error instanceof Error ? error.message : String(error),
+                    stack: error instanceof Error ? error.stack : undefined
+                });
+                
                 // Fallback to server-side search
                 if (!customersLoaded || allCustomers.length === 0) {
-                    const results = await searchCustomersOnServer(customerSearchTerm);
-                    if (isMountedRef.current) {
-                        try {
-                            setServerCustomerSearchResults(results);
-                            setCustomers(results);
-                        } catch (error) {
-                            console.debug('[POS] State update skipped (component unmounted)');
+                    console.log('[POS] Falling back to server-side search...');
+                    try {
+                        const results = await searchCustomersOnServer(customerSearchTerm);
+                        console.log('[POS] Server-side search results:', {
+                            searchTerm: customerSearchTerm,
+                            resultsCount: results.length,
+                            sampleResults: results.slice(0, 3).map(c => ({ id: c.id, name: c.name, phone: c.phone }))
+                        });
+                        
+                        if (isMountedRef.current) {
+                            try {
+                                setServerCustomerSearchResults(results);
+                                setCustomers(results);
+                            } catch (error) {
+                                console.debug('[POS] State update skipped (component unmounted)');
+                            }
+                        }
+                    } catch (serverError) {
+                        console.error('[POS] Server-side search also failed:', serverError);
+                        // Set empty results to show "no results" message
+                        if (isMountedRef.current) {
+                            try {
+                                setCustomers([]);
+                                setServerCustomerSearchResults([]);
+                            } catch (error) {
+                                console.debug('[POS] State update skipped (component unmounted)');
+                            }
                         }
                     }
                 } else {
-                    // Fallback to client-side filter from state
-                    const searchLower = customerSearchTerm.toLowerCase();
-                    const filtered = allCustomers.filter(customer => 
-                        customer.name?.toLowerCase().includes(searchLower) ||
-                        customer.phone?.includes(searchLower) ||
-                        customer.address?.toLowerCase().includes(searchLower)
-                    );
+                    // Fallback to client-side filter from state (should have been done above, but double-check)
+                    console.log('[POS] Using client-side filter as fallback...');
+                    const searchLower = customerSearchTerm.toLowerCase().trim();
+                    const filtered = allCustomers.filter(customer => {
+                        const name = (customer.name || '').toLowerCase();
+                        const phone = (customer.phone || '').toLowerCase();
+                        const address = (customer.address || '').toLowerCase();
+                        
+                        return name.includes(searchLower) || 
+                               phone.includes(searchLower) || 
+                               address.includes(searchLower);
+                    });
+                    
+                    console.log('[POS] Client-side filter fallback results:', {
+                        searchTerm: customerSearchTerm,
+                        filteredCount: filtered.length
+                    });
+                    
                     if (isMountedRef.current) {
                         try {
                             setCustomers(filtered);
+                            setServerCustomerSearchResults([]);
                         } catch (error) {
                             console.debug('[POS] State update skipped (component unmounted)');
                         }
@@ -6182,7 +6285,9 @@ const POSPage: React.FC = () => {
                                                                 >
                                                                     <div className="flex flex-col items-end w-full">
                                                                         <div className="flex items-center justify-between w-full">
-                                                                            <p className="font-semibold text-sm text-gray-900 dark:text-gray-100">{customer.name}</p>
+                                                                            <p className="font-semibold text-sm text-gray-900 dark:text-gray-100">
+                                                                                {customer.name || customer.phone || 'عميل بدون اسم'}
+                                                                            </p>
                                                                             <CustomerPointsDisplay
                                                                                 customerId={customer.id}
                                                                                 customerPhone={customer.phone}
@@ -6190,7 +6295,9 @@ const POSPage: React.FC = () => {
                                                                                 className="mr-2"
                                                                             />
                                                                         </div>
-                                                                        <p className="text-xs text-gray-600 dark:text-gray-400 mt-1">{customer.phone}</p>
+                                                                        {customer.name && customer.phone && customer.name !== customer.phone && (
+                                                                            <p className="text-xs text-gray-600 dark:text-gray-400 mt-1">{customer.phone}</p>
+                                                                        )}
                                                                     </div>
                                                                 </button>
                                                                 ))
@@ -6231,8 +6338,12 @@ const POSPage: React.FC = () => {
                                             <div className="flex-1 text-right">
                                                 <div className="flex justify-between items-center mb-1">
                                                     <div className="flex-1">
-                                                        <p className="font-semibold text-sm text-gray-900 dark:text-gray-100">{currentInvoice.customer.name}</p>
-                                                        <p className="text-xs text-gray-600 dark:text-gray-400">{currentInvoice.customer.phone}</p>
+                                                        <p className="font-semibold text-sm text-gray-900 dark:text-gray-100">
+                                                            {currentInvoice.customer.name || currentInvoice.customer.phone || 'عميل بدون اسم'}
+                                                        </p>
+                                                        {currentInvoice.customer.name && currentInvoice.customer.phone && currentInvoice.customer.name !== currentInvoice.customer.phone && (
+                                                            <p className="text-xs text-gray-600 dark:text-gray-400">{currentInvoice.customer.phone}</p>
+                                                        )}
                                                     </div>
                                                     {customerPointsBalance !== null && customerPointsBalance > 0 && currentInvoice.customer && (
                                                         <Link

@@ -139,6 +139,7 @@ export const AR_LABELS = {
   salesHistory: 'سجل المبيعات',
   salesHistoryDescription: 'تصفح وابحث في سجل المبيعات الخاص بك.',
   totalSales: 'إجمالي المشتريات',
+  totalDebt: 'إجمالي الدين',
   numberOfOrders: 'عدد الطلبات',
   avgOrderValue: 'متوسط قيمة الطلب',
   filterByDate: 'تصفية حسب التاريخ',
@@ -196,6 +197,8 @@ export const AR_LABELS = {
   allCustomers: 'كل العملاء',
   hasBalance: 'عليه رصيد',
   noBalance: 'ليس عليه رصيد',
+  debtorCustomers: 'الزبائن المدينين',
+  creditorCustomers: 'الزبائن الدائنين',
   customerStatement: 'كشف حساب العميل',
   transactionHistory: 'سجل الحركات',
   debit: 'مدين',
@@ -659,8 +662,12 @@ export const AR_LABELS = {
   linkPay: 'شحن رصيد وطنية',
 
   // Customer Balance Operations
-  addBalance: 'إضافة دفعة',
-  addDebt: 'خصم من الرصيد',
-  payDebt: ' إضافة رصيد',
-  deductBalance: ' إضافة دين ',
+  addBalance: 'سند قيد', // Legacy - kept for backward compatibility
+  addDebt: 'سند قبض', // Legacy - kept for backward compatibility
+  payDebt: ' إضافة رصيد', // Legacy - kept for backward compatibility
+  deductBalance: 'سند قبض', // Legacy - kept for backward compatibility
+  
+  // Customer Account Vouchers
+  journalVoucher: 'سند قيد', // Debt from customer (increases customer debt)
+  receiptVoucher: 'سند قبض', // Payment from customer (decreases customer debt)
 };

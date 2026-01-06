@@ -24,6 +24,7 @@ const calculateSupplierBalance = (
   return totalPurchases - totalPaid;
 };
 
+const MOCK_SUPPLIERS: Supplier[] = [];
 
 interface SuppliersPageProps {
   purchases?: PurchaseOrder[];
