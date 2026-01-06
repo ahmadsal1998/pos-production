@@ -11,6 +11,35 @@ let isPrinting = false;
 let currentPrintIframe: HTMLIFrameElement | null = null;
 
 /**
+ * Format date with English numerals in YYYY/MM/DD HH:MM AM/PM format
+ * Uses 12-hour format with AM/PM, removes seconds, and uses English numerals (0-9) instead of Arabic numerals
+ */
+const formatDateEnglish = (date: Date | string | number): string => {
+  const d = typeof date === 'string' || typeof date === 'number' 
+    ? new Date(date) 
+    : date instanceof Date 
+    ? date 
+    : new Date();
+  
+  if (isNaN(d.getTime())) {
+    return '';
+  }
+  
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  
+  // Convert to 12-hour format
+  let hours = d.getHours();
+  const ampm = hours >= 12 ? 'PM' : 'AM';
+  hours = hours % 12;
+  hours = hours ? hours : 12; // 0 should be 12
+  const minutes = String(d.getMinutes()).padStart(2, '0');
+  
+  return `${year}/${month}/${day} || ${String(hours).padStart(2, '0')}:${minutes} ${ampm}`;
+};
+
+/**
  * Get print settings from preferences with defaults
  * Uses printer configuration if printer type is set, otherwise falls back to manual settings
  */
@@ -201,14 +230,26 @@ const removeCurrencySymbolsFromTable = (node: Node, isInSummary: boolean = false
  */
 const generateThermalStyles = (printSettings: PrinterConfig & { paperSize: string; paperWidth: number; paperHeight: number; marginTop: number; marginBottom: number; marginLeft: number; marginRight: number; fontSize: number; tableFontSize: number; showBorders: boolean; compactMode: boolean }): string => {
   const paperWidth = printSettings.paperWidth; // 58 or 80
-  const fontSize = printSettings.fontSize;
-  const tableFontSize = printSettings.tableFontSize;
   const pageSize = getPageSize(printSettings.paperSize, printSettings.paperWidth, printSettings.paperHeight, (printSettings as any).orientation);
+  
+  // For thermal printers, use minimal margins (convert cm to mm, but use 0 or minimal)
+  // Convert cm to mm: 0.2cm = 2mm, 0.3cm = 3mm, but for maximum compactness use 0 or 1-2mm
+  const thermalMarginTop = Math.max(printSettings.marginTop * 10, 0); // Convert cm to mm, minimum 0
+  const thermalMarginBottom = Math.max(printSettings.marginBottom * 10, 0);
+  const thermalMarginLeft = Math.max(printSettings.marginLeft * 10, 0);
+  const thermalMarginRight = Math.max(printSettings.marginRight * 10, 0);
+  
+  // Optimized font sizes for thermal printers (in pt for better print quality)
+  // Main body text: 8-8.5pt, Table cells: 8pt, Important headings: 9pt, Secondary: 7.5pt minimum
+  const bodyFontSize = '8.5pt'; // Main body text
+  const tableCellFontSize = '8pt'; // Table cell text
+  const importantHeadingFontSize = '9pt'; // Store name, invoice number, grand total
+  const secondaryTextFontSize = '7.5pt'; // Date, cashier, notes - minimum readable size
   
   return `
     <style>
       @page {
-        margin: ${printSettings.marginTop}cm ${printSettings.marginRight}cm ${printSettings.marginBottom}cm ${printSettings.marginLeft}cm;
+        margin: ${thermalMarginTop}mm ${thermalMarginRight}mm ${thermalMarginBottom}mm ${thermalMarginLeft}mm;
         ${pageSize}
       }
       * {
@@ -220,10 +261,10 @@ const generateThermalStyles = (printSettings: PrinterConfig & { paperSize: strin
         margin: 0;
         padding: 0;
         font-family: 'Courier New', 'Monaco', monospace;
-        font-size: ${fontSize}px;
+        font-size: ${bodyFontSize} !important;
         color: #000;
         background: white;
-        line-height: 1.3;
+        line-height: 1.1;
         width: ${paperWidth}mm;
         max-width: ${paperWidth}mm;
         -webkit-print-color-adjust: exact;
@@ -232,21 +273,21 @@ const generateThermalStyles = (printSettings: PrinterConfig & { paperSize: strin
       .print-hidden {
         display: none !important;
       }
-      /* Receipt container - fixed width, no responsive */
+      /* Receipt container - fixed width, minimal padding for thermal printers */
       #printable-receipt {
         width: ${paperWidth}mm !important;
         max-width: ${paperWidth}mm !important;
         margin: 0 auto;
-        padding: 4px 2px !important;
+        padding: 2px 1px !important;
         background: white;
         border-radius: 0 !important;
         overflow: visible !important;
       }
-      /* Store Logo - fixed size */
+      /* Store Logo - compact size for thermal */
       #printable-receipt .receipt-logo {
-        width: 60px !important;
-        height: 60px !important;
-        margin: 0 auto 8px auto !important;
+        width: 50px !important;
+        height: 50px !important;
+        margin: 0 auto 3px auto !important;
         border-radius: 0 !important;
         display: flex !important;
         align-items: center !important;
@@ -257,66 +298,66 @@ const generateThermalStyles = (printSettings: PrinterConfig & { paperSize: strin
         box-shadow: none !important;
       }
       #printable-receipt .receipt-logo svg {
-        width: 30px !important;
-        height: 30px !important;
+        width: 25px !important;
+        height: 25px !important;
         color: #ffffff !important;
         fill: none !important;
         stroke: #ffffff !important;
         stroke-width: 2 !important;
       }
       #printable-receipt .receipt-logo img {
-        width: 60px !important;
-        height: 60px !important;
-        max-width: 60px !important;
-        max-height: 60px !important;
+        width: 50px !important;
+        height: 50px !important;
+        max-width: 50px !important;
+        max-height: 50px !important;
         object-fit: contain !important;
         border-radius: 0 !important;
         background: white !important;
-        padding: 2px !important;
+        padding: 1px !important;
         border: 1px solid #000 !important;
         box-shadow: none !important;
       }
-      /* Store name header */
+      /* Store name header - compact for thermal */
       #printable-receipt h1 {
-        margin: 0 0 6px 0;
+        margin: 0 0 2px 0 !important;
         font-weight: 900;
-        font-size: ${Math.max(fontSize + 2, 14)}px !important;
-        line-height: 1.2;
+        font-size: ${importantHeadingFontSize} !important;
+        line-height: 1.1 !important;
         text-align: center !important;
         color: #000000 !important;
       }
       #printable-receipt h2,
       #printable-receipt h3 {
-        margin: 0 0 4px 0;
+        margin: 0 0 2px 0 !important;
         font-weight: 700;
-        font-size: ${Math.max(fontSize, 10)}px !important;
-        line-height: 1.2;
+        font-size: ${bodyFontSize} !important;
+        line-height: 1.1 !important;
       }
-      /* Store header container */
+      /* Store header container - minimal spacing */
       #printable-receipt > div.text-center:first-of-type,
       #printable-receipt .text-center.mb-6,
       #printable-receipt .text-center.mb-8 {
-        margin-bottom: 6px !important;
-        padding-bottom: 4px !important;
+        margin-bottom: 3px !important;
+        padding-bottom: 2px !important;
         border-bottom: 1px solid #000 !important;
         text-align: center !important;
       }
-      /* Address below store name */
+      /* Address below store name - compact */
       #printable-receipt .text-center p {
-        margin: 2px 0 0 0 !important;
-        font-size: ${Math.max(fontSize - 2, 8)}px !important;
+        margin: 1px 0 0 0 !important;
+        font-size: ${secondaryTextFontSize} !important;
         color: #000000 !important;
-        line-height: 1.3;
+        line-height: 1.1 !important;
         text-align: center !important;
       }
-      /* Table - fixed layout, character-based */
+      /* Table - fixed layout, ultra-compact for thermal printers */
       #printable-receipt table {
         width: 100% !important;
         max-width: 100% !important;
         border-collapse: collapse !important;
         border-spacing: 0 !important;
-        margin: 8px 0 !important;
-        font-size: ${tableFontSize}px !important;
+        margin: 2px 0 !important;
+        font-size: ${tableCellFontSize} !important;
         background: white !important;
         table-layout: fixed !important;
         border: 1px solid #000 !important;
@@ -326,36 +367,43 @@ const generateThermalStyles = (printSettings: PrinterConfig & { paperSize: strin
         display: table-header-group;
       }
       #printable-receipt table th {
-        padding: 4px 2px !important;
+        padding: 1px 0.5mm !important;
+        margin: 0 !important;
         text-align: center !important;
         font-weight: 900 !important;
         border: 1px solid #000 !important;
         color: #000000 !important;
-        font-size: ${tableFontSize}px !important;
+        font-size: ${tableCellFontSize} !important;
         text-transform: uppercase !important;
-        letter-spacing: 0.3px !important;
+        letter-spacing: 0.1px !important;
         word-wrap: break-word !important;
         word-break: break-all !important;
         white-space: normal !important;
         vertical-align: top !important;
         overflow-wrap: break-word;
         background-color: #ffffff !important;
+        line-height: 1.0 !important;
       }
       #printable-receipt table td {
-        padding: 4px 2px !important;
+        padding: 1px 0.5mm !important;
+        margin: 0 !important;
         border: 1px solid #000 !important;
         text-align: center !important;
-        font-size: ${tableFontSize}px !important;
+        font-size: ${tableCellFontSize} !important;
         color: #000000 !important;
         word-wrap: break-word !important;
         word-break: break-all !important;
         white-space: normal !important;
         vertical-align: top !important;
         overflow-wrap: break-word;
-        line-height: 1.4;
+        line-height: 1.0 !important;
         background-color: white !important;
         height: auto !important;
         max-height: none !important;
+      }
+      #printable-receipt table tr {
+        margin: 0 !important;
+        padding: 0 !important;
       }
       /* Column width classes for invoice tables */
       #printable-receipt table .col-description,
@@ -364,6 +412,13 @@ const generateThermalStyles = (printSettings: PrinterConfig & { paperSize: strin
       }
       #printable-receipt table .col-qty {
         width: 15% !important;
+      }
+      /* Prevent Quantity header from breaking - keep word intact */
+      #printable-receipt table th.col-qty {
+        white-space: nowrap !important;
+        word-break: keep-all !important;
+        word-wrap: normal !important;
+        overflow-wrap: normal !important;
       }
       #printable-receipt table .col-price,
       #printable-receipt table .col-unit-price {
@@ -391,11 +446,11 @@ const generateThermalStyles = (printSettings: PrinterConfig & { paperSize: strin
         /* Statement-specific styling - ensure it's distinct from invoices */
       }
       
-      /* Statement Summary - Different from Invoice Summary */
+      /* Statement Summary - Different from Invoice Summary - compact for thermal */
       #printable-receipt.customer-statement-print .statement-summary {
-        margin-top: 8px !important;
-        margin-bottom: 8px !important;
-        padding: 6px 0 !important;
+        margin-top: 3px !important;
+        margin-bottom: 3px !important;
+        padding: 3px 0 !important;
         border-top: 1px solid #000 !important;
         border-bottom: 1px solid #000 !important;
       }
@@ -403,9 +458,10 @@ const generateThermalStyles = (printSettings: PrinterConfig & { paperSize: strin
         display: flex !important;
         justify-content: space-between !important;
         align-items: center !important;
-        padding: 3px 0 !important;
-        font-size: ${fontSize}px !important;
-        line-height: 1.4 !important;
+        padding: 2px 0 !important;
+        margin: 0 !important;
+        font-size: ${bodyFontSize} !important;
+        line-height: 1.1 !important;
       }
       #printable-receipt.customer-statement-print .statement-summary > div span:first-child {
         color: #000000 !important;
@@ -417,20 +473,21 @@ const generateThermalStyles = (printSettings: PrinterConfig & { paperSize: strin
       }
       #printable-receipt.customer-statement-print .statement-summary .grand-total {
         font-weight: 900 !important;
-        font-size: ${Math.max(fontSize + 1, 12)}px !important;
-        padding: 6px 0 !important;
-        margin-top: 4px !important;
+        font-size: ${importantHeadingFontSize} !important;
+        padding: 3px 0 !important;
+        margin-top: 3px !important;
         border-top: 2px solid #000 !important;
         border-radius: 0 !important;
         background-color: #ffffff !important;
         color: #000000 !important;
+        line-height: 1.1 !important;
       }
       #printable-receipt.customer-statement-print .statement-summary .grand-total span:first-child {
-        font-size: ${Math.max(fontSize + 1, 12)}px !important;
+        font-size: ${importantHeadingFontSize} !important;
         font-weight: 900 !important;
       }
       #printable-receipt.customer-statement-print .statement-summary .grand-total span:last-child {
-        font-size: ${Math.max(fontSize + 2, 14)}px !important;
+        font-size: ${importantHeadingFontSize} !important;
         font-weight: 900 !important;
       }
       
@@ -440,10 +497,10 @@ const generateThermalStyles = (printSettings: PrinterConfig & { paperSize: strin
         width: 100% !important;
         max-width: 100% !important;
         table-layout: fixed !important;
-        font-size: ${Math.max(tableFontSize - 2, 7)}px !important;
+        font-size: ${tableCellFontSize} !important;
         border-collapse: collapse !important;
         border-spacing: 0 !important;
-        margin: 4px 0 !important;
+        margin: 2px 0 !important;
       }
       /* PRINT-ONLY: Hide date column in print (date is merged into description column) */
       #printable-receipt .statement-transactions-table .statement-col-date {
@@ -458,11 +515,12 @@ const generateThermalStyles = (printSettings: PrinterConfig & { paperSize: strin
         color: #000000 !important;
         word-wrap: break-word !important;
         word-break: break-all !important;
-        padding: 1px !important;
-        font-size: ${Math.max(tableFontSize - 2, 7)}px !important;
+        padding: 1px 0.5mm !important;
+        margin: 0 !important;
+        font-size: ${tableCellFontSize} !important;
         overflow-wrap: break-word !important;
         hyphens: auto !important;
-        line-height: 1.3 !important;
+        line-height: 1.0 !important;
         white-space: normal !important;
         vertical-align: top !important;
         border: 1px solid #000 !important;
@@ -474,12 +532,14 @@ const generateThermalStyles = (printSettings: PrinterConfig & { paperSize: strin
         text-align: right !important;
         font-family: 'Courier New', monospace !important;
         color: #000000 !important;
-        padding: 1px !important;
-        font-size: ${Math.max(tableFontSize - 2, 7)}px !important;
+        padding: 1px 0.5mm !important;
+        margin: 0 !important;
+        font-size: ${tableCellFontSize} !important;
         white-space: nowrap !important;
         overflow: hidden !important;
         text-overflow: ellipsis !important;
         border: 1px solid #000 !important;
+        line-height: 1.0 !important;
       }
       #printable-receipt .statement-transactions-table .print-text-black {
         color: #000000 !important;
@@ -492,12 +552,14 @@ const generateThermalStyles = (printSettings: PrinterConfig & { paperSize: strin
         font-family: 'Courier New', monospace !important;
         font-weight: 600 !important;
         color: #000000 !important;
-        padding: 1px !important;
-        font-size: ${Math.max(tableFontSize - 2, 7)}px !important;
+        padding: 1px 0.5mm !important;
+        margin: 0 !important;
+        font-size: ${tableCellFontSize} !important;
         white-space: nowrap !important;
         overflow: hidden !important;
         text-overflow: ellipsis !important;
         border: 1px solid #000 !important;
+        line-height: 1.0 !important;
       }
       /* PRINT-ONLY: Ensure all statement table content (cells and headers) is black for thermal printers */
       /* NOTE: This forces black text in print; on-screen display can use colors */
@@ -518,19 +580,21 @@ const generateThermalStyles = (printSettings: PrinterConfig & { paperSize: strin
       #printable-receipt .statement-transactions-table th.statement-col-description,
       #printable-receipt .statement-transactions-table th.statement-col-amount,
       #printable-receipt .statement-transactions-table th.statement-col-balance {
-        padding: 1px !important;
-        font-size: ${Math.max(tableFontSize - 2, 7)}px !important;
+        padding: 1px 0.5mm !important;
+        margin: 0 !important;
+        font-size: ${tableCellFontSize} !important;
         font-weight: 700 !important;
         color: #000000 !important;
         text-transform: none !important;
         letter-spacing: 0 !important;
         border: 1px solid #000 !important;
+        line-height: 1.0 !important;
       }
-      /* Invoice info section */
+      /* Invoice info section - compact for thermal */
       #printable-receipt .invoice-info {
-        padding: 4px 0 !important;
+        padding: 2px 0 !important;
         border-bottom: 1px dashed #000 !important;
-        margin-bottom: 6px !important;
+        margin-bottom: 3px !important;
       }
       #printable-receipt .invoice-info .grid {
         display: block !important;
@@ -538,36 +602,69 @@ const generateThermalStyles = (printSettings: PrinterConfig & { paperSize: strin
       }
       #printable-receipt .invoice-info .grid > div {
         display: block !important;
-        margin-bottom: 4px !important;
+        margin-bottom: 2px !important;
+      }
+      /* Allow flex-row layout for inline display (e.g., customer name) */
+      #printable-receipt .invoice-info .grid > div.flex-row {
+        display: flex !important;
+        flex-direction: row !important;
+        align-items: center !important;
+        gap: 4px !important;
+        margin-bottom: 2px !important;
       }
       #printable-receipt .invoice-info .grid span.text-xs {
-        font-size: ${Math.max(tableFontSize - 1, 8)}px !important;
+        font-size: ${secondaryTextFontSize} !important;
         font-weight: 600 !important;
         color: #000 !important;
-        margin-bottom: 2px !important;
-        line-height: 1.3;
-        display: block;
+        margin-bottom: 0 !important;
+        line-height: 1.1 !important;
+        display: inline;
+      }
+      #printable-receipt .invoice-info .grid > div.flex-row span.text-xs {
+        margin-bottom: 0 !important;
+        display: inline !important;
       }
       #printable-receipt .invoice-info .grid span.text-sm {
-        font-size: ${tableFontSize}px !important;
+        font-size: ${bodyFontSize} !important;
         font-weight: 600 !important;
         color: #000000 !important;
-        line-height: 1.3;
-        display: block;
+        line-height: 1.1 !important;
+        display: inline;
       }
-      /* Summary section */
+      #printable-receipt .invoice-info .grid > div.flex-row span.text-sm {
+        display: inline !important;
+      }
+      /* Payment info section - compact for thermal */
+      #printable-receipt .payment-info {
+        font-size: ${bodyFontSize} !important;
+        line-height: 1.1 !important;
+        margin-top: 3px !important;
+        padding-top: 3px !important;
+      }
+      #printable-receipt .payment-info .payment-method {
+        font-size: ${bodyFontSize} !important;
+      }
+      #printable-receipt .payment-info .payment-detail-row {
+        font-size: ${bodyFontSize} !important;
+      }
+      #printable-receipt .payment-info span.text-xs,
+      #printable-receipt .payment-info .text-xs {
+        font-size: ${secondaryTextFontSize} !important;
+      }
+      /* Summary section - compact for thermal */
       #printable-receipt .receipt-summary {
-        margin-top: 6px !important;
-        padding-top: 6px !important;
+        margin-top: 3px !important;
+        padding-top: 3px !important;
         border-top: 1px dashed #000 !important;
       }
       #printable-receipt .receipt-summary > div {
         display: flex !important;
         justify-content: space-between !important;
         align-items: center !important;
-        padding: 4px 0 !important;
-        font-size: ${fontSize}px !important;
-        line-height: 1.4 !important;
+        padding: 2px 0 !important;
+        margin: 0 !important;
+        font-size: ${bodyFontSize} !important;
+        line-height: 1.1 !important;
       }
       #printable-receipt .receipt-summary > div span:first-child {
         color: #000000 !important;
@@ -579,22 +676,23 @@ const generateThermalStyles = (printSettings: PrinterConfig & { paperSize: strin
       }
       #printable-receipt .receipt-summary .grand-total {
         font-weight: 900 !important;
-        font-size: ${Math.max(fontSize + 1, 12)}px !important;
-        padding: 8px 0 !important;
-        margin-top: 8px !important;
+        font-size: ${importantHeadingFontSize} !important;
+        padding: 3px 0 !important;
+        margin-top: 3px !important;
         border-top: 2px solid #000 !important;
         border-radius: 0 !important;
         background-color: #ffffff !important;
         color: #000000 !important;
         box-shadow: none !important;
+        line-height: 1.1 !important;
       }
       #printable-receipt .receipt-summary .grand-total span:first-child {
-        font-size: ${Math.max(fontSize + 1, 12)}px !important;
+        font-size: ${importantHeadingFontSize} !important;
         font-weight: 900 !important;
         text-transform: uppercase !important;
       }
       #printable-receipt .receipt-summary .grand-total span:last-child {
-        font-size: ${Math.max(fontSize + 2, 14)}px !important;
+        font-size: ${importantHeadingFontSize} !important;
         font-weight: 900 !important;
       }
       /* Footer - hidden in print */
@@ -611,19 +709,21 @@ const generateThermalStyles = (printSettings: PrinterConfig & { paperSize: strin
         color-adjust: exact;
         -webkit-print-color-adjust: exact;
       }
-      /* Print media */
+      /* Print media - optimized for thermal printers */
       @media print {
         @page {
-          margin: ${printSettings.marginTop}cm ${printSettings.marginRight}cm ${printSettings.marginBottom}cm ${printSettings.marginLeft}cm;
+          margin: ${thermalMarginTop}mm ${thermalMarginRight}mm ${thermalMarginBottom}mm ${thermalMarginLeft}mm;
           size: ${paperWidth}mm auto;
         }
         body {
-          margin: 0;
-          padding: 0;
+          margin: 0 !important;
+          padding: 0 !important;
           background: white !important;
           color: #000000 !important;
           width: ${paperWidth}mm !important;
           max-width: ${paperWidth}mm !important;
+          line-height: 1.1 !important;
+          font-size: ${bodyFontSize} !important;
         }
         #printable-receipt {
           box-shadow: none !important;
@@ -631,8 +731,24 @@ const generateThermalStyles = (printSettings: PrinterConfig & { paperSize: strin
           max-width: ${paperWidth}mm !important;
           width: ${paperWidth}mm !important;
           margin: 0 !important;
-          padding: 8px 4px !important;
+          padding: 2px 1px !important;
           background: white !important;
+        }
+        /* Ensure tables are ultra-compact in print */
+        #printable-receipt table {
+          margin: 2px 0 !important;
+          font-size: ${tableCellFontSize} !important;
+        }
+        #printable-receipt table th,
+        #printable-receipt table td {
+          padding: 1px 0.5mm !important;
+          margin: 0 !important;
+          line-height: 1.0 !important;
+          font-size: ${tableCellFontSize} !important;
+        }
+        #printable-receipt table tr {
+          margin: 0 !important;
+          padding: 0 !important;
         }
         .print-hidden {
           display: none !important;
@@ -658,9 +774,10 @@ const generateThermalStyles = (printSettings: PrinterConfig & { paperSize: strin
           width: 100% !important;
           max-width: 100% !important;
           table-layout: fixed !important;
-          font-size: ${Math.max(tableFontSize - 2, 7)}px !important;
+          font-size: ${tableCellFontSize} !important;
           border-collapse: collapse !important;
           border-spacing: 0 !important;
+          margin: 2px 0 !important;
         }
         /* Hide date column in print (date is merged into description column) */
         #printable-receipt .statement-transactions-table .statement-col-date {
@@ -671,40 +788,48 @@ const generateThermalStyles = (printSettings: PrinterConfig & { paperSize: strin
           max-width: 40% !important;
           text-align: right !important;
           color: #000000 !important;
-          padding: 1px !important;
-          font-size: ${Math.max(tableFontSize - 2, 7)}px !important;
+          padding: 1px 0.5mm !important;
+          margin: 0 !important;
+          font-size: ${tableCellFontSize} !important;
           word-wrap: break-word !important;
           word-break: break-all !important;
           white-space: normal !important;
           vertical-align: top !important;
           overflow-wrap: break-word !important;
+          line-height: 1.0 !important;
         }
         #printable-receipt .statement-transactions-table .statement-col-amount {
           width: 30% !important;
           max-width: 30% !important;
           text-align: right !important;
           color: #000000 !important;
-          padding: 1px !important;
-          font-size: ${Math.max(tableFontSize - 2, 7)}px !important;
+          padding: 1px 0.5mm !important;
+          margin: 0 !important;
+          font-size: ${tableCellFontSize} !important;
           overflow: hidden !important;
+          line-height: 1.0 !important;
         }
         #printable-receipt .statement-transactions-table .statement-col-balance {
           width: 30% !important;
           max-width: 30% !important;
           text-align: right !important;
           color: #000000 !important;
-          padding: 1px !important;
-          font-size: ${Math.max(tableFontSize - 2, 7)}px !important;
+          padding: 1px 0.5mm !important;
+          margin: 0 !important;
+          font-size: ${tableCellFontSize} !important;
           overflow: hidden !important;
+          line-height: 1.0 !important;
         }
         /* Ensure table headers fit - hide date column header */
         #printable-receipt .statement-transactions-table th.statement-col-date {
           display: none !important;
         }
         #printable-receipt .statement-transactions-table th {
-          padding: 1px !important;
-          font-size: ${Math.max(tableFontSize - 2, 7)}px !important;
+          padding: 1px 0.5mm !important;
+          margin: 0 !important;
+          font-size: ${tableCellFontSize} !important;
           font-weight: 700 !important;
+          line-height: 1.0 !important;
         }
         /* Customer Statement - Ensure distinct from Invoice in print */
         #printable-receipt.customer-statement-print {
@@ -1422,9 +1547,19 @@ const extractInvoiceData = (element: HTMLElement): InvoiceData | null => {
     // Extract invoice info from .invoice-info section
     const invoiceInfoEl = element.querySelector('.invoice-info');
     let invoiceNumber = 'N/A';
-    let dateText = new Date().toLocaleString('ar-SA');
+    let dateText = formatDateEnglish(new Date());
     let cashier = 'N/A';
     let customerName = 'N/A';
+    
+    // Try to get the raw date from data attributes or invoice object if available
+    const invoiceDateAttr = element.getAttribute('data-invoice-date');
+    if (invoiceDateAttr) {
+      try {
+        dateText = formatDateEnglish(new Date(invoiceDateAttr));
+      } catch (e) {
+        // Fall back to current date
+      }
+    }
     
     if (invoiceInfoEl) {
       // Try grid format first (POSPage format: .grid > div with span.text-xs and span.text-sm)
@@ -1439,7 +1574,33 @@ const extractInvoiceData = (element: HTMLElement): InvoiceData | null => {
           if (label.includes('رقم الفاتورة') || label.includes('Invoice') || label.includes('INV')) {
             invoiceNumber = value;
           } else if (label.includes('التاريخ') || label.includes('Date')) {
-            dateText = value;
+            // Try to parse the date value and reformat it with English numerals
+            try {
+              // First, try to find a data attribute with the raw date (preferred method)
+              const dateValue = valueEl?.getAttribute('data-date') || 
+                               valueEl?.closest('[data-date]')?.getAttribute('data-date') ||
+                               div.getAttribute('data-date');
+              if (dateValue) {
+                dateText = formatDateEnglish(new Date(dateValue));
+              } else {
+                // Try to parse the text value as a date (might contain Arabic numerals)
+                // Replace Arabic numerals with English ones for parsing
+                const arabicToEnglish: { [key: string]: string } = {
+                  '٠': '0', '١': '1', '٢': '2', '٣': '3', '٤': '4',
+                  '٥': '5', '٦': '6', '٧': '7', '٨': '8', '٩': '9'
+                };
+                const englishValue = value.replace(/[٠-٩]/g, (d) => arabicToEnglish[d] || d);
+                const parsedDate = new Date(englishValue);
+                if (!isNaN(parsedDate.getTime())) {
+                  dateText = formatDateEnglish(parsedDate);
+                } else {
+                  dateText = formatDateEnglish(new Date());
+                }
+              }
+            } catch (e) {
+              // If parsing fails, use current date
+              dateText = formatDateEnglish(new Date());
+            }
           } else if (label.includes('كاشير') || label.includes('Cashier') || label.includes('بائع')) {
             cashier = value;
           } else if (label.includes('عميل') || label.includes('Customer')) {
@@ -1465,7 +1626,30 @@ const extractInvoiceData = (element: HTMLElement): InvoiceData | null => {
           if (label.includes('رقم الفاتورة') || label.includes('Invoice') || label.includes('INV') || label.includes('Invoice Number')) {
             invoiceNumber = value || 'N/A';
           } else if (label.includes('التاريخ') || label.includes('Date')) {
-            dateText = value || new Date().toLocaleString('ar-SA');
+            // Try to parse and reformat the date
+            try {
+              const dateValue = p.getAttribute('data-date') || 
+                                p.closest('[data-date]')?.getAttribute('data-date') ||
+                                invoiceInfoEl.querySelector('[data-date]')?.getAttribute('data-date');
+              if (dateValue) {
+                dateText = formatDateEnglish(new Date(dateValue));
+              } else {
+                // Try to parse the text value (might contain Arabic numerals)
+                const arabicToEnglish: { [key: string]: string } = {
+                  '٠': '0', '١': '1', '٢': '2', '٣': '3', '٤': '4',
+                  '٥': '5', '٦': '6', '٧': '7', '٨': '8', '٩': '9'
+                };
+                const englishValue = value.replace(/[٠-٩]/g, (d) => arabicToEnglish[d] || d);
+                const parsedDate = new Date(englishValue);
+                if (!isNaN(parsedDate.getTime())) {
+                  dateText = formatDateEnglish(parsedDate);
+                } else {
+                  dateText = formatDateEnglish(new Date());
+                }
+              }
+            } catch (e) {
+              dateText = formatDateEnglish(new Date());
+            }
           } else if (label.includes('كاشير') || label.includes('Cashier') || label.includes('بائع') || label.includes('Seller')) {
             cashier = value || 'N/A';
           } else if (label.includes('عميل') || label.includes('Customer') || label.includes('Customer Name')) {
@@ -1770,8 +1954,7 @@ const generateInvoiceHTML = (data: InvoiceData, printSettings: ReturnType<typeof
           ${data.cashier ? `المحاسب: ${data.cashier}` : ''}
         </div>
         <div class="party-block" style="text-align: right;">
-          <div class="party-title"> :العميل</div>
-          <strong>${data.customerName}</strong>
+          ${data.customerName ? `العميل: <strong>${data.customerName}</strong>` : ''}
         </div>
       </div>
       
@@ -1781,9 +1964,9 @@ const generateInvoiceHTML = (data: InvoiceData, printSettings: ReturnType<typeof
           <tr>
             <th class="col-index">#</th>
             <th class="col-name">المنتج</th>
-            <th class="col-qty">الكمية</th>
-            <th class="col-unit-price">سعر الوحدة</th>
-            <th class="col-total">الإجمالي</th>
+            <th class="col-qty">كمية</th>
+            <th class="col-unit-price">سعر</th>
+            <th class="col-total">إجمالي</th>
           </tr>
         </thead>
         <tbody>
@@ -2049,6 +2232,14 @@ const generateUniversalInvoiceStyles = (printSettings: ReturnType<typeof getPrin
         color: #000; 
       }
       
+      /* Prevent Quantity header from breaking - keep word intact */
+      th.col-qty {
+        white-space: nowrap !important;
+        word-break: keep-all !important;
+        word-wrap: normal !important;
+        overflow-wrap: normal !important;
+      }
+      
       .col-unit-price { 
         width: 20%; 
         text-align: right; 
@@ -2285,6 +2476,13 @@ const generateUniversalInvoiceStyles = (printSettings: ReturnType<typeof getPrin
         vertical-align: top !important;
         white-space: nowrap !important;
       }
+      /* Prevent Quantity header from breaking in 58mm */
+      .width-58mm th.col-qty {
+        white-space: nowrap !important;
+        word-break: keep-all !important;
+        word-wrap: normal !important;
+        overflow-wrap: normal !important;
+      }
       .width-58mm .col-unit-price { 
         width: 23% !important;
         font-size: 0.85em !important; 
@@ -2465,6 +2663,13 @@ const generateUniversalInvoiceStyles = (printSettings: ReturnType<typeof getPrin
         text-align: center !important;
         vertical-align: top !important;
         white-space: nowrap !important;
+      }
+      /* Prevent Quantity header from breaking in 80mm */
+      .width-80mm th.col-qty {
+        white-space: nowrap !important;
+        word-break: keep-all !important;
+        word-wrap: normal !important;
+        overflow-wrap: normal !important;
       }
       .width-80mm .col-unit-price { 
         width: 22% !important;

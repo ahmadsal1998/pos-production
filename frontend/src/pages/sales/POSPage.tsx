@@ -51,6 +51,35 @@ type POSProduct = Product & {
 
 // All dummy/fake customers have been removed. Customer list starts empty.
 
+/**
+ * Format date with English numerals in YYYY/MM/DD HH:MM AM/PM format
+ * Uses 12-hour format with AM/PM, removes seconds, and uses English numerals (0-9) instead of Arabic numerals
+ */
+const formatDateEnglish = (date: Date | string | number): string => {
+  const d = typeof date === 'string' || typeof date === 'number' 
+    ? new Date(date) 
+    : date instanceof Date 
+    ? date 
+    : new Date();
+  
+  if (isNaN(d.getTime())) {
+    return '';
+  }
+  
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  
+  // Convert to 12-hour format
+  let hours = d.getHours();
+  const ampm = hours >= 12 ? 'PM' : 'AM';
+  hours = hours % 12;
+  hours = hours ? hours : 12; // 0 should be 12
+  const minutes = String(d.getMinutes()).padStart(2, '0');
+  
+  return `${year}/${month}/${day} || ${String(hours).padStart(2, '0')}:${minutes} ${ampm}`;
+};
+
 const generateNewInvoice = (cashierName: string, invoiceNumber: string = 'INV-1', isReturn: boolean = false, originalInvoiceId?: string): POSInvoice => ({
   id: invoiceNumber,
   date: new Date(),
@@ -5223,8 +5252,11 @@ const POSPage: React.FC = () => {
                     <div className="grid grid-cols-2 gap-x-6 gap-y-4">
                         <div className="flex flex-col">
                             <span className="text-xs text-gray-400 dark:text-gray-500 mb-2 font-semibold uppercase tracking-wide">{AR_LABELS.date}</span>
-                            <span className="text-sm font-bold text-gray-900 dark:text-gray-100">
-                                {new Date(invoice.date).toLocaleString('ar-SA')}
+                            <span 
+                                className="text-sm font-bold text-gray-900 dark:text-gray-100"
+                                data-date={invoice.date instanceof Date ? invoice.date.toISOString() : new Date(invoice.date).toISOString()}
+                            >
+                                {formatDateEnglish(invoice.date)}
                             </span>
                         </div>
                         <div className="flex flex-col">
@@ -5244,8 +5276,8 @@ const POSPage: React.FC = () => {
                                 {'cashier' in invoice ? invoice.cashier : invoice.seller}
                             </span>
                         </div>
-                        <div className="flex flex-col">
-                            <span className="text-xs text-gray-400 dark:text-gray-500 mb-2 font-semibold uppercase tracking-wide">{AR_LABELS.customerName}</span>
+                        <div className="flex flex-row items-center gap-2">
+                            <span className="text-xs text-gray-400 dark:text-gray-500 font-semibold uppercase tracking-wide">{AR_LABELS.customerName}:</span>
                             <span className="text-sm font-bold text-gray-900 dark:text-gray-100">
                                 {'customer' in invoice ? invoice.customer?.name : invoice.customerName || 'N/A'}
                             </span>
