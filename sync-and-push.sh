@@ -19,7 +19,7 @@ git log --oneline HEAD..origin/main 2>/dev/null || echo "  (none)"
 
 echo ""
 echo "🔄 Merging remote changes..."
-git pull origin main --no-edit
+git pull origin main --no-rebase --no-edit
 
 echo ""
 echo "📤 Pushing to GitHub..."
