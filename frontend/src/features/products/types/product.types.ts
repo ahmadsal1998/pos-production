@@ -106,6 +106,18 @@ export interface Warehouse {
   productCount: number; // Number of products in this warehouse
 }
 
+// --- PRODUCT UNIT INTERFACES ---
+
+export interface ProductUnit {
+  unitName: string;
+  barcode?: string;
+  sellingPrice: number;
+  conversionFactor?: number; // Legacy field for backward compatibility
+  multiplier?: number; // How many of the smallest unit are in this unit
+  order?: number; // Order in hierarchy (0 for largest, increments for smaller)
+  unitsInPrevious?: number; // How many of this unit are in the previous (larger) unit
+}
+
 // --- WHOLESALE POS INTERFACES ---
 
 export interface WholesaleProductUnit {

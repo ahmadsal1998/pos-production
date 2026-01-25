@@ -17,6 +17,8 @@
     "start": "node dist/index.js",
     "seed": "ts-node src/utils/seedDatabase.ts",
     "migrate:stores": "ts-node src/utils/migrateStores.ts",
+    "migrate:customer-payments": "ts-node src/utils/migrateCustomerPayments.ts",
+    "test:mongo": "ts-node src/utils/testMongoConnection.ts",
     "purge-trials": "ts-node src/scripts/purgeTrialAccounts.ts"
   },
   "keywords": [

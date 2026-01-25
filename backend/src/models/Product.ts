@@ -8,6 +8,7 @@ export interface ProductDocument extends Document {
   costPrice: number;
   price: number;
   stock: number;
+  total_units?: number; // Stock stored in smallest unit (for hierarchical units)
   warehouseId?: string;
   categoryId?: string;
   brandId?: string;
@@ -28,9 +29,12 @@ export interface ProductDocument extends Document {
   wholesalePrice?: number;
   units?: Array<{
     unitName: string;
-    barcode: string;
+    barcode?: string;
     sellingPrice: number;
-    conversionFactor: number;
+    conversionFactor?: number; // Legacy field for backward compatibility
+    multiplier?: number; // How many of the smallest unit are in this unit
+    order?: number; // Order in hierarchy (0 for largest, increments for smaller)
+    unitsInPrevious?: number; // How many of this unit are in the previous (larger) unit
   }>;
   multiWarehouseDistribution?: Array<{
     warehouseId: string;
@@ -77,6 +81,11 @@ const productSchema = new Schema(
       type: Number,
       default: 0,
       min: [0, 'Stock cannot be negative'],
+    },
+    total_units: {
+      type: Number,
+      default: 0,
+      min: [0, 'Total units cannot be negative'],
     },
     warehouseId: {
       type: String,
@@ -167,6 +176,19 @@ const productSchema = new Schema(
           type: Number,
           default: 1,
           min: [1, 'Conversion factor must be at least 1'],
+        },
+        multiplier: {
+          type: Number,
+          min: [1, 'Multiplier must be at least 1'],
+        },
+        order: {
+          type: Number,
+          default: 0,
+          min: [0, 'Order must be non-negative'],
+        },
+        unitsInPrevious: {
+          type: Number,
+          min: [1, 'Units in previous must be at least 1'],
         },
       },
     ],

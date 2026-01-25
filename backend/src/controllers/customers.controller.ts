@@ -98,7 +98,7 @@ export const createCustomer = asyncHandler(async (req: AuthenticatedRequest, res
     // If initial balance is set, create a payment record to track it in the statement
     if (previousBalance && previousBalance !== 0) {
       try {
-        const CustomerPayment = await getCustomerPaymentModelForStore(storeId);
+        const CustomerPayment = getCustomerPaymentModelForStore(storeId);
         
         // Determine voucher type and payment amount:
         // Journal Voucher (سند قيد): previousBalance is positive (customer owes) → payment amount should be negative (debt transaction)
@@ -586,13 +586,13 @@ export const createCustomerPayment = asyncHandler(async (req: AuthenticatedReque
       });
     }
 
-    // Get store-specific Customer Payment model
-    const CustomerPayment = await getCustomerPaymentModelForStore(storeId);
+    // Get Customer Payment model (unified collection in admin_db, filtered by storeId)
+    const CustomerPayment = getCustomerPaymentModelForStore(storeId);
 
-    // Create payment record
+    // Create payment record with normalized storeId
     const payment = await CustomerPayment.create({
       customerId: customerId.trim(),
-      storeId: storeId,
+      storeId: normalizedStoreId, // Use normalized storeId for consistency
       date: date ? new Date(date) : new Date(),
       amount: parseFloat(amount),
       method: method,
@@ -652,10 +652,15 @@ export const getCustomerPayments = asyncHandler(async (req: AuthenticatedRequest
   }
 
   try {
-    const CustomerPayment = await getCustomerPaymentModelForStore(storeId);
+    // Normalize storeId to lowercase for consistency
+    const normalizedStoreId = storeId.toLowerCase().trim();
     
-    // Build query
-    const query: any = {};
+    const CustomerPayment = getCustomerPaymentModelForStore(storeId);
+    
+    // Build query - always filter by storeId since we use a single collection
+    const query: any = {
+      storeId: normalizedStoreId, // Required: filter by storeId
+    };
     if (customerId && typeof customerId === 'string') {
       query.customerId = customerId.trim();
     }

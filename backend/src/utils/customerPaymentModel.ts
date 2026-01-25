@@ -1,12 +1,11 @@
-import mongoose, { Schema, Model, Document, Connection } from 'mongoose';
-import Store from '../models/Store';
-import { getDatabaseConnection, getDatabaseIdForStore, getDatabaseName } from './databaseManager';
+import mongoose, { Schema, Model, Document } from 'mongoose';
+import { getAdminDatabaseConnection } from './databaseManager';
 import { log } from './logger';
 
 // Customer Payment document interface
 export interface CustomerPaymentDocument extends Document {
   customerId: string;
-  storeId?: string;
+  storeId: string; // Required: identifies which store the payment belongs to
   date: Date;
   amount: number;
   method: 'Cash' | 'Bank Transfer' | 'Cheque';
@@ -26,8 +25,8 @@ const customerPaymentSchema = new Schema<CustomerPaymentDocument>(
     },
     storeId: {
       type: String,
+      required: [true, 'Store ID is required'],
       index: true,
-      default: null,
     },
     date: {
       type: Date,
@@ -76,76 +75,19 @@ customerPaymentSchema.index({ method: 1, storeId: 1 });
 customerPaymentSchema.index({ invoiceId: 1, storeId: 1 });
 
 /**
- * Get store prefix from storeId
- * @param storeId - Store ID to get prefix for
- * @returns Store prefix or null if not found
+ * Get a Mongoose model for the unified Customer Payment collection
+ * All customer payments are stored in admin_db in a single collection, filtered by storeId
+ * @returns Mongoose model for the Customer Payment collection in admin_db
  */
-async function getStorePrefix(storeId: string): Promise<string | null> {
-  try {
-    const normalizedStoreId = storeId.toLowerCase().trim();
-    
-    // Try to find by storeId first
-    let store = await Store.findOne({ storeId: normalizedStoreId }).lean();
-    
-    // If not found, try by prefix (in case storeId is actually a prefix)
-    if (!store) {
-      store = await Store.findOne({ prefix: normalizedStoreId }).lean();
-    }
-    
-    if (store && store.prefix) {
-      return store.prefix;
-    }
-    
-    return null;
-  } catch (error: any) {
-    log.error(`Error getting store prefix for ${storeId}`, error);
-    throw new Error(`Failed to get store prefix: ${error.message}`);
-  }
-}
-
-/**
- * Get a Mongoose model for a store-specific Customer Payment collection
- * @param prefix - Store prefix (e.g., 'store1')
- * @param databaseId - Database ID where the collection is stored
- * @returns Mongoose model for the store-specific Customer Payment collection
- */
-export async function getCustomerPaymentModel(
-  prefix: string | null,
-  databaseId?: number
-): Promise<Model<CustomerPaymentDocument>> {
-  if (!prefix) {
-    throw new Error('Store prefix is required for customer payment model');
-  }
-
-  // If databaseId is not provided, we need to get it from the Store model
-  let finalDatabaseId: number | null | undefined = databaseId;
-  if (!finalDatabaseId) {
-    finalDatabaseId = await getDatabaseIdForStore(prefix, Store);
-    if (!finalDatabaseId) {
-      throw new Error(`Database ID not found for store with prefix: ${prefix}`);
-    }
-  }
-
-  const dbId: number = finalDatabaseId;
+export function getCustomerPaymentModel(): Model<CustomerPaymentDocument> {
+  const collectionName = 'customer_payments';
   
-  // Validate and sanitize prefix
-  const sanitizedPrefix = prefix.toLowerCase().trim();
-  if (!sanitizedPrefix || !/^[a-z0-9_]+$/.test(sanitizedPrefix)) {
-    throw new Error(`Invalid store prefix: ${prefix}. Prefix can only contain lowercase letters, numbers, and underscores.`);
-  }
-  
-  const collectionName = `${sanitizedPrefix}_customer_payments`;
-  
-  // Validate collection name (MongoDB restrictions)
-  if (collectionName.length > 255) {
-    throw new Error(`Collection name too long: ${collectionName}. Maximum length is 255 characters.`);
-  }
-  
-  // Get the connection for this database
-  const connection = await getDatabaseConnection(dbId);
+  // Get the admin_db connection (main database)
+  const connection = getAdminDatabaseConnection();
   const connectionDbName = connection.db?.databaseName;
-  if (connectionDbName && connectionDbName !== getDatabaseName(dbId)) {
-    log.warn(`Database name mismatch: Expected ${getDatabaseName(dbId)}, got ${connectionDbName}`);
+  
+  if (connectionDbName !== 'admin_db') {
+    log.warn(`Expected admin_db connection, but got: ${connectionDbName}`);
   }
   
   // Check if model already exists in this connection
@@ -153,27 +95,20 @@ export async function getCustomerPaymentModel(
     return connection.models[collectionName] as Model<CustomerPaymentDocument>;
   }
 
-  // Create new model with the collection name on the specific connection
+  // Create new model with the collection name on the admin_db connection
   return connection.model<CustomerPaymentDocument>(collectionName, customerPaymentSchema, collectionName);
 }
 
 /**
  * Get Customer Payment model for a user's store
- * @param storeId - User's storeId
- * @returns Mongoose model for the user's store Customer Payment collection
+ * Uses a single collection in admin_db, with storeId used for filtering
+ * @param storeId - User's storeId (optional, but recommended for validation)
+ * @returns Mongoose model for the Customer Payment collection in admin_db
  */
-export async function getCustomerPaymentModelForStore(storeId: string | null | undefined): Promise<Model<CustomerPaymentDocument>> {
-  if (!storeId) {
-    throw new Error('Store ID is required to access customer payments');
-  }
-  
-  const prefix = await getStorePrefix(storeId);
-  const databaseId = await getDatabaseIdForStore(storeId, Store);
-  
-  if (!databaseId) {
-    throw new Error(`Database ID not found for store: ${storeId}`);
-  }
-  
-  return getCustomerPaymentModel(prefix, databaseId);
+export function getCustomerPaymentModelForStore(storeId?: string | null): Model<CustomerPaymentDocument> {
+  // Note: storeId is optional here since we use a unified collection
+  // However, it's recommended to always provide it for consistency
+  // All queries should filter by storeId when using this model
+  return getCustomerPaymentModel();
 }
 

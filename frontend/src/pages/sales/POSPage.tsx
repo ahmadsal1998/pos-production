@@ -2221,6 +2221,87 @@ const POSPage: React.FC = () => {
         return factor && factor > 0 ? factor : 1;
     }, []);
 
+    /**
+     * Convert quantity from a specific unit to main units (order 0) for stock deduction
+     * Handles hierarchical unit structure with unitsInPrevious and order fields
+     * Falls back to conversionFactor for backward compatibility
+     */
+    const convertQuantityToMainUnits = useCallback((
+        product: POSProduct | undefined,
+        unitName: string | undefined,
+        quantity: number
+    ): number => {
+        if (!product || !unitName || quantity <= 0) return quantity;
+
+        // Find the unit being sold
+        const normalizedUnit = unitName.toLowerCase().trim();
+        const soldUnit = product.units?.find(
+            (u) =>
+                !!u.unitName &&
+                u.unitName.toLowerCase() === normalizedUnit
+        );
+
+        if (!soldUnit) {
+            // Unit not found, assume it's the main unit
+            return quantity;
+        }
+
+        // Check if product uses hierarchical units (has order and unitsInPrevious)
+        const hasHierarchicalUnits = product.units?.some(u => 
+            (u as any).order !== undefined || (u as any).unitsInPrevious !== undefined
+        );
+
+        if (hasHierarchicalUnits) {
+            // Use hierarchical approach
+            const soldUnitOrder = (soldUnit as any).order ?? 
+                product.units?.findIndex(u => u.unitName === soldUnit.unitName) ?? 0;
+            
+            // Find main unit (order 0 or first unit)
+            const mainUnit = product.units?.find((u: any) => u.order === 0) || product.units?.[0];
+            
+            if (!mainUnit || soldUnitOrder === 0) {
+                // Already in main units
+                return quantity;
+            }
+
+            // Calculate conversion factor from sold unit to main unit
+            // We need to divide by all unitsInPrevious values from sold unit up to main unit
+            let conversionFactor = 1;
+            
+            // Sort units by order to traverse hierarchy correctly
+            const sortedUnits = [...(product.units || [])].sort((a: any, b: any) => 
+                ((a.order ?? 999) - (b.order ?? 999))
+            );
+
+            // Find the sold unit's position in sorted array
+            const soldUnitIndex = sortedUnits.findIndex(u => 
+                u.unitName?.toLowerCase() === normalizedUnit
+            );
+
+            if (soldUnitIndex > 0) {
+                // Multiply by all unitsInPrevious values from sold unit up to main unit
+                for (let i = soldUnitIndex; i > 0; i--) {
+                    const currentUnit = sortedUnits[i] as any;
+                    const unitsInPrev = currentUnit.unitsInPrevious || 1;
+                    conversionFactor *= unitsInPrev;
+                }
+            }
+
+            // Convert: quantity in sold unit / conversion factor = quantity in main units
+            return quantity / conversionFactor;
+        } else {
+            // Use legacy conversionFactor approach
+            const conversionFactor = soldUnit.conversionFactor || 1;
+            if (conversionFactor > 1) {
+                // If selling in sub-units, convert to main units
+                return quantity / conversionFactor;
+            } else {
+                // Already in main units
+                return quantity;
+            }
+        }
+    }, []);
+
     // Check stock from server for critical operations (bypasses cache)
     const checkStockFromServer = useCallback(async (productId: string, originalId?: string): Promise<number | null> => {
         const idToQuery = originalId || productId;
@@ -3266,9 +3347,8 @@ const POSPage: React.FC = () => {
                 if (productIndex !== -1) {
                     const product = newProducts[productIndex];
                     const piecesPerMainUnit = getPiecesPerMainUnit(product);
-                    const stockAddition = item.conversionFactor && item.conversionFactor > 0
-                        ? roundForStock(item.quantity / item.conversionFactor)
-                        : item.quantity;
+                    // Calculate stock addition - convert quantity to main units
+                    const stockAddition = convertQuantityToMainUnits(product, item.unit, item.quantity);
                     
                     // Update stock optimistically (ADD stock for returns)
                     const oldStock = product.stock;
@@ -3355,16 +3435,12 @@ const POSPage: React.FC = () => {
                     continue;
                 }
 
-                // Calculate stock addition for returns
-                let piecesPerMainUnit = 1;
-                if (product) {
-                    piecesPerMainUnit = getPiecesPerMainUnit(product);
-                } else if (item.conversionFactor && item.conversionFactor > 0) {
-                    piecesPerMainUnit = item.conversionFactor;
-                }
-                
+                // Calculate stock addition for returns - convert quantity to main units
                 let stockAddition: number;
-                if (item.conversionFactor && item.conversionFactor > 0 && piecesPerMainUnit > 1) {
+                if (product) {
+                    stockAddition = convertQuantityToMainUnits(product, item.unit, item.quantity);
+                } else if (item.conversionFactor && item.conversionFactor > 0) {
+                    // Fallback: use conversionFactor if product not available
                     stockAddition = item.quantity / item.conversionFactor;
                 } else {
                     stockAddition = item.quantity;
@@ -4184,11 +4260,8 @@ const POSPage: React.FC = () => {
                     return;
                 }
 
-                // Calculate stock reduction
-                const piecesPerMainUnit = getPiecesPerMainUnit(product);
-                const stockReduction = item.conversionFactor && item.conversionFactor > 0
-                    ? roundForStock(item.quantity / item.conversionFactor)
-                    : item.quantity;
+                // Calculate stock reduction - convert quantity to main units
+                const stockReduction = convertQuantityToMainUnits(product, item.unit, item.quantity);
 
                 // Update stock for this specific product only (optimistic update)
                 const oldStock = product.stock;
@@ -4398,27 +4471,19 @@ const POSPage: React.FC = () => {
                     productIdToUpdate = product.originalId;
                 }
 
-                // Calculate the stock change considering conversion factors
+                // Calculate the stock change - convert quantity to main units
                 // For sales, we SUBTRACT stock
                 const itemQuantity = item.quantity;
                 
-                // The quantity in the cart is in pieces, we need to convert to base units for stock
-                // Get piecesPerMainUnit from product if available, otherwise use conversionFactor
-                let piecesPerMainUnit = 1;
-                if (product) {
-                    piecesPerMainUnit = getPiecesPerMainUnit(product);
-                } else if (item.conversionFactor && item.conversionFactor > 0) {
-                    piecesPerMainUnit = item.conversionFactor;
-                }
-                
+                // Convert quantity from sold unit to main units using unit hierarchy
                 let stockChange: number;
-                
-                if (item.conversionFactor && item.conversionFactor > 0 && piecesPerMainUnit > 1) {
-                    // If we're selling in a sub-unit (e.g., pieces), convert to base unit (e.g., cartons)
-                    // Example: 24 pieces with conversionFactor 24 = 1 carton
+                if (product) {
+                    stockChange = convertQuantityToMainUnits(product, item.unit, itemQuantity);
+                } else if (item.conversionFactor && item.conversionFactor > 0) {
+                    // Fallback: use conversionFactor if product not available
                     stockChange = itemQuantity / item.conversionFactor;
                 } else {
-                    // Direct quantity (already in base units)
+                    // No conversion factor, assume already in main units
                     stockChange = itemQuantity;
                 }
                 

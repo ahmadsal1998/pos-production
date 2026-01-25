@@ -307,3 +307,15 @@ export function getConnectionCount(): number {
   return databaseConnections.size;
 }
 
+/**
+ * Get the admin_db connection (main database connection)
+ * This is the default mongoose connection used for admin_db
+ * @returns Mongoose connection for admin_db
+ */
+export function getAdminDatabaseConnection(): Connection {
+  if (mongoose.connection.readyState !== 1) {
+    throw new Error('Admin database (admin_db) is not connected. Please ensure the main database connection is established.');
+  }
+  return mongoose.connection;
+}
+

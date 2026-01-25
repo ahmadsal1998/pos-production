@@ -65,6 +65,7 @@ export const createProduct = asyncHandler(async (req: AuthenticatedRequest, res:
     costPrice,
     price,
     stock = 0,
+    initialQuantity, // Quantity in largest unit (for hierarchical units)
     warehouseId,
     categoryId,
     brandId,
@@ -113,14 +114,52 @@ export const createProduct = asyncHandler(async (req: AuthenticatedRequest, res:
       });
     }
 
+    // Parse initial quantity (quantity in largest/main unit)
+    // CRITICAL: Stock should ALWAYS be stored in main units, not sub-units
+    const initialQty = initialQuantity !== undefined ? parseInt(initialQuantity) : (parseInt(stock) || 0);
+    
+    // Calculate total_units (in smallest unit) for reference/display purposes only
+    // This is calculated dynamically and should NOT override the main stock field
+    let totalUnitsInSmallest = 0;
+    
+    if (units && Array.isArray(units) && units.length > 0) {
+      // Sort units by order (0 = largest, higher = smaller)
+      const sortedUnits = [...units].sort((a: any, b: any) => (a.order || 0) - (b.order || 0));
+      
+      // If we have hierarchical units, calculate total_units for reference
+      if (sortedUnits.length > 1 && initialQty > 0) {
+        // Start with initial quantity (in largest unit)
+        let calculatedTotal = initialQty;
+        
+        // Multiply by unitsInPrevious for each sub-unit
+        for (let i = 1; i < sortedUnits.length; i++) {
+          const currentUnit = sortedUnits[i] as any;
+          const unitsInPrev = currentUnit.unitsInPrevious || 1;
+          if (unitsInPrev > 0) {
+            calculatedTotal = calculatedTotal * unitsInPrev;
+          }
+        }
+        
+        totalUnitsInSmallest = calculatedTotal;
+      } else {
+        // No sub-units or no initial quantity - total equals main unit quantity
+        totalUnitsInSmallest = initialQty;
+      }
+    } else {
+      // No units - total equals main unit quantity
+      totalUnitsInSmallest = initialQty;
+    }
+
     // Prepare product data - ALWAYS include storeId
+    // CRITICAL: stock is stored in MAIN UNITS (largest unit), not sub-units
     const productData: any = {
       storeId: storeId.toLowerCase(), // REQUIRED for multi-tenant isolation
       name: name.trim(),
       barcode: barcode.trim(),
       costPrice: parseFloat(costPrice),
       price: parseFloat(price),
-      stock: parseInt(stock) || 0,
+      stock: initialQty, // ALWAYS in main units (largest unit) - this is the primary stock field
+      total_units: totalUnitsInSmallest, // Reference field - total in smallest unit (calculated dynamically)
       status: status || 'active',
     };
 
@@ -477,15 +516,67 @@ export const updateProduct = asyncHandler(async (req: AuthenticatedRequest, res:
     // Get trial-aware Product model
     const Product = await getProductModelForStore(storeId);
     
-    // Ensure storeId is not overridden from request body
-    const updateData = { ...req.body };
-    delete updateData.storeId; // Never allow storeId from request body
-    
-    // Get the old product before updating to invalidate old barcodes
+    // Get the old product before updating to invalidate old barcodes and get current units
     const oldProduct = await Product.findOne({
       _id: id,
       storeId: storeId.toLowerCase(),
     }).lean();
+
+    if (!oldProduct) {
+      return res.status(404).json({
+        success: false,
+        message: 'Product not found',
+      });
+    }
+
+    // Ensure storeId is not overridden from request body
+    const updateData = { ...req.body };
+    delete updateData.storeId; // Never allow storeId from request body
+    
+    // Handle initialQuantity update - ensure stock is stored in main units
+    if (updateData.initialQuantity !== undefined || updateData.stock !== undefined) {
+      // Get the quantity to update (prefer initialQuantity, fallback to stock)
+      const newQuantity = updateData.initialQuantity !== undefined 
+        ? parseInt(updateData.initialQuantity) 
+        : (updateData.stock !== undefined ? parseInt(updateData.stock) : null);
+      
+      if (newQuantity !== null && !isNaN(newQuantity)) {
+        // CRITICAL: Stock should ALWAYS be stored in main units
+        updateData.stock = newQuantity;
+        
+        // Recalculate total_units if product has hierarchical units
+        const units = updateData.units || oldProduct.units;
+        if (units && Array.isArray(units) && units.length > 0) {
+          // Sort units by order (0 = largest, higher = smaller)
+          const sortedUnits = [...units].sort((a: any, b: any) => (a.order || 0) - (b.order || 0));
+          
+          // If we have hierarchical units, calculate total_units for reference
+          if (sortedUnits.length > 1 && newQuantity > 0) {
+            let calculatedTotal = newQuantity;
+            
+            // Multiply by unitsInPrevious for each sub-unit
+            for (let i = 1; i < sortedUnits.length; i++) {
+              const currentUnit = sortedUnits[i] as any;
+              const unitsInPrev = currentUnit.unitsInPrevious || 1;
+              if (unitsInPrev > 0) {
+                calculatedTotal = calculatedTotal * unitsInPrev;
+              }
+            }
+            
+            updateData.total_units = calculatedTotal;
+          } else {
+            // No sub-units or no quantity - total equals main unit quantity
+            updateData.total_units = newQuantity;
+          }
+        } else {
+          // No units - total equals main unit quantity
+          updateData.total_units = newQuantity;
+        }
+        
+        // Remove initialQuantity from updateData as it's been converted to stock
+        delete updateData.initialQuantity;
+      }
+    }
 
     // Use unified model with storeId filter for isolation
     const product = await Product.findOneAndUpdate(

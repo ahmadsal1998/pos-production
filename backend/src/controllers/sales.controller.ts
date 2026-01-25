@@ -10,6 +10,88 @@ import { getBusinessDateFilterRange } from '../utils/businessDate';
 import { log } from '../utils/logger';
 import Sequence, { ISequence } from '../models/Sequence';
 import Store from '../models/Store';
+import { ProductDocument } from '../models/Product';
+
+/**
+ * Convert quantity from a specific unit to main units (order 0) for stock operations
+ * Handles hierarchical unit structure with unitsInPrevious and order fields
+ * Falls back to conversionFactor for backward compatibility
+ */
+function convertQuantityToMainUnits(
+  product: ProductDocument | null,
+  unitName: string | undefined,
+  quantity: number
+): number {
+  if (!product || !unitName || quantity <= 0) return quantity;
+
+  // Find the unit being processed
+  const normalizedUnit = unitName.toLowerCase().trim();
+  const targetUnit = product.units?.find(
+    (u) =>
+      !!u.unitName &&
+      u.unitName.toLowerCase() === normalizedUnit
+  );
+
+  if (!targetUnit) {
+    // Unit not found, assume it's the main unit
+    return quantity;
+  }
+
+  // Check if product uses hierarchical units (has order and unitsInPrevious)
+  const hasHierarchicalUnits = product.units?.some((u: any) => 
+    u.order !== undefined || u.unitsInPrevious !== undefined
+  );
+
+  if (hasHierarchicalUnits) {
+    // Use hierarchical approach
+    const targetUnitOrder = (targetUnit as any).order ?? 
+      product.units?.findIndex((u: any) => u.unitName === targetUnit.unitName) ?? 0;
+    
+    // Find main unit (order 0 or first unit)
+    const mainUnit = product.units?.find((u: any) => u.order === 0) || product.units?.[0];
+    
+    if (!mainUnit || targetUnitOrder === 0) {
+      // Already in main units
+      return quantity;
+    }
+
+    // Calculate conversion factor from target unit to main unit
+    // We need to divide by all unitsInPrevious values from target unit up to main unit
+    let conversionFactor = 1;
+    
+    // Sort units by order to traverse hierarchy correctly
+    const sortedUnits = [...(product.units || [])].sort((a: any, b: any) => 
+      ((a.order ?? 999) - (b.order ?? 999))
+    );
+
+    // Find the target unit's position in sorted array
+    const targetUnitIndex = sortedUnits.findIndex((u: any) => 
+      u.unitName?.toLowerCase() === normalizedUnit
+    );
+
+    if (targetUnitIndex > 0) {
+      // Multiply by all unitsInPrevious values from target unit up to main unit
+      for (let i = targetUnitIndex; i > 0; i--) {
+        const currentUnit = sortedUnits[i] as any;
+        const unitsInPrev = currentUnit.unitsInPrevious || 1;
+        conversionFactor *= unitsInPrev;
+      }
+    }
+
+    // Convert: quantity in target unit / conversion factor = quantity in main units
+    return quantity / conversionFactor;
+  } else {
+    // Use legacy conversionFactor approach
+    const conversionFactor = targetUnit.conversionFactor || 1;
+    if (conversionFactor > 1) {
+      // If processing in sub-units, convert to main units
+      return quantity / conversionFactor;
+    } else {
+      // Already in main units
+      return quantity;
+    }
+  }
+}
 
 /**
  * Helper function to get the current max invoice number from existing sales
@@ -562,6 +644,118 @@ export const createSale = asyncHandler(async (req: AuthenticatedRequest, res: Re
 
   if (!sale) {
     throw new Error('Failed to create sale: Unable to save after retries');
+  }
+
+  // Update product stock for each item in the sale
+  // For regular sales: decrease stock (isReturn = false)
+  // For return invoices: increase stock (isReturn = true)
+  const stockUpdateResults: Array<{ productId: string; success: boolean; error?: string }> = [];
+  
+  if (items && Array.isArray(items) && items.length > 0) {
+    for (const item of items) {
+      const { productId, quantity: itemQuantity, unit: itemUnit } = item;
+      
+      if (!productId || !itemQuantity || itemQuantity <= 0) {
+        continue; // Skip invalid items
+      }
+
+      try {
+        // Find the product
+        const mongoose = (await import('mongoose')).default;
+        let product = null;
+
+        if (mongoose.Types.ObjectId.isValid(productId) && productId.length === 24) {
+          product = await Product.findOne({
+            _id: productId,
+            storeId: storeId.toLowerCase(),
+          });
+        }
+
+        if (!product) {
+          // Try finding by custom id field
+          product = await Product.findOne({
+            id: productId,
+            storeId: storeId.toLowerCase(),
+          });
+        }
+
+        if (!product) {
+          stockUpdateResults.push({
+            productId: String(productId),
+            success: false,
+            error: 'Product not found',
+          });
+          log.warn(`[Sales Controller] Product not found for stock update: ${productId}`);
+          continue;
+        }
+
+        // Convert quantity to main units using unit hierarchy
+        const unit = itemUnit || 'قطعة';
+        let stockChange: number;
+        
+        if (product.units && product.units.length > 0) {
+          stockChange = convertQuantityToMainUnits(product, unit, itemQuantity);
+        } else if (item.conversionFactor && item.conversionFactor > 1) {
+          // Fallback: use conversionFactor if no unit structure
+          stockChange = itemQuantity / item.conversionFactor;
+        } else {
+          stockChange = itemQuantity;
+        }
+
+        // Calculate new stock
+        const currentStock = product.stock || 0;
+        let newStock: number;
+        
+        if (isReturn) {
+          // Return: increase stock
+          newStock = currentStock + stockChange;
+        } else {
+          // Sale: decrease stock
+          newStock = Math.max(0, currentStock - stockChange);
+        }
+
+        // Update product stock
+        await Product.findByIdAndUpdate(
+          product._id,
+          { stock: newStock },
+          { new: true }
+        );
+
+        // Invalidate product cache
+        await invalidateAllProductBarcodeCaches(storeId, product);
+
+        stockUpdateResults.push({
+          productId: String(productId),
+          success: true,
+        });
+
+        log.debug(
+          `[Sales Controller] Stock ${isReturn ? 'increased' : 'decreased'} for product ${productId}: ` +
+          `${currentStock} -> ${newStock} (${isReturn ? '+' : '-'}${stockChange})`
+        );
+      } catch (error: any) {
+        log.error(`[Sales Controller] Error updating stock for product ${productId}:`, error);
+        stockUpdateResults.push({
+          productId: String(productId),
+          success: false,
+          error: error.message || 'Failed to update stock',
+        });
+      }
+    }
+
+    // Log stock update summary
+    const successful = stockUpdateResults.filter(r => r.success).length;
+    const failed = stockUpdateResults.filter(r => !r.success).length;
+    
+    if (failed > 0) {
+      log.warn(
+        `[Sales Controller] Stock updates completed with errors: ${successful} successful, ${failed} failed`
+      );
+    } else {
+      log.debug(
+        `[Sales Controller] All stock updates completed successfully: ${successful} products updated`
+      );
+    }
   }
 
   // Return response
@@ -1571,12 +1765,18 @@ export const processReturn = asyncHandler(async (req: AuthenticatedRequest, res:
         }
       }
 
-      // Calculate stock increase considering conversion factors
-      let stockIncrease = returnQuantity;
+      // Calculate stock increase - convert quantity to main units
+      const unit = returnItem.unit || 'قطعة';
+      let stockIncrease: number;
       
-      if (conversionFactor > 1) {
-        // If returning in sub-units, convert to base units
-        stockIncrease = Math.ceil(returnQuantity / conversionFactor);
+      // Use hierarchical unit conversion if product has unit structure
+      if (product.units && product.units.length > 0) {
+        stockIncrease = convertQuantityToMainUnits(product, unit, returnQuantity);
+      } else if (conversionFactor > 1) {
+        // Fallback: use conversionFactor if no unit structure
+        stockIncrease = returnQuantity / conversionFactor;
+      } else {
+        stockIncrease = returnQuantity;
       }
 
       const currentStock = product.stock || 0;
@@ -1600,7 +1800,7 @@ export const processReturn = asyncHandler(async (req: AuthenticatedRequest, res:
       let unitPrice = returnItem.unitPrice;
       let discount = returnItem.discount || 0;
       let productName = returnItem.productName || product.name;
-      let unit = returnItem.unit || 'قطعة';
+      // unit is already declared above, reuse it
 
       if (originalInvoice) {
         const originalItem = originalInvoice.items.find(

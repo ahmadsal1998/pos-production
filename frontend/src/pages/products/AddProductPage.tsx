@@ -5,6 +5,8 @@ import { productsApi, categoriesApi, brandsApi, warehousesApi, unitsApi } from '
 import BrandFormModal from '@/features/products/components/brand-management/BrandFormModal';
 import UnitFormModal from '@/features/products/components/unit-management/UnitFormModal';
 import CategoryFormModal from '@/features/products/components/category-management/CategoryFormModal';
+import HierarchicalUnitsManager from '@/features/products/components/HierarchicalUnitsManager';
+import { ProductUnit } from '@/features/products/types/product.types';
 import { Brand, Unit, Category } from '@/shared/types';
 import { ApiError } from '@/lib/api/client';
 import { invalidateProductsCache, getStoreIdFromToken } from '@/lib/cache/productsCache';
@@ -23,9 +25,12 @@ interface ProductFormData {
   // Advanced Options
   units: Array<{
     unitName: string;
-    barcode: string;
+    barcode?: string;
     sellingPrice: number;
-    conversionFactor: number;
+    conversionFactor?: number;
+    multiplier?: number;
+    order?: number;
+    unitsInPrevious?: number;
   }>;
   wholesalePrice: number;
   multiWarehouseDistribution: Array<{
@@ -107,8 +112,6 @@ const AddProductPage: React.FC = () => {
 
   // State for "Add Stock" functionality
   const [showAddStockForm, setShowAddStockForm] = useState(false);
-  const [showUnitSelection, setShowUnitSelection] = useState(false);
-  const [selectedUnitForStock, setSelectedUnitForStock] = useState<string>('');
   const [newUnitForm, setNewUnitForm] = useState<{
     unitType: 'basic' | 'new';
     unitName: string;
@@ -406,6 +409,39 @@ const AddProductPage: React.FC = () => {
       setIsAddingMainUnit(true);
       setIsUnitModalOpen(true);
       return; // Don't update formData, just open modal
+    }
+
+    // Handle main unit selection - update first unit name when mainUnitId changes
+    if (name === 'mainUnitId') {
+      const selectedUnit = units.find(u => u.id === value);
+      const newMainUnitName = selectedUnit?.nameAr || '';
+      
+      setFormData(prev => {
+        const updatedUnits = [...(prev.units || [])];
+        
+        // If there's a first unit, update its name to match the selected main unit
+        if (updatedUnits.length > 0 && newMainUnitName) {
+          updatedUnits[0] = {
+            ...updatedUnits[0],
+            unitName: newMainUnitName,
+          };
+        } else if (updatedUnits.length === 0 && newMainUnitName) {
+          // If no units exist yet, create the first unit with the main unit name
+          updatedUnits.push({
+            unitName: newMainUnitName,
+            barcode: '',
+            sellingPrice: 0,
+            order: 0,
+          } as ProductUnit);
+        }
+        
+        return {
+          ...prev,
+          [name]: value,
+          units: updatedUnits,
+        };
+      });
+      return;
     }
     
     if (type === 'checkbox') {
@@ -852,6 +888,22 @@ const AddProductPage: React.FC = () => {
     }));
   };
 
+  // Memoized callback for HierarchicalUnitsManager to prevent infinite loops
+  const handleUnitsChange = useCallback((updatedUnits: ProductUnit[]) => {
+    setFormData(prev => {
+      // Only update if units actually changed
+      const currentUnitsJson = JSON.stringify(prev.units || []);
+      const newUnitsJson = JSON.stringify(updatedUnits || []);
+      if (currentUnitsJson === newUnitsJson) {
+        return prev; // No change, return previous state
+      }
+      return {
+        ...prev,
+        units: updatedUnits,
+      };
+    });
+  }, []);
+
   const handleUnitSave = async (unitDraft: { nameAr: string; description?: string }) => {
     try {
       const payload = {
@@ -935,10 +987,31 @@ const AddProductPage: React.FC = () => {
 
           // If we're adding a main unit, select it as the main unit
           if (isAddingMainUnit) {
-            setFormData(prev => ({
-              ...prev,
-              mainUnitId: newUnit.id,
-            }));
+            setFormData(prev => {
+              const updatedUnits = [...(prev.units || [])];
+              
+              // Update or create first unit with the new main unit name
+              if (updatedUnits.length > 0) {
+                updatedUnits[0] = {
+                  ...updatedUnits[0],
+                  unitName: newUnit.nameAr,
+                };
+              } else {
+                // Create first unit with the new main unit name
+                updatedUnits.push({
+                  unitName: newUnit.nameAr,
+                  barcode: '',
+                  sellingPrice: 0,
+                  order: 0,
+                } as ProductUnit);
+              }
+              
+              return {
+                ...prev,
+                mainUnitId: newUnit.id,
+                units: updatedUnits,
+              };
+            });
             setIsAddingMainUnit(false);
           }
 
@@ -1041,7 +1114,7 @@ const AddProductPage: React.FC = () => {
       // Ensure numeric fields are properly converted to numbers
       const costPrice = parseFloat(String(formData.costPrice)) || 0;
       const price = parseFloat(String(formData.retailSellingPrice)) || 0;
-      const stock = parseInt(String(formData.initialQuantity)) || 0;
+      const initialQty = parseInt(String(formData.initialQuantity)) || 0;
       
       // Ensure barcode is trimmed and not empty
       const barcode = formData.primaryBarcode?.trim() || '';
@@ -1057,7 +1130,7 @@ const AddProductPage: React.FC = () => {
         barcode: barcode,
         costPrice: costPrice,
         price: price,
-        stock: stock,
+        initialQuantity: initialQty, // Send initialQuantity instead of stock
       };
 
       // Add optional fields only if they have values
@@ -1076,7 +1149,18 @@ const AddProductPage: React.FC = () => {
       if (formData.discountRules?.enabled) productPayload.discountRules = formData.discountRules;
       if (formData.status) productPayload.status = formData.status;
       if (formData.wholesalePrice > 0) productPayload.wholesalePrice = parseFloat(String(formData.wholesalePrice));
-      if (formData.units && formData.units.length > 0) productPayload.units = formData.units;
+      
+      // Process units: ensure they have order and proper structure
+      if (formData.units && formData.units.length > 0) {
+        productPayload.units = formData.units.map((unit, index) => ({
+          unitName: unit.unitName,
+          barcode: unit.barcode || '',
+          sellingPrice: parseFloat(String(unit.sellingPrice)) || 0,
+          multiplier: unit.multiplier || 1,
+          order: unit.order !== undefined ? unit.order : index,
+          unitsInPrevious: unit.unitsInPrevious || (index === 0 ? undefined : 1),
+        }));
+      }
       if (formData.multiWarehouseDistribution && formData.multiWarehouseDistribution.length > 0) {
         productPayload.multiWarehouseDistribution = formData.multiWarehouseDistribution;
       }
@@ -1137,31 +1221,39 @@ const AddProductPage: React.FC = () => {
           (isEditMode ? 'فشل تحديث المنتج: ' : 'فشل إنشاء المنتج: ') + errorMessage
         );
       }
-    } catch (error: any) {
-      console.error(`Error ${isEditMode ? 'updating' : 'creating'} product:`, error);
-      
-      // Extract error message from error object
-      // The ApiClient interceptor wraps errors, so check both error.details and error.response
-      let errorMessage = 'خطأ غير معروف';
-      
-      // Check if error has details (from ApiClient interceptor)
-      if (error.details) {
-        const errorData = error.details;
-        if (errorData.message) {
-          errorMessage = errorData.message;
-        } else if (errorData.errors && Array.isArray(errorData.errors)) {
-          errorMessage = errorData.errors.map((err: any) => err.msg || err.message || String(err)).join('\n');
+      } catch (error: any) {
+        console.error(`Error ${isEditMode ? 'updating' : 'creating'} product:`, error);
+        
+        // Extract error message from error object
+        // The ApiClient interceptor wraps errors, so check both error.details and error.response
+        let errorMessage = 'خطأ غير معروف';
+        
+        // Check if error has details (from ApiClient interceptor)
+        if (error.details) {
+          const errorData = error.details;
+          
+          // Handle duplicate barcode error with helpful message
+          if (errorData.message && (errorData.message.includes('barcode already exists') || errorData.message.includes('Product with this barcode already exists'))) {
+            errorMessage = `المنتج موجود بالفعل: الباركود "${formData.primaryBarcode}" مستخدم بالفعل. يرجى استخدام باركود مختلف أو تعديل المنتج الموجود.`;
+          } else if (errorData.message) {
+            errorMessage = errorData.message;
+          } else if (errorData.errors && Array.isArray(errorData.errors)) {
+            errorMessage = errorData.errors.map((err: any) => err.msg || err.message || String(err)).join('\n');
+          }
         }
-      }
-      // Check if error has response.data (direct axios error)
-      else if (error.response?.data) {
-        const errorData = error.response.data;
-        if (errorData.message) {
-          errorMessage = errorData.message;
-        } else if (errorData.errors && Array.isArray(errorData.errors)) {
-          errorMessage = errorData.errors.map((err: any) => err.msg || err.message || String(err)).join('\n');
+        // Check if error has response.data (direct axios error)
+        else if (error.response?.data) {
+          const errorData = error.response.data;
+          
+          // Handle duplicate barcode error with helpful message
+          if (errorData.message && (errorData.message.includes('barcode already exists') || errorData.message.includes('Product with this barcode already exists'))) {
+            errorMessage = `المنتج موجود بالفعل: الباركود "${formData.primaryBarcode}" مستخدم بالفعل. يرجى استخدام باركود مختلف أو تعديل المنتج الموجود.`;
+          } else if (errorData.message) {
+            errorMessage = errorData.message;
+          } else if (errorData.errors && Array.isArray(errorData.errors)) {
+            errorMessage = errorData.errors.map((err: any) => err.msg || err.message || String(err)).join('\n');
+          }
         }
-      }
       // Fallback to error.message
       else if (error.message) {
         errorMessage = error.message;
@@ -1435,8 +1527,20 @@ const AddProductPage: React.FC = () => {
                   </p>
                 )}
                 <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                  يمكنك إدخال الكمية الأولية يدوياً أو تحديثها عند إضافة المخزون
+                  أدخل الكمية الأولية في أكبر وحدة (مثال: إذا كان لديك 5 صناديق، أدخل 5)
                 </p>
+              </div>
+
+              {/* Hierarchical Units Manager */}
+              <div className="col-span-full border-t border-gray-200 dark:border-gray-700 pt-4">
+                <HierarchicalUnitsManager
+                  units={formData.units || []}
+                  onChange={handleUnitsChange}
+                  errors={errors}
+                  initialQuantity={formData.initialQuantity || 0}
+                  availableUnits={units.map(u => ({ id: u.id, nameAr: u.nameAr }))}
+                  mainUnitName={formData.mainUnitId ? units.find(u => u.id === formData.mainUnitId)?.nameAr : undefined}
+                />
               </div>
 
               {/* Warehouse Selection */}
@@ -1468,162 +1572,6 @@ const AddProductPage: React.FC = () => {
                 )}
               </div>
 
-              {/* Add Stock Button - Shows after basic info is filled */}
-              {formData.name && formData.categoryId && formData.costPrice > 0 && formData.retailSellingPrice > 0 && (
-                <div>
-                  <button
-                    type="button"
-                    onClick={() => setShowUnitSelection(true)}
-                    className="w-full px-4 py-3 bg-orange-500 hover:bg-orange-600 text-white rounded-md shadow-sm font-medium flex items-center justify-center gap-2 transition-colors"
-                  >
-                    <PlusIcon className="w-5 h-5" />
-                    إضافة وحدات
-                  </button>
-                </div>
-              )}
-
-              {/* Unit Selection Modal - First step before Add Stock */}
-              {showUnitSelection && (
-                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-                  <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl p-6 w-full max-w-md mx-4">
-                    <div className="flex justify-between items-center mb-4">
-                      <h3 className="text-xl font-semibold text-gray-900 dark:text-gray-200">
-                        اختر الوحدة
-                      </h3>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setShowUnitSelection(false);
-                          setSelectedUnitForStock('');
-                        }}
-                        className="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
-                      >
-                        ✕
-                      </button>
-                    </div>
-
-                    <div className="space-y-4">
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                          اختر الوحدة لإضافة المخزون <span className="text-red-500">*</span>
-                        </label>
-                        <select
-                          value={selectedUnitForStock}
-                          onChange={(e) => setSelectedUnitForStock(e.target.value)}
-                          className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-orange-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200"
-                        >
-                          <option value="">اختر وحدة</option>
-                          {formData.mainUnitId && (() => {
-                            const mainUnit = units.find(u => u.id === formData.mainUnitId);
-                            return mainUnit ? (
-                              <option value="main">{mainUnit.nameAr}</option>
-                            ) : null;
-                          })()}
-                          {units.filter(unit => unit.id !== formData.mainUnitId).map((unit) => (
-                            <option key={unit.id} value={unit.id}>
-                              {unit.nameAr}
-                            </option>
-                          ))}
-                          <option value="new">إضافة وحدة جديدة</option>
-                        </select>
-                        <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                          اختر الوحدة التي تريد إضافة المخزون لها
-                        </p>
-                      </div>
-
-                      <div className="flex gap-3 pt-4">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            if (!selectedUnitForStock) {
-                              alert('يرجى اختيار وحدة أولاً');
-                              return;
-                            }
-                            // Set the unit type and name based on selection
-                            if (selectedUnitForStock === 'main') {
-                              // Selected the main unit
-                              const mainUnit = units.find(u => u.id === formData.mainUnitId);
-                              setNewUnitForm(prev => ({
-                                ...prev,
-                                unitType: 'basic',
-                                unitName: mainUnit?.nameAr || '',
-                                conversionFactor: 1,
-                                quantity: 0,
-                                barcode: '',
-                                sellingPrice: 0,
-                                wholesalePrice: 0,
-                                costPrice: formData.costPrice, // Use main unit cost price
-                              }));
-                            } else if (selectedUnitForStock === 'new') {
-                              setNewUnitForm(prev => ({
-                                ...prev,
-                                unitType: 'new',
-                                unitName: '',
-                                conversionFactor: 1,
-                                quantity: 0,
-                                barcode: '',
-                                sellingPrice: 0,
-                                wholesalePrice: 0,
-                                costPrice: 0,
-                              }));
-                            } else {
-                              // Selected an existing unit from the store by ID
-                              const selectedUnit = units.find(u => u.id === selectedUnitForStock);
-                              if (selectedUnit) {
-                                const unitName = selectedUnit.nameAr;
-                                // Check if this unit already exists in formData.units
-                                const existingUnit = formData.units.find(u => u.unitName === unitName);
-                                if (existingUnit) {
-                                  // Unit already exists in product, use its data
-                                  setNewUnitForm(prev => ({
-                                    ...prev,
-                                    unitType: 'new',
-                                    unitName: unitName,
-                                    conversionFactor: existingUnit.conversionFactor || 1,
-                                    barcode: existingUnit.barcode || '',
-                                    sellingPrice: existingUnit.sellingPrice || 0,
-                                    quantity: 0,
-                                    wholesalePrice: 0,
-                                    costPrice: calculateUnitCostPrice(existingUnit.conversionFactor || 1, 'new'),
-                                  }));
-                                } else {
-                                  // New unit from store units list, but not yet added to product
-                                  setNewUnitForm(prev => ({
-                                    ...prev,
-                                    unitType: 'new',
-                                    unitName: unitName,
-                                    conversionFactor: 1, // Will be asked in the form
-                                    quantity: 0,
-                                    barcode: '',
-                                    sellingPrice: 0,
-                                    wholesalePrice: 0,
-                                    costPrice: 0,
-                                  }));
-                                }
-                              }
-                            }
-                            setShowUnitSelection(false);
-                            setShowAddStockForm(true);
-                          }}
-                          className="flex-1 px-4 py-2 bg-orange-500 hover:bg-orange-600 text-white rounded-md font-medium transition-colors"
-                        >
-                          التالي
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setShowUnitSelection(false);
-                            setSelectedUnitForStock('');
-                          }}
-                          className="flex-1 px-4 py-2 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-800 dark:text-gray-200 rounded-md font-medium transition-colors"
-                        >
-                          إلغاء
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
 
               {/* Add Stock Form Modal */}
               {showAddStockForm && (
@@ -1637,8 +1585,6 @@ const AddProductPage: React.FC = () => {
                         type="button"
                         onClick={() => {
                           setShowAddStockForm(false);
-                          setShowUnitSelection(false);
-                          setSelectedUnitForStock('');
                           setNewUnitForm({
                             unitType: 'basic',
                             unitName: '',
@@ -1675,8 +1621,6 @@ const AddProductPage: React.FC = () => {
                           type="button"
                           onClick={() => {
                             setShowAddStockForm(false);
-                            setShowUnitSelection(true);
-                            setSelectedUnitForStock('');
                           }}
                           className="mt-2 text-xs text-blue-600 dark:text-blue-400 hover:underline"
                         >
@@ -1928,8 +1872,6 @@ const AddProductPage: React.FC = () => {
                           type="button"
                           onClick={() => {
                             setShowAddStockForm(false);
-                            setShowUnitSelection(false);
-                            setSelectedUnitForStock('');
                             setNewUnitForm({
                               unitType: 'basic',
                               unitName: '',
