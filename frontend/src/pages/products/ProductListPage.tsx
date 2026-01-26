@@ -38,6 +38,17 @@ interface BackendProduct {
   expiryDate?: string;
   createdAt: string;
   updatedAt: string;
+  parentProductId?: string; // For child products
+  parentProduct?: { // Parent product reference (for child products)
+    id: string;
+    name: string;
+    barcode: string;
+  };
+  units?: Array<{ // Unit barcodes for searching
+    unitName: string;
+    barcode?: string;
+    sellingPrice: number;
+  }>;
 }
 
 const ProductListPage: React.FC<ProductListPageProps> = () => {
@@ -138,28 +149,38 @@ const ProductListPage: React.FC<ProductListPageProps> = () => {
         
         const storeId = getStoreIdFromToken();
         
-        // For regular pagination mode, check cache first (but not for barcode searches - need fresh data)
-        const isBarcodeSearchForCache = searchTerm && searchTerm.trim() && /^[0-9]+$/.test(searchTerm.trim());
-        if (!isAdvancedMode && !searchTerm && currentPage === 1 && !isBarcodeSearchForCache) {
+        // CRITICAL: Never use cache for barcode searches - always fetch fresh data from server
+        // This ensures child products are found correctly
+        const isBarcodeSearch = searchTerm && searchTerm.trim() && /^[0-9]+$/.test(searchTerm.trim());
+        
+        // Invalidate cache for barcode searches to ensure fresh data
+        if (isBarcodeSearch && storeId) {
+          invalidateProductsCache(storeId);
+        }
+        
+        // For regular pagination mode, check cache first (but NEVER for barcode searches)
+        if (!isAdvancedMode && !searchTerm && currentPage === 1 && !isBarcodeSearch) {
           const cached = storeId ? getCachedProducts(storeId) : null;
           if (cached && cached.products.length > 0) {
             // Use cached products for first page
             const paginatedProducts = cached.products.slice(0, itemsPerPage);
-            const mappedProducts: (Product & { categoryId?: string; backendId?: string })[] = paginatedProducts.map((p: BackendProduct) => ({
+            // IMPORTANT: Use the product's own data, not parent product data
+            const mappedProducts: (Product & { categoryId?: string; backendId?: string; parentProduct?: any })[] = paginatedProducts.map((p: BackendProduct) => ({
               id: idToNumber(p.id || p._id),
-              name: p.name,
+              name: p.name, // Use child product's own name
               category: p.categoryId ? (cached.categories[p.categoryId]?.name || categories[p.categoryId] || 'غير محدد') : 'غير محدد',
               brand: p.brandId || '',
-              price: p.price || 0,
-              cost: p.costPrice || 0,
-              costPrice: p.costPrice || 0,
-              stock: p.stock || 0,
-              barcode: p.barcode || '',
+              price: p.price || 0, // Use child product's own price
+              cost: p.costPrice || 0, // Use child product's own cost
+              costPrice: p.costPrice || 0, // Use child product's own cost price
+              stock: p.stock || 0, // Use child product's own stock
+              barcode: p.barcode || '', // Use child product's own barcode
               expiryDate: p.expiryDate || '',
               createdAt: p.createdAt || new Date().toISOString(),
               updatedAt: p.updatedAt || new Date().toISOString(),
               categoryId: p.categoryId,
               backendId: p.id || p._id,
+              parentProduct: (p as any).parentProduct, // Include parent reference if available
             }));
             
             setProducts(mappedProducts);
@@ -173,9 +194,9 @@ const ProductListPage: React.FC<ProductListPageProps> = () => {
           }
         }
 
-        // For barcode searches, fetch all products and filter client-side to ensure exact matching
-        // This is important for single-digit barcodes which might not work correctly with server-side partial matching
-        const isBarcodeSearch = searchTerm && searchTerm.trim() && /^[0-9]+$/.test(searchTerm.trim());
+        // CRITICAL: For barcode searches, always use server-side search with fresh data
+        // The backend now has direct query logic to find child products with exact barcode matches
+        // Note: isBarcodeSearch is already declared above (line 154)
         const shouldFetchAllForBarcode = !isAdvancedMode && isBarcodeSearch;
         
         // Fetch from API (with pagination for regular mode, or all for advanced mode or barcode searches)
@@ -184,9 +205,20 @@ const ProductListPage: React.FC<ProductListPageProps> = () => {
           limit: (isAdvancedMode || shouldFetchAllForBarcode) ? undefined : itemsPerPage,
           all: isAdvancedMode || shouldFetchAllForBarcode, // Fetch all for advanced mode or barcode searches
           includeCategories: true, // Include category data
-          // Don't use server-side search for barcode searches - we'll filter client-side for exact matching
-          search: (!isAdvancedMode && searchTerm && !isBarcodeSearch) ? searchTerm.trim() : undefined,
+          // CRITICAL: Always use server-side search for barcode searches
+          // The backend has direct query to find child products with exact barcode matches
+          // This ensures child products are returned, not parent products
+          search: (!isAdvancedMode && searchTerm) ? searchTerm.trim() : undefined,
         };
+        
+        // Log barcode search parameters (development only)
+        if (process.env.NODE_ENV === 'development' && isBarcodeSearch) {
+          console.log('[ProductListPage] Barcode search - fetching from server:', {
+            searchTerm,
+            apiParams,
+            note: 'Backend will use direct query to find child product with exact barcode match',
+          });
+        }
         
         if (process.env.NODE_ENV === 'development') {
           console.log('[ProductListPage] Fetching products with params:', apiParams);
@@ -197,6 +229,35 @@ const ProductListPage: React.FC<ProductListPageProps> = () => {
         if (productsRes.success) {
           const responseData = productsRes.data as any;
           const productsData = responseData?.products || [];
+          
+          // Debug: Log child products in search results (development only)
+          if (process.env.NODE_ENV === 'development' && searchTerm) {
+            const childProducts = productsData.filter((p: any) => p.parentProductId);
+            const parentProducts = productsData.filter((p: any) => !p.parentProductId);
+            console.log('[ProductListPage] Search results from API:', {
+              searchTerm,
+              totalProducts: productsData.length,
+              childProducts: childProducts.length,
+              parentProducts: parentProducts.length,
+              firstProduct: productsData.length > 0 ? {
+                id: productsData[0].id || productsData[0]._id,
+                name: productsData[0].name,
+                barcode: productsData[0].barcode,
+                price: productsData[0].price,
+                isChild: !!productsData[0].parentProductId,
+                parentProductId: productsData[0].parentProductId,
+              } : null,
+              childProductsData: childProducts.map((p: any) => ({
+                id: p.id || p._id,
+                name: p.name,
+                barcode: p.barcode,
+                price: p.price,
+                parentProductId: p.parentProductId,
+                parentProduct: p.parentProduct,
+              })),
+            });
+          }
+          
           setBackendProducts(productsData);
 
           // Update pagination info - ensure it's always set correctly
@@ -270,22 +331,68 @@ const ProductListPage: React.FC<ProductListPageProps> = () => {
           });
           
           // Map backend products to frontend Product type with category names
-          const mappedProducts: (Product & { categoryId?: string; backendId?: string })[] = productsData.map((p: BackendProduct) => ({
-            id: idToNumber(p.id || p._id),
-            name: p.name,
-            category: p.categoryId ? ((p as any).category?.name || (p as any).category?.nameAr || enrichedCategoryMap[p.categoryId] || 'غير محدد') : 'غير محدد',
-            brand: p.brandId || '',
-            price: p.price || 0,
-            cost: p.costPrice || 0,
-            costPrice: p.costPrice || 0,
-            stock: p.stock || 0,
-            barcode: p.barcode || '',
-            expiryDate: p.expiryDate || '',
-            createdAt: p.createdAt || new Date().toISOString(),
-            updatedAt: p.updatedAt || new Date().toISOString(),
-            categoryId: p.categoryId, // Keep for filtering
-            backendId: p.id || p._id, // Store backend ID for editing
-          }));
+          // IMPORTANT: Use the product's own data (p.name, p.barcode, etc.), not parent product data
+          // For child products, the backend returns the child product with its own data + parentProduct reference
+          const mappedProducts: (Product & { categoryId?: string; backendId?: string; parentProduct?: any })[] = productsData.map((p: BackendProduct) => {
+            // Log child products for debugging (development only)
+            if (process.env.NODE_ENV === 'development' && p.parentProductId) {
+              console.log('[ProductListPage] Mapping child product:', {
+                childId: p.id || p._id,
+                childName: p.name,
+                childBarcode: p.barcode,
+                childPrice: p.price,
+                childStock: p.stock,
+                parentProductId: p.parentProductId,
+                parentProduct: p.parentProduct,
+              });
+            }
+            
+            const mapped = {
+              id: idToNumber(p.id || p._id),
+              name: p.name, // Use child product's own name
+              category: p.categoryId ? ((p as any).category?.name || (p as any).category?.nameAr || enrichedCategoryMap[p.categoryId] || 'غير محدد') : 'غير محدد',
+              brand: p.brandId || '',
+              price: p.price || 0, // Use child product's own price
+              cost: p.costPrice || 0, // Use child product's own cost
+              costPrice: p.costPrice || 0, // Use child product's own cost price
+              stock: p.stock || 0, // Use child product's own stock
+              barcode: p.barcode || '', // Use child product's own barcode
+              expiryDate: p.expiryDate || '',
+              createdAt: p.createdAt || new Date().toISOString(),
+              updatedAt: p.updatedAt || new Date().toISOString(),
+              categoryId: p.categoryId, // Keep for filtering
+              backendId: p.id || p._id, // Store backend ID for editing
+              parentProduct: p.parentProduct, // Include parent reference for display if needed
+            };
+            
+            // Verify we're using child product data, not parent (development only)
+            if (process.env.NODE_ENV === 'development' && p.parentProductId && searchTerm) {
+              const searchBarcode = searchTerm.trim().toLowerCase();
+              const productBarcode = String(p.barcode || '').trim().toLowerCase();
+              if (productBarcode === searchBarcode) {
+                console.log('[ProductListPage] ✅ Correctly mapped child product with matching barcode:', {
+                  mappedName: mapped.name,
+                  mappedBarcode: mapped.barcode,
+                  mappedPrice: mapped.price,
+                  parentName: p.parentProduct?.name,
+                  parentBarcode: p.parentProduct?.barcode,
+                });
+              }
+            }
+            
+            return mapped;
+          });
+
+          // Log first mapped product to verify (development only)
+          if (process.env.NODE_ENV === 'development' && searchTerm && mappedProducts.length > 0) {
+            console.log('[ProductListPage] First mapped product:', {
+              id: mappedProducts[0].id,
+              name: mappedProducts[0].name,
+              barcode: mappedProducts[0].barcode,
+              price: mappedProducts[0].price,
+              hasParentProduct: !!mappedProducts[0].parentProduct,
+            });
+          }
 
           setProducts(mappedProducts);
           
@@ -335,22 +442,40 @@ const ProductListPage: React.FC<ProductListPageProps> = () => {
           }
         });
         
-        const mappedProducts: (Product & { categoryId?: string; backendId?: string })[] = productsData.map((p: BackendProduct) => ({
-          id: idToNumber(p.id || p._id),
-          name: p.name,
-          category: p.categoryId ? ((p as any).category?.name || (p as any).category?.nameAr || enrichedCategoryMap[p.categoryId] || 'غير محدد') : 'غير محدد',
-          brand: p.brandId || '',
-          price: p.price || 0,
-          cost: p.costPrice || 0,
-          costPrice: p.costPrice || 0,
-          stock: p.stock || 0,
-          barcode: p.barcode || '',
-          expiryDate: p.expiryDate || '',
-          createdAt: p.createdAt || new Date().toISOString(),
-          updatedAt: p.updatedAt || new Date().toISOString(),
-          categoryId: p.categoryId, // Keep for filtering
-          backendId: p.id || p._id, // Store backend ID for editing
-        }));
+        // IMPORTANT: Use the product's own data (p.name, p.barcode, etc.), not parent product data
+        // For child products, the backend returns the child product with its own data + parentProduct reference
+        const mappedProducts: (Product & { categoryId?: string; backendId?: string; parentProduct?: any })[] = productsData.map((p: BackendProduct) => {
+          // Log child products for debugging (development only)
+          if (process.env.NODE_ENV === 'development' && p.parentProductId) {
+            console.log('[ProductListPage] Mapping child product (fetchAllProductsFromAPI):', {
+              childId: p.id || p._id,
+              childName: p.name,
+              childBarcode: p.barcode,
+              childPrice: p.price,
+              childStock: p.stock,
+              parentProductId: p.parentProductId,
+              parentProduct: p.parentProduct,
+            });
+          }
+          
+          return {
+            id: idToNumber(p.id || p._id),
+            name: p.name, // Use child product's own name
+            category: p.categoryId ? ((p as any).category?.name || (p as any).category?.nameAr || enrichedCategoryMap[p.categoryId] || 'غير محدد') : 'غير محدد',
+            brand: p.brandId || '',
+            price: p.price || 0, // Use child product's own price
+            cost: p.costPrice || 0, // Use child product's own cost
+            costPrice: p.costPrice || 0, // Use child product's own cost price
+            stock: p.stock || 0, // Use child product's own stock
+            barcode: p.barcode || '', // Use child product's own barcode
+            expiryDate: p.expiryDate || '',
+            createdAt: p.createdAt || new Date().toISOString(),
+            updatedAt: p.updatedAt || new Date().toISOString(),
+            categoryId: p.categoryId, // Keep for filtering
+            backendId: p.id || p._id, // Store backend ID for editing
+            parentProduct: p.parentProduct, // Include parent reference for display if needed
+          };
+        });
 
         setAllProducts(mappedProducts);
         // Also store backend products for lookup
@@ -383,31 +508,43 @@ const ProductListPage: React.FC<ProductListPageProps> = () => {
       if (cached && cached.products.length > 0 && !searchTerm) {
         // Use cached products if available and no search term
         console.log(`Using ${cached.products.length} cached products for advanced search`);
-        const mappedProducts: (Product & { categoryId?: string; backendId?: string })[] = cached.products.map((p: BackendProduct) => ({
+        // IMPORTANT: Use the product's own data, not parent product data
+        const mappedProducts: (Product & { categoryId?: string; backendId?: string; parentProduct?: any })[] = cached.products.map((p: BackendProduct) => ({
           id: idToNumber(p.id || p._id),
-          name: p.name,
+          name: p.name, // Use child product's own name
           category: p.categoryId ? (cached.categories[p.categoryId]?.name || categoryMap[p.categoryId] || 'غير محدد') : 'غير محدد',
           brand: p.brandId || '',
-          price: p.price || 0,
-          cost: p.costPrice || 0,
-          costPrice: p.costPrice || 0,
-          stock: p.stock || 0,
-          barcode: p.barcode || '',
+          price: p.price || 0, // Use child product's own price
+          cost: p.costPrice || 0, // Use child product's own cost
+          costPrice: p.costPrice || 0, // Use child product's own cost price
+          stock: p.stock || 0, // Use child product's own stock
+          barcode: p.barcode || '', // Use child product's own barcode
           expiryDate: p.expiryDate || '',
           createdAt: p.createdAt || new Date().toISOString(),
           updatedAt: p.updatedAt || new Date().toISOString(),
           categoryId: p.categoryId,
           backendId: p.id || p._id,
+          parentProduct: (p as any).parentProduct, // Include parent reference if available
         }));
         
         // Filter by search term if provided
         let filtered = mappedProducts;
         if (searchTerm) {
           const searchTermTrimmed = searchTerm.trim().toLowerCase();
-          filtered = mappedProducts.filter((product) => 
-            product.name.toLowerCase().includes(searchTermTrimmed) ||
-            product.barcode.toLowerCase().includes(searchTermTrimmed)
-          );
+          const isBarcodeSearch = /^[0-9]+$/.test(searchTermTrimmed);
+          
+          filtered = mappedProducts.filter((product) => {
+            if (isBarcodeSearch) {
+              // For barcode searches: exact match only (no partial matches)
+              // This ensures "00001" only matches "00001", not "00011" or "000012"
+              const productBarcode = String(product.barcode || '').trim().toLowerCase();
+              return productBarcode === searchTermTrimmed;
+            } else {
+              // For name searches: partial match is allowed
+              return product.name.toLowerCase().includes(searchTermTrimmed) ||
+                     product.barcode.toLowerCase().includes(searchTermTrimmed);
+            }
+          });
         }
         
         setAllProducts(filtered);
@@ -428,21 +565,23 @@ const ProductListPage: React.FC<ProductListPageProps> = () => {
   // Update category names when categories are loaded (for products that were loaded before categories)
   useEffect(() => {
     if (Object.keys(categories).length > 0 && backendProducts.length > 0) {
-      const mappedProducts: (Product & { categoryId?: string; backendId?: string })[] = backendProducts.map((p: BackendProduct) => ({
+      // IMPORTANT: Use the product's own data, not parent product data
+      const mappedProducts: (Product & { categoryId?: string; backendId?: string; parentProduct?: any })[] = backendProducts.map((p: BackendProduct) => ({
         id: idToNumber(p.id || p._id),
-        name: p.name,
+        name: p.name, // Use child product's own name
         category: p.categoryId ? categories[p.categoryId] || 'غير محدد' : 'غير محدد',
         brand: p.brandId || '',
-        price: p.price || 0,
-        cost: p.costPrice || 0,
-        costPrice: p.costPrice || 0,
-        stock: p.stock || 0,
-        barcode: p.barcode || '',
+        price: p.price || 0, // Use child product's own price
+        cost: p.costPrice || 0, // Use child product's own cost
+        costPrice: p.costPrice || 0, // Use child product's own cost price
+        stock: p.stock || 0, // Use child product's own stock
+        barcode: p.barcode || '', // Use child product's own barcode
         expiryDate: p.expiryDate || '',
         createdAt: p.createdAt || new Date().toISOString(),
         updatedAt: p.updatedAt || new Date().toISOString(),
         categoryId: p.categoryId, // Keep for filtering
         backendId: p.id || p._id, // Store backend ID for editing
+        parentProduct: (p as any).parentProduct, // Include parent reference if available
       }));
       setProducts(mappedProducts);
     }
@@ -516,17 +655,9 @@ const ProductListPage: React.FC<ProductListPageProps> = () => {
     // When not in advanced mode, use products directly (already filtered by server-side search)
     // When in advanced mode, use allProducts and apply client-side filters
     if (!isAdvancedMode) {
-      // For barcode searches, we fetch all products and filter client-side for exact matching
-      // This ensures single-digit barcodes work correctly
-      if (isBarcode) {
-        // Filter to exact matches only
-        return products.filter((product) => {
-          const productBarcode = String(product.barcode || '').trim();
-          const searchBarcode = searchTermTrimmed.trim();
-          return productBarcode.toLowerCase() === searchBarcode.toLowerCase();
-        });
-      }
-      // For non-barcode searches, return products as-is (already filtered by server)
+      // Server-side search now handles barcode searches correctly and returns child products
+      // No need for additional client-side filtering - backend returns the correct products
+      // Return products as-is (already filtered by server, including child products)
       return [...products];
     }
 
@@ -555,9 +686,35 @@ const ProductListPage: React.FC<ProductListPageProps> = () => {
         filtered = filtered.filter((product) => {
           if (isBarcode) {
             // For barcode searches: exact match only (case-insensitive, trimmed)
+            // IMPORTANT: Prioritize exact product barcode matches over unit barcodes
+            // This ensures child products with barcode "00002" are found, not parent products with unit barcode "00002"
             const productBarcode = String(product.barcode || '').trim();
             const searchBarcode = searchTermTrimmed.trim();
-            return productBarcode.toLowerCase() === searchBarcode.toLowerCase();
+            
+            // FIRST: Check main product barcode (exact match)
+            // This ensures child products are found by their own barcode
+            if (productBarcode.toLowerCase() === searchBarcode.toLowerCase()) {
+              return true;
+            }
+            
+            // SECOND: Check unit barcodes only if main barcode doesn't match
+            // This prevents parent products from matching when child products should match
+            const backendProduct = allBackendProducts.find((bp: any) => 
+              (bp.id || bp._id) === product.backendId
+            ) || backendProducts.find((bp: any) => 
+              (bp.id || bp._id) === product.backendId
+            );
+            
+            if (backendProduct && backendProduct.units && Array.isArray(backendProduct.units)) {
+              for (const unit of backendProduct.units) {
+                const unitBarcode = String(unit.barcode || '').trim();
+                if (unitBarcode.toLowerCase() === searchBarcode.toLowerCase()) {
+                  return true;
+                }
+              }
+            }
+            
+            return false;
           } else {
             // For name/category searches: partial match (normalized and direct)
             const normalizedName = normalizeText(product.name || '');
@@ -616,7 +773,7 @@ const ProductListPage: React.FC<ProductListPageProps> = () => {
     }
 
     return filtered;
-  }, [searchTerm, products, allProducts, isAdvancedMode, advancedFilters, isBarcodeInput]);
+  }, [searchTerm, products, allProducts, isAdvancedMode, advancedFilters, isBarcodeInput, backendProducts, allBackendProducts]);
 
   // Handle page change
   const handlePageChange = (page: number) => {

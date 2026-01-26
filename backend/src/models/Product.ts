@@ -43,6 +43,7 @@ export interface ProductDocument extends Document {
   status: 'active' | 'inactive' | 'hidden';
   images?: string[];
   showInQuickProducts?: boolean;
+  parentProductId?: string; // Reference to parent product (for child products)
   createdAt: Date;
   updatedAt: Date;
 }
@@ -216,6 +217,11 @@ const productSchema = new Schema(
       type: Boolean,
       default: false,
     },
+    parentProductId: {
+      type: String,
+      trim: true,
+      default: null,
+    },
   },
   {
     timestamps: true,
@@ -247,6 +253,9 @@ productSchema.index({ storeId: 1, 'units.barcode': 1 });
 
 // Index for SKU searches (internalSKU is searched in product listings)
 productSchema.index({ storeId: 1, internalSKU: 1 });
+
+// Index for parent-child product relationships
+productSchema.index({ storeId: 1, parentProductId: 1 });
 
 // Create model - single unified collection
 const Product: Model<ProductDocument> = mongoose.model<ProductDocument>('Product', productSchema);

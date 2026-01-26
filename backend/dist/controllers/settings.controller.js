@@ -1,120 +1,144 @@
 "use strict";
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
+var __create = Object.create;
+var __defProp = Object.defineProperty;
+var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __getProtoOf = Object.getPrototypeOf;
+var __hasOwnProp = Object.prototype.hasOwnProperty;
+var __export = (target, all) => {
+  for (var name in all)
+    __defProp(target, name, { get: all[name], enumerable: true });
 };
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.validateUpdateStoreSetting = exports.getStoreSettings = exports.updateStoreSetting = exports.getStoreSetting = void 0;
-const express_validator_1 = require("express-validator");
-const error_middleware_1 = require("../middleware/error.middleware");
-const Settings_1 = __importDefault(require("../models/Settings"));
-/**
- * Get store-specific setting
- * Store users can access their own store settings
- */
-exports.getStoreSetting = (0, error_middleware_1.asyncHandler)(async (req, res) => {
+var __copyProps = (to, from, except, desc) => {
+  if (from && typeof from === "object" || typeof from === "function") {
+    for (let key of __getOwnPropNames(from))
+      if (!__hasOwnProp.call(to, key) && key !== except)
+        __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
+  }
+  return to;
+};
+var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__getProtoOf(mod)) : {}, __copyProps(
+  // If the importer is in node compatibility mode or this is not an ESM
+  // file that has been converted to a CommonJS file using a Babel-
+  // compatible transform (i.e. "__esModule" has not been set), then set
+  // "default" to the CommonJS "module.exports" for node compatibility.
+  isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
+  mod
+));
+var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
+var settings_controller_exports = {};
+__export(settings_controller_exports, {
+  getStoreSetting: () => getStoreSetting,
+  getStoreSettings: () => getStoreSettings,
+  updateStoreSetting: () => updateStoreSetting,
+  validateUpdateStoreSetting: () => validateUpdateStoreSetting
+});
+module.exports = __toCommonJS(settings_controller_exports);
+var import_express_validator = require("express-validator");
+var import_error = require("../middleware/error.middleware");
+var import_Settings = __toESM(require("../models/Settings"));
+const getStoreSetting = (0, import_error.asyncHandler)(
+  async (req, res) => {
     const { key } = req.params;
     const storeId = req.user?.storeId;
     if (!storeId) {
-        return res.status(400).json({
-            success: false,
-            message: 'Store ID is required. Please ensure you are logged in as a store user.',
-        });
+      return res.status(400).json({
+        success: false,
+        message: "Store ID is required. Please ensure you are logged in as a store user."
+      });
     }
-    const setting = await Settings_1.default.findOne({
-        storeId: storeId.toLowerCase(),
-        key: key.toLowerCase()
+    const setting = await import_Settings.default.findOne({
+      storeId: storeId.toLowerCase(),
+      key: key.toLowerCase()
     });
     res.status(200).json({
-        success: true,
-        data: {
-            setting,
-        },
+      success: true,
+      data: {
+        setting
+      }
     });
-});
-/**
- * Update or create store-specific setting
- * Store users can update their own store settings
- */
-exports.updateStoreSetting = (0, error_middleware_1.asyncHandler)(async (req, res) => {
-    const errors = (0, express_validator_1.validationResult)(req);
+  }
+);
+const updateStoreSetting = (0, import_error.asyncHandler)(
+  async (req, res) => {
+    const errors = (0, import_express_validator.validationResult)(req);
     if (!errors.isEmpty()) {
-        return res.status(400).json({
-            success: false,
-            message: 'Validation failed',
-            errors: errors.array(),
-        });
+      return res.status(400).json({
+        success: false,
+        message: "Validation failed",
+        errors: errors.array()
+      });
     }
     const { key } = req.params;
     const { value, description } = req.body;
     const storeId = req.user?.storeId;
     if (!storeId) {
-        return res.status(400).json({
-            success: false,
-            message: 'Store ID is required. Please ensure you are logged in as a store user.',
-        });
+      return res.status(400).json({
+        success: false,
+        message: "Store ID is required. Please ensure you are logged in as a store user."
+      });
     }
-    // Coerce value/description to strings safely
-    const valueString = value !== undefined && value !== null ? String(value).trim() : '';
-    const descriptionString = description !== undefined && description !== null ? String(description).trim() : undefined;
-    // Use upsert to create if doesn't exist, update if exists
-    const setting = await Settings_1.default.findOneAndUpdate({
+    const valueString = value !== void 0 && value !== null ? String(value).trim() : "";
+    const descriptionString = description !== void 0 && description !== null ? String(description).trim() : void 0;
+    const setting = await import_Settings.default.findOneAndUpdate(
+      {
         storeId: storeId.toLowerCase(),
         key: key.toLowerCase()
-    }, {
+      },
+      {
         storeId: storeId.toLowerCase(),
         key: key.toLowerCase(),
         value: valueString,
-        description: descriptionString || undefined,
-    }, {
+        description: descriptionString || void 0
+      },
+      {
         new: true,
         upsert: true,
-        runValidators: true,
-    });
+        runValidators: true
+      }
+    );
     res.status(200).json({
-        success: true,
-        message: 'Setting updated successfully',
-        data: {
-            setting,
-        },
+      success: true,
+      message: "Setting updated successfully",
+      data: {
+        setting
+      }
     });
-});
-/**
- * Get all store-specific settings
- */
-exports.getStoreSettings = (0, error_middleware_1.asyncHandler)(async (req, res) => {
+  }
+);
+const getStoreSettings = (0, import_error.asyncHandler)(
+  async (req, res) => {
     const storeId = req.user?.storeId;
     if (!storeId) {
-        return res.status(400).json({
-            success: false,
-            message: 'Store ID is required. Please ensure you are logged in as a store user.',
-        });
+      return res.status(400).json({
+        success: false,
+        message: "Store ID is required. Please ensure you are logged in as a store user."
+      });
     }
-    const settings = await Settings_1.default.find({
-        storeId: storeId.toLowerCase()
+    const settings = await import_Settings.default.find({
+      storeId: storeId.toLowerCase()
     }).sort({ key: 1 });
-    // Convert array to object for easier access
     const settingsObject = {};
     settings.forEach((setting) => {
-        settingsObject[setting.key] = setting.value;
+      settingsObject[setting.key] = setting.value;
     });
     res.status(200).json({
-        success: true,
-        data: {
-            settings: settingsObject,
-            settingsList: settings,
-        },
+      success: true,
+      data: {
+        settings: settingsObject,
+        settingsList: settings
+      }
     });
-});
-// Validation middleware for update setting
-exports.validateUpdateStoreSetting = [
-    (0, express_validator_1.body)('value')
-        .optional({ nullable: true, checkFalsy: false })
-        .customSanitizer((v) => (v === undefined || v === null ? '' : String(v).trim()))
-        .isLength({ min: 0, max: 500 })
-        .withMessage('Setting value must be at most 500 characters'),
-    (0, express_validator_1.body)('description')
-        .optional()
-        .customSanitizer((v) => (v === undefined || v === null ? undefined : String(v).trim()))
-        .isLength({ max: 500 })
-        .withMessage('Description must be at most 500 characters'),
+  }
+);
+const validateUpdateStoreSetting = [
+  (0, import_express_validator.body)("value").optional({ nullable: true, checkFalsy: false }).customSanitizer((v) => v === void 0 || v === null ? "" : String(v).trim()).isLength({ min: 0, max: 500 }).withMessage("Setting value must be at most 500 characters"),
+  (0, import_express_validator.body)("description").optional().customSanitizer((v) => v === void 0 || v === null ? void 0 : String(v).trim()).isLength({ max: 500 }).withMessage("Description must be at most 500 characters")
 ];
+// Annotate the CommonJS export names for ESM import in node:
+0 && (module.exports = {
+  getStoreSetting,
+  getStoreSettings,
+  updateStoreSetting,
+  validateUpdateStoreSetting
+});

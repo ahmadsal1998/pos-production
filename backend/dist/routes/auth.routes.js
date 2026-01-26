@@ -1,17 +1,35 @@
 "use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-const express_1 = require("express");
-const auth_controller_1 = require("../controllers/auth.controller");
-const auth_middleware_1 = require("../middleware/auth.middleware");
-const router = (0, express_1.Router)();
-// Public routes
-router.post('/login', auth_controller_1.validateLogin, auth_controller_1.login);
-router.post('/logout', auth_middleware_1.authenticate, auth_controller_1.logout);
-router.get('/contact-number', auth_controller_1.getContactNumber); // Public endpoint for expired subscription page
-// Password reset flow routes
-router.post('/forgot-password', auth_controller_1.validateForgotPassword, auth_controller_1.forgotPassword);
-router.post('/verify-otp', auth_controller_1.validateVerifyOTP, auth_controller_1.verifyOTP);
-router.post('/reset-password', auth_controller_1.validateResetPassword, auth_controller_1.resetPassword);
-// Protected routes
-router.get('/me', auth_middleware_1.authenticate, auth_controller_1.getMe);
-exports.default = router;
+var __defProp = Object.defineProperty;
+var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __hasOwnProp = Object.prototype.hasOwnProperty;
+var __export = (target, all) => {
+  for (var name in all)
+    __defProp(target, name, { get: all[name], enumerable: true });
+};
+var __copyProps = (to, from, except, desc) => {
+  if (from && typeof from === "object" || typeof from === "function") {
+    for (let key of __getOwnPropNames(from))
+      if (!__hasOwnProp.call(to, key) && key !== except)
+        __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
+  }
+  return to;
+};
+var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
+var auth_routes_exports = {};
+__export(auth_routes_exports, {
+  default: () => auth_routes_default
+});
+module.exports = __toCommonJS(auth_routes_exports);
+var import_express = require("express");
+var import_auth = require("../controllers/auth.controller");
+var import_auth2 = require("../middleware/auth.middleware");
+const router = (0, import_express.Router)();
+router.post("/login", import_auth.validateLogin, import_auth.login);
+router.post("/logout", import_auth2.authenticate, import_auth.logout);
+router.get("/contact-number", import_auth.getContactNumber);
+router.post("/forgot-password", import_auth.validateForgotPassword, import_auth.forgotPassword);
+router.post("/verify-otp", import_auth.validateVerifyOTP, import_auth.verifyOTP);
+router.post("/reset-password", import_auth.validateResetPassword, import_auth.resetPassword);
+router.get("/me", import_auth2.authenticate, import_auth.getMe);
+var auth_routes_default = router;

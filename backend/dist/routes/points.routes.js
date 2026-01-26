@@ -1,23 +1,37 @@
 "use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-const express_1 = require("express");
-const points_controller_1 = require("../controllers/points.controller");
-const auth_middleware_1 = require("../middleware/auth.middleware");
-const storeIsolation_middleware_1 = require("../middleware/storeIsolation.middleware");
-const router = (0, express_1.Router)();
-// All points routes require authentication and store access
-router.use(auth_middleware_1.authenticate);
-router.use(storeIsolation_middleware_1.requireStoreAccess);
-// Add points after sale (store operation)
-router.post('/add', points_controller_1.validateAddPoints, points_controller_1.addPointsAfterSale);
-// Get customer points balance and history
-// Routes without path params (using query params) must come BEFORE routes with path params
-// This ensures /customer/history matches before /customer/:customerId
-router.get('/customer/history', points_controller_1.getCustomerPointsHistory);
-router.get('/customer', points_controller_1.getCustomerPoints);
-// Routes with path parameters come after
-router.get('/customer/:customerId/history', points_controller_1.getCustomerPointsHistory);
-router.get('/customer/:customerId', points_controller_1.getCustomerPoints);
-// Pay with points
-router.post('/pay', points_controller_1.validatePayWithPoints, points_controller_1.payWithPoints);
-exports.default = router;
+var __defProp = Object.defineProperty;
+var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __hasOwnProp = Object.prototype.hasOwnProperty;
+var __export = (target, all) => {
+  for (var name in all)
+    __defProp(target, name, { get: all[name], enumerable: true });
+};
+var __copyProps = (to, from, except, desc) => {
+  if (from && typeof from === "object" || typeof from === "function") {
+    for (let key of __getOwnPropNames(from))
+      if (!__hasOwnProp.call(to, key) && key !== except)
+        __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
+  }
+  return to;
+};
+var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
+var points_routes_exports = {};
+__export(points_routes_exports, {
+  default: () => points_routes_default
+});
+module.exports = __toCommonJS(points_routes_exports);
+var import_express = require("express");
+var import_points = require("../controllers/points.controller");
+var import_auth = require("../middleware/auth.middleware");
+var import_storeIsolation = require("../middleware/storeIsolation.middleware");
+const router = (0, import_express.Router)();
+router.use(import_auth.authenticate);
+router.use(import_storeIsolation.requireStoreAccess);
+router.post("/add", import_points.validateAddPoints, import_points.addPointsAfterSale);
+router.get("/customer/history", import_points.getCustomerPointsHistory);
+router.get("/customer", import_points.getCustomerPoints);
+router.get("/customer/:customerId/history", import_points.getCustomerPointsHistory);
+router.get("/customer/:customerId", import_points.getCustomerPoints);
+router.post("/pay", import_points.validatePayWithPoints, import_points.payWithPoints);
+var points_routes_default = router;

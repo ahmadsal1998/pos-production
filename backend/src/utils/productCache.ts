@@ -10,6 +10,110 @@ function getBarcodeCacheKey(storeId: string, barcode: string): string {
 }
 
 /**
+ * Create a pseudo product from a unit when no child products exist
+ * This ensures unit barcode searches return accurate pricing and stock information
+ * 
+ * @param parentProduct - The parent product containing the unit
+ * @param unit - The unit that matched the barcode search
+ * @param unitBarcode - The barcode that was searched
+ * @returns A pseudo product document with unit-specific data
+ */
+export function createPseudoProductFromUnit(
+  parentProduct: any,
+  unit: any,
+  unitBarcode: string
+): ProductDocument {
+  // Get all units from parent product
+  const allUnits = parentProduct.units || [];
+  
+  // Find the matched unit's order in the hierarchy
+  const matchedUnitOrder = unit.order ?? 0;
+  
+  // Check if this is the main unit (order 0)
+  const isMainUnit = matchedUnitOrder === 0;
+  
+  // Calculate cumulative conversion factor from main unit to matched unit
+  // This matches the calculation in HierarchicalUnitsManager.calculateTotalQuantityAtLevel
+  // The calculation multiplies initialQuantity by all unitsInPrevious values from order 1 up to the matched unit's order
+  let cumulativeConversionFactor = 1;
+  
+  if (!isMainUnit && allUnits.length > 0) {
+    // Find all units with order >= 1 and <= matchedUnitOrder, sorted by order
+    const unitsInPath = allUnits
+      .filter((u: any) => {
+        const uOrder = u.order ?? 0;
+        return uOrder >= 1 && uOrder <= matchedUnitOrder;
+      })
+      .sort((a: any, b: any) => {
+        const aOrder = a.order ?? 0;
+        const bOrder = b.order ?? 0;
+        return aOrder - bOrder;
+      });
+    
+    // Multiply by all unitsInPrevious values in the path from main unit to matched unit
+    // This matches: initialQuantity * unitsInPrevious[order1] * unitsInPrevious[order2] * ... * unitsInPrevious[matchedOrder]
+    for (const currentUnit of unitsInPath) {
+      const unitsInPrev = currentUnit.unitsInPrevious || 1;
+      if (unitsInPrev > 0) {
+        cumulativeConversionFactor *= unitsInPrev;
+      }
+    }
+  }
+  
+  // Calculate cost price for the unit based on parent cost price
+  // If this is the main unit (order 0), use parent cost directly
+  let unitCostPrice = parentProduct.costPrice || 0;
+  
+  if (!isMainUnit) {
+    // Divide by cumulative conversion factor to get cost per unit
+    // For example, if parent cost is 100 for 1 main unit, and cumulative factor is 15,
+    // then unit cost is 100 / 15 = 6.67
+    if (cumulativeConversionFactor > 0) {
+      unitCostPrice = (parentProduct.costPrice || 0) / cumulativeConversionFactor;
+    } else if (unit.conversionFactor && unit.conversionFactor > 0) {
+      // Fallback to legacy conversionFactor if unitsInPrevious is not available
+      unitCostPrice = (parentProduct.costPrice || 0) / unit.conversionFactor;
+    }
+  }
+  
+  // Calculate stock for the unit
+  // Stock is stored in main units, so we need to convert to this unit
+  // This matches the calculation: initialQuantity * cumulativeConversionFactor
+  let unitStock = parentProduct.stock || 0;
+  
+  if (!isMainUnit) {
+    // Multiply stock by cumulative conversion factor
+    // For example, if parent stock is 1 (in main units) and cumulative factor is 15,
+    // then unit stock is 1 * 15 = 15
+    if (cumulativeConversionFactor > 0) {
+      unitStock = (parentProduct.stock || 0) * cumulativeConversionFactor;
+    } else if (unit.conversionFactor && unit.conversionFactor > 0) {
+      // Fallback to legacy conversionFactor if unitsInPrevious is not available
+      unitStock = (parentProduct.stock || 0) * unit.conversionFactor;
+    }
+  }
+  
+  // Create pseudo product with unit-specific data
+  const pseudoProduct: any = {
+    ...parentProduct,
+    _id: parentProduct._id || parentProduct.id,
+    id: parentProduct._id?.toString() || parentProduct.id,
+    // Override with unit-specific data
+    barcode: unitBarcode, // Use the unit barcode, not parent barcode
+    price: unit.sellingPrice || parentProduct.price || 0, // Use unit's selling price
+    costPrice: unitCostPrice, // Calculated cost price for this unit
+    stock: unitStock, // Calculated stock for this unit (matches HierarchicalUnitsManager calculation)
+    // Add unit information for reference
+    matchedUnit: unit,
+    isPseudoProduct: true, // Flag to indicate this is a pseudo product
+    // Preserve parent product reference
+    parentProductId: parentProduct._id?.toString() || parentProduct.id,
+  };
+  
+  return pseudoProduct as ProductDocument;
+}
+
+/**
  * Get product by barcode with Redis caching
  * This is the critical path for POS barcode scans - must be < 5ms at DB level
  * 
@@ -48,6 +152,8 @@ export async function getProductByBarcode(
   }
 
   // Product not found - also check unit barcodes
+  // CRITICAL: When a unit barcode matches, try to find the corresponding child product
+  // This ensures unit barcodes return child product data, not parent product data
   const productWithUnit = await Product.findOne({
     storeId: storeId.toLowerCase(),
     'units.barcode': trimmedBarcode,
@@ -55,9 +161,68 @@ export async function getProductByBarcode(
   }).lean();
 
   if (productWithUnit) {
-    // Cache for 1 hour
-    await cache.set(cacheKey, productWithUnit, 3600);
-    return productWithUnit as any;
+    // Check if this is a parent product (has no parentProductId)
+    const isParentProduct = !productWithUnit.parentProductId || 
+                           productWithUnit.parentProductId === null || 
+                           productWithUnit.parentProductId === '';
+    
+    if (isParentProduct) {
+      // This is a parent product with matching unit barcode
+      // Try to find the corresponding child product that has this barcode
+      const parentId = productWithUnit._id?.toString() || productWithUnit.id;
+      
+      // First, try to find a child product with the exact same barcode as the unit barcode
+      const childProduct = await Product.findOne({
+        storeId: storeId.toLowerCase(),
+        parentProductId: parentId,
+        barcode: trimmedBarcode,
+        status: 'active',
+      }).lean();
+      
+      if (childProduct) {
+        // Found child product - cache and return it
+        await cache.set(cacheKey, childProduct, 3600);
+        return childProduct as any;
+      }
+      
+      // If no child product found with exact barcode match, try to find any child product
+      const anyChildProduct = await Product.findOne({
+        storeId: storeId.toLowerCase(),
+        parentProductId: parentId,
+        status: 'active',
+      }).lean();
+      
+      if (anyChildProduct) {
+        // Found a child product - cache and return it
+        await cache.set(cacheKey, anyChildProduct, 3600);
+        return anyChildProduct as any;
+      }
+      
+      // No child product found - create pseudo product from unit data
+      // This ensures unit barcode searches return accurate pricing and stock information
+      const matchedUnit = productWithUnit.units?.find(
+        (u: any) => u.barcode && u.barcode.trim().toLowerCase() === trimmedBarcode.toLowerCase()
+      );
+      
+      if (matchedUnit) {
+        const pseudoProduct = createPseudoProductFromUnit(
+          productWithUnit,
+          matchedUnit,
+          trimmedBarcode
+        );
+        // Cache the pseudo product
+        await cache.set(cacheKey, pseudoProduct, 3600);
+        return pseudoProduct as any;
+      }
+      
+      // Fallback: return parent product if unit not found (shouldn't happen)
+      await cache.set(cacheKey, productWithUnit, 3600);
+      return productWithUnit as any;
+    } else {
+      // This is already a child product - return it directly
+      await cache.set(cacheKey, productWithUnit, 3600);
+      return productWithUnit as any;
+    }
   }
 
   return null;

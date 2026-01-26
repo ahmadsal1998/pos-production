@@ -2,7 +2,7 @@ import { Response } from 'express';
 import { body, validationResult } from 'express-validator';
 import { asyncHandler } from '../middleware/error.middleware';
 import { AuthenticatedRequest } from '../middleware/auth.middleware';
-import { getProductByBarcode as getCachedProductByBarcode, invalidateProductCache, invalidateStoreProductCache, invalidateAllProductBarcodeCaches } from '../utils/productCache';
+import { getProductByBarcode as getCachedProductByBarcode, invalidateProductCache, invalidateStoreProductCache, invalidateAllProductBarcodeCaches, createPseudoProductFromUnit } from '../utils/productCache';
 import { getProductModelForStore } from '../utils/productModel';
 import Category from '../models/Category';
 import multer from 'multer';
@@ -278,33 +278,281 @@ export const getProducts = asyncHandler(async (req: AuthenticatedRequest, res: R
       queryFilter.status = status;
     }
 
-    // If search term is provided, search in name and barcode
+    // If search term is provided, search in name, barcode, and unit barcodes
+    // This ensures both parent and child products are found
     if (searchTerm) {
       // Normalize search term: remove extra spaces and handle Arabic diacritics
       const normalizedSearchTerm = searchTerm
         .replace(/\s+/g, ' ')
         .trim();
 
-      // Create regex pattern for case-insensitive search
-      // Escape special regex characters
-      const escapedSearchTerm = normalizedSearchTerm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      // Check if this is a barcode search (numeric only)
+      const isBarcodeSearch = /^[0-9]+$/.test(normalizedSearchTerm);
       
-      // Search in name and barcode fields
-      // Using $or to search in multiple fields
-      // Using $regex with 'i' flag for case-insensitive search
-      queryFilter.$or = [
-        { name: { $regex: escapedSearchTerm, $options: 'i' } },
-        { barcode: { $regex: escapedSearchTerm, $options: 'i' } },
-      ];
+      if (isBarcodeSearch) {
+        // For barcode searches, use ONLY exact matches (no partial matches)
+        // This ensures that searching for "00001" only returns products with barcode "00001"
+        // and does NOT return products with barcodes like "00011", "000012", etc.
+        const trimmedBarcode = normalizedSearchTerm.trim();
+        const escapedBarcode = trimmedBarcode.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        
+        // Use exact matching only (with ^ and $ anchors) - case-insensitive
+        // This ensures precise barcode matching without partial matches
+        queryFilter.$or = [
+          { barcode: { $regex: `^${escapedBarcode}$`, $options: 'i' } }, // Exact product barcode match only
+          { 'units.barcode': { $regex: `^${escapedBarcode}$`, $options: 'i' } }, // Exact unit barcode match only
+        ];
+      } else {
+        // For name searches, use regex
+        const escapedSearchTerm = normalizedSearchTerm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        
+        queryFilter.$or = [
+          { name: { $regex: escapedSearchTerm, $options: 'i' } },
+          { barcode: { $regex: escapedSearchTerm, $options: 'i' } },
+          { 'units.barcode': { $regex: escapedSearchTerm, $options: 'i' } },
+        ];
 
-      // Also search in internalSKU if it exists
-      if (normalizedSearchTerm.length > 0) {
-        queryFilter.$or.push({ internalSKU: { $regex: escapedSearchTerm, $options: 'i' } });
+        // Also search in internalSKU if it exists
+        if (normalizedSearchTerm.length > 0) {
+          queryFilter.$or.push({ internalSKU: { $regex: escapedSearchTerm, $options: 'i' } });
+        }
       }
     }
 
     // Get trial-aware Product model
     const Product = await getProductModelForStore(storeId);
+    
+    // CRITICAL FIX: For barcode searches, first check for child products with exact barcode match
+    // This ensures child products are found and returned, not parent products
+    // Also check if the barcode matches a unit barcode - if so, find the corresponding child product
+    let childProductWithExactBarcode: any = null;
+    if (searchTerm && /^[0-9]+$/.test(searchTerm.trim())) {
+      const exactBarcode = searchTerm.trim();
+      try {
+        // STEP 1: Build direct query for child product with exact barcode match
+        // CRITICAL: Check for child products first - they have parentProductId set to a non-null, non-empty value
+        // Child products are identified by having parentProductId that is not null/undefined/empty
+        
+        // Strategy 1: Try exact case-sensitive barcode match with parentProductId filter
+        // Use $and to combine conditions properly
+        let directQuery: any = {
+          storeId: storeId.toLowerCase(),
+          barcode: exactBarcode,
+          // Child products have parentProductId that exists and is not null/empty
+          $and: [
+            { parentProductId: { $exists: true } },
+            { parentProductId: { $ne: null } },
+            { parentProductId: { $ne: '' } },
+          ],
+        };
+        
+        // Only apply status filter if it was explicitly set in the request
+        // Don't default to 'active' - we want to find child products even if they have different status
+        if (status) {
+          directQuery.status = status;
+        }
+        
+        // Apply showInQuickProducts filter if it exists
+        if (queryFilter.showInQuickProducts !== undefined) {
+          directQuery.showInQuickProducts = queryFilter.showInQuickProducts;
+        }
+        
+        // Direct query for child product with exact barcode match (case-sensitive first)
+        childProductWithExactBarcode = await Product.findOne(directQuery).lean();
+        
+        // Strategy 2: If not found, try case-insensitive exact match
+        if (!childProductWithExactBarcode) {
+          directQuery = {
+            storeId: storeId.toLowerCase(),
+            barcode: { $regex: `^${exactBarcode.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' },
+            $and: [
+              { parentProductId: { $exists: true } },
+              { parentProductId: { $ne: null } },
+              { parentProductId: { $ne: '' } },
+            ],
+          };
+          if (status) {
+            directQuery.status = status;
+          }
+          if (queryFilter.showInQuickProducts !== undefined) {
+            directQuery.showInQuickProducts = queryFilter.showInQuickProducts;
+          }
+          childProductWithExactBarcode = await Product.findOne(directQuery).lean();
+        }
+        
+        // Strategy 3: If still not found and no status filter was applied, try without status filter
+        // This is a fallback to ensure we find child products even if they have unexpected status
+        if (!childProductWithExactBarcode && !status) {
+          const fallbackQuery: any = {
+            storeId: storeId.toLowerCase(),
+            barcode: { $regex: `^${exactBarcode.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' },
+            $and: [
+              { parentProductId: { $exists: true } },
+              { parentProductId: { $ne: null } },
+              { parentProductId: { $ne: '' } },
+            ],
+          };
+          if (queryFilter.showInQuickProducts !== undefined) {
+            fallbackQuery.showInQuickProducts = queryFilter.showInQuickProducts;
+          }
+          childProductWithExactBarcode = await Product.findOne(fallbackQuery).lean();
+        }
+        
+        // STEP 2: If no child product found by direct barcode match, check if barcode matches a unit barcode
+        // When a parent product has a unit with this barcode, find the child products of that parent
+        // This enables searching by unit barcode to return child product data (like POS screen behavior)
+        if (!childProductWithExactBarcode) {
+          // Find parent products that have a unit with this barcode
+          // CRITICAL: Parent products have parentProductId as null/undefined/empty (not set)
+          // Use $or to handle different ways parentProductId might be stored
+          const parentQuery: any = {
+            storeId: storeId.toLowerCase(),
+            'units.barcode': { $regex: `^${exactBarcode.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' },
+            $or: [
+              { parentProductId: { $exists: false } },
+              { parentProductId: null },
+              { parentProductId: '' },
+            ],
+          };
+          
+          const parentWithUnitBarcode = await Product.findOne(parentQuery).lean();
+          
+          if (parentWithUnitBarcode) {
+            const parentId = parentWithUnitBarcode._id?.toString() || parentWithUnitBarcode.id;
+            
+            // Found a parent product with this unit barcode
+            // Now find child products of this parent
+            // First, try to find a child product with the exact same barcode as the unit barcode
+            let childQuery: any = {
+              storeId: storeId.toLowerCase(),
+              parentProductId: parentId, // Match parent ID exactly
+              barcode: { $regex: `^${exactBarcode.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' },
+            };
+            
+            if (status) {
+              childQuery.status = status;
+            }
+            
+            if (queryFilter.showInQuickProducts !== undefined) {
+              childQuery.showInQuickProducts = queryFilter.showInQuickProducts;
+            }
+            
+            childProductWithExactBarcode = await Product.findOne(childQuery).lean();
+            
+            // If not found with exact barcode match, try to find ANY child product of this parent
+            // This ensures we return a child product even if its barcode differs from the unit barcode
+            if (!childProductWithExactBarcode) {
+              const anyChildQuery: any = {
+                storeId: storeId.toLowerCase(),
+                parentProductId: parentId,
+              };
+              
+              if (status) {
+                anyChildQuery.status = status;
+              }
+              
+              if (queryFilter.showInQuickProducts !== undefined) {
+                anyChildQuery.showInQuickProducts = queryFilter.showInQuickProducts;
+              }
+              
+              // Find the first child product (or all if we want to return multiple)
+              childProductWithExactBarcode = await Product.findOne(anyChildQuery).lean();
+            }
+            
+            // If still not found and no status filter, try without status filter
+            if (!childProductWithExactBarcode && !status) {
+              const childFallbackQuery: any = {
+                storeId: storeId.toLowerCase(),
+                parentProductId: parentId,
+              };
+              if (queryFilter.showInQuickProducts !== undefined) {
+                childFallbackQuery.showInQuickProducts = queryFilter.showInQuickProducts;
+              }
+              childProductWithExactBarcode = await Product.findOne(childFallbackQuery).lean();
+            }
+            
+            if (childProductWithExactBarcode && process.env.NODE_ENV === 'development') {
+              log.debug('Found child product via unit barcode match (direct query)', {
+                unitBarcode: exactBarcode,
+                parentId: parentId,
+                parentName: parentWithUnitBarcode.name,
+                childId: childProductWithExactBarcode._id || childProductWithExactBarcode.id,
+                childBarcode: childProductWithExactBarcode.barcode,
+                childName: childProductWithExactBarcode.name,
+                childPrice: childProductWithExactBarcode.price,
+                childStock: childProductWithExactBarcode.stock,
+                note: 'Child product data will be returned, not parent product data',
+              });
+            } else {
+              // No child product found - create pseudo product from unit data
+              // This ensures unit barcode searches return accurate pricing and stock information
+              const matchedUnit = parentWithUnitBarcode.units?.find(
+                (u: any) => u.barcode && u.barcode.trim().toLowerCase() === exactBarcode.toLowerCase()
+              );
+              
+              if (matchedUnit) {
+                childProductWithExactBarcode = createPseudoProductFromUnit(
+                  parentWithUnitBarcode,
+                  matchedUnit,
+                  exactBarcode
+                );
+                
+                if (process.env.NODE_ENV === 'development') {
+                  log.debug('No child product found for unit barcode - returning pseudo product from unit (direct query)', {
+                    unitBarcode: exactBarcode,
+                    parentId: parentId,
+                    parentName: parentWithUnitBarcode.name,
+                    unitName: matchedUnit.unitName,
+                    unitPrice: matchedUnit.sellingPrice,
+                    pseudoProductBarcode: childProductWithExactBarcode.barcode,
+                    pseudoProductPrice: childProductWithExactBarcode.price,
+                    note: 'Returning pseudo product with unit-specific pricing and stock because no child products exist',
+                  });
+                }
+              } else {
+                // Fallback: return parent product if unit not found (shouldn't happen)
+                childProductWithExactBarcode = parentWithUnitBarcode;
+                
+                if (process.env.NODE_ENV === 'development') {
+                  log.debug('No child product found for unit barcode - returning parent product as fallback (direct query)', {
+                    unitBarcode: exactBarcode,
+                    parentId: parentId,
+                    parentName: parentWithUnitBarcode.name,
+                    parentBarcode: parentWithUnitBarcode.barcode,
+                    note: 'Returning parent product because no child products exist for this unit barcode',
+                  });
+                }
+              }
+            }
+          }
+        }
+        
+        if (childProductWithExactBarcode && process.env.NODE_ENV === 'development') {
+          log.debug('Found child product with exact barcode match (direct query)', {
+            childId: childProductWithExactBarcode._id || childProductWithExactBarcode.id,
+            childBarcode: childProductWithExactBarcode.barcode,
+            childName: childProductWithExactBarcode.name,
+            childPrice: childProductWithExactBarcode.price,
+            childStock: childProductWithExactBarcode.stock,
+            childCostPrice: childProductWithExactBarcode.costPrice,
+            parentProductId: childProductWithExactBarcode.parentProductId,
+            searchBarcode: exactBarcode,
+            matchType: 'exact',
+          });
+        } else if (process.env.NODE_ENV === 'development') {
+          log.debug('No child product found with exact barcode match (direct query)', {
+            searchBarcode: exactBarcode,
+            queryUsed: directQuery,
+            note: 'Will proceed with general search',
+          });
+        }
+      } catch (directQueryError: any) {
+        log.error('Error in direct child product query', directQueryError, {
+          searchBarcode: exactBarcode,
+        });
+        // Continue with normal search if direct query fails
+      }
+    }
     
     // Get total count for pagination metadata
     let totalProducts: number = 0;
@@ -319,7 +567,8 @@ export const getProducts = asyncHandler(async (req: AuthenticatedRequest, res: R
       totalProducts = 0;
     }
 
-    const totalPages = fetchAll ? 1 : Math.max(1, Math.ceil(totalProducts / limit));
+    // Use let instead of const because totalPages may be updated later when filtering exact matches
+    let totalPages = fetchAll ? 1 : Math.max(1, Math.ceil(totalProducts / limit));
 
     // Determine which fields to select (for optimization)
     // If showInQuickProducts filter is used, only return essential fields
@@ -332,26 +581,480 @@ export const getProducts = asyncHandler(async (req: AuthenticatedRequest, res: R
 
     // Fetch products with pagination and search filter
     // Use compound index (storeId, createdAt) for optimal performance
+    // NOTE: This query will return both parent products (parentProductId is null/undefined)
+    // and child products (parentProductId is set) that match the search criteria
     let products: any[] = [];
-    try {
-      let query = Product.find(queryFilter);
+    
+    // CRITICAL FIX: If we found a product (child or parent) with exact barcode via direct query, skip general query
+    // This ensures products are returned efficiently without interference from general search
+    // Priority: child products first, then parent products (when no child products exist for unit barcodes)
+    if (childProductWithExactBarcode) {
+      // Return the product found by direct query (child product if available, parent product as fallback)
+      // This ensures unit barcode searches always return results
+      products = [childProductWithExactBarcode];
       
-      // Apply field selection if specified
-      if (fieldsToSelect) {
-        query = query.select(fieldsToSelect);
+      // Update total count to reflect single child product
+      totalProducts = 1;
+      totalPages = 1;
+      
+      if (process.env.NODE_ENV === 'development') {
+        const isChildProduct = !!childProductWithExactBarcode.parentProductId;
+        log.debug('Barcode search: Using product from direct query, skipping general query', {
+          productId: childProductWithExactBarcode._id || childProductWithExactBarcode.id,
+          productBarcode: childProductWithExactBarcode.barcode,
+          productName: childProductWithExactBarcode.name,
+          productPrice: childProductWithExactBarcode.price,
+          productStock: childProductWithExactBarcode.stock,
+          productCostPrice: childProductWithExactBarcode.costPrice,
+          isChildProduct: isChildProduct,
+          parentProductId: childProductWithExactBarcode.parentProductId,
+          note: isChildProduct 
+            ? 'Returning child product from direct query' 
+            : 'Returning parent product from direct query (no child products exist for this unit barcode)',
+        });
       }
-      
-      products = await query
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(limit)
-        .lean();
-    } catch (queryError: any) {
-      log.error('Error querying products', queryError, {
-        name: queryError.name,
-      });
-      // Return empty array if query fails
-      products = [];
+    } else {
+      // No child product found via direct query - proceed with general search
+      try {
+        let query = Product.find(queryFilter);
+        
+        // Apply field selection if specified
+        // Always include parentProductId in selection to identify child products
+        if (fieldsToSelect) {
+          const fieldsWithParent = fieldsToSelect.includes('parentProductId') 
+            ? fieldsToSelect 
+            : `${fieldsToSelect} parentProductId`;
+          query = query.select(fieldsWithParent);
+        }
+        // If no field selection, all fields (including parentProductId) are returned by default
+        
+        products = await query
+          .sort({ createdAt: -1 })
+          .skip(skip)
+          .limit(limit)
+          .lean();
+
+        // For barcode searches, ONLY return exact barcode matches (no partial matches)
+        // This ensures that searching for "00001" only returns products with barcode "00001"
+        // and does NOT return products with barcodes like "00011", "000012", etc.
+        if (searchTerm && /^[0-9]+$/.test(searchTerm.trim())) {
+          // Fallback: If direct query didn't find child product, process general search results
+          // CRITICAL: Only accept exact barcode matches - filter out any partial matches
+          const exactBarcodeMatch = searchTerm.trim().toLowerCase();
+          
+          // Separate products into exact barcode matches and unit barcode matches
+          // IMPORTANT: Only products with EXACT barcode matches are included
+          const exactBarcodeMatches: any[] = [];
+          const unitBarcodeMatches: any[] = [];
+          
+          products.forEach((product: any) => {
+            const productBarcode = String(product.barcode || '').trim().toLowerCase();
+            
+            // CRITICAL: Only accept exact barcode match (case-insensitive, trimmed)
+            // This ensures "00001" matches only "00001", not "00011" or "000012"
+            if (productBarcode === exactBarcodeMatch) {
+              exactBarcodeMatches.push(product);
+              
+              // Log child products found by exact barcode match (development only)
+              if (process.env.NODE_ENV === 'development' && product.parentProductId) {
+                log.debug('Found child product with exact barcode match in general search', {
+                  childId: product._id || product.id,
+                  childBarcode: product.barcode,
+                  childName: product.name,
+                  childPrice: product.price,
+                  parentProductId: product.parentProductId,
+                });
+              }
+            } else {
+              // Check if it matches via unit barcode (exact match only)
+              const hasUnitMatch = product.units && Array.isArray(product.units) && 
+                product.units.some((unit: any) => {
+                  const unitBarcode = String(unit.barcode || '').trim().toLowerCase();
+                  // CRITICAL: Only exact unit barcode matches are accepted
+                  return unitBarcode === exactBarcodeMatch;
+                });
+              
+              if (hasUnitMatch) {
+                unitBarcodeMatches.push(product);
+              }
+              // IMPORTANT: Products that don't have exact barcode or unit barcode matches are excluded
+              // This ensures no partial matches are returned
+            }
+          });
+          
+          // CRITICAL FIX: Prioritize child products over parent products
+          // When searching by barcode:
+          // 1. If child product has exact barcode match → return child product
+          // 2. If parent product has unit barcode match → find and return child product (NOT parent)
+          // 3. If parent product has exact barcode match → return parent product
+          const childWithExactMatch = exactBarcodeMatches.find((p: any) => !!p.parentProductId);
+          const parentWithExactMatch = exactBarcodeMatches.find((p: any) => !p.parentProductId);
+          
+          if (childWithExactMatch) {
+            // When a child product has exact barcode match, return ONLY that child product
+            // This ensures child products are displayed, not parent products
+            // CRITICAL: Use the child product's own data (name, barcode, price, stock, costPrice, categoryId)
+            // Do NOT use parent product data
+            products = [childWithExactMatch];
+            
+            // Update pagination to reflect single child product
+            totalProducts = 1;
+            totalPages = 1;
+            
+            if (process.env.NODE_ENV === 'development') {
+              log.debug('Barcode search: Found child product with exact match in results, returning only child product', {
+                childId: childWithExactMatch._id || childWithExactMatch.id,
+                childBarcode: childWithExactMatch.barcode,
+                childName: childWithExactMatch.name,
+                childPrice: childWithExactMatch.price,
+                childStock: childWithExactMatch.stock,
+                childCostPrice: childWithExactMatch.costPrice,
+                childCategoryId: childWithExactMatch.categoryId,
+                parentProductId: childWithExactMatch.parentProductId,
+                excludedCount: exactBarcodeMatches.length + unitBarcodeMatches.length - 1,
+                note: 'Child product data will be preserved - parent product data will NOT replace child data',
+              });
+            }
+          } else if (unitBarcodeMatches.length > 0) {
+            // CRITICAL: When unit barcode matches, prioritize child products but fallback to parent products
+            // Unit barcode matches indicate parent products - we need to find their child products first
+            // If no child products exist, return the parent product (this ensures unit barcodes always return results)
+            const childProductsFromUnits: any[] = [];
+            const parentProductsFromUnits: any[] = [];
+            
+            for (const parentProduct of unitBarcodeMatches) {
+              const parentId = parentProduct._id?.toString() || parentProduct.id;
+              
+              // First, try to find a child product that has this barcode as its own barcode
+              // This is the preferred behavior: unit barcode should return the child product with that barcode
+              let childQuery: any = {
+                storeId: storeId.toLowerCase(),
+                parentProductId: parentId,
+                barcode: { $regex: `^${exactBarcodeMatch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' },
+              };
+              
+              if (status) {
+                childQuery.status = status;
+              }
+              
+              let childProduct = await Product.findOne(childQuery).lean();
+              
+              // If not found with exact barcode match, try to find ANY child product of this parent
+              // This ensures we return a child product even if its barcode differs from the unit barcode
+              if (!childProduct) {
+                const anyChildQuery: any = {
+                  storeId: storeId.toLowerCase(),
+                  parentProductId: parentId,
+                };
+                
+                if (status) {
+                  anyChildQuery.status = status;
+                }
+                
+                childProduct = await Product.findOne(anyChildQuery).lean();
+              }
+              
+              // If still not found and no status filter, try without status filter
+              if (!childProduct && !status) {
+                const childFallbackQuery: any = {
+                  storeId: storeId.toLowerCase(),
+                  parentProductId: parentId,
+                };
+                childProduct = await Product.findOne(childFallbackQuery).lean();
+              }
+              
+              if (childProduct) {
+                childProductsFromUnits.push(childProduct);
+                
+                if (process.env.NODE_ENV === 'development') {
+                  log.debug('Found child product via unit barcode match in general search', {
+                    unitBarcode: exactBarcodeMatch,
+                    parentId: parentId,
+                    parentName: parentProduct.name,
+                    childId: childProduct._id || childProduct.id,
+                    childBarcode: childProduct.barcode,
+                    childName: childProduct.name,
+                    childPrice: childProduct.price,
+                    childStock: childProduct.stock,
+                    note: 'Returning child product data, not parent product data',
+                  });
+                }
+              } else {
+                // No child product found - create pseudo product from unit data
+                // This ensures unit barcode searches return accurate pricing and stock information
+                const matchedUnit = parentProduct.units?.find(
+                  (u: any) => u.barcode && u.barcode.trim().toLowerCase() === exactBarcodeMatch.toLowerCase()
+                );
+                
+                if (matchedUnit) {
+                  const pseudoProduct = createPseudoProductFromUnit(
+                    parentProduct,
+                    matchedUnit,
+                    exactBarcodeMatch
+                  );
+                  parentProductsFromUnits.push(pseudoProduct);
+                  
+                  if (process.env.NODE_ENV === 'development') {
+                    log.debug('No child product found for unit barcode - returning pseudo product from unit', {
+                      unitBarcode: exactBarcodeMatch,
+                      parentId: parentId,
+                      parentName: parentProduct.name,
+                      unitName: matchedUnit.unitName,
+                      unitPrice: matchedUnit.sellingPrice,
+                      pseudoProductBarcode: pseudoProduct.barcode,
+                      pseudoProductPrice: pseudoProduct.price,
+                      note: 'Returning pseudo product with unit-specific pricing and stock because no child products exist',
+                    });
+                  }
+                } else {
+                  // Fallback: add parent product if unit not found (shouldn't happen)
+                  parentProductsFromUnits.push(parentProduct);
+                  
+                  if (process.env.NODE_ENV === 'development') {
+                    log.debug('No child product found for unit barcode - returning parent product as fallback', {
+                      unitBarcode: exactBarcodeMatch,
+                      parentId: parentId,
+                      parentName: parentProduct.name,
+                      parentBarcode: parentProduct.barcode,
+                      note: 'Returning parent product because no child products exist for this unit barcode',
+                    });
+                  }
+                }
+              }
+            }
+            
+            // CRITICAL: Prioritize child products, but include parent products as fallback
+            // This ensures unit barcode searches always return results
+            // Also include parent products that have exact barcode match (not unit barcode match)
+            if (childProductsFromUnits.length > 0) {
+              // Include parent products with exact barcode match (these are legitimate results)
+              products = parentWithExactMatch 
+                ? [parentWithExactMatch, ...childProductsFromUnits, ...parentProductsFromUnits]
+                : [...childProductsFromUnits, ...parentProductsFromUnits];
+            } else {
+              // No child products found - return parent products (both exact match and unit barcode match)
+              products = parentWithExactMatch 
+                ? [parentWithExactMatch, ...parentProductsFromUnits]
+                : parentProductsFromUnits;
+            }
+            
+            // Prioritize child products, then parent products with exact barcode match, then parent products with unit barcode match
+            products.sort((a: any, b: any) => {
+              const aIsChild = !!a.parentProductId;
+              const bIsChild = !!b.parentProductId;
+              // Child products first
+              if (aIsChild && !bIsChild) return -1;
+              if (!aIsChild && bIsChild) return 1;
+              // If both are parents, prioritize exact barcode match over unit barcode match
+              const aIsExactMatch = exactBarcodeMatches.some((p: any) => (p._id || p.id) === (a._id || a.id));
+              const bIsExactMatch = exactBarcodeMatches.some((p: any) => (p._id || p.id) === (b._id || b.id));
+              if (aIsExactMatch && !bIsExactMatch) return -1;
+              if (!aIsExactMatch && bIsExactMatch) return 1;
+              return 0;
+            });
+            
+            // Update pagination to reflect results
+            totalProducts = products.length;
+            totalPages = fetchAll ? 1 : Math.max(1, Math.ceil(totalProducts / limit));
+          } else {
+            // No unit barcode matches - return only exact barcode matches (parent or child)
+            // Prioritize child products among exact matches
+            products = [...exactBarcodeMatches].sort((a: any, b: any) => {
+              const aIsChild = !!a.parentProductId;
+              const bIsChild = !!b.parentProductId;
+              // Child products first
+              if (aIsChild && !bIsChild) return -1;
+              if (!aIsChild && bIsChild) return 1;
+              return 0;
+            });
+            
+            // Update pagination to reflect only exact matches
+            totalProducts = products.length;
+            totalPages = fetchAll ? 1 : Math.max(1, Math.ceil(totalProducts / limit));
+          }
+        }
+
+        // Log search results for debugging (only in development)
+        if (process.env.NODE_ENV === 'development' && searchTerm) {
+          const childProducts = products.filter((p: any) => p.parentProductId);
+          const parentProducts = products.filter((p: any) => !p.parentProductId);
+          
+          log.debug('Product search results', {
+            searchTerm,
+            totalFound: products.length,
+            childProducts: childProducts.length,
+            parentProducts: parentProducts.length,
+            // Log first few results to verify correct products are returned
+            sampleResults: products.slice(0, 5).map((p: any) => ({
+              id: p._id || p.id,
+              name: p.name,
+              barcode: p.barcode,
+              price: p.price,
+              isChild: !!p.parentProductId,
+              parentProductId: p.parentProductId,
+            })),
+            // Log the first result to see what's being returned
+            firstResult: products.length > 0 ? {
+              id: products[0]._id || products[0].id,
+              name: products[0].name,
+              barcode: products[0].barcode,
+              price: products[0].price,
+              isChild: !!products[0].parentProductId,
+              parentProductId: products[0].parentProductId,
+            } : null,
+          });
+        }
+      } catch (queryError: any) {
+        log.error('Error querying products', queryError, {
+          name: queryError.name,
+          queryFilter: JSON.stringify(queryFilter),
+        });
+        // Return empty array if query fails
+        products = [];
+      }
+    }
+
+    // Enrich child products with parent product information
+    if (products.length > 0) {
+      try {
+        // Identify child products (products with parentProductId)
+        const childProducts = products.filter((p: any) => p.parentProductId);
+        
+        if (childProducts.length > 0) {
+          // Get unique parent product IDs
+          const parentProductIds = [...new Set(
+            childProducts
+              .map((p: any) => p.parentProductId)
+              .filter((id: any) => id)
+              .map((id: any) => id.toString().trim())
+          )].filter((id: string) => id.length > 0);
+
+          if (parentProductIds.length > 0) {
+            // Fetch parent products
+            const mongoose = await import('mongoose');
+            
+            // Convert parent product IDs to ObjectIds if valid, otherwise use as strings
+            const parentObjectIds: any[] = [];
+            const parentStringIds: string[] = [];
+            
+            parentProductIds.forEach((id: string) => {
+              if (mongoose.default.Types.ObjectId.isValid(id)) {
+                parentObjectIds.push(new mongoose.default.Types.ObjectId(id));
+              } else {
+                parentStringIds.push(id);
+              }
+            });
+
+            // Build query to find parent products by _id
+            const parentQuery: any = {
+              storeId: storeId.toLowerCase(),
+              status: 'active',
+            };
+
+            if (parentObjectIds.length > 0 && parentStringIds.length > 0) {
+              parentQuery.$or = [
+                { _id: { $in: parentObjectIds } },
+                { _id: { $in: parentStringIds } },
+              ];
+            } else if (parentObjectIds.length > 0) {
+              parentQuery._id = { $in: parentObjectIds };
+            } else if (parentStringIds.length > 0) {
+              parentQuery._id = { $in: parentStringIds };
+            }
+
+            const parentProducts = parentQuery.$or || parentQuery._id 
+              ? await Product.find(parentQuery).select('_id name barcode').lean()
+              : [];
+
+            // Create a map of parent product ID -> parent product data
+            const parentMap: Record<string, any> = {};
+            parentProducts.forEach((parent: any) => {
+              const parentId = parent._id?.toString() || parent.id;
+              parentMap[parentId] = {
+                id: parentId,
+                name: parent.name,
+                barcode: parent.barcode,
+              };
+            });
+
+            // Enrich child products with parent information
+            // CRITICAL: We return the CHILD product's own data (name, barcode, price, stock, etc.)
+            // We ONLY add a parentProduct reference for informational purposes
+            // We NEVER replace or modify the child product's own fields
+            products = products.map((product: any): any => {
+              if (product.parentProductId) {
+                const parentIdStr = product.parentProductId.toString().trim();
+                
+                // Try to find parent by ObjectId string if valid
+                let parentInfo = null;
+                if (mongoose.default.Types.ObjectId.isValid(parentIdStr)) {
+                  const objectIdStr = new mongoose.default.Types.ObjectId(parentIdStr).toString();
+                  parentInfo = parentMap[objectIdStr] || null;
+                }
+                
+                // Fallback: try direct string match
+                if (!parentInfo) {
+                  parentInfo = parentMap[parentIdStr] || null;
+                }
+
+                // CRITICAL: Store original child product data before any modification
+                const originalChildData = {
+                  name: product.name,
+                  barcode: product.barcode,
+                  price: product.price,
+                  stock: product.stock,
+                  costPrice: product.costPrice,
+                };
+
+                // Add parent product reference to child product (for display purposes only)
+                // The child product's own fields (name, barcode, price, stock, etc.) remain unchanged
+                product.parentProduct = parentInfo;
+                
+                // Log child product data for debugging (development only)
+                if (process.env.NODE_ENV === 'development') {
+                  log.debug('Returning child product with own data', {
+                    childId: product._id || product.id,
+                    childName: product.name,
+                    childBarcode: product.barcode,
+                    childPrice: product.price,
+                    childStock: product.stock,
+                    childCostPrice: product.costPrice,
+                    parentProductId: product.parentProductId,
+                    parentName: parentInfo?.name,
+                    parentBarcode: parentInfo?.barcode,
+                    // Verify child data is intact
+                    dataIntegrity: {
+                      nameMatches: product.name === originalChildData.name,
+                      barcodeMatches: product.barcode === originalChildData.barcode,
+                      priceMatches: product.price === originalChildData.price,
+                      stockMatches: product.stock === originalChildData.stock,
+                    },
+                  });
+                  
+                  // Warn if child data was modified (should never happen)
+                  if (product.name !== originalChildData.name || 
+                      product.barcode !== originalChildData.barcode ||
+                      product.price !== originalChildData.price) {
+                    log.warn('⚠️ WARNING: Child product data appears to have been modified!', {
+                      original: originalChildData,
+                      current: {
+                        name: product.name,
+                        barcode: product.barcode,
+                        price: product.price,
+                      },
+                    });
+                  }
+                }
+              }
+              // Return the product with its own data intact (child or parent)
+              return product;
+            });
+          }
+        }
+      } catch (parentEnrichmentError: any) {
+        log.error('Error enriching child products with parent information', parentEnrichmentError);
+        // Continue without parent enrichment - products are still valid
+      }
     }
 
     // Enrich products with category names if requested and categoryId exists
@@ -417,6 +1120,28 @@ export const getProducts = asyncHandler(async (req: AuthenticatedRequest, res: R
       }
     }
 
+    // Final verification: Log what's being returned (development only)
+    if (process.env.NODE_ENV === 'development' && searchTerm && products.length > 0) {
+      const returnedChildProducts = products.filter((p: any) => p.parentProductId);
+      log.debug('Final response - products being returned to frontend', {
+        searchTerm,
+        totalProducts: products.length,
+        childProducts: returnedChildProducts.length,
+        firstProduct: products[0] ? {
+          id: products[0]._id || products[0].id,
+          name: products[0].name,
+          barcode: products[0].barcode,
+          price: products[0].price,
+          isChild: !!products[0].parentProductId,
+          parentProductId: products[0].parentProductId,
+        } : null,
+      });
+    }
+
+    // CRITICAL: When returning child products, ensure their own data (name, barcode, price, stock, costPrice, categoryId)
+    // is preserved. The parentProduct field is only a reference for display purposes and does NOT replace child data.
+    // This ensures the Products screen displays child product information when searching by child barcode,
+    // matching the behavior of the POS screen.
     res.status(200).json({
       success: true,
       message: 'Products retrieved successfully',

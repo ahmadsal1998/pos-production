@@ -1,108 +1,112 @@
 "use strict";
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
+var __create = Object.create;
+var __defProp = Object.defineProperty;
+var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __getProtoOf = Object.getPrototypeOf;
+var __hasOwnProp = Object.prototype.hasOwnProperty;
+var __export = (target, all) => {
+  for (var name in all)
+    __defProp(target, name, { get: all[name], enumerable: true });
+};
+var __copyProps = (to, from, except, desc) => {
+  if (from && typeof from === "object" || typeof from === "function") {
+    for (let key of __getOwnPropNames(from))
+      if (!__hasOwnProp.call(to, key) && key !== except)
+        __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
+  }
+  return to;
+};
+var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__getProtoOf(mod)) : {}, __copyProps(
+  // If the importer is in node compatibility mode or this is not an ESM
+  // file that has been converted to a CommonJS file using a Babel-
+  // compatible transform (i.e. "__esModule" has not been set), then set
+  // "default" to the CommonJS "module.exports" for node compatibility.
+  isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
+  mod
+));
+var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
+var PointsBalance_exports = {};
+__export(PointsBalance_exports, {
+  PointsBalance: () => PointsBalance,
+  default: () => PointsBalance_default
 });
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.PointsBalance = void 0;
-const mongoose_1 = __importStar(require("mongoose"));
-const pointsBalanceSchema = new mongoose_1.Schema({
+module.exports = __toCommonJS(PointsBalance_exports);
+var import_mongoose = __toESM(require("mongoose"));
+const pointsBalanceSchema = new import_mongoose.Schema(
+  {
     globalCustomerId: {
-        type: String,
-        required: [true, 'Global customer ID is required'],
-        trim: true,
-        lowercase: true,
+      type: String,
+      required: [true, "Global customer ID is required"],
+      trim: true,
+      lowercase: true
     },
     customerName: {
-        type: String,
-        required: [true, 'Customer name is required'],
-        trim: true,
+      type: String,
+      required: [true, "Customer name is required"],
+      trim: true
     },
     customerPhone: {
-        type: String,
-        trim: true,
+      type: String,
+      trim: true
     },
     customerEmail: {
-        type: String,
-        trim: true,
-        lowercase: true,
+      type: String,
+      trim: true,
+      lowercase: true
     },
     totalPoints: {
-        type: Number,
-        default: 0,
-        min: 0,
+      type: Number,
+      default: 0,
+      min: 0
     },
     availablePoints: {
-        type: Number,
-        default: 0,
-        min: 0,
+      type: Number,
+      default: 0,
+      min: 0
     },
     pendingPoints: {
-        type: Number,
-        default: 0,
-        min: 0,
+      type: Number,
+      default: 0,
+      min: 0
     },
     lifetimeEarned: {
-        type: Number,
-        default: 0,
-        min: 0,
+      type: Number,
+      default: 0,
+      min: 0
     },
     lifetimeSpent: {
-        type: Number,
-        default: 0,
-        min: 0,
+      type: Number,
+      default: 0,
+      min: 0
     },
     lastTransactionDate: {
-        type: Date,
-    },
-}, {
+      type: Date
+    }
+  },
+  {
     timestamps: true,
     toJSON: {
-        transform: function (doc, ret) {
-            ret.id = ret._id;
-            delete ret._id;
-            delete ret.__v;
-            return ret;
-        },
-    },
-});
-// CRITICAL INDEXES for performance
-// Unique global customer
+      transform: function(doc, ret) {
+        ret.id = ret._id;
+        delete ret._id;
+        delete ret.__v;
+        return ret;
+      }
+    }
+  }
+);
 pointsBalanceSchema.index({ globalCustomerId: 1 }, { unique: true });
-// Search by phone or email
 pointsBalanceSchema.index({ customerPhone: 1 });
 pointsBalanceSchema.index({ customerEmail: 1 });
-// List balances
 pointsBalanceSchema.index({ totalPoints: -1 });
 pointsBalanceSchema.index({ createdAt: -1 });
-exports.PointsBalance = mongoose_1.default.model('PointsBalance', pointsBalanceSchema);
-exports.default = exports.PointsBalance;
+const PointsBalance = import_mongoose.default.model(
+  "PointsBalance",
+  pointsBalanceSchema
+);
+var PointsBalance_default = PointsBalance;
+// Annotate the CommonJS export names for ESM import in node:
+0 && (module.exports = {
+  PointsBalance
+});

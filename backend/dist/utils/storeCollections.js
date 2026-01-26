@@ -1,64 +1,60 @@
 "use strict";
-/**
- * @deprecated This file is deprecated. All collections now use unified collections with storeId.
- *
- * This file is kept for backward compatibility but all functions are no-ops or return empty results.
- * All models now use unified collections:
- * - Product, Customer, Category, Brand, Unit, Sale, Warehouse all use unified collections with storeId
- * - Collections are created automatically by Mongoose when first document is inserted
- *
- * DO NOT USE THESE FUNCTIONS FOR NEW CODE.
- * Use the unified models directly from ../models/
- */
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.getStoreCollectionName = getStoreCollectionName;
-exports.getStoreModel = getStoreModel;
-exports.getDatabase = getDatabase;
-exports.collectionExists = collectionExists;
-exports.ensureCollectionExists = ensureCollectionExists;
-exports.createStoreCollections = createStoreCollections;
-const databaseManager_1 = require("./databaseManager");
-/**
- * @deprecated No longer needed - collections are unified with storeId
- */
+var __defProp = Object.defineProperty;
+var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __hasOwnProp = Object.prototype.hasOwnProperty;
+var __export = (target, all) => {
+  for (var name in all)
+    __defProp(target, name, { get: all[name], enumerable: true });
+};
+var __copyProps = (to, from, except, desc) => {
+  if (from && typeof from === "object" || typeof from === "function") {
+    for (let key of __getOwnPropNames(from))
+      if (!__hasOwnProp.call(to, key) && key !== except)
+        __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
+  }
+  return to;
+};
+var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
+var storeCollections_exports = {};
+__export(storeCollections_exports, {
+  collectionExists: () => collectionExists,
+  createStoreCollections: () => createStoreCollections,
+  ensureCollectionExists: () => ensureCollectionExists,
+  getDatabase: () => getDatabase,
+  getStoreCollectionName: () => getStoreCollectionName,
+  getStoreModel: () => getStoreModel
+});
+module.exports = __toCommonJS(storeCollections_exports);
+var import_databaseManager = require("./databaseManager");
 function getStoreCollectionName(prefix, collectionType) {
-    console.warn('⚠️ getStoreCollectionName is deprecated. Use unified collections with storeId instead.');
-    return `${prefix.toLowerCase()}_${collectionType}`;
+  console.warn("\u26A0\uFE0F getStoreCollectionName is deprecated. Use unified collections with storeId instead.");
+  return `${prefix.toLowerCase()}_${collectionType}`;
 }
-/**
- * @deprecated No longer needed - use unified models directly
- */
 async function getStoreModel(prefix, collectionType, schema, databaseId) {
-    console.warn('⚠️ getStoreModel is deprecated. Use unified models directly from ../models/');
-    throw new Error('getStoreModel is deprecated. Use unified models with storeId instead.');
+  console.warn("\u26A0\uFE0F getStoreModel is deprecated. Use unified models directly from ../models/");
+  throw new Error("getStoreModel is deprecated. Use unified models with storeId instead.");
 }
-/**
- * Get the database instance for a specific database
- * @param databaseId - Database ID (1-5)
- * @returns MongoDB database instance
- */
 async function getDatabase(databaseId) {
-    const connection = await (0, databaseManager_1.getDatabaseConnection)(databaseId);
-    return connection.db;
+  const connection = await (0, import_databaseManager.getDatabaseConnection)(databaseId);
+  return connection.db;
 }
-/**
- * @deprecated No longer needed - collections are unified with storeId
- */
 async function collectionExists(prefix, collectionType, databaseId) {
-    console.warn('⚠️ collectionExists is deprecated. Collections are now unified with storeId.');
-    return false;
+  console.warn("\u26A0\uFE0F collectionExists is deprecated. Collections are now unified with storeId.");
+  return false;
 }
-/**
- * @deprecated No longer needed - collections are created automatically by Mongoose
- */
 async function ensureCollectionExists(prefix, collectionType, databaseId) {
-    console.warn('⚠️ ensureCollectionExists is deprecated. Collections are created automatically by Mongoose.');
-    // No-op - collections are created automatically
+  console.warn("\u26A0\uFE0F ensureCollectionExists is deprecated. Collections are created automatically by Mongoose.");
 }
-/**
- * @deprecated No longer needed - collections are unified with storeId and created automatically
- */
 async function createStoreCollections(prefix, databaseId, storeId) {
-    console.warn('⚠️ createStoreCollections is deprecated. All collections are now unified with storeId and created automatically by Mongoose.');
-    // No-op - collections are created automatically when first document is inserted
+  console.warn("\u26A0\uFE0F createStoreCollections is deprecated. All collections are now unified with storeId and created automatically by Mongoose.");
 }
+// Annotate the CommonJS export names for ESM import in node:
+0 && (module.exports = {
+  collectionExists,
+  createStoreCollections,
+  ensureCollectionExists,
+  getDatabase,
+  getStoreCollectionName,
+  getStoreModel
+});
