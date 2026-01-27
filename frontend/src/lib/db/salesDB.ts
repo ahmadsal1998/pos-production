@@ -374,45 +374,99 @@ class SalesDB {
    * Get all unsynced sales
    */
   async getUnsyncedSales(storeId?: string): Promise<SaleRecord[]> {
-    const db = await this.ensureDB();
-    const transaction = db.transaction([STORE_NAME], 'readonly');
-    const store = transaction.objectStore(STORE_NAME);
+    try {
+      const db = await this.ensureDB();
+      
+      // Check if database connection is still valid
+      if (!db || db.objectStoreNames.length === 0) {
+        console.warn('[SalesDB] Database connection invalid, reinitializing...');
+        this.db = null;
+        this.initPromise = null;
+        const newDb = await this.ensureDB();
+        return this.getUnsyncedSales(storeId); // Retry once
+      }
 
-    return new Promise((resolve, reject) => {
-      const sales: SaleRecord[] = [];
-      
-      // Iterate through all sales and filter by synced status
-      // We can't use IDBKeyRange.only(false) because boolean values don't work well with key ranges
-      const request = store.openCursor();
-      
-      request.onsuccess = (event) => {
-        const cursor = (event.target as IDBRequest<IDBCursorWithValue>).result;
+      const transaction = db.transaction([STORE_NAME], 'readonly');
+      const store = transaction.objectStore(STORE_NAME);
+
+      return new Promise((resolve, reject) => {
+        const sales: SaleRecord[] = [];
         
-        if (cursor) {
-          const sale = cursor.value as SaleRecord;
-          
-          // Check if sale is unsynced (synced === false or undefined)
-          const isUnsynced = sale.synced === false || sale.synced === undefined;
-          
-          if (isUnsynced) {
-            // Filter by storeId if provided
-            if (!storeId || (sale.storeId && sale.storeId.toLowerCase().trim() === storeId.toLowerCase().trim())) {
-              sales.push(sale);
+        // Handle transaction errors
+        transaction.onerror = () => {
+          const error = transaction.error;
+          // Handle AbortError gracefully
+          if (error?.name === 'AbortError' || error?.message?.includes('connection was closed')) {
+            console.debug('[SalesDB] Transaction was aborted (non-critical)');
+            resolve([]); // Return empty array instead of rejecting
+          } else {
+            console.error('❌ Transaction error getting unsynced sales:', error);
+            reject(error);
+          }
+        };
+
+        transaction.onabort = () => {
+          console.debug('[SalesDB] Transaction was aborted');
+          resolve([]); // Return empty array instead of rejecting
+        };
+        
+        // Iterate through all sales and filter by synced status
+        // We can't use IDBKeyRange.only(false) because boolean values don't work well with key ranges
+        const request = store.openCursor();
+        
+        request.onsuccess = (event) => {
+          try {
+            const cursor = (event.target as IDBRequest<IDBCursorWithValue>).result;
+            
+            if (cursor) {
+              const sale = cursor.value as SaleRecord;
+              
+              // Check if sale is unsynced (synced === false or undefined)
+              const isUnsynced = sale.synced === false || sale.synced === undefined;
+              
+              if (isUnsynced) {
+                // Filter by storeId if provided
+                if (!storeId || (sale.storeId && sale.storeId.toLowerCase().trim() === storeId.toLowerCase().trim())) {
+                  sales.push(sale);
+                }
+              }
+              
+              cursor.continue();
+            } else {
+              // No more records
+              resolve(sales);
+            }
+          } catch (error: any) {
+            // Handle errors during cursor iteration
+            if (error?.name === 'AbortError' || error?.message?.includes('connection was closed')) {
+              console.debug('[SalesDB] Cursor iteration was aborted (non-critical)');
+              resolve(sales); // Return what we have so far
+            } else {
+              reject(error);
             }
           }
-          
-          cursor.continue();
-        } else {
-          // No more records
-          resolve(sales);
-        }
-      };
-      
-      request.onerror = () => {
-        console.error('❌ Error getting unsynced sales:', request.error);
-        reject(request.error);
-      };
-    });
+        };
+        
+        request.onerror = () => {
+          const error = request.error;
+          // Handle AbortError gracefully
+          if (error?.name === 'AbortError' || error?.message?.includes('connection was closed')) {
+            console.debug('[SalesDB] Request was aborted (non-critical)');
+            resolve([]); // Return empty array instead of rejecting
+          } else {
+            console.error('❌ Error getting unsynced sales:', error);
+            reject(error);
+          }
+        };
+      });
+    } catch (error: any) {
+      // Handle initialization errors
+      if (error?.name === 'AbortError' || error?.message?.includes('connection was closed')) {
+        console.debug('[SalesDB] Database operation was aborted (non-critical)');
+        return []; // Return empty array instead of throwing
+      }
+      throw error;
+    }
   }
 
   /**

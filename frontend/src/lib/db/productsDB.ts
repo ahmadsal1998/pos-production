@@ -400,7 +400,74 @@ class ProductsDB {
         const records = request.result as ProductRecord[];
         const products = records.map((record) => record.product);
 
-        // Search for exact barcode match
+        // PRIORITY 1: Check for scale barcodes FIRST (before exact matches)
+        // This ensures that scale barcodes like "1234000500" are recognized
+        // even if the base barcode "1234" exists as an exact match
+        for (const product of products) {
+          if (!product.isScaleBarcode || !product.baseBarcode || !product.scaleBarcodeFormat) {
+            continue;
+          }
+
+          const baseBarcode = product.baseBarcode.trim();
+          
+          // Check if scanned barcode starts with base barcode
+          if (!trimmedBarcode.startsWith(baseBarcode)) {
+            continue;
+          }
+
+          // If the scanned barcode is longer than the base barcode, it's likely a scale barcode
+          // Only check scale barcodes if the scanned barcode is longer than the base
+          if (trimmedBarcode.length <= baseBarcode.length) {
+            continue; // Skip - this might be an exact match, check that later
+          }
+
+          // Parse scale barcode
+          const format = product.scaleBarcodeFormat;
+          const weightStart = format.weightStartIndex;
+          const weightEnd = weightStart + format.weightLength;
+
+          if (weightEnd > trimmedBarcode.length) {
+            continue;
+          }
+
+          const weightString = trimmedBarcode.substring(weightStart, weightEnd);
+          const weight = parseInt(weightString, 10);
+
+          if (isNaN(weight) || weight <= 0) {
+            continue;
+          }
+
+          // Convert to grams if needed
+          let weightInGrams = weight;
+          if (format.weightUnit === 'kg') {
+            weightInGrams = weight * 1000;
+          }
+
+          // Create a modified product with the extracted weight
+          const scaleProduct = {
+            ...product,
+            extractedWeight: weightInGrams / 1000, // Weight in kg (for quantity calculation)
+            extractedWeightGrams: weightInGrams, // Weight in grams (for reference)
+            isScaleBarcodeProduct: true, // Flag to indicate this came from scale barcode
+            // Keep original price (price per kg) - POS will calculate total as price * quantity
+            // Quantity will be set to extractedWeight (in kg)
+          };
+
+          console.log('[ProductsDB] Scale barcode matched:', {
+            scannedBarcode: trimmedBarcode,
+            baseBarcode,
+            extractedWeight: weightInGrams / 1000,
+            extractedWeightGrams: weightInGrams,
+          });
+
+          resolve({
+            product: scaleProduct,
+            matchedUnit: null,
+          });
+          return;
+        }
+
+        // PRIORITY 2: Search for exact barcode match (only if scale barcode didn't match)
         for (const product of products) {
           // Check product barcode (exact match)
           const productBarcode = (product.barcode || product.primaryBarcode || '').trim();

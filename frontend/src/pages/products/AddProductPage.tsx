@@ -11,6 +11,7 @@ import { Brand, Unit, Category } from '@/shared/types';
 import { ApiError } from '@/lib/api/client';
 import { invalidateProductsCache, getStoreIdFromToken } from '@/lib/cache/productsCache';
 import { productSync } from '@/lib/sync/productSync';
+import { formatQuantityForDisplay } from '@/shared/utils';
 
 interface ProductFormData {
   // Basic Information
@@ -56,6 +57,14 @@ interface ProductFormData {
   };
   status: 'active' | 'inactive' | 'hidden';
   showInQuickProducts: boolean;
+  // Scale barcode support
+  isScaleBarcode: boolean;
+  baseBarcode: string;
+  scaleBarcodeFormat: {
+    weightStartIndex: number;
+    weightLength: number;
+    weightUnit: 'g' | 'kg';
+  } | null;
 }
 
 const AddProductPage: React.FC = () => {
@@ -108,6 +117,10 @@ const AddProductPage: React.FC = () => {
     },
     status: 'active',
     showInQuickProducts: false,
+    // Scale barcode support
+    isScaleBarcode: false,
+    baseBarcode: '',
+    scaleBarcodeFormat: null,
   });
 
   // State for "Add Stock" functionality
@@ -326,6 +339,10 @@ const AddProductPage: React.FC = () => {
                       },
                   status: product.status || 'active',
                   showInQuickProducts: product.showInQuickProducts === true,
+                  // Scale barcode support
+                  isScaleBarcode: product.isScaleBarcode === true,
+                  baseBarcode: product.baseBarcode || '',
+                  scaleBarcodeFormat: product.scaleBarcodeFormat || null,
                 };
                 
                 console.log('Setting form data:', formDataUpdate);
@@ -411,7 +428,7 @@ const AddProductPage: React.FC = () => {
       return; // Don't update formData, just open modal
     }
 
-    // Handle main unit selection - update first unit name when mainUnitId changes
+    // Handle main unit selection - update first unit name, barcode, and selling price when mainUnitId changes
     if (name === 'mainUnitId') {
       const selectedUnit = units.find(u => u.id === value);
       const newMainUnitName = selectedUnit?.nameAr || '';
@@ -419,20 +436,63 @@ const AddProductPage: React.FC = () => {
       setFormData(prev => {
         const updatedUnits = [...(prev.units || [])];
         
-        // If there's a first unit, update its name to match the selected main unit
+        // If there's a first unit, update its name, barcode, and selling price to match the main unit
         if (updatedUnits.length > 0 && newMainUnitName) {
           updatedUnits[0] = {
             ...updatedUnits[0],
             unitName: newMainUnitName,
+            // Inherit barcode from product primaryBarcode
+            barcode: prev.primaryBarcode || updatedUnits[0].barcode || '',
+            // Inherit selling price from product retailSellingPrice
+            sellingPrice: prev.retailSellingPrice || updatedUnits[0].sellingPrice || 0,
           };
         } else if (updatedUnits.length === 0 && newMainUnitName) {
-          // If no units exist yet, create the first unit with the main unit name
+          // If no units exist yet, create the first unit with the main unit data
           updatedUnits.push({
             unitName: newMainUnitName,
-            barcode: '',
-            sellingPrice: 0,
+            // Inherit barcode from product primaryBarcode
+            barcode: prev.primaryBarcode || '',
+            // Inherit selling price from product retailSellingPrice
+            sellingPrice: prev.retailSellingPrice || 0,
             order: 0,
           } as ProductUnit);
+        }
+        
+        return {
+          ...prev,
+          [name]: value,
+          units: updatedUnits,
+        };
+      });
+      return;
+    }
+    
+    // Handle primaryBarcode changes - sync with baseBarcode if scale barcode is enabled
+    if (name === 'primaryBarcode' && formData.isScaleBarcode) {
+      setFormData(prev => ({
+        ...prev,
+        baseBarcode: value as string,
+        scaleBarcodeFormat: prev.scaleBarcodeFormat ? {
+          ...prev.scaleBarcodeFormat,
+          weightStartIndex: (value as string).length,
+        } : null,
+      }));
+    }
+    
+    // Handle primaryBarcode or retailSellingPrice changes - update first unit if mainUnitId is set
+    if ((name === 'primaryBarcode' || name === 'retailSellingPrice') && formData.mainUnitId && formData.units.length > 0) {
+      setFormData(prev => {
+        const updatedUnits = [...(prev.units || [])];
+        
+        // Update first unit's barcode or selling price when product values change
+        if (updatedUnits.length > 0) {
+          updatedUnits[0] = {
+            ...updatedUnits[0],
+            // Update barcode if primaryBarcode changed
+            ...(name === 'primaryBarcode' && { barcode: value as string }),
+            // Update selling price if retailSellingPrice changed
+            ...(name === 'retailSellingPrice' && { sellingPrice: parseFloat(String(value)) || 0 }),
+          };
         }
         
         return {
@@ -1100,6 +1160,47 @@ const AddProductPage: React.FC = () => {
     return Object.keys(newErrors).length === 0;
   };
 
+  // Prevent form submission on Enter key press (especially from barcode scanners)
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLFormElement>) => {
+    // Prevent Enter key from submitting the form
+    // Only allow submission via explicit Save button click
+    if (e.key === 'Enter' || e.keyCode === 13) {
+      const target = e.target as HTMLElement;
+      
+      // Allow Enter in textarea fields (for description, etc.) - let it create new lines
+      if (target.tagName === 'TEXTAREA') {
+        return; // Allow Enter in textarea
+      }
+      
+      // Allow Enter on submit button (explicit button activation)
+      // This ensures the Save button can still be activated with Enter when focused
+      if (target.tagName === 'BUTTON' && (target as HTMLButtonElement).type === 'submit') {
+        // Only allow if the button is explicitly focused/clicked
+        // This maintains accessibility while preventing accidental submissions
+        return;
+      }
+      
+      // Prevent form submission on Enter in input/select fields or anywhere else
+      // This prevents barcode scanner Enter key from auto-submitting
+      if (target.tagName === 'INPUT' || target.tagName === 'SELECT' || target === e.currentTarget) {
+        e.preventDefault();
+        e.stopPropagation();
+        
+        // If Enter was pressed in an input/select field, move focus to next field
+        if (target.tagName === 'INPUT' || target.tagName === 'SELECT') {
+          const form = e.currentTarget;
+          const inputs = Array.from(
+            form.querySelectorAll('input:not([type="hidden"]):not([type="submit"]):not([type="button"]), select, textarea')
+          ) as HTMLElement[];
+          const currentIndex = inputs.indexOf(target);
+          if (currentIndex < inputs.length - 1) {
+            inputs[currentIndex + 1].focus();
+          }
+        }
+      }
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -1114,7 +1215,8 @@ const AddProductPage: React.FC = () => {
       // Ensure numeric fields are properly converted to numbers
       const costPrice = parseFloat(String(formData.costPrice)) || 0;
       const price = parseFloat(String(formData.retailSellingPrice)) || 0;
-      const initialQty = parseInt(String(formData.initialQuantity)) || 0;
+      // Preserve decimal values for initialQuantity (don't truncate with parseInt)
+      const initialQty = parseFloat(String(formData.initialQuantity)) || 0;
       
       // Ensure barcode is trimmed and not empty
       const barcode = formData.primaryBarcode?.trim() || '';
@@ -1149,6 +1251,19 @@ const AddProductPage: React.FC = () => {
       if (formData.discountRules?.enabled) productPayload.discountRules = formData.discountRules;
       if (formData.status) productPayload.status = formData.status;
       if (formData.wholesalePrice > 0) productPayload.wholesalePrice = parseFloat(String(formData.wholesalePrice));
+      
+      // Scale barcode support
+      if (formData.isScaleBarcode) {
+        productPayload.isScaleBarcode = true;
+        if (formData.baseBarcode?.trim()) {
+          productPayload.baseBarcode = formData.baseBarcode.trim();
+        }
+        if (formData.scaleBarcodeFormat) {
+          productPayload.scaleBarcodeFormat = formData.scaleBarcodeFormat;
+        }
+      } else {
+        productPayload.isScaleBarcode = false;
+      }
       
       // Process units: ensure they have order and proper structure
       if (formData.units && formData.units.length > 0) {
@@ -1290,7 +1405,7 @@ const AddProductPage: React.FC = () => {
         </p>
       </div>
 
-      <form onSubmit={handleSubmit} className="space-y-6">
+      <form onSubmit={handleSubmit} onKeyDown={handleKeyDown} className="space-y-6">
         {/* Main Layout: 50/50 split on large screens */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {/* Left Side: Basic Information */}
@@ -1353,6 +1468,145 @@ const AddProductPage: React.FC = () => {
                   <p className="mt-1 text-sm text-red-600 dark:text-red-400">
                     {errors.primaryBarcode}
                   </p>
+                )}
+              </div>
+
+              {/* Scale Barcode Configuration */}
+              <div className="border rounded-md p-4 bg-gray-50 dark:bg-gray-800">
+                <div className="flex items-center gap-2 mb-3">
+                  <input
+                    type="checkbox"
+                    id="isScaleBarcode"
+                    checked={formData.isScaleBarcode}
+                    onChange={(e) => {
+                      setFormData(prev => ({
+                        ...prev,
+                        isScaleBarcode: e.target.checked,
+                        baseBarcode: e.target.checked ? prev.primaryBarcode : '',
+                        scaleBarcodeFormat: e.target.checked ? {
+                          weightStartIndex: prev.primaryBarcode.length,
+                          weightLength: 6,
+                          weightUnit: 'g' as const,
+                        } : null,
+                      }));
+                    }}
+                    className="w-4 h-4 text-orange-600 border-gray-300 rounded focus:ring-orange-500"
+                  />
+                  <label htmlFor="isScaleBarcode" className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                    تفعيل الباركود الموزون (Scale Barcode)
+                  </label>
+                </div>
+                {formData.isScaleBarcode && (
+                  <div className="space-y-3 mt-3">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                        الباركود الأساسي (Base Barcode)
+                      </label>
+                      <input
+                        type="text"
+                        value={formData.baseBarcode}
+                        onChange={(e) => {
+                          const baseBarcode = e.target.value;
+                          setFormData(prev => ({
+                            ...prev,
+                            baseBarcode,
+                            scaleBarcodeFormat: prev.scaleBarcodeFormat ? {
+                              ...prev.scaleBarcodeFormat,
+                              weightStartIndex: baseBarcode.length,
+                            } : null,
+                          }));
+                        }}
+                        className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-orange-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200"
+                        placeholder="مثال: 123"
+                      />
+                      <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                        الباركود الأساسي الذي يبدأ به جميع الباركودات الموزونة (مثال: 123)
+                      </p>
+                    </div>
+                    {formData.scaleBarcodeFormat && (
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                            موضع الوزن (Weight Start Index)
+                          </label>
+                          <input
+                            type="number"
+                            value={formData.scaleBarcodeFormat.weightStartIndex}
+                            onChange={(e) => {
+                              const weightStartIndex = parseInt(e.target.value) || 0;
+                              setFormData(prev => ({
+                                ...prev,
+                                scaleBarcodeFormat: prev.scaleBarcodeFormat ? {
+                                  ...prev.scaleBarcodeFormat,
+                                  weightStartIndex,
+                                } : null,
+                              }));
+                            }}
+                            min="0"
+                            className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-orange-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200"
+                          />
+                          <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                            موضع بداية الوزن في الباركود (0 = أول حرف)
+                          </p>
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                            طول الوزن (Weight Length)
+                          </label>
+                          <input
+                            type="number"
+                            value={formData.scaleBarcodeFormat.weightLength}
+                            onChange={(e) => {
+                              const weightLength = parseInt(e.target.value) || 6;
+                              setFormData(prev => ({
+                                ...prev,
+                                scaleBarcodeFormat: prev.scaleBarcodeFormat ? {
+                                  ...prev.scaleBarcodeFormat,
+                                  weightLength,
+                                } : null,
+                              }));
+                            }}
+                            min="1"
+                            className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-orange-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200"
+                          />
+                          <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                            عدد الأرقام المخصصة للوزن (مثال: 6)
+                          </p>
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                            وحدة الوزن (Weight Unit)
+                          </label>
+                          <select
+                            value={formData.scaleBarcodeFormat.weightUnit}
+                            onChange={(e) => {
+                              const weightUnit = e.target.value as 'g' | 'kg';
+                              setFormData(prev => ({
+                                ...prev,
+                                scaleBarcodeFormat: prev.scaleBarcodeFormat ? {
+                                  ...prev.scaleBarcodeFormat,
+                                  weightUnit,
+                                } : null,
+                              }));
+                            }}
+                            className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-orange-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200"
+                          >
+                            <option value="g">جرام (g)</option>
+                            <option value="kg">كيلوجرام (kg)</option>
+                          </select>
+                        </div>
+                      </div>
+                    )}
+                    <div className="mt-2 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-md">
+                      <p className="text-xs text-blue-800 dark:text-blue-200">
+                        <strong>مثال:</strong> إذا كان الباركود الأساسي هو "123" وطول الوزن هو 6:
+                        <br />
+                        • 500 جرام → الباركود: <code className="bg-white dark:bg-gray-800 px-1 rounded">123000500</code>
+                        <br />
+                        • 800 جرام → الباركود: <code className="bg-white dark:bg-gray-800 px-1 rounded">123000800</code>
+                      </p>
+                    </div>
+                  </div>
                 )}
               </div>
 
@@ -1510,7 +1764,7 @@ const AddProductPage: React.FC = () => {
                 <input
                   type="number"
                   name="initialQuantity"
-                  value={formData.initialQuantity}
+                  value={formatQuantityForDisplay(formData.initialQuantity)}
                   onChange={handleInputChange}
                   min="0"
                   step="1"
@@ -1540,6 +1794,8 @@ const AddProductPage: React.FC = () => {
                   initialQuantity={formData.initialQuantity || 0}
                   availableUnits={units.map(u => ({ id: u.id, nameAr: u.nameAr }))}
                   mainUnitName={formData.mainUnitId ? units.find(u => u.id === formData.mainUnitId)?.nameAr : undefined}
+                  mainUnitBarcode={formData.mainUnitId ? formData.primaryBarcode : undefined}
+                  mainUnitSellingPrice={formData.mainUnitId ? formData.retailSellingPrice : undefined}
                 />
               </div>
 

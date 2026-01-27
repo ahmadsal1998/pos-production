@@ -1,6 +1,7 @@
 import { cache } from './redis';
 import { ProductDocument } from '../models/Product';
 import { getProductModelForStore } from './productModel';
+import { findProductByScaleBarcode } from './scaleBarcode';
 
 /**
  * Cache key generator for product barcode lookups
@@ -138,7 +139,38 @@ export async function getProductByBarcode(
   // Get trial-aware Product model
   const Product = await getProductModelForStore(storeId);
   
-  // Use compound index (storeId, barcode) for optimal performance
+  // PRIORITY 1: Check for scale barcodes FIRST (before exact matches)
+  // This ensures that scale barcodes like "1234000500" are recognized
+  // even if the base barcode "1234" exists as an exact match
+  const scaleBarcodeResult = await findProductByScaleBarcode(
+    Product,
+    storeId,
+    trimmedBarcode
+  );
+
+  if (scaleBarcodeResult) {
+    const { product, weight } = scaleBarcodeResult;
+    
+    // Create a modified product with the extracted weight as quantity
+    // The weight is stored in a special field for the frontend to use
+    const scaleProduct: any = {
+      ...product,
+      _id: product._id || product.id,
+      id: product._id?.toString() || product.id,
+      // Store the extracted weight for quantity calculation (in kg for pricing)
+      extractedWeight: weight / 1000, // Weight in kg (for quantity calculation)
+      extractedWeightGrams: weight, // Weight in grams (for reference)
+      isScaleBarcodeProduct: true, // Flag to indicate this came from scale barcode
+      // Keep original price (price per kg) - POS will calculate total as price * quantity
+      // Quantity will be set to extractedWeight (in kg)
+    };
+    
+    // Cache the scale product result
+    await cache.set(cacheKey, scaleProduct, 3600);
+    return scaleProduct as any;
+  }
+  
+  // PRIORITY 2: Use compound index (storeId, barcode) for exact match
   const product = await Product.findOne({
     storeId: storeId.toLowerCase(),
     barcode: trimmedBarcode,
@@ -151,7 +183,7 @@ export async function getProductByBarcode(
     return product as any;
   }
 
-  // Product not found - also check unit barcodes
+  // PRIORITY 3: Product not found - also check unit barcodes
   // CRITICAL: When a unit barcode matches, try to find the corresponding child product
   // This ensures unit barcodes return child product data, not parent product data
   const productWithUnit = await Product.findOne({
@@ -225,6 +257,7 @@ export async function getProductByBarcode(
     }
   }
 
+  // No match found
   return null;
 }
 

@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { AR_LABELS, EditIcon, DeleteIcon, SearchIcon } from '@/shared/constants';
 import { Product } from '@/shared/types';
-import { formatDate } from '@/shared/utils';
+import { formatDate, formatQuantityForDisplay } from '@/shared/utils';
 import { useConfirmDialog } from '@/shared/contexts';
 
 interface ProductPageProps {}
@@ -102,8 +102,8 @@ const ProductPage: React.FC<ProductPageProps> = () => {
                   <td className="px-6 py-4 whitespace-nowrap"><div className="text-sm text-gray-700 dark:text-gray-300">{product.category}</div></td>
                   <td className="px-6 py-4 whitespace-nowrap"><div className="text-sm text-gray-700 dark:text-gray-300">{product.price.toFixed(2)} ر.س</div></td>
                   <td className="px-6 py-4 whitespace-nowrap">
-                    <span className={`text-sm font-semibold ${product.stock < LOW_STOCK_THRESHOLD ? 'text-red-600 dark:text-red-400' : 'text-gray-700 dark:text-gray-300'}`}>
-                      {product.stock}
+                    <span className={`text-sm font-semibold ${formatQuantityForDisplay(product.stock) < LOW_STOCK_THRESHOLD ? 'text-red-600 dark:text-red-400' : 'text-gray-700 dark:text-gray-300'}`}>
+                      {formatQuantityForDisplay(product.stock)}
                     </span>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap"><div className="text-sm text-gray-700 dark:text-gray-300">{formatDate(product.expiryDate)}</div></td>

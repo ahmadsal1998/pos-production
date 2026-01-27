@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { AR_LABELS, EditIcon, DeleteIcon, SearchIcon, GridViewIcon, TableViewIcon } from '@/shared/constants';
 import { Product } from '@/shared/types';
 import ProductQuickActions from '@/features/products/components/ProductQuickActions';
-import { formatDate } from '@/shared/utils';
+import { formatDate, formatQuantityForDisplay } from '@/shared/utils';
 import { productsApi, categoriesApi } from '@/lib/api/client';
 import { getCachedProducts, setCachedProducts, getStoreIdFromToken, invalidateProductsCache } from '@/lib/cache/productsCache';
 import { productSync } from '@/lib/sync/productSync';
@@ -1250,8 +1250,8 @@ const ProductListPage: React.FC<ProductListPageProps> = () => {
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap"><div className="text-sm text-gray-700 dark:text-gray-300">{formatCurrency(product.price, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div></td>
                     <td className="px-6 py-4 whitespace-nowrap">
-                      <span className={`text-sm font-semibold ${product.stock < LOW_STOCK_THRESHOLD ? 'text-red-600 dark:text-red-400' : 'text-gray-700 dark:text-gray-300'}`}>
-                        {product.stock}
+                      <span className={`text-sm font-semibold ${formatQuantityForDisplay(product.stock) < LOW_STOCK_THRESHOLD ? 'text-red-600 dark:text-red-400' : 'text-gray-700 dark:text-gray-300'}`}>
+                        {formatQuantityForDisplay(product.stock)}
                       </span>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap"><div className="text-sm text-gray-700 dark:text-gray-300">{formatDate(product.expiryDate)}</div></td>
@@ -1304,8 +1304,8 @@ const ProductListPage: React.FC<ProductListPageProps> = () => {
                 <div>
                   <div className="flex justify-between items-start mb-2">
                     <h3 className="text-lg font-bold text-gray-800 dark:text-gray-100">{product.name}</h3>
-                    <span className={`text-xs font-semibold ${product.stock < LOW_STOCK_THRESHOLD ? 'text-red-600 dark:text-red-400' : 'text-gray-700 dark:text-gray-300'}`}>
-                      {product.stock}
+                    <span className={`text-xs font-semibold ${formatQuantityForDisplay(product.stock) < LOW_STOCK_THRESHOLD ? 'text-red-600 dark:text-red-400' : 'text-gray-700 dark:text-gray-300'}`}>
+                      {formatQuantityForDisplay(product.stock)}
                     </span>
                   </div>
                   <p className="text-sm text-gray-500 dark:text-gray-400">{AR_LABELS.barcode}: {product.barcode}</p>

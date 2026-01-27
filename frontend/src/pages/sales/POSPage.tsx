@@ -11,7 +11,7 @@ import { useCurrency } from '@/shared/contexts/CurrencyContext';
 import { saveSale } from '@/shared/utils/salesStorage';
 import { loadSettings, saveSettings } from '@/shared/utils/settingsStorage';
 import { playBeepSound, preloadBeepSound } from '@/shared/utils/soundUtils';
-import { convertArabicToEnglishNumerals } from '@/shared/utils';
+import { convertArabicToEnglishNumerals, formatQuantityForDisplay } from '@/shared/utils';
 import { useAuthStore } from '@/app/store';
 import { printReceipt } from '@/shared/utils/printUtils';
 import { productSync } from '@/lib/sync/productSync';
@@ -47,6 +47,17 @@ type POSProduct = Product & {
     description?: string;
     showInQuickProducts?: boolean;
     status?: string;
+    // Scale barcode properties
+    isScaleBarcode?: boolean;
+    isScaleBarcodeProduct?: boolean;
+    baseBarcode?: string;
+    scaleBarcodeFormat?: {
+        weightStartIndex: number;
+        weightLength: number;
+        weightUnit: 'g' | 'kg';
+    };
+    extractedWeight?: number; // Weight in kg (for quantity calculation)
+    extractedWeightGrams?: number; // Weight in grams (for reference)
 };
 
 // All dummy/fake customers have been removed. Customer list starts empty.
@@ -937,16 +948,26 @@ const POSPage: React.FC = () => {
         };
     }, []); // setSearchTerm is stable from useState, no need to include in deps
 
+    // Track if a check is in progress to prevent concurrent calls
+    const isCheckingUnsyncedRef = useRef(false);
+    
     // Function to check for unsynced sales (sales under review)
     // IMPORTANT: Only disable Confirm Payment for critical errors (duplicates), not just unsynced sales
     // Unsynced sales will sync automatically in the background without blocking new sales
     const checkUnsyncedSales = useCallback(async () => {
+        // Prevent concurrent calls
+        if (isCheckingUnsyncedRef.current) {
+            return;
+        }
+
         try {
             const storeId = user?.storeId;
             if (!storeId) {
                 setHasUnsyncedSales(false);
                 return;
             }
+
+            isCheckingUnsyncedRef.current = true;
 
             await salesDB.init();
             const unsyncedSales = await salesDB.getUnsyncedSales(storeId);
@@ -956,10 +977,19 @@ const POSPage: React.FC = () => {
                 console.log(`[POS] Found ${unsyncedSales.length} unsynced sale(s) - Will sync in background (not blocking)`);
             }
             setHasUnsyncedSales(false); // Never block new sales based on unsynced sales
-        } catch (error) {
-            console.error('[POS] Error checking for unsynced sales:', error);
+        } catch (error: any) {
+            // Handle AbortError gracefully - it's not a critical error
+            // AbortError occurs when IndexedDB transaction is cancelled (e.g., component unmounts, new request starts)
+            if (error?.name === 'AbortError' || error?.message?.includes('connection was closed')) {
+                // Silently ignore - this is expected when transactions are cancelled
+                console.debug('[POS] Unsynced sales check was cancelled (non-critical)');
+            } else {
+                console.error('[POS] Error checking for unsynced sales:', error);
+            }
             // On error, don't block payment - assume no critical errors
             setHasUnsyncedSales(false);
+        } finally {
+            isCheckingUnsyncedRef.current = false;
         }
     }, [user?.storeId]);
 
@@ -988,16 +1018,29 @@ const POSPage: React.FC = () => {
 
     // Check for unsynced sales on mount and periodically
     useEffect(() => {
-        // Initial check
-        checkUnsyncedSales();
+        let isMounted = true;
+        let intervalId: NodeJS.Timeout | null = null;
 
-        // Check every 2 seconds for unsynced sales
-        const interval = setInterval(() => {
-            checkUnsyncedSales();
-        }, 2000);
+        const checkWithMountGuard = async () => {
+            if (!isMounted) return;
+            await checkUnsyncedSales();
+        };
+
+        // Initial check
+        checkWithMountGuard();
+
+        // Check every 5 seconds for unsynced sales (reduced frequency to prevent conflicts)
+        intervalId = setInterval(() => {
+            if (isMounted) {
+                checkWithMountGuard();
+            }
+        }, 5000);
 
         return () => {
-            clearInterval(interval);
+            isMounted = false;
+            if (intervalId) {
+                clearInterval(intervalId);
+            }
         };
     }, [checkUnsyncedSales]);
 
@@ -1346,6 +1389,13 @@ const POSPage: React.FC = () => {
             description: p.description,
             showInQuickProducts: p.showInQuickProducts === true,
             status: p.status || 'active', // Store status for reference
+            // CRITICAL: Preserve scale barcode properties for scale barcode products
+            isScaleBarcode: p.isScaleBarcode || false,
+            isScaleBarcodeProduct: p.isScaleBarcodeProduct || false,
+            baseBarcode: p.baseBarcode || '',
+            scaleBarcodeFormat: p.scaleBarcodeFormat || undefined,
+            extractedWeight: p.extractedWeight !== undefined && p.extractedWeight !== null ? p.extractedWeight : undefined, // Weight in kg
+            extractedWeightGrams: p.extractedWeightGrams !== undefined && p.extractedWeightGrams !== null ? p.extractedWeightGrams : undefined, // Weight in grams
         };
     }, []);
 
@@ -2348,11 +2398,37 @@ const POSPage: React.FC = () => {
             : getUnitConversionFactor(finalProduct, unit);
 
         // piecesPerUnit determines how many pieces to add for this scan
-        const piecesPerUnit = piecesPerUnitOverride && piecesPerUnitOverride > 0
-            ? piecesPerUnitOverride
-            : unit === 'قطعة'
-                ? 1
-                : piecesPerMainUnit;
+        // CRITICAL: For scale barcode products, always use extractedWeight if available
+        const isScaleBarcodeProduct = finalProduct.isScaleBarcodeProduct || finalProduct.isScaleBarcode;
+        const extractedWeight = finalProduct.extractedWeight; // Weight in kg
+        
+        // Debug logging for scale barcode products
+        if (isScaleBarcodeProduct || finalProduct.baseBarcode) {
+            console.log('[POS] Scale barcode product detected in handleAddProduct:', {
+                productName: finalProduct.name,
+                isScaleBarcodeProduct,
+                isScaleBarcode: finalProduct.isScaleBarcode,
+                baseBarcode: finalProduct.baseBarcode,
+                extractedWeight,
+                extractedWeightGrams: finalProduct.extractedWeightGrams,
+                piecesPerUnitOverride,
+            });
+        }
+        
+        let piecesPerUnit: number;
+        if (isScaleBarcodeProduct && extractedWeight !== undefined && extractedWeight !== null && extractedWeight > 0) {
+            // For scale barcode products, use extracted weight as quantity
+            piecesPerUnit = extractedWeight;
+            console.log(`[POS] ✅ Using extracted weight for scale barcode product: ${extractedWeight}kg (${finalProduct.extractedWeightGrams || extractedWeight * 1000}g)`);
+        } else if (piecesPerUnitOverride !== undefined && piecesPerUnitOverride !== null && piecesPerUnitOverride > 0) {
+            // Use override if provided (for unit barcodes, etc.)
+            piecesPerUnit = piecesPerUnitOverride;
+            console.log(`[POS] Using piecesPerUnitOverride: ${piecesPerUnitOverride}`);
+        } else {
+            // Default logic: 1 for 'قطعة', otherwise use piecesPerMainUnit
+            piecesPerUnit = unit === 'قطعة' ? 1 : piecesPerMainUnit;
+            console.log(`[POS] Using default piecesPerUnit: ${piecesPerUnit} (unit: ${unit})`);
+        }
 
         // Calculate the unit price
         // Priority: unitPriceOverride > product price (for base unit or no units) > calculated per-piece price
@@ -2362,7 +2438,12 @@ const POSPage: React.FC = () => {
         } else {
             // Always use retail price with unit conversion
             const basePrice = finalProduct.price;
-            if (finalProduct.units && finalProduct.units.length > 0 && unit !== 'قطعة') {
+            if (isScaleBarcodeProduct) {
+                // For scale barcode products, basePrice is already price per kg
+                // Use it directly - total will be calculated as pricePerKg * weightInKg
+                incomingUnitPrice = basePrice;
+                console.log(`[POS] Scale barcode product - using price per kg: ${basePrice}, weight: ${extractedWeight}kg`);
+            } else if (finalProduct.units && finalProduct.units.length > 0 && unit !== 'قطعة') {
                 // Product has units and we're using a specific unit - calculate per-piece price
                 incomingUnitPrice = piecesPerMainUnit > 0 ? (basePrice / piecesPerMainUnit) : basePrice;
             } else {
@@ -2501,6 +2582,66 @@ const POSPage: React.FC = () => {
     
     type SearchMatch = { product: POSProduct; unitName: string; unitPrice: number; barcode?: string; conversionFactor?: number; piecesPerUnit?: number };
 
+    // Helper function to calculate unit cost price based on parent cost price and unit hierarchy
+    // This matches the backend logic in createPseudoProductFromUnit
+    const calculateUnitCostPrice = useCallback((parentProduct: any, matchedUnit: any | null): number => {
+        if (!matchedUnit) {
+            // No unit matched - use parent cost price directly
+            return parseFloat(parentProduct.costPrice) || 0;
+        }
+
+        const allUnits = parentProduct.units || [];
+        const matchedUnitOrder = matchedUnit.order ?? 0;
+        const isMainUnit = matchedUnitOrder === 0;
+
+        // If this is the main unit (order 0), use parent cost directly
+        if (isMainUnit) {
+            return parseFloat(parentProduct.costPrice) || 0;
+        }
+
+        // Calculate cumulative conversion factor from main unit to matched unit
+        // This matches the calculation in HierarchicalUnitsManager.calculateTotalQuantityAtLevel
+        let cumulativeConversionFactor = 1;
+
+        if (allUnits.length > 0) {
+            // Find all units with order >= 1 and <= matchedUnitOrder, sorted by order
+            const unitsInPath = allUnits
+                .filter((u: any) => {
+                    const uOrder = u.order ?? 0;
+                    return uOrder >= 1 && uOrder <= matchedUnitOrder;
+                })
+                .sort((a: any, b: any) => {
+                    const aOrder = a.order ?? 0;
+                    const bOrder = b.order ?? 0;
+                    return aOrder - bOrder;
+                });
+
+            // Multiply by all unitsInPrevious values in the path from main unit to matched unit
+            for (const currentUnit of unitsInPath) {
+                const unitsInPrev = currentUnit.unitsInPrevious || 1;
+                if (unitsInPrev > 0) {
+                    cumulativeConversionFactor *= unitsInPrev;
+                }
+            }
+        }
+
+        // Calculate cost price for the unit
+        // Divide by cumulative conversion factor to get cost per unit
+        // For example, if parent cost is 100 for 1 main unit, and cumulative factor is 15,
+        // then unit cost is 100 / 15 = 6.67
+        const parentCostPrice = parseFloat(parentProduct.costPrice) || 0;
+        
+        if (cumulativeConversionFactor > 0) {
+            return parentCostPrice / cumulativeConversionFactor;
+        } else if (matchedUnit.conversionFactor && matchedUnit.conversionFactor > 0) {
+            // Fallback to legacy conversionFactor if unitsInPrevious is not available
+            return parentCostPrice / matchedUnit.conversionFactor;
+        }
+
+        // Final fallback: return parent cost price
+        return parentCostPrice;
+    }, []);
+
     // Server-side search function (fallback when client-side products aren't loaded)
     const searchProductsOnServer = useCallback(async (term: string): Promise<SearchMatch[]> => {
         const trimmed = term.trim();
@@ -2557,8 +2698,17 @@ const POSPage: React.FC = () => {
                             )) {
                                 // For units, use unit's sellingPrice if available, otherwise calculate from retail price
                                 const perPiecePrice = u.sellingPrice || (piecesPerMainUnit > 0 ? (normalizedProduct.price / piecesPerMainUnit) : normalizedProduct.price);
+                                
+                                // CRITICAL FIX: Calculate unit-specific cost price
+                                const unitCostPrice = calculateUnitCostPrice(p, u);
+                                const productWithUnitCost = {
+                                    ...normalizedProduct,
+                                    costPrice: unitCostPrice,
+                                    cost: unitCostPrice,
+                                };
+                                
                                 results.push({ 
-                                    product: normalizedProduct, 
+                                    product: productWithUnitCost, 
                                     unitName: u.unitName || 'قطعة', 
                                     unitPrice: perPiecePrice, 
                                     barcode: u.barcode, 
@@ -2605,7 +2755,7 @@ const POSPage: React.FC = () => {
         } finally {
             setIsSearchingServer(false);
         }
-    }, [normalizeProduct, getPiecesPerMainUnit]);
+    }, [normalizeProduct, getPiecesPerMainUnit, calculateUnitCostPrice]);
 
     // Client-side search function (uses IndexedDB for fast search)
     const resolveSearchMatches = useCallback(async (term: string): Promise<SearchMatch[]> => {
@@ -2652,9 +2802,18 @@ const POSPage: React.FC = () => {
                         if (u.barcode && (u.barcode === trimmed || u.barcode.toLowerCase() === lower)) {
                             // For units, use unit's sellingPrice if available, otherwise calculate from retail price
                             const perPiecePrice = u.sellingPrice || (piecesPerMainUnit > 0 ? (normalizedProduct.price / piecesPerMainUnit) : normalizedProduct.price);
+                            
+                            // CRITICAL FIX: Calculate unit-specific cost price
+                            const unitCostPrice = calculateUnitCostPrice(p, u);
+                            const productWithUnitCost = {
+                                ...normalizedProduct,
+                                costPrice: unitCostPrice,
+                                cost: unitCostPrice,
+                            };
+                            
                             // Secondary units are counted as 1 piece per scan
                             results.push({ 
-                                product: normalizedProduct, 
+                                product: productWithUnitCost, 
                                 unitName: u.unitName || 'قطعة', 
                                 unitPrice: perPiecePrice, 
                                 barcode: u.barcode, 
@@ -2707,7 +2866,7 @@ const POSPage: React.FC = () => {
             });
             return results;
         }
-    }, [products, normalizeProduct, getPiecesPerMainUnit]);
+    }, [products, normalizeProduct, getPiecesPerMainUnit, calculateUnitCostPrice]);
 
     // Helper function to check if input is a barcode (numeric only)
     const isBarcodeInput = useCallback((input: string): boolean => {
@@ -2781,7 +2940,51 @@ const POSPage: React.FC = () => {
                 
                 // Normalize the product
                 const normalizedProduct = normalizeProduct(dbResult.product);
-                const { unitName, unitPrice, conversionFactor, piecesPerUnit } = extractUnitInfo(normalizedProduct, dbResult.matchedUnit);
+                
+                // Debug: Log scale barcode properties after normalization
+                if (dbResult.product.isScaleBarcodeProduct || dbResult.product.isScaleBarcode) {
+                    console.log('[POS] Scale barcode properties after normalization:', {
+                        beforeNormalize: {
+                            isScaleBarcodeProduct: dbResult.product.isScaleBarcodeProduct,
+                            isScaleBarcode: dbResult.product.isScaleBarcode,
+                            extractedWeight: dbResult.product.extractedWeight,
+                            extractedWeightGrams: dbResult.product.extractedWeightGrams,
+                        },
+                        afterNormalize: {
+                            isScaleBarcodeProduct: normalizedProduct.isScaleBarcodeProduct,
+                            isScaleBarcode: normalizedProduct.isScaleBarcode,
+                            extractedWeight: normalizedProduct.extractedWeight,
+                            extractedWeightGrams: normalizedProduct.extractedWeightGrams,
+                        },
+                    });
+                }
+                
+                // Check if this is a scale barcode product
+                const isScaleBarcode = normalizedProduct.isScaleBarcodeProduct || normalizedProduct.isScaleBarcode;
+                const extractedWeight = normalizedProduct.extractedWeight; // Weight in kg (for quantity calculation)
+                
+                // CRITICAL FIX: If a unit barcode was matched, calculate the unit-specific cost price
+                // This ensures cost price matches the same unit as the selling price
+                if (dbResult.matchedUnit) {
+                    const unitCostPrice = calculateUnitCostPrice(dbResult.product, dbResult.matchedUnit);
+                    normalizedProduct.costPrice = unitCostPrice;
+                    normalizedProduct.cost = unitCostPrice;
+                    console.log(`[POS] ✅ Unit barcode matched - using unit cost price: ${unitCostPrice} (parent cost: ${dbResult.product.costPrice || 0})`);
+                }
+                
+                let { unitName, unitPrice, conversionFactor, piecesPerUnit } = extractUnitInfo(normalizedProduct, dbResult.matchedUnit);
+                
+                // For scale barcode products, use extracted weight as quantity
+                // extractedWeight is already in kg (converted in productsDB)
+                let finalPiecesPerUnit = piecesPerUnit;
+                if (isScaleBarcode && extractedWeight) {
+                    // Use extracted weight (in kg) as quantity
+                    finalPiecesPerUnit = extractedWeight;
+                    // Use appropriate unit name for scale barcode products
+                    const weightUnit = normalizedProduct.scaleBarcodeFormat?.weightUnit || 'g';
+                    unitName = weightUnit === 'kg' ? 'كيلوجرام' : 'جرام';
+                    console.log(`[POS] ✅ Scale barcode detected - scanned: "${trimmed}", base: "${normalizedProduct.baseBarcode}", extracted weight: ${normalizedProduct.extractedWeightGrams || extractedWeight * 1000}${weightUnit} (${finalPiecesPerUnit}kg for quantity)`);
+                }
                 
                 // Return immediately with product from IndexedDB
                 // No API calls - instant response for reliable POS operation
@@ -2791,7 +2994,7 @@ const POSPage: React.FC = () => {
                     unitName,
                     unitPrice,
                     conversionFactor,
-                    piecesPerUnit,
+                    piecesPerUnit: finalPiecesPerUnit,
                 };
             } else {
                 // Product not found in IndexedDB
@@ -2804,7 +3007,7 @@ const POSPage: React.FC = () => {
             console.error('[POS] ❌ Error searching IndexedDB for barcode:', error);
             return { success: false };
         }
-    }, [normalizeProduct, extractUnitInfo, showToast]);
+    }, [normalizeProduct, extractUnitInfo, calculateUnitCostPrice, showToast]);
 
     // Handler to load product from server search notification
     const handleLoadProductFromNotification = useCallback(async () => {
@@ -4099,6 +4302,9 @@ const POSPage: React.FC = () => {
                     quantity: item.quantity,
                     unitPrice: item.unitPrice,
                     totalPrice: item.total - (item.discount * item.quantity),
+                    // CRITICAL FIX: Include costPrice from cart item to ensure unit-specific cost price is used
+                    // This ensures net profit calculation uses the correct cost price (unit or parent) that was displayed during sale
+                    costPrice: item.costPrice || item.cost || 0,
                     unit: item.unit,
                     discount: item.discount,
                     conversionFactor: item.conversionFactor,
@@ -5496,7 +5702,7 @@ const POSPage: React.FC = () => {
                                             {item.name}
                                         </td>
                                         <td className="py-3.5 px-4 text-center text-gray-700 dark:text-gray-300 font-medium">
-                                            {Math.abs(item.quantity)}
+                                            {formatQuantityForDisplay(Math.abs(item.quantity))}
                                         </td>
                                         <td className={`py-3.5 px-4 text-center font-medium ${isReturn ? 'text-red-600 dark:text-red-400' : 'text-gray-700 dark:text-gray-300'}`}>
                                             {formatCurrency(itemUnitPrice)}

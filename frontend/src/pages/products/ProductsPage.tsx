@@ -6,6 +6,7 @@ import { MetricCard } from '../../shared/components/ui/MetricCard';
 import { productsApi, ApiError } from '@/lib/api/client';
 import { getCachedProducts, setCachedProducts, invalidateProductsCache, getStoreIdFromToken } from '@/lib/cache/productsCache';
 import { useResponsiveViewMode } from '../../shared/hooks';
+import { formatQuantityForDisplay } from '../../shared/utils';
 
 // Enhanced Product interface with image and status
 interface EnhancedProduct extends Product {
@@ -351,7 +352,7 @@ const ProductsPage: React.FC<ProductsPageProps> = ({ onAddProduct, onProductClic
           </div>
           <div className="flex justify-between">
             <span>المخزون:</span>
-            <span className="font-medium">{product.stock} قطعة</span>
+            <span className="font-medium">{formatQuantityForDisplay(product.stock)} قطعة</span>
           </div>
           {product.sku && (
             <div className="flex justify-between">
@@ -429,7 +430,7 @@ const ProductsPage: React.FC<ProductsPageProps> = ({ onAddProduct, onProductClic
         {product.price} ر.س
       </td>
       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-400">
-        {product.stock} قطعة
+        {formatQuantityForDisplay(product.stock)} قطعة
       </td>
       <td className="px-6 py-4 whitespace-nowrap">
         {getStatusBadge(product.status)}

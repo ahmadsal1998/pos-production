@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { ProductUnit } from '@/features/products/types/product.types';
+import { formatQuantityForDisplay } from '@/shared/utils';
 
 interface AvailableUnit {
   id: string;
@@ -13,6 +14,8 @@ interface HierarchicalUnitsManagerProps {
   initialQuantity?: number; // Number of boxes (largest unit)
   availableUnits?: AvailableUnit[];
   mainUnitName?: string; // Name of the main unit from mainUnitId selection (for first level unit)
+  mainUnitBarcode?: string; // Barcode to inherit for the main unit (from product primaryBarcode)
+  mainUnitSellingPrice?: number; // Selling price to inherit for the main unit (from product retailSellingPrice)
 }
 
 const HierarchicalUnitsManager: React.FC<HierarchicalUnitsManagerProps> = ({
@@ -22,6 +25,8 @@ const HierarchicalUnitsManager: React.FC<HierarchicalUnitsManagerProps> = ({
   initialQuantity = 0,
   availableUnits = [],
   mainUnitName,
+  mainUnitBarcode,
+  mainUnitSellingPrice,
 }) => {
   const [units, setUnits] = useState<ProductUnit[]>(initialUnits || []);
   const prevInitialUnitsRef = useRef<string>('');
@@ -48,14 +53,35 @@ const HierarchicalUnitsManager: React.FC<HierarchicalUnitsManagerProps> = ({
     }
   }, [initialUnits]);
 
-  // Update first unit name when mainUnitName changes
+  // Update first unit data when mainUnitName, mainUnitBarcode, or mainUnitSellingPrice changes
   useEffect(() => {
     if (mainUnitName && units.length > 0) {
       const firstUnit = units[0];
+      let needsUpdate = false;
+      const updates: Partial<ProductUnit> = {};
+      
+      // Check if name needs update
       if (firstUnit && firstUnit.unitName !== mainUnitName) {
+        updates.unitName = mainUnitName;
+        needsUpdate = true;
+      }
+      
+      // Check if barcode needs update (only if provided and different)
+      if (mainUnitBarcode !== undefined && firstUnit && firstUnit.barcode !== mainUnitBarcode) {
+        updates.barcode = mainUnitBarcode;
+        needsUpdate = true;
+      }
+      
+      // Check if selling price needs update (only if provided and different)
+      if (mainUnitSellingPrice !== undefined && firstUnit && firstUnit.sellingPrice !== mainUnitSellingPrice) {
+        updates.sellingPrice = mainUnitSellingPrice;
+        needsUpdate = true;
+      }
+      
+      if (needsUpdate) {
         const updatedUnits = units.map((unit, index) => {
           if (index === 0) {
-            return { ...unit, unitName: mainUnitName };
+            return { ...unit, ...updates };
           }
           return unit;
         });
@@ -68,7 +94,7 @@ const HierarchicalUnitsManager: React.FC<HierarchicalUnitsManagerProps> = ({
         }, 100);
       }
     }
-  }, [mainUnitName, units]);
+  }, [mainUnitName, mainUnitBarcode, mainUnitSellingPrice, units]);
 
   // Remove the automatic onChange useEffect - we'll call it manually in handlers
   // This prevents infinite loops by only notifying when user makes changes
@@ -134,10 +160,20 @@ const HierarchicalUnitsManager: React.FC<HierarchicalUnitsManagerProps> = ({
   };
 
   const handleUnitChange = (index: number, field: keyof ProductUnit | 'unitsInPrevious', value: string | number) => {
-    // Prevent editing the first unit's name if mainUnitName is provided
-    if (index === 0 && field === 'unitName' && mainUnitName) {
-      // Don't allow changing the first unit name - it's read-only
-      return;
+    // Prevent editing the first unit's name, barcode, or selling price if main unit data is provided
+    if (index === 0) {
+      if (field === 'unitName' && mainUnitName) {
+        // Don't allow changing the first unit name - it's read-only
+        return;
+      }
+      if (field === 'barcode' && mainUnitBarcode !== undefined) {
+        // Don't allow changing the first unit barcode - it's read-only (inherited)
+        return;
+      }
+      if (field === 'sellingPrice' && mainUnitSellingPrice !== undefined) {
+        // Don't allow changing the first unit selling price - it's read-only (inherited)
+        return;
+      }
     }
 
     const newUnits = units.map((unit, i) => {
@@ -301,7 +337,7 @@ const HierarchicalUnitsManager: React.FC<HierarchicalUnitsManagerProps> = ({
               {index === 0 && (
                 <div className="p-2 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-md">
                   <p className="text-xs font-medium text-blue-700 dark:text-blue-400">
-                    ✓ إجمالي {unit.unitName || 'الوحدة'}: <span className="font-bold">{initialQuantity || 0}</span>
+                    ✓ إجمالي {unit.unitName || 'الوحدة'}: <span className="font-bold">{formatQuantityForDisplay(initialQuantity || 0)}</span>
                   </p>
                   <p className="text-xs text-blue-600 dark:text-blue-500 mt-1">
                     هذا هو عدد {unit.unitName || 'الوحدة'} التي تم إدخالها
@@ -361,10 +397,10 @@ const HierarchicalUnitsManager: React.FC<HierarchicalUnitsManagerProps> = ({
                     return (
                       <div className="mt-2 p-2 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-md">
                         <p className="text-xs font-medium text-green-700 dark:text-green-400">
-                          ✓ إجمالي {currentUnitName}: <span className="font-bold">{totalQty}</span> (محسوب تلقائياً)
+                          ✓ إجمالي {currentUnitName}: <span className="font-bold">{formatQuantityForDisplay(totalQty)}</span> (محسوب تلقائياً)
                         </p>
                         <p className="text-xs text-green-600 dark:text-green-500 mt-1">
-                          {prevTotal} {prevUnitName} × {unitsInPrev} {currentUnitName} = {totalQty} {currentUnitName}
+                          {formatQuantityForDisplay(prevTotal)} {prevUnitName} × {unitsInPrev} {currentUnitName} = {formatQuantityForDisplay(totalQty)} {currentUnitName}
                         </p>
                       </div>
                     );
@@ -377,13 +413,30 @@ const HierarchicalUnitsManager: React.FC<HierarchicalUnitsManagerProps> = ({
                 <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
                   الباركود
                 </label>
-                <input
-                  type="text"
-                  value={unit.barcode || ''}
-                  onChange={(e) => handleUnitChange(index, 'barcode', e.target.value)}
-                  className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200"
-                  placeholder="باركود فريد للوحدة"
-                />
+                {index === 0 && mainUnitBarcode !== undefined ? (
+                  // First level unit: read-only, inherited from product primaryBarcode
+                  <input
+                    type="text"
+                    value={mainUnitBarcode}
+                    readOnly
+                    disabled
+                    className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 cursor-not-allowed"
+                    title="باركود الوحدة الرئيسية (موروث من باركود المنتج)"
+                  />
+                ) : (
+                  <input
+                    type="text"
+                    value={unit.barcode || ''}
+                    onChange={(e) => handleUnitChange(index, 'barcode', e.target.value)}
+                    className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200"
+                    placeholder="باركود فريد للوحدة"
+                  />
+                )}
+                {index === 0 && mainUnitBarcode !== undefined && (
+                  <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    باركود الوحدة الرئيسية مأخوذ من باركود المنتج
+                  </p>
+                )}
               </div>
 
               {/* Selling Price */}
@@ -391,15 +444,34 @@ const HierarchicalUnitsManager: React.FC<HierarchicalUnitsManagerProps> = ({
                 <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
                   سعر البيع <span className="text-red-500">*</span>
                 </label>
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={unit.sellingPrice || 0}
-                  onChange={(e) => handleUnitChange(index, 'sellingPrice', parseFloat(e.target.value) || 0)}
-                  className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200"
-                  placeholder="0.00"
-                />
+                {index === 0 && mainUnitSellingPrice !== undefined ? (
+                  // First level unit: read-only, inherited from product retailSellingPrice
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={mainUnitSellingPrice}
+                    readOnly
+                    disabled
+                    className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 cursor-not-allowed"
+                    title="سعر بيع الوحدة الرئيسية (موروث من سعر بيع المنتج)"
+                  />
+                ) : (
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={unit.sellingPrice || 0}
+                    onChange={(e) => handleUnitChange(index, 'sellingPrice', parseFloat(e.target.value) || 0)}
+                    className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200"
+                    placeholder="0.00"
+                  />
+                )}
+                {index === 0 && mainUnitSellingPrice !== undefined && (
+                  <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    سعر بيع الوحدة الرئيسية مأخوذ من سعر بيع المنتج
+                  </p>
+                )}
               </div>
             </div>
           </div>
@@ -417,7 +489,7 @@ const HierarchicalUnitsManager: React.FC<HierarchicalUnitsManagerProps> = ({
               ملخص الحسابات
             </h4>
             <p className="text-xs text-purple-700 dark:text-purple-400">
-              إجمالي {smallestUnit?.unitName || 'أصغر وحدة'}: <span className="font-bold">{totalSmallest}</span>
+              إجمالي {smallestUnit?.unitName || 'أصغر وحدة'}: <span className="font-bold">{formatQuantityForDisplay(totalSmallest)}</span>
             </p>
             <p className="text-xs text-purple-600 dark:text-purple-500 mt-1">
               هذا هو الرقم المرجعي المستخدم في جميع العمليات (المبيعات، المخزون، إلخ)

@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { AR_LABELS } from '@/shared/constants';
 import { useCurrency } from '@/shared/contexts/CurrencyContext';
 import { SaleTransaction } from '@/shared/types';
+import { formatQuantityForDisplay } from '@/shared/utils';
 
 const PublicInvoicePage: React.FC = () => {
   const { invoiceNumber, storeId } = useParams<{ invoiceNumber: string; storeId?: string }>();
@@ -159,7 +160,7 @@ const PublicInvoicePage: React.FC = () => {
                   return (
                     <tr key={idx} className="border-b border-gray-200 dark:border-gray-700">
                       <td className="py-3 px-4 text-right font-medium text-gray-900 dark:text-gray-100">{itemName}</td>
-                      <td className="py-3 px-4 text-center text-gray-700 dark:text-gray-300">{Math.abs(item.quantity || 0)}</td>
+                      <td className="py-3 px-4 text-center text-gray-700 dark:text-gray-300">{formatQuantityForDisplay(Math.abs(item.quantity || 0))}</td>
                       <td className={`py-3 px-4 text-center ${isReturn ? 'text-red-600 dark:text-red-400' : 'text-gray-700 dark:text-gray-300'}`}>
                         {formatCurrency(itemUnitPrice)}
                       </td>

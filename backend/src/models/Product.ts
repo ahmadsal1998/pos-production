@@ -44,6 +44,14 @@ export interface ProductDocument extends Document {
   images?: string[];
   showInQuickProducts?: boolean;
   parentProductId?: string; // Reference to parent product (for child products)
+  // Scale barcode support
+  isScaleBarcode?: boolean; // Whether this product uses scale/weight-based barcodes
+  baseBarcode?: string; // Base barcode (e.g., "123")
+  scaleBarcodeFormat?: {
+    weightStartIndex: number; // Starting position of weight in barcode (0-based)
+    weightLength: number; // Length of weight digits
+    weightUnit: 'g' | 'kg'; // Unit for weight (grams or kilograms)
+  };
   createdAt: Date;
   updatedAt: Date;
 }
@@ -221,6 +229,30 @@ const productSchema = new Schema(
       type: String,
       trim: true,
       default: null,
+    },
+    // Scale barcode support
+    isScaleBarcode: {
+      type: Boolean,
+      default: false,
+    },
+    baseBarcode: {
+      type: String,
+      trim: true,
+    },
+    scaleBarcodeFormat: {
+      weightStartIndex: {
+        type: Number,
+        min: [0, 'Weight start index must be non-negative'],
+      },
+      weightLength: {
+        type: Number,
+        min: [1, 'Weight length must be at least 1'],
+      },
+      weightUnit: {
+        type: String,
+        enum: ['g', 'kg'],
+        default: 'g',
+      },
     },
   },
   {

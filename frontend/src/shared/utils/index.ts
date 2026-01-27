@@ -92,3 +92,17 @@ export const convertArabicToEnglishNumerals = (text: string): string => {
   
   return text.replace(/[٠-٩]/g, (char) => arabicToEnglish[char] || char);
 };
+
+/**
+ * Formats quantity for display in the UI
+ * Uses Math.floor to display only the integer part (no rounding)
+ * Backend stores the actual decimal value, but UI shows integer only
+ * @param quantity - The quantity value (can be decimal)
+ * @returns The floored integer value for display
+ */
+export const formatQuantityForDisplay = (quantity: number | null | undefined): number => {
+  if (quantity == null || !Number.isFinite(quantity)) {
+    return 0;
+  }
+  return Math.floor(quantity);
+};
