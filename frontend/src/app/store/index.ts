@@ -1,9 +1,9 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import axios from 'axios';
+import { authApi } from '@/lib/api/client';
 import { cleanupAllIndexedDB } from '../../lib/db/indexedDBCleanup';
-import { productSync } from '../../lib/sync/productSync';
-import { customerSync } from '../../lib/sync/customerSync';
+import { runSyncOnLogin } from '../../lib/sync/runSyncOnLogin';
+import { clearAllProductsCaches } from '@/lib/cache/productsCache';
 
 // Auth types
 export interface User {
@@ -14,6 +14,7 @@ export interface User {
   permissions: string[];
   fullName?: string;
   storeId?: string | null; // null for system/admin users, string for store-specific users
+  storeTypeName?: string | null; // Store type name (e.g., "Other", "Restaurant", "Supermarket")
 }
 
 export interface SubscriptionStatus {
@@ -27,6 +28,15 @@ export interface LoginCredentials {
   password: string;
 }
 
+/** Last sync result (products + customers) for UI (e.g. "data may be outdated" + retry). */
+export interface LastSyncResult {
+  success: boolean;
+  productError?: string;
+  customerError?: string;
+  productsSynced: number;
+  customersSynced: number;
+}
+
 // Auth state interface
 interface AuthState {
   user: User | null;
@@ -35,7 +45,9 @@ interface AuthState {
   isLoading: boolean;
   error: string | null;
   subscriptionStatus: SubscriptionStatus | null;
-  
+  /** Set after login sync (or manual retry); used to show "sync failed" banner and retry. */
+  lastSyncResult: LastSyncResult | null;
+
   // Actions
   login: (credentials: LoginCredentials) => Promise<void>;
   logout: () => Promise<void>;
@@ -43,19 +55,15 @@ interface AuthState {
   setUser: (user: User) => void;
   setSubscriptionStatus: (status: SubscriptionStatus | null) => void;
   checkSubscriptionStatus: () => Promise<void>;
+  /** Sync token from localStorage (single source of truth) after rehydration. */
+  syncTokenFromStorage: () => void;
+  /** Retry store data sync (products + customers); updates lastSyncResult. */
+  retrySync: () => Promise<LastSyncResult | null>;
+  /** Clear last sync result (e.g. after user dismisses banner). */
+  clearLastSyncResult: () => void;
 }
 
-// Create axios instance
-// Use VITE_API_URL from environment, fallback to '/api' for local development
-const API_BASE_URL = (import.meta.env.VITE_API_URL as string) || '/api';
-const api = axios.create({
-  baseURL: API_BASE_URL,
-  headers: {
-    'Content-Type': 'application/json',
-  },
-});
-
-// Auth store
+// Auth store - uses single apiClient (authApi) so login gets same interceptors (401, request ID, etc.)
 export const useAuthStore = create<AuthState>()(
   persist(
     (set, get) => ({
@@ -65,18 +73,18 @@ export const useAuthStore = create<AuthState>()(
       isLoading: false,
       error: null,
       subscriptionStatus: null,
+      lastSyncResult: null,
 
       login: async (credentials: LoginCredentials) => {
         set({ isLoading: true, error: null });
         
         try {
-          const response = await api.post('/auth/login', credentials);
-          const { user, token, subscriptionStatus } = response.data.data;
+          const response = await authApi.login(credentials);
+          const { user, token, refreshToken, subscriptionStatus } = response.data.data;
 
-          // Store token in localStorage for API calls
-          if (token) {
-            localStorage.setItem('auth-token', token);
-          }
+          // Single source of truth for API: token and refreshToken in localStorage (API client reads from here)
+          if (token) localStorage.setItem('auth-token', token);
+          if (refreshToken) localStorage.setItem('auth-refresh-token', refreshToken);
 
           set({ 
             user, 
@@ -96,55 +104,40 @@ export const useAuthStore = create<AuthState>()(
             return;
           }
 
-          // CRITICAL: Sync ALL products and customers to IndexedDB on login for store users
-          // This ensures barcode scanning and customer lookup work instantly without API calls
+          // CRITICAL: Sync products and customers via single sync layer (no duplicate sync logic in auth store)
           if (user?.storeId) {
-            console.log('[Auth] Starting product and customer sync to IndexedDB on login...');
-            
-            // Sync products
             try {
-              // Force full refresh to ensure all products are synced
-              const productSyncResult = await productSync.syncProducts({ 
-                forceRefresh: true 
+              const syncResult = await runSyncOnLogin(user.storeId);
+              set({
+                lastSyncResult: {
+                  success: syncResult.success,
+                  productError: syncResult.productError,
+                  customerError: syncResult.customerError,
+                  productsSynced: syncResult.productsSynced,
+                  customersSynced: syncResult.customersSynced,
+                },
               });
-              
-              if (productSyncResult.success) {
-                console.log(`[Auth] ✅ Product sync completed: ${productSyncResult.syncedCount} products synced to IndexedDB`);
+              if (syncResult.success) {
+                console.log(`[Auth] ✅ Sync completed: ${syncResult.productsSynced} products, ${syncResult.customersSynced} customers`);
               } else {
-                console.error(`[Auth] ⚠️ Product sync failed: ${productSyncResult.error}`);
-                // Don't block login if sync fails, but log the error
-                // The system will try to sync again when POS page loads
+                if (syncResult.productError) console.error('[Auth] ⚠️ Product sync failed:', syncResult.productError);
+                if (syncResult.customerError) console.error('[Auth] ⚠️ Customer sync failed:', syncResult.customerError);
               }
             } catch (syncError) {
-              console.error('[Auth] Error during product sync on login:', syncError);
-              // Don't block login if sync fails - user can still use the system
-              // Sync will retry when POS page loads
-            }
-
-            // Sync customers
-            try {
-              // Force full refresh to ensure all customers are synced
-              const customerSyncResult = await customerSync.syncCustomers({ 
-                forceRefresh: true 
+              console.error('[Auth] Error during sync on login:', syncError);
+              set({
+                lastSyncResult: {
+                  success: false,
+                  productError: (syncError as Error)?.message ?? 'Sync failed',
+                  customersSynced: 0,
+                  productsSynced: 0,
+                },
               });
-              
-              if (customerSyncResult.success) {
-                console.log(`[Auth] ✅ Customer sync completed: ${customerSyncResult.syncedCount} customers synced to IndexedDB`);
-              } else {
-                console.error(`[Auth] ⚠️ Customer sync failed: ${customerSyncResult.error}`);
-                // Don't block login if sync fails, but log the error
-                // The system will try to sync again when POS page loads
-              }
-            } catch (syncError) {
-              console.error('[Auth] Error during customer sync on login:', syncError);
-              // Don't block login if sync fails - user can still use the system
-              // Sync will retry when POS page loads
             }
           }
         } catch (error: any) {
-          const errorData = error.response?.data || {};
-          const errorMessage = errorData.message || 'Login failed. Please check your credentials.';
-          
+          // authApi uses apiClient; errors are ApiError shape (message, status, details)
+          const errorMessage = error?.message ?? error?.details?.message ?? 'Login failed. Please check your credentials.';
           set({ 
             error: errorMessage,
             isLoading: false 
@@ -155,36 +148,74 @@ export const useAuthStore = create<AuthState>()(
 
       logout: async () => {
         try {
-          // Clean up IndexedDB before logout
+          // Notify backend so it can invalidate refresh tokens (token still in localStorage for this request)
+          try {
+            await authApi.logout();
+          } catch (logoutApiError) {
+            // Ignore: network/401/etc.; always clear local state
+          }
+
+          // Clean up IndexedDB
           try {
             await cleanupAllIndexedDB();
           } catch (cleanupError) {
             console.error('Error during IndexedDB cleanup:', cleanupError);
-            // Continue with logout even if cleanup fails
           }
 
-          // Clear token from localStorage
+          clearAllProductsCaches();
           localStorage.removeItem('auth-token');
-          
-          set({ 
-            user: null, 
+          localStorage.removeItem('auth-refresh-token');
+
+          set({
+            user: null,
             token: null,
-            isAuthenticated: false, 
+            isAuthenticated: false,
             error: null,
             subscriptionStatus: null,
+            lastSyncResult: null,
           });
         } catch (error) {
-          // Even if logout fails, clear local state
           localStorage.removeItem('auth-token');
-          set({ 
-            user: null, 
+          localStorage.removeItem('auth-refresh-token');
+          set({
+            user: null,
             token: null,
-            isAuthenticated: false, 
+            isAuthenticated: false,
             error: null,
             subscriptionStatus: null,
+            lastSyncResult: null,
           });
         }
       },
+
+      retrySync: async (): Promise<LastSyncResult | null> => {
+        const user = get().user;
+        const storeId = user?.storeId;
+        if (!storeId) return null;
+        try {
+          const syncResult = await runSyncOnLogin(storeId);
+          const result: LastSyncResult = {
+            success: syncResult.success,
+            productError: syncResult.productError,
+            customerError: syncResult.customerError,
+            productsSynced: syncResult.productsSynced,
+            customersSynced: syncResult.customersSynced,
+          };
+          set({ lastSyncResult: result });
+          return result;
+        } catch (e: any) {
+          const result: LastSyncResult = {
+            success: false,
+            productError: e?.message ?? 'Sync failed',
+            productsSynced: 0,
+            customersSynced: 0,
+          };
+          set({ lastSyncResult: result });
+          return result;
+        }
+      },
+
+      clearLastSyncResult: () => set({ lastSyncResult: null }),
 
       clearError: () => {
         set({ error: null });
@@ -198,9 +229,16 @@ export const useAuthStore = create<AuthState>()(
         set({ subscriptionStatus: status });
       },
 
+      syncTokenFromStorage: () => {
+        if (typeof localStorage === 'undefined') return;
+        const token = localStorage.getItem('auth-token');
+        set({ token });
+        if (!token) set({ isAuthenticated: false, user: null });
+      },
+
       checkSubscriptionStatus: async () => {
         try {
-          const response = await api.get('/auth/me');
+          const response = await authApi.getMe();
           const { subscriptionStatus } = response.data.data;
           
           set({ subscriptionStatus: subscriptionStatus || null });
@@ -213,13 +251,13 @@ export const useAuthStore = create<AuthState>()(
             }
           }
         } catch (error: any) {
-          // If we get a 403 with SUBSCRIPTION_EXPIRED code, treat as expired
-          if (error.response?.status === 403 && error.response?.data?.code === 'SUBSCRIPTION_EXPIRED') {
+          // If we get a 403 with SUBSCRIPTION_EXPIRED code, treat as expired (apiClient rejects with ApiError)
+          if (error?.status === 403 && error?.code === 'SUBSCRIPTION_EXPIRED') {
             set({ 
               subscriptionStatus: {
                 isActive: false,
                 subscriptionExpired: true,
-                subscriptionEndDate: error.response?.data?.subscriptionEndDate || new Date(),
+                subscriptionEndDate: error?.details?.subscriptionEndDate || new Date(),
               }
             });
             // Redirect to expired subscription page
@@ -235,12 +273,20 @@ export const useAuthStore = create<AuthState>()(
     }),
     {
       name: 'auth-storage',
-      partialize: (state) => ({ 
-        user: state.user, 
-        token: state.token,
+      partialize: (state) => ({
+        user: state.user ? {
+          ...state.user,
+          storeTypeName: state.user.storeTypeName,
+        } : null,
         isAuthenticated: state.isAuthenticated,
         subscriptionStatus: state.subscriptionStatus,
+        // lastSyncResult not persisted so banner shows only for current session after failed sync
       }),
+      onRehydrateStorage: () => (state) => {
+        if (typeof window !== 'undefined') {
+          setTimeout(() => useAuthStore.getState().syncTokenFromStorage(), 0);
+        }
+      },
     }
   )
 );

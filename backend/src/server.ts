@@ -1,31 +1,27 @@
 import express, { Application } from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import mongoose from 'mongoose';
 import connectDB from './config/database';
 import { initRedis } from './utils/redis';
 import { errorHandler } from './middleware/error.middleware';
 import { log } from './utils/logger';
 
-// Import routes
-import authRoutes from './routes/auth.routes';
-import usersRoutes from './routes/users.routes';
-import categoriesRoutes from './routes/categories.routes';
-import brandsRoutes from './routes/brands.routes';
-import unitsRoutes from './routes/units.routes';
-import warehousesRoutes from './routes/warehouses.routes';
-import productsRoutes from './routes/products.routes';
-import adminRoutes from './routes/admin.routes';
-import paymentsRoutes from './routes/payments.routes';
-import merchantsRoutes from './routes/merchants.routes';
-import settingsRoutes from './routes/settings.routes';
-import customersRoutes from './routes/customers.routes';
-import salesRoutes from './routes/sales.routes';
-import pointsRoutes from './routes/points.routes';
-import storeAccountRoutes from './routes/storeAccount.routes';
-import storePointsAccountRoutes from './routes/storePointsAccount.routes';
+import { mountRoutes } from './routes';
 
 // Load environment variables
 dotenv.config();
+
+// Production: warn if admin credentials are missing or weak (never commit real values)
+if (process.env.NODE_ENV === 'production') {
+  const adminUser = process.env.ADMIN_USERNAME;
+  const adminPass = process.env.ADMIN_PASSWORD;
+  if (!adminUser || !adminPass) {
+    log.warn('Admin login disabled: ADMIN_USERNAME and ADMIN_PASSWORD must both be set in production. Use strong values and do not commit them.');
+  } else if (adminPass.length < 12) {
+    log.warn('Admin password is short: consider using at least 12 characters. Prefer DB-backed admin user with hashed password and MFA later.');
+  }
+}
 
 // Create Express app
 const app: Application = express();
@@ -134,14 +130,9 @@ const corsOptions = {
         }
       }
 
-      // Origin not allowed - log for debugging but still allow (for now, to debug)
-      log.warn(`CORS: Origin not explicitly allowed: ${origin}`);
-      log.debug(`CORS: CLIENT_URL env var: ${process.env.CLIENT_URL || 'not set'}`);
-      // Temporarily allow to see if this fixes the issue - we can restrict later
-      log.warn(`CORS: Temporarily allowing origin for debugging: ${origin}`);
-      return callback(null, true);
-      // TODO: Re-enable strict checking after debugging
-      // callback(new Error(`Not allowed by CORS: ${origin}`));
+      // Production: strict allowlist — only CLIENT_URL and Vercel origins allowed
+      log.warn(`CORS: Origin not allowed: ${origin}`);
+      return callback(new Error(`Not allowed by CORS: ${origin}`));
     } catch (error) {
       // If there's an error in the validation logic, allow by default to prevent blocking
       log.error('CORS validation error', error);
@@ -205,64 +196,74 @@ app.use((req, res, next) => {
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Health check endpoint - simplified for faster response
+// Health check endpoint — reflects DB and Redis for load balancers
 app.get('/health', async (req, res) => {
   try {
     const { getRedisStatus, isRedisAvailable } = await import('./utils/redis');
     const redisStatus = getRedisStatus();
     const redisHealthy = await isRedisAvailable();
 
-    res.json({
-      success: true,
-      message: 'POS System API is running',
-      timestamp: new Date().toISOString(),
-      services: {
-        database: 'connected', // MongoDB connection is checked elsewhere
-        redis: {
-          available: redisStatus.available,
-          connected: redisStatus.connected,
-          healthy: redisHealthy,
-          url: redisStatus.url?.replace(/:[^:@]+@/, ':****@'), // Hide password in URL
+    // MongoDB: ping so load balancers can stop traffic when DB is down
+    let dbHealthy = false;
+    if (mongoose.connection.readyState === 1 && mongoose.connection.db) {
+      try {
+        await mongoose.connection.db.admin().command({ ping: 1 });
+        dbHealthy = true;
+      } catch {
+        dbHealthy = false;
+      }
+    }
+
+    if (!dbHealthy) {
+      res.status(503).json({
+        success: false,
+        message: 'Service Unavailable: database unreachable',
+        timestamp: new Date().toISOString(),
+        services: {
+          database: 'disconnected',
+          redis: {
+            available: redisStatus.available,
+            connected: redisStatus.connected,
+            healthy: redisHealthy,
+            url: redisStatus.url?.replace(/:[^:@]+@/, ':****@'),
+          },
         },
-      },
-    });
-  } catch (error) {
-    // Even if Redis check fails, return healthy status
-    res.status(200).json({
+      });
+      return;
+    }
+
+    res.json({
       success: true,
       message: 'POS System API is running',
       timestamp: new Date().toISOString(),
       services: {
         database: 'connected',
         redis: {
-          available: false,
-          connected: false,
-          healthy: false,
+          available: redisStatus.available,
+          connected: redisStatus.connected,
+          healthy: redisHealthy,
+          url: redisStatus.url?.replace(/:[^:@]+@/, ':****@'),
         },
+      },
+    });
+  } catch (error) {
+    // Redis or other failure: still return 200 if DB is up so LB doesn't pull the instance
+    const dbHealthy = mongoose.connection.readyState === 1;
+    const status = dbHealthy ? 200 : 503;
+    res.status(status).json({
+      success: dbHealthy,
+      message: dbHealthy ? 'POS System API is running' : 'Service Unavailable',
+      timestamp: new Date().toISOString(),
+      services: {
+        database: dbHealthy ? 'connected' : 'unknown',
+        redis: { available: false, connected: false, healthy: false },
       },
     });
   }
 });
 
-// API Routes
-app.use('/api/auth', authRoutes);
-app.use('/api/users', usersRoutes);
-app.use('/api/categories', categoriesRoutes);
-app.use('/api/brands', brandsRoutes);
-app.use('/api/units', unitsRoutes);
-app.use('/api/warehouses', warehousesRoutes);
-app.use('/api/products', productsRoutes);
-log.debug('Products routes registered at /api/products');
-log.debug('Available product routes: GET /api/products/, GET /api/products/metrics, GET /api/products/barcode/:barcode, GET /api/products/:id, POST /api/products/, POST /api/products/import, PUT /api/products/:id, DELETE /api/products/:id');
-app.use('/api/admin', adminRoutes);
-app.use('/api/payments', paymentsRoutes);
-app.use('/api/merchants', merchantsRoutes);
-app.use('/api/settings', settingsRoutes);
-app.use('/api/customers', customersRoutes);
-app.use('/api/sales', salesRoutes);
-app.use('/api/points', pointsRoutes);
-app.use('/api/store-accounts', storeAccountRoutes);
-app.use('/api/store-points-accounts', storePointsAccountRoutes);
+// API Routes (centralized in routes/index.ts)
+mountRoutes(app);
 
 // 404 handler - log all unmatched routes for debugging
 app.use((req, res) => {
@@ -324,11 +325,12 @@ server.on('error', (error: NodeJS.ErrnoException) => {
   }
 });
 
-// Handle unhandled promise rejections
-process.on('unhandledRejection', (err: Error) => {
-  log.error('Unhandled Rejection', err);
-  // In production, log but don't exit immediately - let the server keep running
-  // This prevents Render from killing the service during startup
+// Handle unhandled promise rejections — global handler so failures are not silent
+process.on('unhandledRejection', (reason: unknown, promise: Promise<unknown>) => {
+  const err = reason instanceof Error ? reason : new Error(String(reason));
+  log.error('Unhandled Rejection', err, { promise: String(promise) });
+  // Optional: report to error tracking (e.g. Sentry: Sentry.captureException(err))
+  // In production, do not exit so the process stays up; in development exit to surface the bug
   if (process.env.NODE_ENV === 'development') {
     process.exit(1);
   }

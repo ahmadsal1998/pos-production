@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AR_LABELS, PRODUCT_CATEGORIES, AddProductIcon, CancelIcon, GenerateBarcodeIcon } from '@/shared/constants';
-import { apiClient } from '@/lib/api';
+import { apiClient, getApiErrorMessage } from '@/lib/api/client';
 
 interface AddNewProductPageProps {}
 
@@ -112,8 +112,7 @@ const AddNewProductPage: React.FC<AddNewProductPageProps> = () => {
       }
     } catch (error: any) {
       console.error('Error creating product:', error);
-      const errorMessage = error.response?.data?.message || error.message || 'فشل حفظ المنتج';
-      alert('فشل حفظ المنتج: ' + errorMessage);
+      alert('فشل حفظ المنتج: ' + getApiErrorMessage(error, 'فشل حفظ المنتج'));
     } finally {
       setIsSubmitting(false);
     }

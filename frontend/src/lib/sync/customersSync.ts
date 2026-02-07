@@ -4,19 +4,7 @@
 
 import { customersApi, ApiError } from '@/lib/api/client';
 import { customersDB } from '@/lib/db/customersDB';
-
-function getStoreIdFromToken(): string | null {
-  try {
-    const token = localStorage.getItem('auth-token');
-    if (!token) {
-      return null;
-    }
-    const payload = JSON.parse(atob(token.split('.')[1]));
-    return payload.storeId || null;
-  } catch (error) {
-    return null;
-  }
-}
+import { getStoreIdFromToken } from '@/lib/utils/storeId';
 
 export interface CustomerSyncResult {
   success: boolean;
@@ -80,28 +68,33 @@ class CustomerSyncManager {
       this.lastSyncTime = now;
 
       try {
-        const response = await customersApi.getCustomers();
+        let customers: any[] = [];
+        let page = 1;
+        const limit = 100;
+        let hasMore = true;
 
-        if (response.success) {
-          const customers = (response.data as any)?.data?.customers || (response.data as any)?.customers || [];
-          
-          if (customers.length > 0) {
-            await customersDB.storeCustomers(customers);
-            customersDB.notifyOtherTabs();
-          }
-
-          return {
-            success: true,
-            syncedCount: customers.length,
-            customers,
-          };
-        } else {
-          return {
-            success: false,
-            syncedCount: 0,
-            error: 'Failed to fetch customers',
-          };
+        while (hasMore) {
+          const response = await customersApi.getCustomers({ page, limit });
+          if (!response.success) break;
+          const data = (response.data as any)?.data;
+          const items = data?.items ?? data?.customers ?? [];
+          const pagination = data?.pagination;
+          customers = [...customers, ...items];
+          hasMore = pagination?.hasNextPage === true && items.length === limit;
+          page++;
+          if (items.length < limit) hasMore = false;
         }
+
+        if (customers.length > 0) {
+          await customersDB.storeCustomers(customers);
+          customersDB.notifyOtherTabs();
+        }
+
+        return {
+          success: true,
+          syncedCount: customers.length,
+          customers,
+        };
       } catch (error: any) {
         const apiError = error as ApiError;
         console.error('[CustomerSync] Error syncing customers:', apiError);

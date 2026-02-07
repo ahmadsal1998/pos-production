@@ -1,10 +1,11 @@
 import { Response, NextFunction } from 'express';
 import { body, validationResult } from 'express-validator';
 import Store from '../models/Store';
+import StoreType from '../models/StoreType';
 import Settings from '../models/Settings';
 import PointsSettings from '../models/PointsSettings';
 import { AuthenticatedRequest } from '../middleware/auth.middleware';
-import { asyncHandler } from '../middleware/error.middleware';
+import { asyncHandler, AppError } from '../middleware/error.middleware';
 import { determineDatabaseForStore } from '../utils/databaseManager';
 import { createStoreCollections } from '../utils/storeCollections';
 import User from '../models/User';
@@ -20,7 +21,9 @@ import {
 // Get all stores
 export const getStores = asyncHandler(
   async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
-    const stores = await Store.find().sort({ storeNumber: 1 });
+    const stores = await Store.find()
+      .sort({ storeNumber: 1 })
+      .populate('storeTypeId', 'name description');
 
     res.status(200).json({
       success: true,
@@ -36,7 +39,7 @@ export const getStore = asyncHandler(
   async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
     const { id } = req.params;
 
-    const store = await Store.findById(id);
+    const store = await Store.findById(id).populate('storeTypeId', 'name description');
 
     if (!store) {
       return res.status(404).json({
@@ -70,7 +73,7 @@ export const createStore = asyncHandler(
     const { 
       name, 
       storeId, 
-      prefix, 
+      storeTypeId,
       createDefaultAdmin, 
       defaultAdminEmail, 
       defaultAdminPassword, 
@@ -80,21 +83,17 @@ export const createStore = asyncHandler(
       isTrialAccount, // Whether this is a trial account (uses _test collections)
     } = req.body;
 
+    const typeExists = await StoreType.findById(storeTypeId);
+    if (!typeExists) {
+      return res.status(400).json({ success: false, message: 'Invalid store type' });
+    }
+
     // Check if storeId already exists
     const existingStoreById = await Store.findOne({ storeId: storeId.toLowerCase() });
     if (existingStoreById) {
       return res.status(400).json({
         success: false,
         message: 'Store ID already exists',
-      });
-    }
-
-    // Check if prefix already exists
-    const existingStoreByPrefix = await Store.findOne({ prefix: prefix.toLowerCase() });
-    if (existingStoreByPrefix) {
-      return res.status(400).json({
-        success: false,
-        message: 'Store prefix already exists',
       });
     }
 
@@ -172,7 +171,7 @@ export const createStore = asyncHandler(
       storeNumber: nextStoreNumber,
       name,
       storeId: storeId.toLowerCase(),
-      prefix: prefix.toLowerCase(),
+      storeTypeId: typeExists._id,
       databaseId,
       subscriptionStartDate: startDate,
       subscriptionEndDate: endDate,
@@ -190,7 +189,7 @@ export const createStore = asyncHandler(
     if (createDefaultAdmin && defaultAdminEmail && defaultAdminPassword) {
       try {
         // Generate a default username if not provided
-        const defaultUsername = defaultAdminEmail.split('@')[0] + '_' + prefix;
+        const defaultUsername = defaultAdminEmail.split('@')[0] + '_' + storeId;
         
         // Check if username already exists in this store (email already validated above)
         const existingUsername = await User.findOne({
@@ -255,18 +254,11 @@ export const createStore = asyncHandler(
           });
         }
       } catch (error: any) {
-        console.error('Error creating default admin user:', error);
-        // If user creation fails after store is created, we should rollback the store
-        // But for now, log the error - the email check above should prevent this
         if (error.code === 11000 && error.keyPattern?.email) {
-          // Duplicate email error (shouldn't happen due to pre-check, but handle it)
           await Store.findByIdAndDelete(store._id);
-          return res.status(400).json({
-            success: false,
-            message: 'Email already in use',
-          });
+          return next(new AppError('Email already in use', 400));
         }
-        throw error; // Re-throw other errors
+        next(error);
       }
     }
 
@@ -306,7 +298,8 @@ export const updateStore = asyncHandler(
       phone, 
       address, 
       city, 
-      country 
+      country,
+      storeTypeId,
     } = req.body;
 
     const store = await Store.findById(id);
@@ -318,13 +311,18 @@ export const updateStore = asyncHandler(
       });
     }
 
-    // Update store fields (storeId and prefix should not be changed)
+    // Update store fields (storeId should not be changed)
     if (name) store.name = name;
     if (email !== undefined) store.email = email || undefined;
     if (phone !== undefined) store.phone = phone || undefined;
     if (address !== undefined) store.address = address || undefined;
     if (city !== undefined) store.city = city || undefined;
     if (country !== undefined) store.country = country || undefined;
+    if (storeTypeId !== undefined) {
+      const st = await StoreType.findById(storeTypeId);
+      if (!st) return res.status(400).json({ success: false, message: 'Invalid store type' });
+      store.storeTypeId = st._id;
+    }
     // Note: isTrialAccount should not be changed after store creation for data integrity
 
     await store.save();
@@ -483,9 +481,9 @@ export const deleteStore = asyncHandler(
     // const db = mongoose.connection.db;
     // if (db) {
     //   const collections = [
-    //     `${store.prefix}_products`,
-    //     `${store.prefix}_orders`,
-    //     `${store.prefix}_customers`,
+    //     `${store.storeId}_products`,
+    //     `${store.storeId}_orders`,
+    //     `${store.storeId}_customers`,
     //   ];
     //   for (const collectionName of collections) {
     //     try {
@@ -518,13 +516,11 @@ export const validateCreateStore = [
     .toLowerCase()
     .matches(/^[a-z0-9_]+$/)
     .withMessage('Store ID must contain only lowercase letters, numbers, and underscores'),
-  body('prefix')
+  body('storeTypeId')
     .notEmpty()
-    .withMessage('Store prefix is required')
-    .trim()
-    .toLowerCase()
-    .matches(/^[a-z0-9_]+$/)
-    .withMessage('Prefix must contain only lowercase letters, numbers, and underscores'),
+    .withMessage('Store type is required')
+    .isMongoId()
+    .withMessage('Invalid store type'),
   body('createDefaultAdmin')
     .optional()
     .isBoolean()
@@ -577,6 +573,10 @@ export const validateUpdateStore = [
   body('country')
     .optional()
     .trim(),
+  body('storeTypeId')
+    .optional()
+    .isMongoId()
+    .withMessage('Invalid store type'),
 ];
 
 // Validation middleware for renew subscription
@@ -692,21 +692,14 @@ export const validateUpdateSetting = [
 // Get purge report for trial accounts (dry-run)
 export const getTrialAccountsPurgeReport = asyncHandler(
   async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
-    try {
-      const report = await generatePurgeReport();
-      res.status(200).json({
-        success: true,
-        data: {
-          report,
-          message: 'This is a dry-run report. No data has been deleted.',
-        },
-      });
-    } catch (error: any) {
-      res.status(500).json({
-        success: false,
-        message: error.message || 'Failed to generate purge report',
-      });
-    }
+    const report = await generatePurgeReport();
+    res.status(200).json({
+      success: true,
+      data: {
+        report,
+        message: 'This is a dry-run report. No data has been deleted.',
+      },
+    });
   }
 );
 
@@ -722,25 +715,18 @@ export const purgeAllTrialAccounts = asyncHandler(
       });
     }
 
-    try {
-      const result = await purgeTrialAccounts(false, true);
-      res.status(200).json({
-        success: result.success,
-        data: {
-          report: result.report,
-          deleted: result.deleted,
-          errors: result.errors,
-        },
-        message: result.success
-          ? 'Trial accounts purged successfully'
-          : 'Purge completed with some errors',
-      });
-    } catch (error: any) {
-      res.status(500).json({
-        success: false,
-        message: error.message || 'Failed to purge trial accounts',
-      });
-    }
+    const result = await purgeTrialAccounts(false, true);
+    res.status(200).json({
+      success: result.success,
+      data: {
+        report: result.report,
+        deleted: result.deleted,
+        errors: result.errors,
+      },
+      message: result.success
+        ? 'Trial accounts purged successfully'
+        : 'Purge completed with some errors',
+    });
   }
 );
 
@@ -758,44 +744,28 @@ export const purgeSpecificTrialAccountEndpoint = asyncHandler(
     }
 
     if (!confirm) {
-      // Return dry-run report
-      try {
-        const result = await purgeSpecificTrialAccount(storeId, true, false);
-        res.status(200).json({
-          success: true,
-          data: {
-            store: result.store,
-            deleted: result.deleted,
-            message: 'This is a dry-run report. Set confirm: true to proceed with deletion.',
-          },
-        });
-      } catch (error: any) {
-        res.status(404).json({
-          success: false,
-          message: error.message || 'Trial account not found',
-        });
-      }
+      const result = await purgeSpecificTrialAccount(storeId, true, false);
+      res.status(200).json({
+        success: true,
+        data: {
+          store: result.store,
+          deleted: result.deleted,
+          message: 'This is a dry-run report. Set confirm: true to proceed with deletion.',
+        },
+      });
     } else {
-      // Actually purge
-      try {
-        const result = await purgeSpecificTrialAccount(storeId, false, true);
-        res.status(200).json({
-          success: result.success,
-          data: {
-            store: result.store,
-            deleted: result.deleted,
-            errors: result.errors,
-          },
-          message: result.success
-            ? 'Trial account purged successfully'
-            : 'Purge completed with some errors',
-        });
-      } catch (error: any) {
-        res.status(500).json({
-          success: false,
-          message: error.message || 'Failed to purge trial account',
-        });
-      }
+      const result = await purgeSpecificTrialAccount(storeId, false, true);
+      res.status(200).json({
+        success: result.success,
+        data: {
+          store: result.store,
+          deleted: result.deleted,
+          errors: result.errors,
+        },
+        message: result.success
+          ? 'Trial account purged successfully'
+          : 'Purge completed with some errors',
+      });
     }
   }
 );
@@ -814,41 +784,29 @@ export const getPointsSettings = asyncHandler(
 
     const { storeId } = req.query;
 
-    try {
-      // Get store-specific settings or global settings
-      let settings = null;
-      if (storeId && typeof storeId === 'string') {
-        settings = await PointsSettings.findOne({ storeId: storeId.toLowerCase() });
-      }
-      
-      // If no store-specific settings, get global settings
-      if (!settings) {
-        settings = await PointsSettings.findOne({ storeId: 'global' });
-        
-        // If no global settings exist, create default
-        if (!settings) {
-          settings = await PointsSettings.create({
-            storeId: 'global',
-            userPointsPercentage: 5,
-            companyProfitPercentage: 2,
-            defaultThreshold: 10000,
-          });
-        }
-      }
-
-      res.status(200).json({
-        success: true,
-        data: {
-          settings,
-        },
-      });
-    } catch (error: any) {
-      log.error('Error getting points settings', error);
-      return res.status(500).json({
-        success: false,
-        message: error.message || 'Failed to get points settings',
-      });
+    let settings = null;
+    if (storeId && typeof storeId === 'string') {
+      settings = await PointsSettings.findOne({ storeId: storeId.toLowerCase() });
     }
+    
+    if (!settings) {
+      settings = await PointsSettings.findOne({ storeId: 'global' });
+      if (!settings) {
+        settings = await PointsSettings.create({
+          storeId: 'global',
+          userPointsPercentage: 5,
+          companyProfitPercentage: 2,
+          defaultThreshold: 10000,
+        });
+      }
+    }
+
+    res.status(200).json({
+      success: true,
+      data: {
+        settings,
+      },
+    });
   }
 );
 
@@ -884,12 +842,10 @@ export const updatePointsSettings = asyncHandler(
       pointsValuePerPoint,
     } = req.body;
 
-    try {
-      const targetStoreId = storeId ? storeId.toLowerCase() : 'global';
+    const targetStoreId = storeId ? storeId.toLowerCase() : 'global';
 
-      // Update or create settings
-      const settings = await PointsSettings.findOneAndUpdate(
-        { storeId: targetStoreId },
+    const settings = await PointsSettings.findOneAndUpdate(
+      { storeId: targetStoreId },
       {
         userPointsPercentage,
         companyProfitPercentage,
@@ -899,27 +855,20 @@ export const updatePointsSettings = asyncHandler(
         maxPointsPerTransaction: maxPointsPerTransaction || undefined,
         pointsValuePerPoint: pointsValuePerPoint || undefined,
       },
-        {
-          new: true,
-          upsert: true,
-          runValidators: true,
-        }
-      );
+      {
+        new: true,
+        upsert: true,
+        runValidators: true,
+      }
+    );
 
-      res.status(200).json({
-        success: true,
-        message: 'Points settings updated successfully',
-        data: {
-          settings,
-        },
-      });
-    } catch (error: any) {
-      log.error('Error updating points settings', error);
-      return res.status(500).json({
-        success: false,
-        message: error.message || 'Failed to update points settings',
-      });
-    }
+    res.status(200).json({
+      success: true,
+      message: 'Points settings updated successfully',
+      data: {
+        settings,
+      },
+    });
   }
 );
 

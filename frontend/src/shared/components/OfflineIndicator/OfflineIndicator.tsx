@@ -6,6 +6,7 @@
 import React, { useState, useEffect } from 'react';
 import { salesDB } from '@/lib/db/salesDB';
 import { inventorySync } from '@/lib/sync/inventorySync';
+import { getStoreIdFromToken } from '@/lib/utils/storeId';
 
 interface OfflineIndicatorProps {
   className?: string;
@@ -67,17 +68,6 @@ export const OfflineIndicator: React.FC<OfflineIndicatorProps> = ({ className = 
       clearInterval(interval);
     };
   }, []);
-
-  const getStoreIdFromToken = (): string | null => {
-    try {
-      const token = localStorage.getItem('auth-token');
-      if (!token) return null;
-      const payload = JSON.parse(atob(token.split('.')[1]));
-      return payload.storeId || null;
-    } catch {
-      return null;
-    }
-  };
 
   const totalPending = pendingSales + pendingStockChanges;
 

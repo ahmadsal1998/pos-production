@@ -2,6 +2,7 @@
 // Handles large product datasets efficiently with fast local search
 
 import { openIndexedDB, isIndexedDBAvailable } from './indexedDBUtils';
+import { getStoreIdFromToken } from '@/lib/utils/storeId';
 
 interface ProductRecord {
   id: string;
@@ -19,6 +20,14 @@ interface SearchOptions {
   offset?: number;
 }
 
+/** In-memory barcode cache entry (store-scoped, short TTL to reduce IndexedDB reads during POS usage) */
+interface BarcodeCacheEntry {
+  result: { product: any; matchedUnit: any | null };
+  expiry: number;
+}
+
+const BARCODE_CACHE_TTL_MS = 2 * 60 * 1000; // 2 minutes
+
 class ProductsDB {
   private dbName = 'POS_ProductsDB';
   private version = 1;
@@ -26,6 +35,8 @@ class ProductsDB {
   private indexName = 'storeId';
   private db: IDBDatabase | null = null;
   private initPromise: Promise<void> | null = null;
+  /** Store-scoped in-memory barcode cache: key = storeId_barcode, value = { result, expiry } */
+  private barcodeCache = new Map<string, BarcodeCacheEntry>();
 
   /**
    * Initialize IndexedDB
@@ -80,20 +91,10 @@ class ProductsDB {
   }
 
   /**
-   * Get store ID from auth token
+   * Get store ID from auth token (safe decode; invalid tokens are cleared).
    */
   private getStoreId(): string | null {
-    try {
-      const token = localStorage.getItem('auth-token');
-      if (!token) {
-        return null;
-      }
-      const payload = JSON.parse(atob(token.split('.')[1]));
-      return payload.storeId || null;
-    } catch (error) {
-      console.error('[ProductsDB] Error getting storeId from token:', error);
-      return null;
-    }
+    return getStoreIdFromToken();
   }
 
   /**
@@ -201,6 +202,7 @@ class ProductsDB {
     });
 
     await Promise.all(promises);
+    this.clearBarcodeCache(storeId);
     console.log(`[ProductsDB] Stored/updated ${uniqueProducts.length} products in IndexedDB`);
   }
 
@@ -247,6 +249,7 @@ class ProductsDB {
       request.onerror = () => reject(request.error);
     });
 
+    this.clearBarcodeCache(storeId);
     console.log(`[ProductsDB] Stored product: ${normalizedProduct.name || normalizedId}`);
   }
 
@@ -329,9 +332,33 @@ class ProductsDB {
     if (lastUpdate === 0) {
       return false; // No data in IndexedDB
     }
-    
+
     const age = Date.now() - lastUpdate;
     return age < maxAge;
+  }
+
+  private static lastSyncKey(storeId: string): string {
+    return `pos_products_last_sync_${storeId}`;
+  }
+
+  /**
+   * Get last full/incremental sync time (ISO string) for incremental sync.
+   * Stored in localStorage, store-scoped.
+   */
+  getLastSyncAt(): string | null {
+    const storeId = this.getStoreId();
+    if (!storeId) return null;
+    return localStorage.getItem(ProductsDB.lastSyncKey(storeId));
+  }
+
+  /**
+   * Set last sync time (ISO string) after a successful sync.
+   * Used for incremental sync (modifiedSince).
+   */
+  setLastSyncAt(iso: string): void {
+    const storeId = this.getStoreId();
+    if (!storeId) return;
+    localStorage.setItem(ProductsDB.lastSyncKey(storeId), iso);
   }
 
   /**
@@ -370,9 +397,27 @@ class ProductsDB {
   }
 
   /**
-   * Get product by barcode (exact match) from IndexedDB
-   * Searches both product barcode and unit barcodes
-   * Returns product and matched unit info if found
+   * Clear in-memory barcode cache (store-scoped). Call after product create/update/delete.
+   * If storeId is omitted, clears all entries.
+   */
+  clearBarcodeCache(storeId?: string): void {
+    if (!storeId) {
+      this.barcodeCache.clear();
+      return;
+    }
+    const prefix = `${storeId}_`;
+    for (const key of this.barcodeCache.keys()) {
+      if (key.startsWith(prefix)) {
+        this.barcodeCache.delete(key);
+      }
+    }
+  }
+
+  /**
+   * Get product by barcode (exact match).
+   * Uses in-memory cache (store-scoped, short TTL) then IndexedDB.
+   * Searches both product barcode and unit barcodes.
+   * Returns product and matched unit info if found.
    */
   async getProductByBarcode(barcode: string): Promise<{ product: any; matchedUnit: any | null } | null> {
     await this.init();
@@ -388,6 +433,12 @@ class ProductsDB {
     const trimmedBarcode = barcode.trim();
     if (!trimmedBarcode) {
       return null;
+    }
+
+    const cacheKey = `${storeId}_${trimmedBarcode}`;
+    const cached = this.barcodeCache.get(cacheKey);
+    if (cached && Date.now() < cached.expiry) {
+      return cached.result;
     }
 
     return new Promise((resolve, reject) => {
@@ -460,10 +511,9 @@ class ProductsDB {
             extractedWeightGrams: weightInGrams,
           });
 
-          resolve({
-            product: scaleProduct,
-            matchedUnit: null,
-          });
+          const result = { product: scaleProduct, matchedUnit: null };
+          this.barcodeCache.set(cacheKey, { result, expiry: Date.now() + BARCODE_CACHE_TTL_MS });
+          resolve(result);
           return;
         }
 
@@ -472,10 +522,9 @@ class ProductsDB {
           // Check product barcode (exact match)
           const productBarcode = (product.barcode || product.primaryBarcode || '').trim();
           if (productBarcode === trimmedBarcode) {
-            resolve({
-              product,
-              matchedUnit: null, // Product barcode matched, no specific unit
-            });
+            const result = { product, matchedUnit: null };
+            this.barcodeCache.set(cacheKey, { result, expiry: Date.now() + BARCODE_CACHE_TTL_MS });
+            resolve(result);
             return;
           }
 
@@ -484,10 +533,9 @@ class ProductsDB {
             for (const unit of product.units) {
               const unitBarcode = (unit.barcode || '').trim();
               if (unitBarcode === trimmedBarcode) {
-                resolve({
-                  product,
-                  matchedUnit: unit, // Unit barcode matched
-                });
+                const result = { product, matchedUnit: unit };
+                this.barcodeCache.set(cacheKey, { result, expiry: Date.now() + BARCODE_CACHE_TTL_MS });
+                resolve(result);
                 return;
               }
             }
@@ -710,6 +758,7 @@ class ProductsDB {
       const request = objectStore.delete(id);
 
       request.onsuccess = () => {
+        this.clearBarcodeCache(storeId);
         console.log(`[ProductsDB] Deleted product ${normalizedId}`);
         resolve();
       };

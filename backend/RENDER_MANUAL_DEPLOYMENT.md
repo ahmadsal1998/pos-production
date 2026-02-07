@@ -122,8 +122,10 @@ Navigate to **Environment** > **Environment Variables** and add:
 | `RESEND_FROM_EMAIL` | `no-reply@yourdomain.com` | Sender email |
 | `RESEND_FROM_NAME` | `POS System` | Sender name |
 | `NODE_OPTIONS` | `--max-old-space-size=1536` | Memory limit (for free tier) |
-| `ADMIN_USERNAME` | `admin` | Admin username (optional) |
-| `ADMIN_PASSWORD` | `[secure password]` | Admin password (optional) |
+| `ADMIN_USERNAME` | `[your admin username]` | Admin username (optional). Use strong value; do not commit. |
+| `ADMIN_PASSWORD` | `[strong password, min 12 chars]` | Admin password (optional). Use strong value; do not commit. Consider DB admin + MFA later. |
+
+**Frontend (Vercel):** Set `VITE_API_URL` to your backend base URL including `/api` (e.g. `https://pos-backend-abc123.onrender.com/api`). See `docs/DEPLOYMENT.md` for details.
 
 ### Generate Secure Secrets
 

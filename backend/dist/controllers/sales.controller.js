@@ -29,6 +29,7 @@ var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: tru
 var sales_controller_exports = {};
 __export(sales_controller_exports, {
   createSale: () => createSale,
+  createSimpleSale: () => createSimpleSale,
   deleteSale: () => deleteSale,
   getCurrentInvoiceNumber: () => getCurrentInvoiceNumber,
   getNextInvoiceNumber: () => getNextInvoiceNumber,
@@ -47,164 +48,14 @@ var import_productCache = require("../utils/productCache");
 var import_Settings = __toESM(require("../models/Settings"));
 var import_businessDate = require("../utils/businessDate");
 var import_logger = require("../utils/logger");
-var import_Sequence = __toESM(require("../models/Sequence"));
 var import_Store = __toESM(require("../models/Store"));
-function convertQuantityToMainUnits(product, unitName, quantity) {
-  if (!product || !unitName || quantity <= 0) return quantity;
-  const normalizedUnit = unitName.toLowerCase().trim();
-  const targetUnit = product.units?.find(
-    (u) => !!u.unitName && u.unitName.toLowerCase() === normalizedUnit
-  );
-  if (!targetUnit) {
-    return quantity;
-  }
-  const hasHierarchicalUnits = product.units?.some(
-    (u) => u.order !== void 0 || u.unitsInPrevious !== void 0
-  );
-  if (hasHierarchicalUnits) {
-    const targetUnitOrder = targetUnit.order ?? product.units?.findIndex((u) => u.unitName === targetUnit.unitName) ?? 0;
-    const mainUnit = product.units?.find((u) => u.order === 0) || product.units?.[0];
-    if (!mainUnit || targetUnitOrder === 0) {
-      return quantity;
-    }
-    let conversionFactor = 1;
-    const sortedUnits = [...product.units || []].sort(
-      (a, b) => (a.order ?? 999) - (b.order ?? 999)
-    );
-    const targetUnitIndex = sortedUnits.findIndex(
-      (u) => u.unitName?.toLowerCase() === normalizedUnit
-    );
-    if (targetUnitIndex > 0) {
-      for (let i = targetUnitIndex; i > 0; i--) {
-        const currentUnit = sortedUnits[i];
-        const unitsInPrev = currentUnit.unitsInPrevious || 1;
-        conversionFactor *= unitsInPrev;
-      }
-    }
-    return quantity / conversionFactor;
-  } else {
-    const conversionFactor = targetUnit.conversionFactor || 1;
-    if (conversionFactor > 1) {
-      return quantity / conversionFactor;
-    } else {
-      return quantity;
-    }
-  }
-}
-async function getMaxInvoiceNumberFromSales(Sale, storeId) {
-  const normalizedStoreId = storeId.toLowerCase().trim();
-  try {
-    const sales = await Sale.find({ storeId: normalizedStoreId }).select("invoiceNumber").lean().limit(1e4);
-    let maxNumber = 0;
-    const sequentialPattern = /^INV-(\d+)$/;
-    const timestampPattern = /^INV-(\d+)-/;
-    for (const sale of sales) {
-      const invoiceNumber = sale.invoiceNumber || "";
-      const sequentialMatch = invoiceNumber.match(sequentialPattern);
-      if (sequentialMatch) {
-        const num = parseInt(sequentialMatch[1], 10);
-        if (!isNaN(num) && num > maxNumber) {
-          maxNumber = num;
-        }
-      } else {
-        const timestampMatch = invoiceNumber.match(timestampPattern);
-        if (timestampMatch) {
-          const baseNumber = 1e6;
-          if (maxNumber < baseNumber) {
-            maxNumber = baseNumber;
-          }
-        }
-      }
-    }
-    return maxNumber;
-  } catch (error) {
-    import_logger.log.error("[Sales Controller] Error getting max invoice number from sales", error);
-    return 0;
-  }
-}
-async function generateNextInvoiceNumber(Sale, storeId) {
-  const normalizedStoreId = storeId.toLowerCase().trim();
-  const sequenceType = "invoiceNumber";
-  try {
-    const maxExistingNumber = await getMaxInvoiceNumberFromSales(Sale, storeId);
-    let sequence = await import_Sequence.default.findOne({
-      storeId: normalizedStoreId,
-      sequenceType
-    });
-    if (!sequence) {
-      sequence = await import_Sequence.default.findOneAndUpdate(
-        { storeId: normalizedStoreId, sequenceType },
-        {
-          $setOnInsert: { value: maxExistingNumber }
-          // Set to max existing number
-        },
-        {
-          upsert: true,
-          new: true,
-          setDefaultsOnInsert: true
-        }
-      );
-      if (!sequence) {
-        throw new Error("Failed to create sequence");
-      }
-    }
-    if (sequence.value < maxExistingNumber) {
-      if (process.env.NODE_ENV === "production") {
-        import_logger.log.debug(`[Sales Controller] Sequence value (${sequence.value}) is behind actual max invoice number (${maxExistingNumber}). Syncing sequence.`);
-      } else {
-        import_logger.log.warn(`[Sales Controller] Sequence value (${sequence.value}) is behind actual max invoice number (${maxExistingNumber}). Syncing sequence.`);
-      }
-      sequence = await import_Sequence.default.findOneAndUpdate(
-        { storeId: normalizedStoreId, sequenceType },
-        { $set: { value: maxExistingNumber } },
-        { new: true }
-      );
-      if (!sequence) {
-        throw new Error("Failed to sync sequence");
-      }
-    } else if (sequence.value > maxExistingNumber) {
-      if (process.env.NODE_ENV === "production") {
-        import_logger.log.debug(`[Sales Controller] Sequence value (${sequence.value}) is ahead of actual max invoice number (${maxExistingNumber}). Syncing sequence down.`);
-      } else {
-        import_logger.log.warn(`[Sales Controller] Sequence value (${sequence.value}) is ahead of actual max invoice number (${maxExistingNumber}). Syncing sequence down.`);
-      }
-      sequence = await import_Sequence.default.findOneAndUpdate(
-        { storeId: normalizedStoreId, sequenceType },
-        { $set: { value: maxExistingNumber } },
-        { new: true }
-      );
-      if (!sequence) {
-        throw new Error("Failed to sync sequence");
-      }
-    }
-    sequence = await import_Sequence.default.findOneAndUpdate(
-      { storeId: normalizedStoreId, sequenceType },
-      { $inc: { value: 1 } },
-      { new: true }
-    );
-    if (!sequence) {
-      throw new Error("Failed to increment sequence");
-    }
-    return `INV-${sequence.value}`;
-  } catch (error) {
-    import_logger.log.error("[Sales Controller] Error generating invoice number atomically, falling back to max-based generation", error);
-    try {
-      const maxNumber = await getMaxInvoiceNumberFromSales(Sale, storeId);
-      const nextNumber = maxNumber + 1;
-      import_Sequence.default.findOneAndUpdate(
-        { storeId: normalizedStoreId, sequenceType },
-        { $set: { value: nextNumber } },
-        { upsert: true }
-      ).catch(() => {
-      });
-      return `INV-${nextNumber}`;
-    } catch (fallbackError) {
-      import_logger.log.error("[Sales Controller] Fallback invoice number generation also failed", fallbackError);
-      const timestamp = Date.now();
-      return `INV-${timestamp}`;
-    }
-  }
-}
+var import_customerModel = require("../utils/customerModel");
+var import_GlobalCustomer = __toESM(require("../models/GlobalCustomer"));
+var import_PointsSettings = __toESM(require("../models/PointsSettings"));
+var import_PointsBalance = __toESM(require("../models/PointsBalance"));
+var import_PointsTransaction = __toESM(require("../models/PointsTransaction"));
+var import_StorePointsAccount = __toESM(require("../models/StorePointsAccount"));
+var import_sales = require("../services/sales.service");
 const getCurrentInvoiceNumber = (0, import_error.asyncHandler)(async (req, res) => {
   const storeId = req.user?.storeId || null;
   if (!storeId) {
@@ -213,64 +64,15 @@ const getCurrentInvoiceNumber = (0, import_error.asyncHandler)(async (req, res) 
       message: "Store ID is required to get invoice number"
     });
   }
-  const Sale = await (0, import_saleModel.getSaleModelForStore)(storeId);
-  const normalizedStoreId = storeId.toLowerCase().trim();
-  const sequenceType = "invoiceNumber";
-  try {
-    const maxNumber = await getMaxInvoiceNumberFromSales(Sale, storeId);
-    const sequence = await import_Sequence.default.findOne({
-      storeId: normalizedStoreId,
-      sequenceType
-    });
-    if (sequence) {
-      if (sequence.value < maxNumber) {
-        import_Sequence.default.findOneAndUpdate(
-          { storeId: normalizedStoreId, sequenceType },
-          { $set: { value: maxNumber } }
-        ).catch(() => {
-        });
-      } else if (sequence.value > maxNumber) {
-        import_Sequence.default.findOneAndUpdate(
-          { storeId: normalizedStoreId, sequenceType },
-          { $set: { value: maxNumber } }
-        ).catch(() => {
-        });
-      }
+  const data = await import_sales.salesService.getCurrentInvoiceNumber(storeId);
+  return res.status(200).json({
+    success: true,
+    message: "Current invoice number retrieved successfully",
+    data: {
+      invoiceNumber: data.invoiceNumber,
+      number: data.number
     }
-    const currentInvoiceNumber = `INV-${maxNumber + 1}`;
-    res.status(200).json({
-      success: true,
-      message: "Current invoice number retrieved successfully",
-      data: {
-        invoiceNumber: currentInvoiceNumber,
-        number: maxNumber + 1
-      }
-    });
-  } catch (error) {
-    import_logger.log.error("[Sales Controller] Error getting current invoice number", error);
-    try {
-      const maxNumber = await getMaxInvoiceNumberFromSales(Sale, storeId);
-      const currentInvoiceNumber = `INV-${maxNumber + 1}`;
-      res.status(200).json({
-        success: true,
-        message: "Current invoice number retrieved successfully",
-        data: {
-          invoiceNumber: currentInvoiceNumber,
-          number: maxNumber + 1
-        }
-      });
-    } catch (fallbackError) {
-      import_logger.log.error("[Sales Controller] Fallback current invoice number retrieval also failed", fallbackError);
-      res.status(200).json({
-        success: true,
-        message: "Current invoice number retrieved successfully",
-        data: {
-          invoiceNumber: "INV-1",
-          number: 1
-        }
-      });
-    }
-  }
+  });
 });
 const getNextInvoiceNumber = (0, import_error.asyncHandler)(async (req, res) => {
   const storeId = req.user?.storeId || null;
@@ -280,20 +82,17 @@ const getNextInvoiceNumber = (0, import_error.asyncHandler)(async (req, res) => 
       message: "Store ID is required to get invoice number"
     });
   }
-  const Sale = await (0, import_saleModel.getSaleModelForStore)(storeId);
-  const nextInvoiceNumber = await generateNextInvoiceNumber(Sale, storeId);
-  const match = nextInvoiceNumber.match(/^INV-(\d+)$/);
-  const number = match ? parseInt(match[1], 10) : 1;
-  res.status(200).json({
+  const data = await import_sales.salesService.getNextInvoiceNumber(storeId);
+  return res.status(200).json({
     success: true,
     message: "Next invoice number retrieved successfully",
     data: {
-      invoiceNumber: nextInvoiceNumber,
-      number
+      invoiceNumber: data.invoiceNumber,
+      number: data.number
     }
   });
 });
-const createSale = (0, import_error.asyncHandler)(async (req, res) => {
+const createSale = (0, import_error.asyncHandler)(async (req, res, next) => {
   const storeId = req.user?.storeId || null;
   if (!storeId) {
     return res.status(400).json({
@@ -318,9 +117,7 @@ const createSale = (0, import_error.asyncHandler)(async (req, res) => {
     status,
     seller,
     isReturn = false
-    // Flag to indicate if this is a return invoice
   } = req.body;
-  const requestedInvoiceNumber = invoiceNumber;
   if (!invoiceNumber || !customerName || !items || !Array.isArray(items) || items.length === 0) {
     return res.status(400).json({
       success: false,
@@ -342,260 +139,52 @@ const createSale = (0, import_error.asyncHandler)(async (req, res) => {
       });
     }
   }
-  const validPaymentMethods = ["cash", "card", "credit"];
-  const normalizedPaymentMethod = paymentMethod?.toLowerCase();
-  if (!normalizedPaymentMethod || !validPaymentMethods.includes(normalizedPaymentMethod)) {
-    return res.status(400).json({
-      success: false,
-      message: `Payment method must be one of: ${validPaymentMethods.join(", ")}`
+  try {
+    const result = await import_sales.salesService.createSale(storeId, {
+      invoiceNumber,
+      date,
+      customerId,
+      customerName,
+      items,
+      subtotal,
+      totalItemDiscount,
+      invoiceDiscount,
+      tax,
+      total,
+      paidAmount,
+      remainingAmount,
+      paymentMethod,
+      status,
+      seller,
+      isReturn
     });
-  }
-  let saleStatus = status;
-  if (!saleStatus) {
-    if (remainingAmount <= 0) {
-      saleStatus = "completed";
-    } else if (paidAmount > 0) {
-      saleStatus = "partial_payment";
-    } else {
-      saleStatus = "pending";
+    return res.status(201).json({
+      success: true,
+      message: "Sale created successfully",
+      data: {
+        sale: result.sale,
+        meta: {
+          requestedInvoiceNumber: result.requestedInvoiceNumber,
+          finalInvoiceNumber: result.finalInvoiceNumber,
+          invoiceAutoAdjusted: result.invoiceAutoAdjusted
+        }
+      }
+    });
+  } catch (error) {
+    if (error.code === "INVALID_PAYMENT_METHOD") {
+      return next(new import_error.AppError(error.message, 400));
     }
-  }
-  const Sale = await (0, import_saleModel.getSaleModelForStore)(storeId);
-  const Product = await (0, import_productModel.getProductModelForStore)(storeId);
-  const itemsWithCostPrice = await Promise.all(
-    items.map(async (item) => {
-      if (item.costPrice !== void 0 && item.costPrice !== null) {
-        return {
-          productId: String(item.productId),
-          productName: item.productName || item.name || "",
-          quantity: item.quantity || 0,
-          unitPrice: item.unitPrice || 0,
-          totalPrice: item.totalPrice || (item.total || 0),
-          costPrice: Number(item.costPrice) || 0,
-          unit: item.unit || "\u0642\u0637\u0639\u0629",
-          discount: item.discount || 0,
-          conversionFactor: item.conversionFactor || 1
-        };
-      }
-      let costPrice = 0;
-      try {
-        const productId = String(item.productId);
-        const mongoose = (await import("mongoose")).default;
-        let product = null;
-        if (mongoose.Types.ObjectId.isValid(productId) && productId.length === 24) {
-          product = await Product.findOne({
-            _id: productId,
-            storeId: storeId.toLowerCase()
-          }).select("costPrice").lean();
+    if (error.code === "INVOICE_CONFLICT") {
+      return next(new import_error.AppError(error.message, 409, {
+        data: {
+          duplicateInvoiceNumber: error.duplicateInvoiceNumber,
+          duplicateInvoiceId: error.duplicateInvoiceId,
+          errorType: "invoice_number_conflict"
         }
-        if (!product) {
-          product = await Product.findOne({
-            id: productId,
-            storeId: storeId.toLowerCase()
-          }).select("costPrice").lean();
-        }
-        if (product) {
-          costPrice = product.costPrice || 0;
-        }
-      } catch (error) {
-        import_logger.log.warn(`[Sales Controller] Failed to fetch cost price for product ${item.productId}`, error);
-      }
-      return {
-        productId: String(item.productId),
-        productName: item.productName || item.name || "",
-        quantity: item.quantity || 0,
-        unitPrice: item.unitPrice || 0,
-        totalPrice: item.totalPrice || (item.total || 0),
-        costPrice,
-        unit: item.unit || "\u0642\u0637\u0639\u0629",
-        discount: item.discount || 0,
-        conversionFactor: item.conversionFactor || 1
-      };
-    })
-  );
-  const normalizedStoreId = storeId.toLowerCase().trim();
-  let currentInvoiceNumber = invoiceNumber;
-  let retryCount = 0;
-  const maxRetries = 3;
-  let sale = null;
-  while (retryCount < maxRetries) {
-    try {
-      const existingSale = await Sale.findOne({
-        invoiceNumber: currentInvoiceNumber,
-        storeId: normalizedStoreId
-      });
-      if (existingSale) {
-        if (process.env.NODE_ENV === "production") {
-          import_logger.log.debug(`[Sales Controller] Invoice number ${currentInvoiceNumber} already exists. Generating new invoice number.`);
-        } else {
-          import_logger.log.warn(`[Sales Controller] Invoice number ${currentInvoiceNumber} already exists. Generating new invoice number.`);
-        }
-        currentInvoiceNumber = await generateNextInvoiceNumber(Sale, storeId);
-        retryCount++;
-        if (retryCount >= maxRetries) {
-          return res.status(409).json({
-            success: false,
-            message: `\u062A\u0639\u0627\u0631\u0636 \u0631\u0642\u0645 \u0627\u0644\u0641\u0627\u062A\u0648\u0631\u0629: \u0627\u0633\u062A\u0645\u0631 \u0627\u0644\u062A\u0639\u0627\u0631\u0636 \u0628\u0639\u062F ${maxRetries} \u0645\u062D\u0627\u0648\u0644\u0627\u062A. \u0631\u0642\u0645 \u0627\u0644\u0641\u0627\u062A\u0648\u0631\u0629: ${currentInvoiceNumber}`,
-            data: {
-              duplicateInvoiceNumber: existingSale.invoiceNumber,
-              duplicateInvoiceId: existingSale.id,
-              errorType: "invoice_number_conflict"
-            }
-          });
-        }
-        continue;
-      }
-      sale = new Sale({
-        invoiceNumber: currentInvoiceNumber,
-        storeId: normalizedStoreId,
-        date: date ? new Date(date) : /* @__PURE__ */ new Date(),
-        customerId: customerId || null,
-        customerName,
-        items: itemsWithCostPrice,
-        subtotal: subtotal || 0,
-        totalItemDiscount: totalItemDiscount || 0,
-        invoiceDiscount: invoiceDiscount || 0,
-        tax: tax || 0,
-        total,
-        paidAmount: paidAmount || 0,
-        remainingAmount: remainingAmount || total - (paidAmount || 0),
-        paymentMethod: normalizedPaymentMethod,
-        status: saleStatus,
-        seller: seller || "Unknown"
-      });
-      await sale.save();
-      break;
-    } catch (error) {
-      if (error.code === 11e3) {
-        if (process.env.NODE_ENV === "production") {
-          import_logger.log.debug(`[Sales Controller] Duplicate key error for invoice ${currentInvoiceNumber}, generating new number`);
-        } else {
-          import_logger.log.warn(`[Sales Controller] Duplicate key error for invoice ${currentInvoiceNumber}, generating new number`);
-        }
-        currentInvoiceNumber = await generateNextInvoiceNumber(Sale, storeId);
-        retryCount++;
-        if (retryCount >= maxRetries) {
-          throw new Error(`Failed to create sale after ${maxRetries} attempts: Unable to generate unique invoice number`);
-        }
-        continue;
-      } else {
-        throw error;
-      }
+      }));
     }
+    next(error);
   }
-  if (!sale) {
-    throw new Error("Failed to create sale: Unable to save after retries");
-  }
-  const stockUpdateResults = [];
-  if (items && Array.isArray(items) && items.length > 0) {
-    for (const item of items) {
-      const { productId, quantity: itemQuantity, unit: itemUnit } = item;
-      if (!productId || !itemQuantity || itemQuantity <= 0) {
-        continue;
-      }
-      try {
-        const mongoose = (await import("mongoose")).default;
-        let product = null;
-        if (mongoose.Types.ObjectId.isValid(productId) && productId.length === 24) {
-          product = await Product.findOne({
-            _id: productId,
-            storeId: storeId.toLowerCase()
-          });
-        }
-        if (!product) {
-          product = await Product.findOne({
-            id: productId,
-            storeId: storeId.toLowerCase()
-          });
-        }
-        if (!product) {
-          stockUpdateResults.push({
-            productId: String(productId),
-            success: false,
-            error: "Product not found"
-          });
-          import_logger.log.warn(`[Sales Controller] Product not found for stock update: ${productId}`);
-          continue;
-        }
-        const unit = itemUnit || "\u0642\u0637\u0639\u0629";
-        let stockChange;
-        if (product.units && product.units.length > 0) {
-          stockChange = convertQuantityToMainUnits(product, unit, itemQuantity);
-        } else if (item.conversionFactor && item.conversionFactor > 1) {
-          stockChange = itemQuantity / item.conversionFactor;
-        } else {
-          stockChange = itemQuantity;
-        }
-        const currentStock = product.stock || 0;
-        let newStock;
-        if (isReturn) {
-          newStock = currentStock + stockChange;
-        } else {
-          newStock = Math.max(0, currentStock - stockChange);
-        }
-        await Product.findByIdAndUpdate(
-          product._id,
-          { stock: newStock },
-          { new: true }
-        );
-        await (0, import_productCache.invalidateAllProductBarcodeCaches)(storeId, product);
-        stockUpdateResults.push({
-          productId: String(productId),
-          success: true
-        });
-        import_logger.log.debug(
-          `[Sales Controller] Stock ${isReturn ? "increased" : "decreased"} for product ${productId}: ${currentStock} -> ${newStock} (${isReturn ? "+" : "-"}${stockChange})`
-        );
-      } catch (error) {
-        import_logger.log.error(`[Sales Controller] Error updating stock for product ${productId}:`, error);
-        stockUpdateResults.push({
-          productId: String(productId),
-          success: false,
-          error: error.message || "Failed to update stock"
-        });
-      }
-    }
-    const successful = stockUpdateResults.filter((r) => r.success).length;
-    const failed = stockUpdateResults.filter((r) => !r.success).length;
-    if (failed > 0) {
-      import_logger.log.warn(
-        `[Sales Controller] Stock updates completed with errors: ${successful} successful, ${failed} failed`
-      );
-    } else {
-      import_logger.log.debug(
-        `[Sales Controller] All stock updates completed successfully: ${successful} products updated`
-      );
-    }
-  }
-  res.status(201).json({
-    success: true,
-    message: "Sale created successfully",
-    data: {
-      sale: {
-        id: sale.id,
-        invoiceNumber: sale.invoiceNumber,
-        date: sale.date,
-        customerName: sale.customerName,
-        customerId: sale.customerId,
-        total: sale.total,
-        paidAmount: sale.paidAmount,
-        remainingAmount: sale.remainingAmount,
-        paymentMethod: sale.paymentMethod,
-        status: sale.status,
-        seller: sale.seller,
-        items: sale.items,
-        subtotal: sale.subtotal,
-        totalItemDiscount: sale.totalItemDiscount,
-        invoiceDiscount: sale.invoiceDiscount,
-        tax: sale.tax
-      },
-      meta: {
-        requestedInvoiceNumber,
-        finalInvoiceNumber: sale.invoiceNumber,
-        invoiceAutoAdjusted: sale.invoiceNumber !== requestedInvoiceNumber
-      }
-    }
-  });
 });
 const getSales = (0, import_error.asyncHandler)(async (req, res) => {
   const userStoreId = req.user?.storeId || null;
@@ -624,7 +213,7 @@ const getSales = (0, import_error.asyncHandler)(async (req, res) => {
         message: "No stores available"
       });
     }
-    modelStoreId = firstStore.storeId || firstStore.prefix;
+    modelStoreId = firstStore.storeId;
   }
   const Sale = await (0, import_saleModel.getSaleModelForStore)(modelStoreId);
   let query = {};
@@ -813,17 +402,21 @@ const getSales = (0, import_error.asyncHandler)(async (req, res) => {
       query = calendarQuery;
     }
   }
+  const totalPages = Math.ceil(total / limitNum);
   res.status(200).json({
     success: true,
     message: "Sales retrieved successfully",
     data: {
       sales,
+      items: sales,
       pagination: {
-        currentPage: pageNum,
-        totalPages: Math.ceil(total / limitNum),
-        totalSales: total,
+        page: pageNum,
         limit: limitNum,
-        hasNextPage: pageNum * limitNum < total,
+        total,
+        totalPages,
+        currentPage: pageNum,
+        totalSales: total,
+        hasNextPage: pageNum < totalPages,
         hasPreviousPage: pageNum > 1
       }
     }
@@ -856,7 +449,7 @@ const getSalesSummary = (0, import_error.asyncHandler)(async (req, res) => {
         message: "No stores available"
       });
     }
-    modelStoreId = firstStore.storeId || firstStore.prefix;
+    modelStoreId = firstStore.storeId;
   }
   const Sale = await (0, import_saleModel.getSaleModelForStore)(modelStoreId);
   const query = {};
@@ -1323,10 +916,10 @@ const processReturn = (0, import_error.asyncHandler)(async (req, res) => {
           conversionFactor = originalItem.conversionFactor;
         }
       }
-      const unit = returnItem.unit || "\u0642\u0637\u0639\u0629";
+      let unit = returnItem.unit || "\u0642\u0637\u0639\u0629";
       let stockIncrease;
       if (product.units && product.units.length > 0) {
-        stockIncrease = convertQuantityToMainUnits(product, unit, returnQuantity);
+        stockIncrease = (0, import_sales.convertQuantityToMainUnits)(product, unit, returnQuantity);
       } else if (conversionFactor > 1) {
         stockIncrease = returnQuantity / conversionFactor;
       } else {
@@ -1405,7 +998,7 @@ const processReturn = (0, import_error.asyncHandler)(async (req, res) => {
   const returnTotal = returnTaxableAmount + returnTax;
   const finalCustomerName = customerName || originalInvoice?.customerName || "\u0639\u0645\u064A\u0644 \u0646\u0642\u062F\u064A";
   const finalCustomerId = customerId || originalInvoice?.customerId || null;
-  const returnInvoiceNumber = await generateNextInvoiceNumber(Sale, storeId);
+  const returnInvoiceNumber = await (0, import_sales.generateNextInvoiceNumber)(Sale, storeId);
   const returnSale = new Sale({
     invoiceNumber: returnInvoiceNumber,
     storeId,
@@ -1461,7 +1054,7 @@ const processReturn = (0, import_error.asyncHandler)(async (req, res) => {
     }
   });
 });
-const getPublicInvoice = (0, import_error.asyncHandler)(async (req, res) => {
+const getPublicInvoice = (0, import_error.asyncHandler)(async (req, res, next) => {
   const { invoiceNumber, storeId } = req.query;
   if (!invoiceNumber || typeof invoiceNumber !== "string") {
     return res.status(400).json({
@@ -1482,7 +1075,7 @@ const getPublicInvoice = (0, import_error.asyncHandler)(async (req, res) => {
           message: "No stores available"
         });
       }
-      const modelStoreId = firstStore.storeId || firstStore.prefix;
+      const modelStoreId = firstStore.storeId;
       Sale = await (0, import_saleModel.getSaleModelForStore)(modelStoreId);
     }
     const query = { invoiceNumber: normalizedInvoiceNumber };
@@ -1526,16 +1119,319 @@ const getPublicInvoice = (0, import_error.asyncHandler)(async (req, res) => {
       }
     });
   } catch (error) {
-    import_logger.log.error("Error fetching public invoice:", error);
-    res.status(500).json({
+    next(error);
+  }
+});
+const createSimpleSale = (0, import_error.asyncHandler)(async (req, res) => {
+  const storeId = req.user?.storeId || null;
+  if (!storeId) {
+    return res.status(400).json({
       success: false,
-      message: "Error fetching invoice"
+      message: "Store ID is required to create a sale"
     });
   }
+  const { invoiceAmount, customerNumber } = req.body;
+  if (!invoiceAmount || invoiceAmount <= 0) {
+    return res.status(400).json({
+      success: false,
+      message: "Invoice amount is required and must be positive"
+    });
+  }
+  const total = Number(invoiceAmount);
+  const paidAmount = total;
+  const remainingAmount = 0;
+  const subtotal = total;
+  const totalItemDiscount = 0;
+  const invoiceDiscount = 0;
+  const tax = 0;
+  const Sale = await (0, import_saleModel.getSaleModelForStore)(storeId);
+  const normalizedStoreId = storeId.toLowerCase().trim();
+  const invoiceNumber = await (0, import_sales.generateNextInvoiceNumber)(Sale, storeId);
+  let customerId = null;
+  let customerName = "Cash Customer";
+  if (customerNumber) {
+    try {
+      const Customer = await (0, import_customerModel.getCustomerModelForStore)(storeId);
+      const mongoose = (await import("mongoose")).default;
+      const trimmedCustomerNumber = customerNumber.trim();
+      if (mongoose.Types.ObjectId.isValid(trimmedCustomerNumber) && trimmedCustomerNumber.length === 24) {
+        const customerById = await Customer.findOne({
+          _id: trimmedCustomerNumber,
+          storeId: normalizedStoreId
+        });
+        if (customerById) {
+          customerId = String(customerById._id);
+          customerName = customerById.name;
+          import_logger.log.info(`[Simple Sale] Found customer by ID: ${customerId}, name: ${customerName}`);
+        }
+      }
+      if (!customerId) {
+        const customerByPhone = await Customer.findOne({
+          phone: trimmedCustomerNumber,
+          storeId: normalizedStoreId
+        });
+        if (customerByPhone) {
+          customerId = String(customerByPhone._id);
+          customerName = customerByPhone.name;
+          import_logger.log.info(`[Simple Sale] Found customer by phone: ${customerId}, name: ${customerName}`);
+        } else {
+          import_logger.log.warn(`[Simple Sale] Customer not found with phone/ID: ${trimmedCustomerNumber} for store: ${normalizedStoreId}`);
+        }
+      }
+    } catch (customerError) {
+      import_logger.log.error("[Simple Sale] Error looking up customer:", customerError);
+    }
+  }
+  const saleData = {
+    invoiceNumber,
+    storeId: normalizedStoreId,
+    date: /* @__PURE__ */ new Date(),
+    customerId: customerId || null,
+    customerName,
+    items: [
+      {
+        productId: "simple-pos-item",
+        productName: "\u0645\u0628\u064A\u0639\u0627\u062A \u0639\u0627\u0645\u0629",
+        // General Sales
+        quantity: 1,
+        unitPrice: total,
+        totalPrice: total,
+        costPrice: 0,
+        // No cost tracking for simple POS
+        unit: "\u0642\u0637\u0639\u0629",
+        discount: 0,
+        conversionFactor: 1
+      }
+    ],
+    subtotal,
+    totalItemDiscount,
+    invoiceDiscount,
+    tax,
+    total,
+    paidAmount,
+    remainingAmount,
+    paymentMethod: "cash",
+    status: "completed",
+    seller: req.user?.userId || "system",
+    originalInvoiceId: null,
+    isReturn: false
+  };
+  const sale = await Sale.create(saleData);
+  const addPointsForCustomer = async (globalCustomerId, customerName2, customerPhone) => {
+    try {
+      import_logger.log.info(`[Simple Sale] Attempting to add points for globalCustomerId: ${globalCustomerId}, invoice: ${invoiceNumber}, amount: ${total}`);
+      let settings = await import_PointsSettings.default.findOne({ storeId: normalizedStoreId });
+      if (!settings) {
+        settings = await import_PointsSettings.default.findOne({ storeId: "global" });
+        if (!settings) {
+          import_logger.log.info("[Simple Sale] Creating default global points settings");
+          settings = await import_PointsSettings.default.create({
+            storeId: "global",
+            userPointsPercentage: 5,
+            companyProfitPercentage: 2,
+            defaultThreshold: 1e4
+          });
+        }
+      }
+      import_logger.log.info(`[Simple Sale] Points settings - percentage: ${settings.userPointsPercentage}%, minPurchase: ${settings.minPurchaseAmount || "none"}`);
+      const pointsPercentage = settings.userPointsPercentage;
+      const points = Math.floor(total * pointsPercentage / 100);
+      import_logger.log.info(`[Simple Sale] Calculated points: ${points} (${pointsPercentage}% of ${total})`);
+      if (points > 0) {
+        if (!settings.minPurchaseAmount || total >= settings.minPurchaseAmount) {
+          const finalPoints = settings.maxPointsPerTransaction ? Math.min(points, settings.maxPointsPerTransaction) : points;
+          import_logger.log.info(`[Simple Sale] Final points to award: ${finalPoints}`);
+          let expiresAt;
+          if (settings.pointsExpirationDays) {
+            expiresAt = /* @__PURE__ */ new Date();
+            expiresAt.setDate(expiresAt.getDate() + settings.pointsExpirationDays);
+          }
+          const pointsValuePerPoint = settings.pointsValuePerPoint || 0.01;
+          const pointsValue = finalPoints * pointsValuePerPoint;
+          import_logger.log.info(`[Simple Sale] Points value: ${pointsValue} (${finalPoints} points \xD7 ${pointsValuePerPoint})`);
+          const transaction = await import_PointsTransaction.default.create({
+            globalCustomerId,
+            customerName: customerName2,
+            earningStoreId: normalizedStoreId,
+            invoiceNumber,
+            transactionType: "earned",
+            points: finalPoints,
+            purchaseAmount: total,
+            pointsPercentage,
+            pointsValue,
+            description: `Points earned from purchase at ${storeId} (Invoice: ${invoiceNumber})`,
+            expiresAt
+          });
+          import_logger.log.info(`[Simple Sale] Points transaction created: ${transaction._id}`);
+          const balance = await import_PointsBalance.default.findOneAndUpdate(
+            { globalCustomerId },
+            {
+              $inc: {
+                totalPoints: finalPoints,
+                availablePoints: finalPoints,
+                lifetimeEarned: finalPoints
+              },
+              $set: {
+                customerName: customerName2,
+                customerPhone: customerPhone || void 0,
+                lastTransactionDate: /* @__PURE__ */ new Date()
+              },
+              $setOnInsert: {
+                globalCustomerId,
+                pendingPoints: 0,
+                lifetimeSpent: 0
+              }
+            },
+            { upsert: true, new: true }
+          );
+          import_logger.log.info(`[Simple Sale] Points balance updated: total=${balance.totalPoints}, available=${balance.availablePoints}`);
+          let storeAccount = await import_StorePointsAccount.default.findOne({ storeId: normalizedStoreId });
+          if (storeAccount) {
+            const oldIssued = storeAccount.totalPointsIssued;
+            const oldValue = storeAccount.totalPointsValueIssued;
+            storeAccount.totalPointsIssued += finalPoints;
+            storeAccount.totalPointsValueIssued += pointsValue;
+            storeAccount.recalculate();
+            await storeAccount.save();
+            import_logger.log.info(`[Simple Sale] Store account updated: points issued ${oldIssued} \u2192 ${storeAccount.totalPointsIssued}, value ${oldValue} \u2192 ${storeAccount.totalPointsValueIssued}`);
+          } else {
+            const store = await import_Store.default.findOne({ storeId: normalizedStoreId });
+            storeAccount = await import_StorePointsAccount.default.create({
+              storeId: normalizedStoreId,
+              storeName: store?.name || "Unknown Store",
+              totalPointsIssued: finalPoints,
+              totalPointsRedeemed: 0,
+              pointsValuePerPoint,
+              totalPointsValueIssued: pointsValue,
+              totalPointsValueRedeemed: 0
+            });
+            storeAccount.recalculate();
+            await storeAccount.save();
+            import_logger.log.info(`[Simple Sale] New store account created: ${storeAccount.storeId}, points issued: ${finalPoints}`);
+          }
+          import_logger.log.info(`[Simple Sale] \u2705 Successfully added ${finalPoints} points for globalCustomerId ${globalCustomerId}`);
+          return { success: true, points: finalPoints };
+        } else {
+          import_logger.log.warn(`[Simple Sale] Purchase amount ${total} is below minimum ${settings.minPurchaseAmount} - no points awarded`);
+          return { success: false, reason: "below_minimum" };
+        }
+      } else {
+        import_logger.log.warn(`[Simple Sale] Calculated points is 0 - no points awarded`);
+        return { success: false, reason: "zero_points" };
+      }
+    } catch (pointsError) {
+      import_logger.log.error("[Simple Sale] \u274C Error adding points:", pointsError);
+      import_logger.log.error("[Simple Sale] Error stack:", pointsError.stack);
+      return { success: false, error: pointsError.message };
+    }
+  };
+  if (customerId) {
+    try {
+      import_logger.log.info(`[Simple Sale] Customer found in store: ${customerId}, invoice: ${invoiceNumber}, amount: ${total}`);
+      const Customer = await (0, import_customerModel.getCustomerModelForStore)(storeId);
+      const customer = await Customer.findById(customerId);
+      if (!customer) {
+        import_logger.log.warn(`[Simple Sale] Customer not found with ID: ${customerId}`);
+      } else {
+        import_logger.log.info(`[Simple Sale] Customer found: ${customer.name}, phone: ${customer.phone}`);
+        const globalCustomer = await import_GlobalCustomer.default.getOrCreateGlobalCustomer(
+          storeId,
+          customerId,
+          customer.name,
+          customer.phone,
+          void 0
+        );
+        import_logger.log.info(`[Simple Sale] Global customer: ${globalCustomer.globalCustomerId}`);
+        await addPointsForCustomer(
+          globalCustomer.globalCustomerId,
+          globalCustomer.name,
+          globalCustomer.phone
+        );
+      }
+    } catch (pointsError) {
+      import_logger.log.error("[Simple Sale] \u274C Error adding points to customer:", pointsError);
+      import_logger.log.error("[Simple Sale] Error stack:", pointsError.stack);
+    }
+  } else if (customerNumber && customerNumber.trim()) {
+    try {
+      const trimmedPhone = customerNumber.trim();
+      import_logger.log.info(`[Simple Sale] Customer not found in store, but phone provided: ${trimmedPhone}. Attempting to add points using phone as globalCustomerId`);
+      const globalCustomerIdFromPhone = trimmedPhone.toLowerCase();
+      let customerNameToUse = "Customer";
+      const existingGlobalCustomer = await import_GlobalCustomer.default.findOne({
+        globalCustomerId: globalCustomerIdFromPhone
+      });
+      if (existingGlobalCustomer) {
+        customerNameToUse = existingGlobalCustomer.name;
+        import_logger.log.info(`[Simple Sale] Found existing GlobalCustomer: ${existingGlobalCustomer.name}, phone: ${existingGlobalCustomer.phone}`);
+      } else {
+        import_logger.log.info(`[Simple Sale] No existing GlobalCustomer found for phone: ${trimmedPhone}. Points will be added using phone as globalCustomerId. GlobalCustomer will be created when customer registers in a store.`);
+      }
+      await addPointsForCustomer(
+        globalCustomerIdFromPhone,
+        customerNameToUse,
+        trimmedPhone
+      );
+    } catch (pointsError) {
+      import_logger.log.error("[Simple Sale] \u274C Error adding points using phone number:", pointsError);
+      import_logger.log.error("[Simple Sale] Error stack:", pointsError.stack);
+    }
+  } else {
+    import_logger.log.info(`[Simple Sale] No customer ID or phone number provided - sale recorded without points`);
+  }
+  const responseData = {
+    sale: {
+      id: sale._id.toString(),
+      invoiceNumber: sale.invoiceNumber,
+      storeId: sale.storeId,
+      date: sale.date,
+      customerId: sale.customerId,
+      customerName: sale.customerName,
+      items: sale.items,
+      subtotal: sale.subtotal,
+      totalItemDiscount: sale.totalItemDiscount,
+      invoiceDiscount: sale.invoiceDiscount,
+      tax: sale.tax,
+      total: sale.total,
+      paidAmount: sale.paidAmount,
+      remainingAmount: sale.remainingAmount,
+      paymentMethod: sale.paymentMethod,
+      status: sale.status,
+      seller: sale.seller,
+      createdAt: sale.createdAt,
+      updatedAt: sale.updatedAt
+    }
+  };
+  if (customerId) {
+    responseData.pointsInfo = {
+      customerFound: true,
+      customerId,
+      customerName,
+      message: "Points processing attempted for registered customer. Check logs for details."
+    };
+  } else if (customerNumber && customerNumber.trim()) {
+    responseData.pointsInfo = {
+      customerFound: false,
+      customerNumber: customerNumber.trim(),
+      message: `Customer not found in store, but points processing attempted using phone number. Check logs for details.`
+    };
+  } else {
+    responseData.pointsInfo = {
+      customerFound: false,
+      message: "No customer number provided. Sale recorded without points."
+    };
+  }
+  import_logger.log.info(`[Simple Sale] \u2705 Sale created successfully: ${invoiceNumber}, customer: ${customerName}${customerId ? ` (ID: ${customerId})` : " (No customer)"}`);
+  res.status(201).json({
+    success: true,
+    message: "Sale created successfully",
+    data: responseData
+  });
 });
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
   createSale,
+  createSimpleSale,
   deleteSale,
   getCurrentInvoiceNumber,
   getNextInvoiceNumber,

@@ -43,53 +43,79 @@ import { AuthenticatedRequest } from '../middleware/auth.middleware';
 import { asyncHandler } from '../middleware/error.middleware';
 import User, { UserDocument } from '../models/User';
 import { log } from '../utils/logger';
+import {
+  parsePaginationQuery,
+  buildPaginationMeta,
+  MAX_PAGE_SIZE,
+} from '../types/pagination';
 
-// Get all users
+// Get all users (paginated: default limit 50, max 100)
 export const getUsers = asyncHandler(
   async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
     // CRITICAL: storeId MUST come from JWT only (never from request)
     const requesterRole = req.user?.role;
     const requesterStoreId = req.user?.storeId;
 
-    let allUsers: UserDocument[] = [];
+    const { page, limit, skip } = parsePaginationQuery(req.query as { page?: string; limit?: string }, MAX_PAGE_SIZE);
+    const searchTerm = (req.query.search as string)?.trim() || '';
+    const roleFilter = (req.query.role as string)?.trim() || '';
 
-    if (requesterRole === 'Admin') {
-      // Admin users can see all users across all stores
-      // Query unified collection - no storeId filter for Admin
-      const users = await User.find({}).sort({ createdAt: -1 }).lean();
-      allUsers = users as unknown as UserDocument[];
-    } else {
-      // Non-admin users can only see users from their own store
-      if (!requesterStoreId) {
-        return res.status(403).json({
-          success: false,
-          message: 'Access denied. Store ID is required for non-admin users.',
-        });
-      }
+    let baseQuery: Record<string, unknown> = requesterRole === 'Admin'
+      ? {}
+      : requesterStoreId
+        ? { storeId: requesterStoreId.toLowerCase() }
+        : (null as unknown as Record<string, unknown>);
 
-      // Use unified model with storeId filter for isolation
-      const users = await User.find({ 
-        storeId: requesterStoreId.toLowerCase() 
-      }).sort({ createdAt: -1 }).lean();
-      allUsers = users as unknown as UserDocument[];
+    if (baseQuery === null) {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied. Store ID is required for non-admin users.',
+      });
     }
+
+    if (roleFilter) {
+      baseQuery = { ...baseQuery, role: roleFilter };
+    }
+    if (searchTerm) {
+      const escaped = searchTerm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      baseQuery = {
+        ...baseQuery,
+        $or: [
+          { fullName: { $regex: escaped, $options: 'i' } },
+          { username: { $regex: escaped, $options: 'i' } },
+          { email: { $regex: escaped, $options: 'i' } },
+        ],
+      };
+    }
+
+    const [users, total] = await Promise.all([
+      User.find(baseQuery).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
+      User.countDocuments(baseQuery),
+    ]);
+
+    const items = (users as unknown as UserDocument[]).map((user) => ({
+      id: user._id.toString(),
+      fullName: user.fullName,
+      username: user.username,
+      email: user.email,
+      role: user.role,
+      permissions: user.permissions,
+      status: user.status,
+      storeId: user.storeId,
+      lastLogin: user.lastLogin,
+      createdAt: user.createdAt,
+      updatedAt: user.updatedAt,
+    }));
+
+    const pagination = buildPaginationMeta(page, limit, total);
 
     res.status(200).json({
       success: true,
       data: {
-        users: allUsers.map((user) => ({
-          id: user._id.toString(),
-          fullName: user.fullName,
-          username: user.username,
-          email: user.email,
-          role: user.role,
-          permissions: user.permissions,
-          status: user.status,
-          storeId: user.storeId, // Include storeId in response
-          lastLogin: user.lastLogin,
-          createdAt: user.createdAt,
-          updatedAt: user.updatedAt,
-        })),
+        items,
+        pagination,
+        // Legacy: keep users for backward compatibility during transition
+        users: items,
       },
     });
   }
@@ -175,12 +201,7 @@ export const createUser = asyncHandler(
       if (requestStoreId) {
         finalStoreId = requestStoreId.toLowerCase();
         // Validate that the store exists
-        const store = await Store.findOne({ 
-          $or: [
-            { storeId: finalStoreId },
-            { prefix: finalStoreId }
-          ]
-        });
+        const store = await Store.findOne({ storeId: finalStoreId });
         if (!store) {
           return res.status(400).json({
             success: false,
@@ -351,12 +372,7 @@ export const updateUser = asyncHandler(
       } else {
         const normalizedStoreId = requestStoreId.toLowerCase();
         // Validate that the store exists
-        const store = await Store.findOne({ 
-          $or: [
-            { storeId: normalizedStoreId },
-            { prefix: normalizedStoreId }
-          ]
-        });
+        const store = await Store.findOne({ storeId: normalizedStoreId });
         if (!store) {
           return res.status(400).json({
             success: false,

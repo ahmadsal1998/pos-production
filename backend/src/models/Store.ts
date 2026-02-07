@@ -24,7 +24,7 @@ export interface IStore {
   storeNumber: number; // Sequential store number (1, 2, 3, 4, 5...)
   storeId: string;
   name: string;
-  prefix: string;
+  storeTypeId?: mongoose.Types.ObjectId; // Reference to StoreType (e.g. Restaurant, Supermarket)
   databaseId: number; // Database ID (1-5) where this store's data is stored
   terminals: ITerminal[]; // Array of terminals for this store
   subscriptionStartDate: Date; // Subscription start date
@@ -139,12 +139,10 @@ const storeSchema = new Schema<StoreDocument>(
       required: [true, 'Store name is required'],
       trim: true,
     },
-    prefix: {
-      type: String,
-      required: [true, 'Store prefix is required'],
-      trim: true,
-      lowercase: true,
-      match: [/^[a-z0-9_]+$/, 'Prefix must contain only lowercase letters, numbers, and underscores'],
+    storeTypeId: {
+      type: Schema.Types.ObjectId,
+      ref: 'StoreType',
+      default: null,
     },
     databaseId: {
       type: Number,
@@ -229,8 +227,8 @@ const storeSchema = new Schema<StoreDocument>(
 // Indexes
 storeSchema.index({ storeNumber: 1 }, { unique: true });
 storeSchema.index({ storeId: 1 });
-storeSchema.index({ prefix: 1 });
 storeSchema.index({ databaseId: 1 });
+storeSchema.index({ storeTypeId: 1 });
 
 // Create model
 const Store: Model<StoreDocument> = mongoose.model<StoreDocument>('Store', storeSchema);

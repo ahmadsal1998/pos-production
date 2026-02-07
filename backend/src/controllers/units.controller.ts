@@ -1,7 +1,7 @@
-import { Response } from 'express';
+import { Response, NextFunction } from 'express';
 import { body, validationResult } from 'express-validator';
 import { parse } from 'csv-parse/sync';
-import { asyncHandler } from '../middleware/error.middleware';
+import { asyncHandler, AppError } from '../middleware/error.middleware';
 import { AuthenticatedRequest } from '../middleware/auth.middleware';
 import Unit from '../models/Unit';
 import User from '../models/User';
@@ -38,7 +38,7 @@ export const validateUpdateUnit = [
     .withMessage('Description cannot exceed 500 characters')
 ];
 
-export const createUnit = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+export const createUnit = asyncHandler(async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
     return res.status(400).json({
@@ -112,38 +112,11 @@ export const createUnit = asyncHandler(async (req: AuthenticatedRequest, res: Re
       unit,
     });
   } catch (error: any) {
-    console.error('❌ Create Unit - Error:', {
-      message: error.message,
-      stack: error.stack,
-      storeId: storeId,
-      name: error.name,
-      code: error.code,
-    });
-    
-    // Handle specific mongoose errors
-    if (error.name === 'ValidationError') {
-      const errorMessages = Object.values(error.errors || {}).map((e: any) => e.message);
-      return res.status(400).json({
-        success: false,
-        message: errorMessages.join(', ') || 'Validation error',
-      });
-    }
-    
-    if (error.code === 11000) {
-      return res.status(400).json({
-        success: false,
-        message: 'Unit with this name already exists',
-      });
-    }
-    
-    return res.status(500).json({
-      success: false,
-      message: error.message || 'Failed to create unit. Please try again.',
-    });
+    next(error);
   }
 });
 
-export const getUnits = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+export const getUnits = asyncHandler(async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   const storeId = req.user?.storeId || null;
   
   // Store users must have a storeId
@@ -168,16 +141,11 @@ export const getUnits = asyncHandler(async (req: AuthenticatedRequest, res: Resp
       units,
     });
   } catch (error: any) {
-    console.error('Error fetching units:', error);
-    return res.status(500).json({
-      success: false,
-      message: error.message || 'Failed to fetch units. Please try again.',
-      units: [],
-    });
+    next(error);
   }
 });
 
-export const getUnitById = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+export const getUnitById = asyncHandler(async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   const { id } = req.params;
   const storeId = req.user?.storeId || null;
 
@@ -211,15 +179,11 @@ export const getUnitById = asyncHandler(async (req: AuthenticatedRequest, res: R
       unit,
     });
   } catch (error: any) {
-    console.error('Error fetching unit:', error);
-    return res.status(500).json({
-      success: false,
-      message: error.message || 'Failed to fetch unit. Please try again.',
-    });
+    next(error);
   }
 });
 
-export const updateUnit = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+export const updateUnit = asyncHandler(async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
     return res.status(400).json({
@@ -284,31 +248,11 @@ export const updateUnit = asyncHandler(async (req: AuthenticatedRequest, res: Re
       unit,
     });
   } catch (error: any) {
-    console.error('Error updating unit:', error);
-    
-    if (error.name === 'ValidationError') {
-      const errorMessages = Object.values(error.errors || {}).map((e: any) => e.message);
-      return res.status(400).json({
-        success: false,
-        message: errorMessages.join(', ') || 'Validation error',
-      });
-    }
-    
-    if (error.code === 11000) {
-      return res.status(400).json({
-        success: false,
-        message: 'Unit with this name already exists',
-      });
-    }
-    
-    return res.status(500).json({
-      success: false,
-      message: error.message || 'Failed to update unit. Please try again.',
-    });
+    next(error);
   }
 });
 
-export const deleteUnit = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+export const deleteUnit = asyncHandler(async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   const { id } = req.params;
   const storeId = req.user?.storeId || null;
 
@@ -343,11 +287,7 @@ export const deleteUnit = asyncHandler(async (req: AuthenticatedRequest, res: Re
       message: 'Unit deleted successfully',
     });
   } catch (error: any) {
-    console.error('Error deleting unit:', error);
-    return res.status(500).json({
-      success: false,
-      message: error.message || 'Failed to delete unit. Please try again.',
-    });
+    next(error);
   }
 });
 
@@ -362,7 +302,7 @@ const escapeCsvValue = (value: string): string => {
 const normalizeHeaderKey = (key: string): string =>
   key.replace(/^\uFEFF/, '').trim().toLowerCase();
 
-export const exportUnits = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+export const exportUnits = asyncHandler(async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   const storeId = req.user?.storeId || null;
   
   // Store users must have a storeId
@@ -397,15 +337,11 @@ export const exportUnits = asyncHandler(async (req: AuthenticatedRequest, res: R
     );
     res.status(200).send(utf8WithBom);
   } catch (error: any) {
-    console.error('Error exporting units:', error);
-    return res.status(500).json({
-      success: false,
-      message: error.message || 'Failed to export units. Please try again.',
-    });
+    next(error);
   }
 });
 
-export const importUnits = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+export const importUnits = asyncHandler(async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   const file = req.file;
   const storeId = req.user?.storeId || null;
 
@@ -435,10 +371,7 @@ export const importUnits = asyncHandler(async (req: AuthenticatedRequest, res: R
       trim: true,
     });
   } catch (error) {
-    return res.status(400).json({
-      success: false,
-      message: 'Invalid CSV format',
-    });
+    return next(new AppError('Invalid CSV format', 400));
   }
 
   let created = 0;
@@ -528,18 +461,7 @@ export const importUnits = asyncHandler(async (req: AuthenticatedRequest, res: R
       units,
     });
   } catch (error: any) {
-    console.error('Error importing units:', error);
-    return res.status(500).json({
-      success: false,
-      message: error.message || 'Failed to import units. Please try again.',
-      summary: {
-        created: 0,
-        updated: 0,
-        failed: normalizedRecords.length,
-      },
-      errors: normalizedRecords.map((_, index) => ({ row: index + 1, message: 'Import error' })),
-      units: [],
-    });
+    next(error);
   }
 });
 

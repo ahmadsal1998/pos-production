@@ -2,6 +2,7 @@
 // Handles customer data efficiently with fast local search
 
 import { openIndexedDB, isIndexedDBAvailable } from './indexedDBUtils';
+import { getStoreIdFromToken } from '@/lib/utils/storeId';
 
 interface CustomerRecord {
   id: string;
@@ -67,19 +68,8 @@ class CustomersDB {
   }
 
   private getStoreId(): string | null {
-    try {
-      const token = localStorage.getItem('auth-token');
-      if (!token) {
-        return null;
-      }
-      const payload = JSON.parse(atob(token.split('.')[1]));
-      const storeId = payload.storeId || null;
-      // Normalize storeId to lowercase to match backend behavior
-      return storeId ? storeId.toLowerCase().trim() : null;
-    } catch (error) {
-      console.error('[CustomersDB] Error getting storeId from token:', error);
-      return null;
-    }
+    const storeId = getStoreIdFromToken();
+    return storeId ? storeId.toLowerCase().trim() : null;
   }
 
   private getCustomerId(customer: any, storeId: string): string {

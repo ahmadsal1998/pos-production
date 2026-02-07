@@ -4,19 +4,7 @@
 
 import { unitsApi, ApiError } from '@/lib/api/client';
 import { unitsDB } from '@/lib/db/unitsDB';
-
-function getStoreIdFromToken(): string | null {
-  try {
-    const token = localStorage.getItem('auth-token');
-    if (!token) {
-      return null;
-    }
-    const payload = JSON.parse(atob(token.split('.')[1]));
-    return payload.storeId || null;
-  } catch (error) {
-    return null;
-  }
-}
+import { getStoreIdFromToken } from '@/lib/utils/storeId';
 
 export interface UnitSyncResult {
   success: boolean;

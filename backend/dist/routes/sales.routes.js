@@ -31,6 +31,7 @@ router.use(import_auth.authenticate);
 router.use(import_storeIsolation.requireStoreAccess);
 router.get("/current-invoice-number", import_sales.getCurrentInvoiceNumber);
 router.get("/next-invoice-number", import_sales.getNextInvoiceNumber);
+router.post("/simple", import_sales.createSimpleSale);
 router.post("/", import_sales.createSale);
 router.post("/return", import_sales.processReturn);
 router.get("/summary", import_sales.getSalesSummary);

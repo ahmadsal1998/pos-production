@@ -1,13 +1,14 @@
-import { Response } from 'express';
+import { Response, NextFunction } from 'express';
 import { Merchant, IMerchant } from '../models/Merchant';
 import Store from '../models/Store';
 import { AuthenticatedRequest } from '../middleware/auth.middleware';
+import { asyncHandler } from '../middleware/error.middleware';
 import { log } from '../utils/logger';
 
 /**
  * Get all merchants
  */
-export const getMerchants = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+export const getMerchants = asyncHandler(async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
     const storeId = req.user?.storeId;
     const query: any = {};
@@ -24,19 +25,14 @@ export const getMerchants = async (req: AuthenticatedRequest, res: Response): Pr
       data: { merchants },
     });
   } catch (error: any) {
-    log.error('Get merchants error', error);
-    res.status(500).json({
-      success: false,
-      message: 'Internal server error',
-      error: error.message,
-    });
+    next(error);
   }
-};
+});
 
 /**
  * Get merchant by ID
  */
-export const getMerchant = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+export const getMerchant = asyncHandler(async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
     const { id } = req.params;
     const storeId = req.user?.storeId;
@@ -77,19 +73,14 @@ export const getMerchant = async (req: AuthenticatedRequest, res: Response): Pro
       },
     });
   } catch (error: any) {
-    log.error('Get merchant error', error);
-    res.status(500).json({
-      success: false,
-      message: 'Internal server error',
-      error: error.message,
-    });
+    next(error);
   }
-};
+});
 
 /**
  * Create new merchant
  */
-export const createMerchant = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+export const createMerchant = asyncHandler(async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
     const { name, merchantId, storeId, description, status } = req.body;
     const userStoreId = req.user?.storeId;
@@ -141,28 +132,14 @@ export const createMerchant = async (req: AuthenticatedRequest, res: Response): 
       data: { merchant },
     });
   } catch (error: any) {
-    console.error('Create merchant error:', error);
-    
-    if (error.code === 11000) {
-      res.status(400).json({
-        success: false,
-        message: 'Merchant ID already exists',
-      });
-      return;
-    }
-
-    res.status(500).json({
-      success: false,
-      message: 'Internal server error',
-      error: error.message,
-    });
+    next(error);
   }
-};
+});
 
 /**
  * Update merchant
  */
-export const updateMerchant = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+export const updateMerchant = asyncHandler(async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
     const { id } = req.params;
     const { name, merchantId, description, status } = req.body;
@@ -210,19 +187,14 @@ export const updateMerchant = async (req: AuthenticatedRequest, res: Response): 
       data: { merchant },
     });
   } catch (error: any) {
-    console.error('Update merchant error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Internal server error',
-      error: error.message,
-    });
+    next(error);
   }
-};
+});
 
 /**
  * Delete merchant
  */
-export const deleteMerchant = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+export const deleteMerchant = asyncHandler(async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
     const { id } = req.params;
     const storeId = req.user?.storeId;
@@ -267,12 +239,7 @@ export const deleteMerchant = async (req: AuthenticatedRequest, res: Response): 
       message: 'Merchant deleted successfully',
     });
   } catch (error: any) {
-    console.error('Delete merchant error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Internal server error',
-      error: error.message,
-    });
+    next(error);
   }
-};
+});
 

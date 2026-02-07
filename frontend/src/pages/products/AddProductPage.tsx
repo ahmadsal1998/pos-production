@@ -8,8 +8,8 @@ import CategoryFormModal from '@/features/products/components/category-managemen
 import HierarchicalUnitsManager from '@/features/products/components/HierarchicalUnitsManager';
 import { ProductUnit } from '@/features/products/types/product.types';
 import { Brand, Unit, Category } from '@/shared/types';
-import { ApiError } from '@/lib/api/client';
-import { invalidateProductsCache, getStoreIdFromToken } from '@/lib/cache/productsCache';
+import { ApiError, getApiErrorMessage } from '@/lib/api/client';
+import { getStoreIdFromToken } from '@/lib/cache/productsCache';
 import { productSync } from '@/lib/sync/productSync';
 import { formatQuantityForDisplay } from '@/shared/utils';
 
@@ -386,7 +386,7 @@ const AddProductPage: React.FC = () => {
             }
           } catch (error: any) {
             console.error('Error loading product:', error);
-            alert('فشل تحميل بيانات المنتج: ' + (error.message || 'خطأ غير معروف'));
+            alert('فشل تحميل بيانات المنتج: ' + getApiErrorMessage(error, 'خطأ غير معروف'));
             setProductLoaded(true); // Set to true even on error to allow form to render
           }
         } else {
@@ -635,9 +635,8 @@ const AddProductPage: React.FC = () => {
         throw new Error(errorMessage);
       }
     } catch (error) {
-      const apiError = error as ApiError;
-      console.error('Failed to create category', apiError);
-      const errorMessage = apiError?.message || 'تعذر إنشاء الفئة. يرجى المحاولة مرة أخرى.';
+      console.error('Failed to create category', error);
+      const errorMessage = getApiErrorMessage(error, 'تعذر إنشاء الفئة. يرجى المحاولة مرة أخرى.');
       window.alert(errorMessage);
       throw error;
     }
@@ -736,9 +735,8 @@ const AddProductPage: React.FC = () => {
         throw new Error(errorMessage);
       }
     } catch (error) {
-      const apiError = error as ApiError;
-      console.error('Failed to create brand', apiError);
-      const errorMessage = apiError?.message || 'تعذر إنشاء العلامة التجارية. يرجى المحاولة مرة أخرى.';
+      console.error('Failed to create brand', error);
+      const errorMessage = getApiErrorMessage(error, 'تعذر إنشاء العلامة التجارية. يرجى المحاولة مرة أخرى.');
       window.alert(errorMessage);
       throw error;
     }
@@ -1090,9 +1088,8 @@ const AddProductPage: React.FC = () => {
         throw new Error(errorMessage);
       }
     } catch (error) {
-      const apiError = error as ApiError;
-      console.error('Failed to create unit', apiError);
-      const errorMessage = apiError?.message || 'تعذر إنشاء الوحدة. يرجى المحاولة مرة أخرى.';
+      console.error('Failed to create unit', error);
+      const errorMessage = getApiErrorMessage(error, 'تعذر إنشاء الوحدة. يرجى المحاولة مرة أخرى.');
       window.alert(errorMessage);
       throw error;
     }
@@ -1308,11 +1305,8 @@ const AddProductPage: React.FC = () => {
           }
         }
         
-        // Invalidate products cache to ensure fresh data on next load (backup)
-        const storeId = getStoreIdFromToken();
-        if (storeId) {
-          invalidateProductsCache(storeId);
-        }
+        // Invalidate in-memory barcode cache so next lookup is fresh
+        productSync.invalidateCache();
         
         // Handle image uploads if any
         if (formData.images.length > 0) {
@@ -1338,46 +1332,13 @@ const AddProductPage: React.FC = () => {
       }
       } catch (error: any) {
         console.error(`Error ${isEditMode ? 'updating' : 'creating'} product:`, error);
-        
-        // Extract error message from error object
-        // The ApiClient interceptor wraps errors, so check both error.details and error.response
-        let errorMessage = 'خطأ غير معروف';
-        
-        // Check if error has details (from ApiClient interceptor)
-        if (error.details) {
-          const errorData = error.details;
-          
-          // Handle duplicate barcode error with helpful message
-          if (errorData.message && (errorData.message.includes('barcode already exists') || errorData.message.includes('Product with this barcode already exists'))) {
-            errorMessage = `المنتج موجود بالفعل: الباركود "${formData.primaryBarcode}" مستخدم بالفعل. يرجى استخدام باركود مختلف أو تعديل المنتج الموجود.`;
-          } else if (errorData.message) {
-            errorMessage = errorData.message;
-          } else if (errorData.errors && Array.isArray(errorData.errors)) {
-            errorMessage = errorData.errors.map((err: any) => err.msg || err.message || String(err)).join('\n');
-          }
-        }
-        // Check if error has response.data (direct axios error)
-        else if (error.response?.data) {
-          const errorData = error.response.data;
-          
-          // Handle duplicate barcode error with helpful message
-          if (errorData.message && (errorData.message.includes('barcode already exists') || errorData.message.includes('Product with this barcode already exists'))) {
-            errorMessage = `المنتج موجود بالفعل: الباركود "${formData.primaryBarcode}" مستخدم بالفعل. يرجى استخدام باركود مختلف أو تعديل المنتج الموجود.`;
-          } else if (errorData.message) {
-            errorMessage = errorData.message;
-          } else if (errorData.errors && Array.isArray(errorData.errors)) {
-            errorMessage = errorData.errors.map((err: any) => err.msg || err.message || String(err)).join('\n');
-          }
-        }
-      // Fallback to error.message
-      else if (error.message) {
-        errorMessage = error.message;
-      }
-      
-      alert(
-        `حدث خطأ أثناء ${isEditMode ? 'تحديث' : 'إنشاء'} المنتج:\n${errorMessage}`
-      );
-    } finally {
+        const rawMessage = getApiErrorMessage(error, 'خطأ غير معروف');
+        const errorMessage =
+          rawMessage.includes('barcode already exists') || rawMessage.includes('Product with this barcode already exists')
+            ? `المنتج موجود بالفعل: الباركود "${formData.primaryBarcode}" مستخدم بالفعل. يرجى استخدام باركود مختلف أو تعديل المنتج الموجود.`
+            : rawMessage;
+        alert(`حدث خطأ أثناء ${isEditMode ? 'تحديث' : 'إنشاء'} المنتج:\n${errorMessage}`);
+      } finally {
       setIsSubmitting(false);
     }
   };

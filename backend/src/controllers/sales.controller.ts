@@ -1,406 +1,85 @@
-import { Response, Request } from 'express';
+import { Response, Request, NextFunction } from 'express';
 import { ISale } from '../models/Sale';
 import { AuthenticatedRequest } from '../middleware/auth.middleware';
-import { asyncHandler } from '../middleware/error.middleware';
+import { asyncHandler, AppError } from '../middleware/error.middleware';
 import { getSaleModelForStore } from '../utils/saleModel';
 import { getProductModelForStore } from '../utils/productModel';
 import { invalidateAllProductBarcodeCaches } from '../utils/productCache';
 import Settings from '../models/Settings';
 import { getBusinessDateFilterRange } from '../utils/businessDate';
 import { log } from '../utils/logger';
-import Sequence, { ISequence } from '../models/Sequence';
 import Store from '../models/Store';
-import { ProductDocument } from '../models/Product';
+import { getCustomerModelForStore } from '../utils/customerModel';
+import GlobalCustomer from '../models/GlobalCustomer';
+import PointsSettings from '../models/PointsSettings';
+import PointsBalance from '../models/PointsBalance';
+import PointsTransaction from '../models/PointsTransaction';
+import StorePointsAccount from '../models/StorePointsAccount';
+import {
+  salesService,
+  convertQuantityToMainUnits,
+  generateNextInvoiceNumber,
+} from '../services/sales.service';
 
 /**
- * Convert quantity from a specific unit to main units (order 0) for stock operations
- * Handles hierarchical unit structure with unitsInPrevious and order fields
- * Falls back to conversionFactor for backward compatibility
- */
-function convertQuantityToMainUnits(
-  product: ProductDocument | null,
-  unitName: string | undefined,
-  quantity: number
-): number {
-  if (!product || !unitName || quantity <= 0) return quantity;
-
-  // Find the unit being processed
-  const normalizedUnit = unitName.toLowerCase().trim();
-  const targetUnit = product.units?.find(
-    (u) =>
-      !!u.unitName &&
-      u.unitName.toLowerCase() === normalizedUnit
-  );
-
-  if (!targetUnit) {
-    // Unit not found, assume it's the main unit
-    return quantity;
-  }
-
-  // Check if product uses hierarchical units (has order and unitsInPrevious)
-  const hasHierarchicalUnits = product.units?.some((u: any) => 
-    u.order !== undefined || u.unitsInPrevious !== undefined
-  );
-
-  if (hasHierarchicalUnits) {
-    // Use hierarchical approach
-    const targetUnitOrder = (targetUnit as any).order ?? 
-      product.units?.findIndex((u: any) => u.unitName === targetUnit.unitName) ?? 0;
-    
-    // Find main unit (order 0 or first unit)
-    const mainUnit = product.units?.find((u: any) => u.order === 0) || product.units?.[0];
-    
-    if (!mainUnit || targetUnitOrder === 0) {
-      // Already in main units
-      return quantity;
-    }
-
-    // Calculate conversion factor from target unit to main unit
-    // We need to divide by all unitsInPrevious values from target unit up to main unit
-    let conversionFactor = 1;
-    
-    // Sort units by order to traverse hierarchy correctly
-    const sortedUnits = [...(product.units || [])].sort((a: any, b: any) => 
-      ((a.order ?? 999) - (b.order ?? 999))
-    );
-
-    // Find the target unit's position in sorted array
-    const targetUnitIndex = sortedUnits.findIndex((u: any) => 
-      u.unitName?.toLowerCase() === normalizedUnit
-    );
-
-    if (targetUnitIndex > 0) {
-      // Multiply by all unitsInPrevious values from target unit up to main unit
-      for (let i = targetUnitIndex; i > 0; i--) {
-        const currentUnit = sortedUnits[i] as any;
-        const unitsInPrev = currentUnit.unitsInPrevious || 1;
-        conversionFactor *= unitsInPrev;
-      }
-    }
-
-    // Convert: quantity in target unit / conversion factor = quantity in main units
-    return quantity / conversionFactor;
-  } else {
-    // Use legacy conversionFactor approach
-    const conversionFactor = targetUnit.conversionFactor || 1;
-    if (conversionFactor > 1) {
-      // If processing in sub-units, convert to main units
-      return quantity / conversionFactor;
-    } else {
-      // Already in main units
-      return quantity;
-    }
-  }
-}
-
-/**
- * Helper function to get the current max invoice number from existing sales
- * Used to initialize or sync the sequence counter
- */
-async function getMaxInvoiceNumberFromSales(Sale: any, storeId: string): Promise<number> {
-  const normalizedStoreId = storeId.toLowerCase().trim();
-  
-  try {
-    // Get all invoice numbers for this store
-    const sales = await Sale.find({ storeId: normalizedStoreId })
-      .select('invoiceNumber')
-      .lean()
-      .limit(10000); // Reasonable limit to prevent memory issues
-    
-    let maxNumber = 0;
-    
-    // Extract numeric part from invoice numbers
-    // Handles both sequential format (INV-123) and legacy timestamp format (INV-timestamp-random)
-    const sequentialPattern = /^INV-(\d+)$/; // Matches INV-123 format
-    const timestampPattern = /^INV-(\d+)-/; // Matches INV-timestamp-... format (legacy)
-    
-    for (const sale of sales) {
-      const invoiceNumber = sale.invoiceNumber || '';
-      // First try sequential format (INV-123)
-      const sequentialMatch = invoiceNumber.match(sequentialPattern);
-      if (sequentialMatch) {
-        const num = parseInt(sequentialMatch[1], 10);
-        if (!isNaN(num) && num > maxNumber) {
-          maxNumber = num;
-        }
-      } else {
-        // Legacy format: use high base number to avoid conflicts with sequential numbers
-        // This ensures new sequential numbers start after legacy invoices
-        const timestampMatch = invoiceNumber.match(timestampPattern);
-        if (timestampMatch) {
-          const baseNumber = 1000000; // Start from 1M to avoid conflicts
-          if (maxNumber < baseNumber) {
-            maxNumber = baseNumber;
-          }
-        }
-      }
-    }
-    
-    return maxNumber;
-  } catch (error) {
-    log.error('[Sales Controller] Error getting max invoice number from sales', error);
-    return 0;
-  }
-}
-
-/**
- * Helper function to generate the next invoice number atomically
- * Uses MongoDB's atomic findOneAndUpdate to prevent race conditions
- * CRITICAL: Always syncs with actual max invoice number to prevent skipping numbers
- */
-async function generateNextInvoiceNumber(Sale: any, storeId: string): Promise<string> {
-  const normalizedStoreId = storeId.toLowerCase().trim();
-  const sequenceType = 'invoiceNumber';
-  
-  try {
-    // CRITICAL: Always get the actual max invoice number from the database first
-    // This ensures we never skip numbers even if the sequence counter is out of sync
-    const maxExistingNumber = await getMaxInvoiceNumberFromSales(Sale, storeId);
-    
-    // Try to get or create sequence
-    let sequence: ISequence | null = await Sequence.findOne({
-      storeId: normalizedStoreId,
-      sequenceType,
-    });
-
-    if (!sequence) {
-      // Sequence doesn't exist - create it with the max existing number
-      sequence = await Sequence.findOneAndUpdate(
-        { storeId: normalizedStoreId, sequenceType },
-        { 
-          $setOnInsert: { value: maxExistingNumber } // Set to max existing number
-        },
-        { 
-          upsert: true,
-          new: true,
-          setDefaultsOnInsert: true
-        }
-      );
-      
-      if (!sequence) {
-        throw new Error('Failed to create sequence');
-      }
-    }
-    
-    // CRITICAL: Sync sequence with actual max invoice number if it's out of sync
-    // If sequence is behind actual invoices, update it
-    // If sequence is ahead of actual invoices (due to failed attempts or deletions), sync it down
-    if (sequence.value < maxExistingNumber) {
-      // Sequence is behind - update it to match actual max
-      // In production, this is expected behavior and only logged at debug level
-      if (process.env.NODE_ENV === 'production') {
-        log.debug(`[Sales Controller] Sequence value (${sequence.value}) is behind actual max invoice number (${maxExistingNumber}). Syncing sequence.`);
-      } else {
-        log.warn(`[Sales Controller] Sequence value (${sequence.value}) is behind actual max invoice number (${maxExistingNumber}). Syncing sequence.`);
-      }
-      sequence = await Sequence.findOneAndUpdate(
-        { storeId: normalizedStoreId, sequenceType },
-        { $set: { value: maxExistingNumber } },
-        { new: true }
-      );
-      
-      if (!sequence) {
-        throw new Error('Failed to sync sequence');
-      }
-    } else if (sequence.value > maxExistingNumber) {
-      // Sequence is ahead - sync it down to match actual max
-      // This prevents skipping numbers when invoices were deleted or failed
-      // In production, this is expected behavior and only logged at debug level
-      if (process.env.NODE_ENV === 'production') {
-        log.debug(`[Sales Controller] Sequence value (${sequence.value}) is ahead of actual max invoice number (${maxExistingNumber}). Syncing sequence down.`);
-      } else {
-        log.warn(`[Sales Controller] Sequence value (${sequence.value}) is ahead of actual max invoice number (${maxExistingNumber}). Syncing sequence down.`);
-      }
-      sequence = await Sequence.findOneAndUpdate(
-        { storeId: normalizedStoreId, sequenceType },
-        { $set: { value: maxExistingNumber } },
-        { new: true }
-      );
-      
-      if (!sequence) {
-        throw new Error('Failed to sync sequence');
-      }
-    }
-    
-    // Now increment the sequence (which is guaranteed to be in sync with actual invoices)
-    sequence = await Sequence.findOneAndUpdate(
-      { storeId: normalizedStoreId, sequenceType },
-      { $inc: { value: 1 } },
-      { new: true }
-    );
-    
-    if (!sequence) {
-      throw new Error('Failed to increment sequence');
-    }
-
-    return `INV-${sequence.value}`;
-  } catch (error: any) {
-    log.error('[Sales Controller] Error generating invoice number atomically, falling back to max-based generation', error);
-    
-    // Fallback: use max-based generation if sequence fails
-    try {
-      const maxNumber = await getMaxInvoiceNumberFromSales(Sale, storeId);
-      const nextNumber = maxNumber + 1;
-      
-      // Try to update sequence for next time (don't wait for it)
-      Sequence.findOneAndUpdate(
-        { storeId: normalizedStoreId, sequenceType },
-        { $set: { value: nextNumber } },
-        { upsert: true }
-      ).catch(() => {
-        // Ignore errors in fallback sequence update
-      });
-      
-      return `INV-${nextNumber}`;
-    } catch (fallbackError) {
-      log.error('[Sales Controller] Fallback invoice number generation also failed', fallbackError);
-      // Last resort: timestamp-based (should rarely happen)
-      const timestamp = Date.now();
-      return `INV-${timestamp}`;
-    }
-  }
-}
-
-/**
- * Get the current invoice number without incrementing
- * Used for displaying the current invoice number on page load
- * CRITICAL: Always syncs with actual max invoice number to ensure accuracy
+ * Get the current invoice number without incrementing (HTTP layer).
+ * Business logic lives in salesService.
  */
 export const getCurrentInvoiceNumber = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
   const storeId = req.user?.storeId || null;
-  
-  // Store users must have a storeId
   if (!storeId) {
     return res.status(400).json({
       success: false,
       message: 'Store ID is required to get invoice number',
     });
   }
-
-  // Get unified Sale model (all stores use same collection)
-  const Sale = await getSaleModelForStore(storeId);
-  const normalizedStoreId = storeId.toLowerCase().trim();
-  const sequenceType = 'invoiceNumber';
-  
-  try {
-    // CRITICAL: Always get the actual max invoice number from the database first
-    // This ensures we return the correct current invoice number even if sequence is out of sync
-    const maxNumber = await getMaxInvoiceNumberFromSales(Sale, storeId);
-    
-    // Get current sequence value without incrementing
-    const sequence = await Sequence.findOne({
-      storeId: normalizedStoreId,
-      sequenceType,
-    });
-    
-    // Sync sequence with actual max if it exists and is out of sync
-    if (sequence) {
-      if (sequence.value < maxNumber) {
-        // Sequence is behind - update it (but don't wait for it)
-        Sequence.findOneAndUpdate(
-          { storeId: normalizedStoreId, sequenceType },
-          { $set: { value: maxNumber } }
-        ).catch(() => {
-          // Ignore errors in background sync
-        });
-      } else if (sequence.value > maxNumber) {
-        // Sequence is ahead - sync it down (but don't wait for it)
-        Sequence.findOneAndUpdate(
-          { storeId: normalizedStoreId, sequenceType },
-          { $set: { value: maxNumber } }
-        ).catch(() => {
-          // Ignore errors in background sync
-        });
-      }
-    }
-    
-    // Always return based on actual max invoice number, not sequence
-    const currentInvoiceNumber = `INV-${maxNumber + 1}`;
-    
-    res.status(200).json({
-      success: true,
-      message: 'Current invoice number retrieved successfully',
-      data: {
-        invoiceNumber: currentInvoiceNumber,
-        number: maxNumber + 1,
-      },
-    });
-  } catch (error: any) {
-    log.error('[Sales Controller] Error getting current invoice number', error);
-    // Fallback: get from existing sales
-    try {
-      const maxNumber = await getMaxInvoiceNumberFromSales(Sale, storeId);
-      const currentInvoiceNumber = `INV-${maxNumber + 1}`;
-      
-      res.status(200).json({
-        success: true,
-        message: 'Current invoice number retrieved successfully',
-        data: {
-          invoiceNumber: currentInvoiceNumber,
-          number: maxNumber + 1,
-        },
-      });
-    } catch (fallbackError) {
-      log.error('[Sales Controller] Fallback current invoice number retrieval also failed', fallbackError);
-      res.status(200).json({
-        success: true,
-        message: 'Current invoice number retrieved successfully',
-        data: {
-          invoiceNumber: 'INV-1',
-          number: 1,
-        },
-      });
-    }
-  }
-});
-
-/**
- * Get the next sequential invoice number (increments the sequence)
- * Use this only when a sale is actually being completed
- */
-export const getNextInvoiceNumber = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
-  const storeId = req.user?.storeId || null;
-  
-  // Store users must have a storeId
-  if (!storeId) {
-    return res.status(400).json({
-      success: false,
-      message: 'Store ID is required to get invoice number',
-    });
-  }
-
-  // Get unified Sale model (all stores use same collection)
-  const Sale = await getSaleModelForStore(storeId);
-  const nextInvoiceNumber = await generateNextInvoiceNumber(Sale, storeId);
-  
-  // Extract number for response
-  const match = nextInvoiceNumber.match(/^INV-(\d+)$/);
-  const number = match ? parseInt(match[1], 10) : 1;
-
-  res.status(200).json({
+  const data = await salesService.getCurrentInvoiceNumber(storeId);
+  return res.status(200).json({
     success: true,
-    message: 'Next invoice number retrieved successfully',
+    message: 'Current invoice number retrieved successfully',
     data: {
-      invoiceNumber: nextInvoiceNumber,
-      number: number,
+      invoiceNumber: data.invoiceNumber,
+      number: data.number,
     },
   });
 });
 
 /**
- * Create a new sale/invoice
+ * Get the next sequential invoice number (HTTP layer).
+ * Business logic lives in salesService.
  */
-export const createSale = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+export const getNextInvoiceNumber = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
   const storeId = req.user?.storeId || null;
-  
-  // Store users must have a storeId
+  if (!storeId) {
+    return res.status(400).json({
+      success: false,
+      message: 'Store ID is required to get invoice number',
+    });
+  }
+  const data = await salesService.getNextInvoiceNumber(storeId);
+  return res.status(200).json({
+    success: true,
+    message: 'Next invoice number retrieved successfully',
+    data: {
+      invoiceNumber: data.invoiceNumber,
+      number: data.number,
+    },
+  });
+});
+
+/**
+ * Create a new sale/invoice (HTTP layer: validation, call service, format response).
+ * Business logic lives in salesService.
+ */
+export const createSale = asyncHandler(async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  const storeId = req.user?.storeId || null;
   if (!storeId) {
     return res.status(400).json({
       success: false,
       message: 'Store ID is required to create a sale',
     });
   }
-  
+
   const {
     invoiceNumber,
     date,
@@ -417,13 +96,9 @@ export const createSale = asyncHandler(async (req: AuthenticatedRequest, res: Re
     paymentMethod,
     status,
     seller,
-    isReturn = false, // Flag to indicate if this is a return invoice
+    isReturn = false,
   } = req.body;
 
-  // Track the invoice number requested by the client so we can report if it was auto-adjusted
-  const requestedInvoiceNumber = invoiceNumber;
-
-  // Validate required fields
   if (!invoiceNumber || !customerName || !items || !Array.isArray(items) || items.length === 0) {
     return res.status(400).json({
       success: false,
@@ -431,9 +106,7 @@ export const createSale = asyncHandler(async (req: AuthenticatedRequest, res: Re
     });
   }
 
-  // For return invoices, allow negative values; for regular sales, require positive
   if (isReturn) {
-    // Return invoices can have negative totals (they represent refunds)
     if (total === undefined || total === null) {
       return res.status(400).json({
         success: false,
@@ -441,7 +114,6 @@ export const createSale = asyncHandler(async (req: AuthenticatedRequest, res: Re
       });
     }
   } else {
-    // Regular sales must have positive totals
     if (!total || total < 0) {
       return res.status(400).json({
         success: false,
@@ -450,344 +122,53 @@ export const createSale = asyncHandler(async (req: AuthenticatedRequest, res: Re
     }
   }
 
-  // Validate payment method
-  const validPaymentMethods = ['cash', 'card', 'credit'];
-  const normalizedPaymentMethod = paymentMethod?.toLowerCase();
-  if (!normalizedPaymentMethod || !validPaymentMethods.includes(normalizedPaymentMethod)) {
-    return res.status(400).json({
-      success: false,
-      message: `Payment method must be one of: ${validPaymentMethods.join(', ')}`,
+  try {
+    const result = await salesService.createSale(storeId, {
+      invoiceNumber,
+      date,
+      customerId,
+      customerName,
+      items,
+      subtotal,
+      totalItemDiscount,
+      invoiceDiscount,
+      tax,
+      total,
+      paidAmount,
+      remainingAmount,
+      paymentMethod,
+      status,
+      seller,
+      isReturn,
     });
-  }
 
-  // Determine status if not provided
-  let saleStatus = status;
-  if (!saleStatus) {
-    if (remainingAmount <= 0) {
-      saleStatus = 'completed';
-    } else if (paidAmount > 0) {
-      saleStatus = 'partial_payment';
-    } else {
-      saleStatus = 'pending';
-    }
-  }
-
-  // Get unified Sale model (all stores use same collection)
-  const Sale = await getSaleModelForStore(storeId);
-
-  // Note: Invoice number conflict checking is handled inside the retry loop below
-  // This allows proper differentiation between duplicate content vs different content
-  // and prevents infinite error loops by providing clear error responses
-
-  // Fetch cost prices for items if not provided
-  // This ensures accurate net profit calculation
-  const Product = await getProductModelForStore(storeId);
-  const itemsWithCostPrice = await Promise.all(
-    items.map(async (item: any) => {
-      // If costPrice is already provided, use it
-      if (item.costPrice !== undefined && item.costPrice !== null) {
-        return {
-          productId: String(item.productId),
-          productName: item.productName || item.name || '',
-          quantity: item.quantity || 0,
-          unitPrice: item.unitPrice || 0,
-          totalPrice: item.totalPrice || (item.total || 0),
-          costPrice: Number(item.costPrice) || 0,
-          unit: item.unit || 'قطعة',
-          discount: item.discount || 0,
-          conversionFactor: item.conversionFactor || 1,
-        };
-      }
-
-      // Otherwise, fetch from product
-      let costPrice = 0;
-      try {
-        const productId = String(item.productId);
-        // Try to find product by _id (ObjectId) or by id field
-        const mongoose = (await import('mongoose')).default;
-        let product = null;
-
-        if (mongoose.Types.ObjectId.isValid(productId) && productId.length === 24) {
-          product = await Product.findOne({
-            _id: productId,
-            storeId: storeId.toLowerCase(),
-          }).select('costPrice').lean();
-        }
-
-        if (!product) {
-          // Try finding by custom id field
-          product = await Product.findOne({
-            id: productId,
-            storeId: storeId.toLowerCase(),
-          }).select('costPrice').lean();
-        }
-
-        if (product) {
-          costPrice = product.costPrice || 0;
-        }
-      } catch (error) {
-        log.warn(`[Sales Controller] Failed to fetch cost price for product ${item.productId}`, error);
-        // Continue with costPrice = 0 if fetch fails
-      }
-
-      return {
-        productId: String(item.productId),
-        productName: item.productName || item.name || '',
-        quantity: item.quantity || 0,
-        unitPrice: item.unitPrice || 0,
-        totalPrice: item.totalPrice || (item.total || 0),
-        costPrice: costPrice,
-        unit: item.unit || 'قطعة',
-        discount: item.discount || 0,
-        conversionFactor: item.conversionFactor || 1,
-      };
-    })
-  );
-
-  // Normalize storeId
-  const normalizedStoreId = storeId.toLowerCase().trim();
-  
-  // CRITICAL: Duplicate detection logic
-  // IMPORTANT: We ONLY block true duplicates (same invoice number + same content)
-  // We do NOT check customer or products separately - same customer can buy same products in different invoices
-  // Each invoice with a unique invoice number is allowed, regardless of customer or product content
-  
-  // Create sale record with retry logic for duplicate invoice numbers
-  let currentInvoiceNumber = invoiceNumber;
-  let retryCount = 0;
-  const maxRetries = 3;
-  let sale: any = null;
-
-  while (retryCount < maxRetries) {
-    try {
-      // Check if invoice number already exists for this store (before attempting save)
-      const existingSale = await Sale.findOne({
-        invoiceNumber: currentInvoiceNumber,
-        storeId: normalizedStoreId,
-      });
-
-      if (existingSale) {
-        // Invoice number already exists - generate a new one and retry
-        // Only rule: invoice numbers must be unique
-        // In production, this is expected behavior and only logged at debug level
-        if (process.env.NODE_ENV === 'production') {
-          log.debug(`[Sales Controller] Invoice number ${currentInvoiceNumber} already exists. Generating new invoice number.`);
-        } else {
-          log.warn(`[Sales Controller] Invoice number ${currentInvoiceNumber} already exists. Generating new invoice number.`);
-        }
-        currentInvoiceNumber = await generateNextInvoiceNumber(Sale, storeId);
-        retryCount++;
-        if (retryCount >= maxRetries) {
-          return res.status(409).json({
-            success: false,
-            message: `تعارض رقم الفاتورة: استمر التعارض بعد ${maxRetries} محاولات. رقم الفاتورة: ${currentInvoiceNumber}`,
-            data: {
-              duplicateInvoiceNumber: existingSale.invoiceNumber,
-              duplicateInvoiceId: existingSale.id,
-              errorType: 'invoice_number_conflict',
-            },
-          });
-        }
-        continue;
-      }
-
-      // Create sale record with current invoice number
-      sale = new Sale({
-        invoiceNumber: currentInvoiceNumber,
-        storeId: normalizedStoreId,
-        date: date ? new Date(date) : new Date(),
-        customerId: customerId || null,
-        customerName,
-        items: itemsWithCostPrice,
-        subtotal: subtotal || 0,
-        totalItemDiscount: totalItemDiscount || 0,
-        invoiceDiscount: invoiceDiscount || 0,
-        tax: tax || 0,
-        total,
-        paidAmount: paidAmount || 0,
-        remainingAmount: remainingAmount || (total - (paidAmount || 0)),
-        paymentMethod: normalizedPaymentMethod,
-        status: saleStatus,
-        seller: seller || 'Unknown',
-      });
-
-      // Attempt to save
-      await sale.save();
-      
-      // Success - break out of retry loop
-      break;
-    } catch (error: any) {
-      // Check if this is a duplicate key error (E11000)
-      if (error.code === 11000) {
-        // Duplicate key error - generate new invoice number and retry
-        // In production, this is expected behavior and only logged at debug level
-        if (process.env.NODE_ENV === 'production') {
-          log.debug(`[Sales Controller] Duplicate key error for invoice ${currentInvoiceNumber}, generating new number`);
-        } else {
-          log.warn(`[Sales Controller] Duplicate key error for invoice ${currentInvoiceNumber}, generating new number`);
-        }
-        currentInvoiceNumber = await generateNextInvoiceNumber(Sale, storeId);
-        retryCount++;
-        
-        if (retryCount >= maxRetries) {
-          // Max retries reached
-          throw new Error(`Failed to create sale after ${maxRetries} attempts: Unable to generate unique invoice number`);
-        }
-        // Continue to retry
-        continue;
-      } else {
-        // Different error - rethrow
-        throw error;
-      }
-    }
-  }
-
-  if (!sale) {
-    throw new Error('Failed to create sale: Unable to save after retries');
-  }
-
-  // Update product stock for each item in the sale
-  // For regular sales: decrease stock (isReturn = false)
-  // For return invoices: increase stock (isReturn = true)
-  const stockUpdateResults: Array<{ productId: string; success: boolean; error?: string }> = [];
-  
-  if (items && Array.isArray(items) && items.length > 0) {
-    for (const item of items) {
-      const { productId, quantity: itemQuantity, unit: itemUnit } = item;
-      
-      if (!productId || !itemQuantity || itemQuantity <= 0) {
-        continue; // Skip invalid items
-      }
-
-      try {
-        // Find the product
-        const mongoose = (await import('mongoose')).default;
-        let product = null;
-
-        if (mongoose.Types.ObjectId.isValid(productId) && productId.length === 24) {
-          product = await Product.findOne({
-            _id: productId,
-            storeId: storeId.toLowerCase(),
-          });
-        }
-
-        if (!product) {
-          // Try finding by custom id field
-          product = await Product.findOne({
-            id: productId,
-            storeId: storeId.toLowerCase(),
-          });
-        }
-
-        if (!product) {
-          stockUpdateResults.push({
-            productId: String(productId),
-            success: false,
-            error: 'Product not found',
-          });
-          log.warn(`[Sales Controller] Product not found for stock update: ${productId}`);
-          continue;
-        }
-
-        // Convert quantity to main units using unit hierarchy
-        const unit = itemUnit || 'قطعة';
-        let stockChange: number;
-        
-        if (product.units && product.units.length > 0) {
-          stockChange = convertQuantityToMainUnits(product, unit, itemQuantity);
-        } else if (item.conversionFactor && item.conversionFactor > 1) {
-          // Fallback: use conversionFactor if no unit structure
-          stockChange = itemQuantity / item.conversionFactor;
-        } else {
-          stockChange = itemQuantity;
-        }
-
-        // Calculate new stock
-        const currentStock = product.stock || 0;
-        let newStock: number;
-        
-        if (isReturn) {
-          // Return: increase stock
-          newStock = currentStock + stockChange;
-        } else {
-          // Sale: decrease stock
-          newStock = Math.max(0, currentStock - stockChange);
-        }
-
-        // Update product stock
-        await Product.findByIdAndUpdate(
-          product._id,
-          { stock: newStock },
-          { new: true }
-        );
-
-        // Invalidate product cache
-        await invalidateAllProductBarcodeCaches(storeId, product);
-
-        stockUpdateResults.push({
-          productId: String(productId),
-          success: true,
-        });
-
-        log.debug(
-          `[Sales Controller] Stock ${isReturn ? 'increased' : 'decreased'} for product ${productId}: ` +
-          `${currentStock} -> ${newStock} (${isReturn ? '+' : '-'}${stockChange})`
-        );
-      } catch (error: any) {
-        log.error(`[Sales Controller] Error updating stock for product ${productId}:`, error);
-        stockUpdateResults.push({
-          productId: String(productId),
-          success: false,
-          error: error.message || 'Failed to update stock',
-        });
-      }
-    }
-
-    // Log stock update summary
-    const successful = stockUpdateResults.filter(r => r.success).length;
-    const failed = stockUpdateResults.filter(r => !r.success).length;
-    
-    if (failed > 0) {
-      log.warn(
-        `[Sales Controller] Stock updates completed with errors: ${successful} successful, ${failed} failed`
-      );
-    } else {
-      log.debug(
-        `[Sales Controller] All stock updates completed successfully: ${successful} products updated`
-      );
-    }
-  }
-
-  // Return response
-  res.status(201).json({
-    success: true,
-    message: 'Sale created successfully',
-    data: {
-      sale: {
-        id: sale.id,
-        invoiceNumber: sale.invoiceNumber,
-        date: sale.date,
-        customerName: sale.customerName,
-        customerId: sale.customerId,
-        total: sale.total,
-        paidAmount: sale.paidAmount,
-        remainingAmount: sale.remainingAmount,
-        paymentMethod: sale.paymentMethod,
-        status: sale.status,
-        seller: sale.seller,
-        items: sale.items,
-        subtotal: sale.subtotal,
-        totalItemDiscount: sale.totalItemDiscount,
-        invoiceDiscount: sale.invoiceDiscount,
-        tax: sale.tax,
+    return res.status(201).json({
+      success: true,
+      message: 'Sale created successfully',
+      data: {
+        sale: result.sale,
+        meta: {
+          requestedInvoiceNumber: result.requestedInvoiceNumber,
+          finalInvoiceNumber: result.finalInvoiceNumber,
+          invoiceAutoAdjusted: result.invoiceAutoAdjusted,
+        },
       },
-      meta: {
-        requestedInvoiceNumber,
-        finalInvoiceNumber: sale.invoiceNumber,
-        invoiceAutoAdjusted: sale.invoiceNumber !== requestedInvoiceNumber,
-      },
-    },
-  });
+    });
+  } catch (error: any) {
+    if (error.code === 'INVALID_PAYMENT_METHOD') {
+      return next(new AppError(error.message, 400));
+    }
+    if (error.code === 'INVOICE_CONFLICT') {
+      return next(new AppError(error.message, 409, {
+        data: {
+          duplicateInvoiceNumber: error.duplicateInvoiceNumber,
+          duplicateInvoiceId: error.duplicateInvoiceId,
+          errorType: 'invoice_number_conflict',
+        },
+      }));
+    }
+    next(error);
+  }
 });
 
 /**
@@ -831,7 +212,7 @@ export const getSales = asyncHandler(async (req: AuthenticatedRequest, res: Resp
         message: 'No stores available',
       });
     }
-    modelStoreId = firstStore.storeId || firstStore.prefix;
+    modelStoreId = firstStore.storeId;
   }
   
   // Get the unified Sale model (all stores use the same collection)
@@ -1077,17 +458,21 @@ export const getSales = asyncHandler(async (req: AuthenticatedRequest, res: Resp
     }
   }
 
+  const totalPages = Math.ceil(total / limitNum);
   res.status(200).json({
     success: true,
     message: 'Sales retrieved successfully',
     data: {
       sales,
+      items: sales,
       pagination: {
-        currentPage: pageNum,
-        totalPages: Math.ceil(total / limitNum),
-        totalSales: total,
+        page: pageNum,
         limit: limitNum,
-        hasNextPage: pageNum * limitNum < total,
+        total,
+        totalPages,
+        currentPage: pageNum,
+        totalSales: total,
+        hasNextPage: pageNum < totalPages,
         hasPreviousPage: pageNum > 1,
       },
     },
@@ -1130,7 +515,7 @@ export const getSalesSummary = asyncHandler(async (req: AuthenticatedRequest, re
         message: 'No stores available',
       });
     }
-    modelStoreId = firstStore.storeId || firstStore.prefix;
+    modelStoreId = firstStore.storeId;
   }
   
   const Sale = await getSaleModelForStore(modelStoreId);
@@ -1766,7 +1151,7 @@ export const processReturn = asyncHandler(async (req: AuthenticatedRequest, res:
       }
 
       // Calculate stock increase - convert quantity to main units
-      const unit = returnItem.unit || 'قطعة';
+      let unit = returnItem.unit || 'قطعة';
       let stockIncrease: number;
       
       // Use hierarchical unit conversion if product has unit structure
@@ -1933,7 +1318,7 @@ export const processReturn = asyncHandler(async (req: AuthenticatedRequest, res:
  * Public endpoint to get invoice by invoice number (no authentication required)
  * Used for QR code invoice viewing
  */
-export const getPublicInvoice = asyncHandler(async (req: Request, res: Response) => {
+export const getPublicInvoice = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
   const { invoiceNumber, storeId } = req.query;
 
   if (!invoiceNumber || typeof invoiceNumber !== 'string') {
@@ -1961,7 +1346,7 @@ export const getPublicInvoice = asyncHandler(async (req: Request, res: Response)
           message: 'No stores available',
         });
       }
-      const modelStoreId = firstStore.storeId || firstStore.prefix;
+      const modelStoreId = firstStore.storeId;
       Sale = await getSaleModelForStore(modelStoreId);
     }
 
@@ -2014,10 +1399,407 @@ export const getPublicInvoice = asyncHandler(async (req: Request, res: Response)
       },
     });
   } catch (error: any) {
-    log.error('Error fetching public invoice:', error);
-    res.status(500).json({
+    next(error);
+  }
+});
+
+/**
+ * Simplified sale creation for "Other" store type
+ * Creates a sale with just invoice amount and customer number
+ * Automatically adds reward points if customer exists
+ */
+export const createSimpleSale = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+  const storeId = req.user?.storeId || null;
+  
+  if (!storeId) {
+    return res.status(400).json({
       success: false,
-      message: 'Error fetching invoice',
+      message: 'Store ID is required to create a sale',
     });
   }
+  
+  const { invoiceAmount, customerNumber } = req.body;
+
+  // Validate required fields
+  if (!invoiceAmount || invoiceAmount <= 0) {
+    return res.status(400).json({
+      success: false,
+      message: 'Invoice amount is required and must be positive',
+    });
+  }
+
+  // Normalize invoice amount
+  const total = Number(invoiceAmount);
+  const paidAmount = total; // Full payment for simple POS
+  const remainingAmount = 0;
+  const subtotal = total;
+  const totalItemDiscount = 0;
+  const invoiceDiscount = 0;
+  const tax = 0;
+
+  // Get unified Sale model
+  const Sale = await getSaleModelForStore(storeId);
+  const normalizedStoreId = storeId.toLowerCase().trim();
+
+  // Generate invoice number
+  const invoiceNumber = await generateNextInvoiceNumber(Sale, storeId);
+
+  // Determine customer information
+  let customerId: string | null = null;
+  let customerName = 'Cash Customer';
+
+  // Try to find customer by customerNumber (could be phone or customer ID)
+  if (customerNumber) {
+    try {
+      const Customer = await getCustomerModelForStore(storeId);
+      const mongoose = (await import('mongoose')).default;
+      const trimmedCustomerNumber = customerNumber.trim();
+      
+      // Try to find by ID first (if it's a valid ObjectId)
+      if (mongoose.Types.ObjectId.isValid(trimmedCustomerNumber) && trimmedCustomerNumber.length === 24) {
+        const customerById = await Customer.findOne({
+          _id: trimmedCustomerNumber,
+          storeId: normalizedStoreId,
+        });
+        
+        if (customerById) {
+          customerId = String(customerById._id);
+          customerName = customerById.name;
+          log.info(`[Simple Sale] Found customer by ID: ${customerId}, name: ${customerName}`);
+        }
+      }
+      
+      // If not found by ID, try by phone
+      if (!customerId) {
+        const customerByPhone = await Customer.findOne({
+          phone: trimmedCustomerNumber,
+          storeId: normalizedStoreId,
+        });
+        
+        if (customerByPhone) {
+          customerId = String(customerByPhone._id);
+          customerName = customerByPhone.name;
+          log.info(`[Simple Sale] Found customer by phone: ${customerId}, name: ${customerName}`);
+        } else {
+          log.warn(`[Simple Sale] Customer not found with phone/ID: ${trimmedCustomerNumber} for store: ${normalizedStoreId}`);
+        }
+      }
+    } catch (customerError: any) {
+      log.error('[Simple Sale] Error looking up customer:', customerError);
+      // Continue with sale even if customer lookup fails
+    }
+  }
+
+  // Create sale with minimal item data
+  // For "Other" store type, we create a single generic item representing the total
+  // This is required because the Sale model requires at least one item
+  const saleData = {
+    invoiceNumber,
+    storeId: normalizedStoreId,
+    date: new Date(),
+    customerId: customerId || null,
+    customerName,
+    items: [
+      {
+        productId: 'simple-pos-item',
+        productName: 'مبيعات عامة', // General Sales
+        quantity: 1,
+        unitPrice: total,
+        totalPrice: total,
+        costPrice: 0, // No cost tracking for simple POS
+        unit: 'قطعة',
+        discount: 0,
+        conversionFactor: 1,
+      },
+    ],
+    subtotal,
+    totalItemDiscount,
+    invoiceDiscount,
+    tax,
+    total,
+    paidAmount,
+    remainingAmount,
+    paymentMethod: 'cash',
+    status: 'completed' as const,
+    seller: req.user?.userId || 'system',
+    originalInvoiceId: null,
+    isReturn: false,
+  };
+
+  // Create sale record
+  const sale = await Sale.create(saleData);
+
+  // Helper function to add points for a customer
+  const addPointsForCustomer = async (
+    globalCustomerId: string,
+    customerName: string,
+    customerPhone?: string
+  ) => {
+    try {
+      log.info(`[Simple Sale] Attempting to add points for globalCustomerId: ${globalCustomerId}, invoice: ${invoiceNumber}, amount: ${total}`);
+
+      // Get points settings
+      let settings = await PointsSettings.findOne({ storeId: normalizedStoreId });
+      if (!settings) {
+        settings = await PointsSettings.findOne({ storeId: 'global' });
+        if (!settings) {
+          log.info('[Simple Sale] Creating default global points settings');
+          settings = await PointsSettings.create({
+            storeId: 'global',
+            userPointsPercentage: 5,
+            companyProfitPercentage: 2,
+            defaultThreshold: 10000,
+          });
+        }
+      }
+
+      log.info(`[Simple Sale] Points settings - percentage: ${settings.userPointsPercentage}%, minPurchase: ${settings.minPurchaseAmount || 'none'}`);
+
+      // Calculate points
+      const pointsPercentage = settings.userPointsPercentage;
+      const points = Math.floor((total * pointsPercentage) / 100);
+
+      log.info(`[Simple Sale] Calculated points: ${points} (${pointsPercentage}% of ${total})`);
+
+      if (points > 0) {
+        // Check minimum purchase amount if set
+        if (!settings.minPurchaseAmount || total >= settings.minPurchaseAmount) {
+          // Check max points per transaction if set
+          const finalPoints = settings.maxPointsPerTransaction 
+            ? Math.min(points, settings.maxPointsPerTransaction)
+            : points;
+
+          log.info(`[Simple Sale] Final points to award: ${finalPoints}`);
+
+          // Calculate expiration date if points expiration is enabled
+          let expiresAt: Date | undefined;
+          if (settings.pointsExpirationDays) {
+            expiresAt = new Date();
+            expiresAt.setDate(expiresAt.getDate() + settings.pointsExpirationDays);
+          }
+
+          // Get points value per point
+          const pointsValuePerPoint = settings.pointsValuePerPoint || 0.01;
+          const pointsValue = finalPoints * pointsValuePerPoint;
+
+          log.info(`[Simple Sale] Points value: ${pointsValue} (${finalPoints} points × ${pointsValuePerPoint})`);
+
+          // Create transaction
+          const transaction = await PointsTransaction.create({
+            globalCustomerId: globalCustomerId,
+            customerName: customerName,
+            earningStoreId: normalizedStoreId,
+            invoiceNumber,
+            transactionType: 'earned',
+            points: finalPoints,
+            purchaseAmount: total,
+            pointsPercentage,
+            pointsValue,
+            description: `Points earned from purchase at ${storeId} (Invoice: ${invoiceNumber})`,
+            expiresAt,
+          });
+          
+          log.info(`[Simple Sale] Points transaction created: ${transaction._id}`);
+
+          // Update or create global points balance
+          const balance = await PointsBalance.findOneAndUpdate(
+            { globalCustomerId: globalCustomerId },
+            {
+              $inc: {
+                totalPoints: finalPoints,
+                availablePoints: finalPoints,
+                lifetimeEarned: finalPoints,
+              },
+              $set: {
+                customerName: customerName,
+                customerPhone: customerPhone || undefined,
+                lastTransactionDate: new Date(),
+              },
+              $setOnInsert: {
+                globalCustomerId: globalCustomerId,
+                pendingPoints: 0,
+                lifetimeSpent: 0,
+              },
+            },
+            { upsert: true, new: true }
+          );
+          
+          log.info(`[Simple Sale] Points balance updated: total=${balance.totalPoints}, available=${balance.availablePoints}`);
+
+          // Update store points account
+          let storeAccount = await StorePointsAccount.findOne({ storeId: normalizedStoreId });
+          if (storeAccount) {
+            const oldIssued = storeAccount.totalPointsIssued;
+            const oldValue = storeAccount.totalPointsValueIssued;
+            
+            storeAccount.totalPointsIssued += finalPoints;
+            storeAccount.totalPointsValueIssued += pointsValue;
+            storeAccount.recalculate();
+            await storeAccount.save();
+            
+            log.info(`[Simple Sale] Store account updated: points issued ${oldIssued} → ${storeAccount.totalPointsIssued}, value ${oldValue} → ${storeAccount.totalPointsValueIssued}`);
+          } else {
+            const store = await Store.findOne({ storeId: normalizedStoreId });
+            storeAccount = await StorePointsAccount.create({
+              storeId: normalizedStoreId,
+              storeName: store?.name || 'Unknown Store',
+              totalPointsIssued: finalPoints,
+              totalPointsRedeemed: 0,
+              pointsValuePerPoint,
+              totalPointsValueIssued: pointsValue,
+              totalPointsValueRedeemed: 0,
+            });
+            storeAccount.recalculate();
+            await storeAccount.save();
+            
+            log.info(`[Simple Sale] New store account created: ${storeAccount.storeId}, points issued: ${finalPoints}`);
+          }
+          
+          log.info(`[Simple Sale] ✅ Successfully added ${finalPoints} points for globalCustomerId ${globalCustomerId}`);
+          return { success: true, points: finalPoints };
+        } else {
+          log.warn(`[Simple Sale] Purchase amount ${total} is below minimum ${settings.minPurchaseAmount} - no points awarded`);
+          return { success: false, reason: 'below_minimum' };
+        }
+      } else {
+        log.warn(`[Simple Sale] Calculated points is 0 - no points awarded`);
+        return { success: false, reason: 'zero_points' };
+      }
+    } catch (pointsError: any) {
+      // Log error but don't fail the sale if points addition fails
+      log.error('[Simple Sale] ❌ Error adding points:', pointsError);
+      log.error('[Simple Sale] Error stack:', pointsError.stack);
+      return { success: false, error: pointsError.message };
+    }
+  };
+
+  // If customer exists in store, add reward points
+  if (customerId) {
+    try {
+      log.info(`[Simple Sale] Customer found in store: ${customerId}, invoice: ${invoiceNumber}, amount: ${total}`);
+      
+      const Customer = await getCustomerModelForStore(storeId);
+      const customer = await Customer.findById(customerId);
+      
+      if (!customer) {
+        log.warn(`[Simple Sale] Customer not found with ID: ${customerId}`);
+      } else {
+        log.info(`[Simple Sale] Customer found: ${customer.name}, phone: ${customer.phone}`);
+        
+        // Get or create global customer
+        const globalCustomer = await GlobalCustomer.getOrCreateGlobalCustomer(
+          storeId,
+          customerId,
+          customer.name,
+          customer.phone,
+          undefined
+        );
+        
+        log.info(`[Simple Sale] Global customer: ${globalCustomer.globalCustomerId}`);
+
+        await addPointsForCustomer(
+          globalCustomer.globalCustomerId,
+          globalCustomer.name,
+          globalCustomer.phone
+        );
+      }
+    } catch (pointsError: any) {
+      // Log error but don't fail the sale if points addition fails
+      log.error('[Simple Sale] ❌ Error adding points to customer:', pointsError);
+      log.error('[Simple Sale] Error stack:', pointsError.stack);
+    }
+  } 
+  // If customer not found in store but phone number provided, try to add points using phone as globalCustomerId
+  else if (customerNumber && customerNumber.trim()) {
+    try {
+      const trimmedPhone = customerNumber.trim();
+      log.info(`[Simple Sale] Customer not found in store, but phone provided: ${trimmedPhone}. Attempting to add points using phone as globalCustomerId`);
+      
+      // Use phone number directly as globalCustomerId (normalized to lowercase)
+      // The points system supports phone numbers directly as globalCustomerId
+      const globalCustomerIdFromPhone = trimmedPhone.toLowerCase();
+      
+      // Try to find existing GlobalCustomer by phone to get customer name if available
+      let customerNameToUse = 'Customer';
+      const existingGlobalCustomer = await GlobalCustomer.findOne({ 
+        globalCustomerId: globalCustomerIdFromPhone 
+      });
+      
+      if (existingGlobalCustomer) {
+        // Use existing global customer's name if available
+        customerNameToUse = existingGlobalCustomer.name;
+        log.info(`[Simple Sale] Found existing GlobalCustomer: ${existingGlobalCustomer.name}, phone: ${existingGlobalCustomer.phone}`);
+      } else {
+        log.info(`[Simple Sale] No existing GlobalCustomer found for phone: ${trimmedPhone}. Points will be added using phone as globalCustomerId. GlobalCustomer will be created when customer registers in a store.`);
+      }
+      
+      // Add points using phone as globalCustomerId
+      // The points system will create/update PointsBalance and PointsTransaction using the phone number
+      await addPointsForCustomer(
+        globalCustomerIdFromPhone,
+        customerNameToUse,
+        trimmedPhone
+      );
+    } catch (pointsError: any) {
+      // Log error but don't fail the sale if points addition fails
+      log.error('[Simple Sale] ❌ Error adding points using phone number:', pointsError);
+      log.error('[Simple Sale] Error stack:', pointsError.stack);
+    }
+  } else {
+    log.info(`[Simple Sale] No customer ID or phone number provided - sale recorded without points`);
+  }
+
+  // Return success response with points information
+  const responseData: any = {
+    sale: {
+      id: sale._id.toString(),
+      invoiceNumber: sale.invoiceNumber,
+      storeId: sale.storeId,
+      date: sale.date,
+      customerId: sale.customerId,
+      customerName: sale.customerName,
+      items: sale.items,
+      subtotal: sale.subtotal,
+      totalItemDiscount: sale.totalItemDiscount,
+      invoiceDiscount: sale.invoiceDiscount,
+      tax: sale.tax,
+      total: sale.total,
+      paidAmount: sale.paidAmount,
+      remainingAmount: sale.remainingAmount,
+      paymentMethod: sale.paymentMethod,
+      status: sale.status,
+      seller: sale.seller,
+      createdAt: sale.createdAt,
+      updatedAt: sale.updatedAt,
+    },
+  };
+
+  // Add points information
+  if (customerId) {
+    responseData.pointsInfo = {
+      customerFound: true,
+      customerId: customerId,
+      customerName: customerName,
+      message: 'Points processing attempted for registered customer. Check logs for details.',
+    };
+  } else if (customerNumber && customerNumber.trim()) {
+    responseData.pointsInfo = {
+      customerFound: false,
+      customerNumber: customerNumber.trim(),
+      message: `Customer not found in store, but points processing attempted using phone number. Check logs for details.`,
+    };
+  } else {
+    responseData.pointsInfo = {
+      customerFound: false,
+      message: 'No customer number provided. Sale recorded without points.',
+    };
+  }
+
+  log.info(`[Simple Sale] ✅ Sale created successfully: ${invoiceNumber}, customer: ${customerName}${customerId ? ` (ID: ${customerId})` : ' (No customer)'}`);
+
+  res.status(201).json({
+    success: true,
+    message: 'Sale created successfully',
+    data: responseData,
+  });
 });

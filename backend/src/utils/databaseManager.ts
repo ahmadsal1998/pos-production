@@ -225,7 +225,7 @@ export async function determineDatabaseForStore(StoreModel?: any): Promise<numbe
 /**
  * Get database ID for an existing store
  * This queries the Store model to get the databaseId
- * @param storeId - Store ID or prefix
+ * @param storeId - Store ID
  * @param StoreModel - The Store model to query (passed to avoid circular dependency)
  * @returns Database ID or null if store not found
  */
@@ -239,14 +239,7 @@ export async function getDatabaseIdForStore(
   
   try {
     const normalizedStoreId = storeId.toLowerCase().trim();
-    
-    // Try to find by prefix first
-    let store = await StoreModel.findOne({ prefix: normalizedStoreId }).lean();
-    
-    // If not found, try by storeId
-    if (!store) {
-      store = await StoreModel.findOne({ storeId: normalizedStoreId }).lean();
-    }
+    const store = await StoreModel.findOne({ storeId: normalizedStoreId }).lean();
     
     if (store && store.databaseId) {
       return store.databaseId;

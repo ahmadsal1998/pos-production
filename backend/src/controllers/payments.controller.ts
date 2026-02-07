@@ -1,12 +1,13 @@
-import { Response } from 'express';
+import { Response, NextFunction } from 'express';
 import { Payment, IPayment } from '../models/Payment';
 import { AuthenticatedRequest } from '../middleware/auth.middleware';
+import { asyncHandler } from '../middleware/error.middleware';
 import { log } from '../utils/logger';
 
 /**
  * Create payment record (without terminal integration)
  */
-export const processPayment = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+export const processPayment = asyncHandler(async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
     const storeId = req.user?.storeId || null;
     const { invoiceId, amount, currency = 'SAR', paymentMethod, description } = req.body;
@@ -50,19 +51,14 @@ export const processPayment = async (req: AuthenticatedRequest, res: Response): 
       },
     });
   } catch (error: any) {
-    log.error('Payment processing error', error);
-    res.status(500).json({
-      success: false,
-      message: 'Internal server error',
-      error: error.message,
-    });
+    next(error);
   }
-};
+});
 
 /**
  * Get payment by ID
  */
-export const getPayment = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+export const getPayment = asyncHandler(async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
     const { id } = req.params;
     const storeId = req.user?.storeId || null;
@@ -85,19 +81,14 @@ export const getPayment = async (req: AuthenticatedRequest, res: Response): Prom
       data: { payment },
     });
   } catch (error: any) {
-    log.error('Get payment error', error);
-    res.status(500).json({
-      success: false,
-      message: 'Internal server error',
-      error: error.message,
-    });
+    next(error);
   }
-};
+});
 
 /**
  * Get payments by invoice ID
  */
-export const getPaymentsByInvoice = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+export const getPaymentsByInvoice = asyncHandler(async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
     const { invoiceId } = req.params;
     const storeId = req.user?.storeId || null;
@@ -112,20 +103,14 @@ export const getPaymentsByInvoice = async (req: AuthenticatedRequest, res: Respo
       data: { payments },
     });
   } catch (error: any) {
-    console.error('Get payments by invoice error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Internal server error',
-      error: error.message,
-    });
+    next(error);
   }
-};
-
+});
 
 /**
  * Cancel payment transaction
  */
-export const cancelPayment = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+export const cancelPayment = asyncHandler(async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
     const { id } = req.params;
     const storeId = req.user?.storeId || null;
@@ -162,13 +147,8 @@ export const cancelPayment = async (req: AuthenticatedRequest, res: Response): P
       data: { payment },
     });
   } catch (error: any) {
-    console.error('Cancel payment error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Internal server error',
-      error: error.message,
-    });
+    next(error);
   }
-};
+});
 
 

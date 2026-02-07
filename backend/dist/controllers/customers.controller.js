@@ -31,6 +31,7 @@ __export(customers_controller_exports, {
   createCustomer: () => createCustomer,
   createCustomerPayment: () => createCustomerPayment,
   deleteCustomer: () => deleteCustomer,
+  getCustomerAccountsSummary: () => getCustomerAccountsSummary,
   getCustomerById: () => getCustomerById,
   getCustomerPayments: () => getCustomerPayments,
   getCustomers: () => getCustomers,
@@ -44,15 +45,17 @@ var import_express_validator = require("express-validator");
 var import_error = require("../middleware/error.middleware");
 var import_customerPaymentModel = require("../utils/customerPaymentModel");
 var import_customerModel = require("../utils/customerModel");
+var import_saleModel = require("../utils/saleModel");
 var import_User = __toESM(require("../models/User"));
 var import_logger = require("../utils/logger");
+var import_pagination = require("../types/pagination");
 const validateCreateCustomer = [
   (0, import_express_validator.body)("name").optional({ nullable: true }).trim().isLength({ max: 200 }).withMessage("Customer name cannot exceed 200 characters"),
   (0, import_express_validator.body)("phone").trim().notEmpty().withMessage("Phone number is required").isLength({ max: 20 }).withMessage("Phone number cannot exceed 20 characters"),
   (0, import_express_validator.body)("address").optional({ nullable: true }).trim().isLength({ max: 500 }).withMessage("Address cannot exceed 500 characters"),
   (0, import_express_validator.body)("previousBalance").optional({ nullable: true }).isFloat().withMessage("Previous balance must be a valid number")
 ];
-const createCustomer = (0, import_error.asyncHandler)(async (req, res) => {
+const createCustomer = (0, import_error.asyncHandler)(async (req, res, next) => {
   const errors = (0, import_express_validator.validationResult)(req);
   if (!errors.isEmpty()) {
     return res.status(400).json({
@@ -138,44 +141,27 @@ const createCustomer = (0, import_error.asyncHandler)(async (req, res) => {
       }
     });
   } catch (error) {
-    import_logger.log.error("Error creating customer", error);
-    if (error.name === "ValidationError") {
-      const errorMessages = Object.values(error.errors || {}).map((e) => e.message);
-      return res.status(400).json({
-        success: false,
-        message: errorMessages.join(", ") || "Validation error"
-      });
-    }
-    if (error.code === 11e3) {
-      return res.status(400).json({
-        success: false,
-        message: "Customer with this phone number already exists"
-      });
-    }
-    return res.status(500).json({
-      success: false,
-      message: error.message || "Failed to create customer. Please try again."
-    });
+    next(error);
   }
 });
-const getCustomers = (0, import_error.asyncHandler)(async (req, res) => {
+const getCustomers = (0, import_error.asyncHandler)(async (req, res, next) => {
   const storeId = req.user?.storeId || null;
   if (!storeId) {
     return res.status(400).json({
       success: false,
       message: "Store ID is required. Please ensure you are logged in as a store user.",
-      data: {
-        customers: []
-      }
+      data: { items: [], pagination: (0, import_pagination.buildPaginationMeta)(1, 50, 0), customers: [] }
     });
   }
   try {
     const normalizedStoreId = storeId.toLowerCase().trim();
     const searchTerm = req.query.search?.trim() || "";
+    const lightParam = req.query.light?.toLowerCase();
+    const light = lightParam === "true" || lightParam === "1" || lightParam === "yes";
+    const maxLimit = light ? import_pagination.MAX_PAGE_SIZE_LIGHT : import_pagination.MAX_PAGE_SIZE;
+    const { page, limit, skip } = (0, import_pagination.parsePaginationQuery)(req.query, maxLimit);
     const Customer = await (0, import_customerModel.getCustomerModelForStore)(storeId);
-    const queryFilter = {
-      storeId: normalizedStoreId
-    };
+    const queryFilter = { storeId: normalizedStoreId };
     if (searchTerm) {
       const normalizedSearchTerm = searchTerm.replace(/\s+/g, " ").trim();
       const escapedSearchTerm = normalizedSearchTerm.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -185,34 +171,32 @@ const getCustomers = (0, import_error.asyncHandler)(async (req, res) => {
         { address: { $regex: escapedSearchTerm, $options: "i" } }
       ];
     }
-    const customers = await Customer.find(queryFilter).sort({ createdAt: -1 });
+    const [customers, total] = await Promise.all([
+      Customer.find(queryFilter).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
+      Customer.countDocuments(queryFilter)
+    ]);
+    const mapCustomer = (c) => ({
+      id: c._id.toString(),
+      name: c.name,
+      phone: c.phone,
+      ...light ? {} : { address: c.address, previousBalance: c.previousBalance, createdAt: c.createdAt, updatedAt: c.updatedAt }
+    });
+    const items = customers.map(mapCustomer);
+    const pagination = (0, import_pagination.buildPaginationMeta)(page, limit, total);
     res.status(200).json({
       success: true,
       message: "Customers fetched successfully",
       data: {
-        customers: customers.map((customer) => ({
-          id: customer._id.toString(),
-          name: customer.name,
-          phone: customer.phone,
-          address: customer.address,
-          previousBalance: customer.previousBalance,
-          createdAt: customer.createdAt,
-          updatedAt: customer.updatedAt
-        }))
+        items,
+        pagination,
+        customers: items
       }
     });
   } catch (error) {
-    import_logger.log.error("Error fetching customers", error);
-    return res.status(500).json({
-      success: false,
-      message: error.message || "Failed to fetch customers. Please try again.",
-      data: {
-        customers: []
-      }
-    });
+    next(error);
   }
 });
-const getCustomerById = (0, import_error.asyncHandler)(async (req, res) => {
+const getCustomerById = (0, import_error.asyncHandler)(async (req, res, next) => {
   const { id } = req.params;
   const storeId = req.user?.storeId || null;
   if (!storeId) {
@@ -250,11 +234,7 @@ const getCustomerById = (0, import_error.asyncHandler)(async (req, res) => {
       }
     });
   } catch (error) {
-    import_logger.log.error("Error fetching customer", error);
-    return res.status(500).json({
-      success: false,
-      message: error.message || "Failed to fetch customer. Please try again."
-    });
+    next(error);
   }
 });
 const validateUpdateCustomer = [
@@ -263,7 +243,7 @@ const validateUpdateCustomer = [
   (0, import_express_validator.body)("address").optional({ nullable: true }).trim().isLength({ max: 500 }).withMessage("Address cannot exceed 500 characters"),
   (0, import_express_validator.body)("previousBalance").optional({ nullable: true }).isFloat().withMessage("Previous balance must be a valid number")
 ];
-const updateCustomer = (0, import_error.asyncHandler)(async (req, res) => {
+const updateCustomer = (0, import_error.asyncHandler)(async (req, res, next) => {
   const errors = (0, import_express_validator.validationResult)(req);
   if (!errors.isEmpty()) {
     return res.status(400).json({
@@ -350,27 +330,10 @@ const updateCustomer = (0, import_error.asyncHandler)(async (req, res) => {
       }
     });
   } catch (error) {
-    import_logger.log.error("Error updating customer", error);
-    if (error.name === "ValidationError") {
-      const errorMessages = Object.values(error.errors || {}).map((e) => e.message);
-      return res.status(400).json({
-        success: false,
-        message: errorMessages.join(", ") || "Validation error"
-      });
-    }
-    if (error.code === 11e3) {
-      return res.status(400).json({
-        success: false,
-        message: "Customer with this phone number already exists"
-      });
-    }
-    return res.status(500).json({
-      success: false,
-      message: error.message || "Failed to update customer. Please try again."
-    });
+    next(error);
   }
 });
-const deleteCustomer = (0, import_error.asyncHandler)(async (req, res) => {
+const deleteCustomer = (0, import_error.asyncHandler)(async (req, res, next) => {
   const { id } = req.params;
   const storeId = req.user?.storeId || null;
   if (!storeId) {
@@ -398,11 +361,7 @@ const deleteCustomer = (0, import_error.asyncHandler)(async (req, res) => {
       message: "Customer deleted successfully"
     });
   } catch (error) {
-    import_logger.log.error("Error deleting customer", error);
-    return res.status(500).json({
-      success: false,
-      message: error.message || "Failed to delete customer. Please try again."
-    });
+    next(error);
   }
 });
 const validateCreateCustomerPayment = [
@@ -418,7 +377,7 @@ const validateCreateCustomerPayment = [
   (0, import_express_validator.body)("invoiceId").optional().trim(),
   (0, import_express_validator.body)("notes").optional().trim().isLength({ max: 1e3 }).withMessage("Notes cannot exceed 1000 characters")
 ];
-const createCustomerPayment = (0, import_error.asyncHandler)(async (req, res) => {
+const createCustomerPayment = (0, import_error.asyncHandler)(async (req, res, next) => {
   const errors = (0, import_express_validator.validationResult)(req);
   if (!errors.isEmpty()) {
     return res.status(400).json({
@@ -487,21 +446,122 @@ const createCustomerPayment = (0, import_error.asyncHandler)(async (req, res) =>
       }
     });
   } catch (error) {
-    import_logger.log.error("Error creating customer payment", error);
-    if (error.name === "ValidationError") {
-      const errorMessages = Object.values(error.errors || {}).map((e) => e.message);
-      return res.status(400).json({
-        success: false,
-        message: errorMessages.join(", ") || "Validation error"
-      });
-    }
-    return res.status(500).json({
-      success: false,
-      message: error.message || "Failed to create customer payment. Please try again."
-    });
+    next(error);
   }
 });
-const getCustomerPayments = (0, import_error.asyncHandler)(async (req, res) => {
+const getCustomerAccountsSummary = (0, import_error.asyncHandler)(async (req, res, next) => {
+  const storeId = req.user?.storeId || null;
+  if (!storeId) {
+    return res.status(400).json({
+      success: false,
+      message: "Store ID is required.",
+      data: { summaries: [] }
+    });
+  }
+  try {
+    const normalizedStoreId = storeId.toLowerCase().trim();
+    const Customer = await (0, import_customerModel.getCustomerModelForStore)(storeId);
+    const Sale = await (0, import_saleModel.getSaleModelForStore)(storeId);
+    const CustomerPayment = (0, import_customerPaymentModel.getCustomerPaymentModelForStore)(storeId);
+    const [customers, salesByCustomer, paymentsByCustomer] = await Promise.all([
+      Customer.find({ storeId: normalizedStoreId }).select("_id name phone address previousBalance").lean(),
+      Sale.aggregate([
+        { $match: { storeId: normalizedStoreId } },
+        {
+          $group: {
+            _id: "$customerId",
+            totalRemainingFromSales: { $sum: "$remainingAmount" },
+            totalPaidAtSale: { $sum: "$paidAmount" },
+            totalPurchases: { $sum: "$total" }
+          }
+        }
+      ]),
+      CustomerPayment.aggregate([
+        { $match: { storeId: normalizedStoreId } },
+        {
+          $group: {
+            _id: "$customerId",
+            receiptTotal: { $sum: { $cond: [{ $gt: ["$amount", 0] }, "$amount", 0] } },
+            journalTotal: { $sum: { $cond: [{ $lt: ["$amount", 0] }, { $abs: "$amount" }, 0] } },
+            receiptExclInitial: {
+              $sum: {
+                $cond: [
+                  {
+                    $and: [
+                      { $gt: ["$amount", 0] },
+                      { $not: { $regexMatch: { input: { $ifNull: ["$notes", ""] }, regex: "\u0631\u0635\u064A\u062F \u0623\u0648\u0644\u064A" } } }
+                    ]
+                  },
+                  "$amount",
+                  0
+                ]
+              }
+            },
+            journalExclInitial: {
+              $sum: {
+                $cond: [
+                  {
+                    $and: [
+                      { $lt: ["$amount", 0] },
+                      { $not: { $regexMatch: { input: { $ifNull: ["$notes", ""] }, regex: "\u0631\u0635\u064A\u062F \u0623\u0648\u0644\u064A" } } }
+                    ]
+                  },
+                  { $abs: "$amount" },
+                  0
+                ]
+              }
+            },
+            lastPaymentDate: { $max: "$date" }
+          }
+        }
+      ])
+    ]);
+    const salesMap = /* @__PURE__ */ new Map();
+    salesByCustomer.forEach((row) => {
+      salesMap.set(row._id || null, {
+        totalRemainingFromSales: row.totalRemainingFromSales ?? 0,
+        totalPaidAtSale: row.totalPaidAtSale ?? 0,
+        totalPurchases: row.totalPurchases ?? 0
+      });
+    });
+    const paymentsMap = /* @__PURE__ */ new Map();
+    paymentsByCustomer.forEach((row) => {
+      paymentsMap.set(row._id || null, {
+        receiptTotal: row.receiptTotal ?? 0,
+        journalTotal: row.journalTotal ?? 0,
+        receiptExclInitial: row.receiptExclInitial ?? 0,
+        journalExclInitial: row.journalExclInitial ?? 0,
+        lastPaymentDate: row.lastPaymentDate ?? null
+      });
+    });
+    const summaries = customers.map((c) => {
+      const id = c._id.toString();
+      const sales = salesMap.get(id) || { totalRemainingFromSales: 0, totalPaidAtSale: 0, totalPurchases: 0 };
+      const pay = paymentsMap.get(id) || { receiptTotal: 0, journalTotal: 0, receiptExclInitial: 0, journalExclInitial: 0, lastPaymentDate: null };
+      const previousBalance = Number(c.previousBalance) || 0;
+      const totalSales = sales.totalPurchases + pay.journalTotal;
+      const totalPaid = sales.totalPaidAtSale + pay.receiptTotal;
+      const balance = -previousBalance + pay.receiptExclInitial - pay.journalExclInitial - sales.totalRemainingFromSales;
+      return {
+        customerId: id,
+        customerName: c.name || "",
+        address: c.address,
+        totalSales,
+        totalPaid,
+        balance,
+        lastPaymentDate: pay.lastPaymentDate ? new Date(pay.lastPaymentDate).toISOString() : null
+      };
+    });
+    res.status(200).json({
+      success: true,
+      message: "Customer account summaries fetched successfully",
+      data: { summaries }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+const getCustomerPayments = (0, import_error.asyncHandler)(async (req, res, next) => {
   const storeId = req.user?.storeId || null;
   const { customerId } = req.query;
   if (!storeId) {
@@ -542,14 +602,7 @@ const getCustomerPayments = (0, import_error.asyncHandler)(async (req, res) => {
       }
     });
   } catch (error) {
-    import_logger.log.error("Error fetching customer payments", error);
-    return res.status(500).json({
-      success: false,
-      message: error.message || "Failed to fetch customer payments. Please try again.",
-      data: {
-        payments: []
-      }
-    });
+    next(error);
   }
 });
 // Annotate the CommonJS export names for ESM import in node:
@@ -557,6 +610,7 @@ const getCustomerPayments = (0, import_error.asyncHandler)(async (req, res) => {
   createCustomer,
   createCustomerPayment,
   deleteCustomer,
+  getCustomerAccountsSummary,
   getCustomerById,
   getCustomerPayments,
   getCustomers,

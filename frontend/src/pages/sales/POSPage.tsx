@@ -6,7 +6,7 @@ import QRCode from 'react-qr-code';
 import { AR_LABELS, UUID, SearchIcon, DeleteIcon, PlusIcon, HandIcon, CancelIcon, PrintIcon, CheckCircleIcon } from '@/shared/constants';
 import { ToggleSwitch } from '@/shared/components/ui/ToggleSwitch';
 import CustomDropdown from '@/shared/components/ui/CustomDropdown/CustomDropdown';
-import { customersApi, productsApi, salesApi, ApiError, storeSettingsApi, pointsApi } from '@/lib/api/client';
+import { customersApi, productsApi, salesApi, ApiError, getApiErrorMessage, storeSettingsApi, pointsApi } from '@/lib/api/client';
 import { useCurrency } from '@/shared/contexts/CurrencyContext';
 import { saveSale } from '@/shared/utils/salesStorage';
 import { loadSettings, saveSettings } from '@/shared/utils/settingsStorage';
@@ -1104,6 +1104,8 @@ const POSPage: React.FC = () => {
                 return syncResult;
             } else {
                 console.warn('[POS] Failed to sync customers:', syncResult.error);
+                const errorMsg = syncResult.error || 'فشل تحميل العملاء';
+                showToast(errorMsg, 'error');
                 // Even on failure, mark as loaded to prevent infinite loading
                 // POS can continue with empty list and use server-side search as fallback
                 setAllCustomers([]);
@@ -1149,20 +1151,11 @@ const POSPage: React.FC = () => {
         try {
             console.log('[POS] Loading customers from IndexedDB...');
             
-            // Verify storeId before loading
-            try {
-                const token = localStorage.getItem('auth-token');
-                if (token) {
-                    const payload = JSON.parse(atob(token.split('.')[1]));
-                    const storeId = payload.storeId;
-                    if (import.meta.env.DEV) {
-                      console.log('[POS] Current storeId from token:', storeId, '(type:', typeof storeId, ')');
-                    }
-                } else {
-                    console.warn('[POS] No auth token found in localStorage');
-                }
-            } catch (tokenError) {
-                console.warn('[POS] Error reading storeId from token:', tokenError);
+            // Verify storeId before loading (safe decode; invalid tokens are cleared)
+            if (import.meta.env.DEV) {
+                const { getStoreIdFromToken } = await import('@/lib/utils/storeId');
+                const storeId = getStoreIdFromToken();
+                console.log('[POS] Current storeId from token:', storeId, '(type:', typeof storeId, ')');
             }
             
             // Initialize IndexedDB
@@ -1552,6 +1545,7 @@ const POSPage: React.FC = () => {
                 } else {
                     setProductsLoaded(false);
                     console.warn('[POS] Failed to sync products from server:', syncResult.error);
+                    showToast(syncResult.error || 'فشل تحميل المنتجات', 'error');
                 }
             }
         } catch (error: any) {
@@ -3525,7 +3519,7 @@ const POSPage: React.FC = () => {
         } catch (error: any) {
             // Handle any unexpected errors
             console.error('Error in handleReturn:', error);
-            showToast(`حدث خطأ أثناء معالجة الإرجاع: ${error?.message || 'خطأ غير معروف'}`, 'error');
+            showToast(`حدث خطأ أثناء معالجة الإرجاع: ${getApiErrorMessage(error, 'خطأ غير معروف')}`, 'error');
         } finally {
             // CRITICAL FIX: Only reset processing state after return is fully processed
             // This ensures the button remains disabled until processing completes
@@ -3965,7 +3959,7 @@ const POSPage: React.FC = () => {
         } catch (error: any) {
             // Handle any unexpected errors
             console.error('Error in handleFinalizePayment:', error);
-            showToast(`حدث خطأ أثناء معالجة الدفع: ${error?.message || 'خطأ غير معروف'}`, 'error');
+            showToast(`حدث خطأ أثناء معالجة الدفع: ${getApiErrorMessage(error, 'خطأ غير معروف')}`, 'error');
         } finally {
             // CRITICAL FIX: Only reset processing state after sale is fully processed
             // This ensures the "Start New Sale" button remains disabled until processing completes
@@ -4235,7 +4229,7 @@ const POSPage: React.FC = () => {
                 }
             } catch (pointsError: any) {
                 console.error('❌ Failed to redeem points:', pointsError);
-                showToast(`فشل استبدال النقاط: ${pointsError?.response?.data?.message || pointsError?.message || 'خطأ غير معروف'}`, 'error');
+                showToast(`فشل استبدال النقاط: ${getApiErrorMessage(pointsError, 'خطأ غير معروف')}`, 'error');
                 // Continue with sale anyway
             }
         }
@@ -4403,7 +4397,7 @@ const POSPage: React.FC = () => {
             customerId = prepared.customerId;
         } catch (error: any) {
             console.error('❌ Failed to prepare sale data:', error);
-            showToast(`فشل في إعداد بيانات الفاتورة: ${error?.message || 'خطأ غير معروف'}`, 'error');
+            showToast(`فشل في إعداد بيانات الفاتورة: ${getApiErrorMessage(error, 'خطأ غير معروف')}`, 'error');
             return;
         }
         
@@ -4564,7 +4558,7 @@ const POSPage: React.FC = () => {
             return result;
         }).catch((error) => {
             console.error(`❌ Error processing sale ${saleId}:`, error);
-            showToast(`فشل في معالجة الفاتورة: ${error?.message || 'خطأ غير معروف'}`, 'error');
+            showToast(`فشل في معالجة الفاتورة: ${getApiErrorMessage(error, 'خطأ غير معروف')}`, 'error');
             throw error;
         });
         
@@ -4896,7 +4890,7 @@ const POSPage: React.FC = () => {
                         console.error('❌ Failed to redeem points:', pointsError);
                         // Don't block the sale, but log the error
                         // In production, you might want to show an error and prevent sale completion
-                        showToast(`فشل استبدال النقاط: ${pointsError?.response?.data?.message || pointsError?.message || 'خطأ غير معروف'}`, 'error');
+                        showToast(`فشل استبدال النقاط: ${getApiErrorMessage(pointsError, 'خطأ غير معروف')}`, 'error');
                         // Reset payment method to Cash as fallback
                         // Or you could throw error to prevent sale
                     }
@@ -5058,7 +5052,7 @@ const POSPage: React.FC = () => {
                     isSubmittingInvoiceRef.current = false;
                     setIsProcessingPayment(false);
                     lockedInvoiceNumberRef.current = null;
-                    showToast(`فشل في حفظ الفاتورة: ${saveError?.message || 'خطأ غير معروف'}`, 'error');
+                    showToast(`فشل في حفظ الفاتورة: ${getApiErrorMessage(saveError, 'خطأ غير معروف')}`, 'error');
                     return;
                 }
                 
@@ -6950,8 +6944,7 @@ const POSPage: React.FC = () => {
                             // Handle auth errors if needed
                             console.error('Authentication error:', apiError);
                         }
-                        const errorMessage = apiError.message || 'فشل حفظ العميل. يرجى المحاولة مرة أخرى.';
-                        showToast(errorMessage, 'error');
+                        showToast(getApiErrorMessage(err, 'فشل حفظ العميل. يرجى المحاولة مرة أخرى.'), 'error');
                         throw err; // Re-throw to let modal handle it
                     }
                 }}

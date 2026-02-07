@@ -15,14 +15,30 @@ const LoginPage = () => {
 
   // Redirect to dashboard if user is already authenticated
   useEffect(() => {
-    if (isAuthenticated) {
-      navigate('/', { replace: true });
+    if (isAuthenticated && user) {
+      if (user.id === 'admin') {
+        navigate('/admin/dashboard', { replace: true });
+      } else if (user.storeTypeName === 'Other') {
+        navigate('/pos/simple', { replace: true });
+      } else {
+        navigate('/', { replace: true });
+      }
     }
-  }, [isAuthenticated, navigate]);
+  }, [isAuthenticated, user, navigate]);
 
   // If authenticated, redirect immediately
-  if (isAuthenticated) {
-    return <Navigate to="/" replace />;
+  if (isAuthenticated && user) {
+    if (user.id === 'admin') {
+      return <Navigate to="/admin/dashboard" replace />;
+    } else if (user.storeTypeName && user.storeTypeName.toLowerCase().trim() === 'other') {
+      if (typeof window !== 'undefined') {
+        window.location.href = '/pos/simple';
+        return null;
+      }
+      return <Navigate to="/pos/simple" replace />;
+    } else {
+      return <Navigate to="/" replace />;
+    }
   }
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -42,9 +58,14 @@ const LoginPage = () => {
         // Only system admin (userId === 'admin' from .env credentials) should be redirected to admin dashboard
         // Store owners/users with role 'Admin' should go to regular dashboard
         if (authState.user && authState.user.id === 'admin') {
-          navigate('/admin/dashboard');
+          navigate('/admin/dashboard', { replace: true });
+        } else if (authState.user && authState.user.storeTypeName && 
+                   authState.user.storeTypeName.toLowerCase().trim() === 'other') {
+          // Redirect "Other" store type users to simple POS immediately
+          // Use window.location for immediate redirect to prevent any other page from loading
+          window.location.href = '/pos/simple';
         } else {
-          navigate('/');
+          navigate('/', { replace: true });
         }
       }, 100);
     } catch (err) {

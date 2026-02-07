@@ -19,22 +19,14 @@ export const getStoreAccounts = asyncHandler(async (req: AuthenticatedRequest, r
     });
   }
 
-  try {
-    const accounts = await StoreAccount.find().sort({ dueBalance: -1 });
+  const accounts = await StoreAccount.find().sort({ dueBalance: -1 });
 
-    res.status(200).json({
-      success: true,
-      data: {
-        accounts,
-      },
-    });
-  } catch (error: any) {
-    log.error('Error getting store accounts', error);
-    return res.status(500).json({
-      success: false,
-      message: error.message || 'Failed to get store accounts',
-    });
-  }
+  res.status(200).json({
+    success: true,
+    data: {
+      accounts,
+    },
+  });
 });
 
 /**
@@ -59,29 +51,21 @@ export const getStoreAccount = asyncHandler(async (req: AuthenticatedRequest, re
     query.storeId = id.toLowerCase();
   }
 
-  try {
-    const account = await StoreAccount.findOne(query);
+  const account = await StoreAccount.findOne(query);
 
-    if (!account) {
-      return res.status(404).json({
-        success: false,
-        message: 'Store account not found',
-      });
-    }
-
-    res.status(200).json({
-      success: true,
-      data: {
-        account,
-      },
-    });
-  } catch (error: any) {
-    log.error('Error getting store account', error);
-    return res.status(500).json({
+  if (!account) {
+    return res.status(404).json({
       success: false,
-      message: error.message || 'Failed to get store account',
+      message: 'Store account not found',
     });
   }
+
+  res.status(200).json({
+    success: true,
+    data: {
+      account,
+    },
+  });
 });
 
 /**
@@ -116,47 +100,36 @@ export const updateStoreAccountThreshold = asyncHandler(async (req: Authenticate
     });
   }
 
-  try {
-    const account = await StoreAccount.findOne({ storeId: storeId.toLowerCase() });
+  const account = await StoreAccount.findOne({ storeId: storeId.toLowerCase() });
 
-    if (!account) {
-      return res.status(404).json({
-        success: false,
-        message: 'Store account not found',
-      });
-    }
-
-    account.threshold = threshold;
-    
-    // If new threshold is higher than current due balance and account is paused, unpause it
-    if (account.isPaused && account.dueBalance < threshold) {
-      account.isPaused = false;
-      account.pausedAt = undefined;
-      account.pausedReason = undefined;
-
-      // Reactivate store
-      await Store.findOneAndUpdate(
-        { storeId: storeId.toLowerCase() },
-        { isActive: true }
-      );
-    }
-
-    await account.save();
-
-    res.status(200).json({
-      success: true,
-      message: 'Store account threshold updated successfully',
-      data: {
-        account,
-      },
-    });
-  } catch (error: any) {
-    log.error('Error updating store account threshold', error);
-    return res.status(500).json({
+  if (!account) {
+    return res.status(404).json({
       success: false,
-      message: error.message || 'Failed to update store account threshold',
+      message: 'Store account not found',
     });
   }
+
+  account.threshold = threshold;
+  
+  if (account.isPaused && account.dueBalance < threshold) {
+    account.isPaused = false;
+    account.pausedAt = undefined;
+    account.pausedReason = undefined;
+    await Store.findOneAndUpdate(
+      { storeId: storeId.toLowerCase() },
+      { isActive: true }
+    );
+  }
+
+  await account.save();
+
+  res.status(200).json({
+    success: true,
+    message: 'Store account threshold updated successfully',
+    data: {
+      account,
+    },
+  });
 });
 
 /**
@@ -191,65 +164,53 @@ export const makePaymentToStore = asyncHandler(async (req: AuthenticatedRequest,
     });
   }
 
-  try {
-    const account = await StoreAccount.findOne({ storeId: storeId.toLowerCase() });
+  const account = await StoreAccount.findOne({ storeId: storeId.toLowerCase() });
 
-    if (!account) {
-      return res.status(404).json({
-        success: false,
-        message: 'Store account not found',
-      });
-    }
-
-    // Update account
-    const paymentAmount = Math.min(amount, account.dueBalance); // Don't overpay
-    account.totalPaid += paymentAmount;
-    account.dueBalance -= paymentAmount;
-    account.lastPaymentDate = new Date();
-    account.lastPaymentAmount = paymentAmount;
-
-    // If account was paused and due balance is now below threshold, unpause it
-    if (account.isPaused && account.dueBalance < account.threshold) {
-      account.isPaused = false;
-      account.pausedAt = undefined;
-      account.pausedReason = undefined;
-
-      // Reactivate store
-      await Store.findOneAndUpdate(
-        { storeId: storeId.toLowerCase() },
-        { isActive: true }
-      );
-    }
-
-    await account.save();
-
-    res.status(200).json({
-      success: true,
-      message: 'Payment processed successfully',
-      data: {
-        account: {
-          id: account._id,
-          storeId: account.storeId,
-          totalEarned: account.totalEarned,
-          totalPaid: account.totalPaid,
-          dueBalance: account.dueBalance,
-          isPaused: account.isPaused,
-          lastPaymentDate: account.lastPaymentDate,
-          lastPaymentAmount: account.lastPaymentAmount,
-        },
-        payment: {
-          amount: paymentAmount,
-          description,
-        },
-      },
-    });
-  } catch (error: any) {
-    log.error('Error making payment to store', error);
-    return res.status(500).json({
+  if (!account) {
+    return res.status(404).json({
       success: false,
-      message: error.message || 'Failed to process payment',
+      message: 'Store account not found',
     });
   }
+
+  const paymentAmount = Math.min(amount, account.dueBalance);
+  account.totalPaid += paymentAmount;
+  account.dueBalance -= paymentAmount;
+  account.lastPaymentDate = new Date();
+  account.lastPaymentAmount = paymentAmount;
+
+  if (account.isPaused && account.dueBalance < account.threshold) {
+    account.isPaused = false;
+    account.pausedAt = undefined;
+    account.pausedReason = undefined;
+    await Store.findOneAndUpdate(
+      { storeId: storeId.toLowerCase() },
+      { isActive: true }
+    );
+  }
+
+  await account.save();
+
+  res.status(200).json({
+    success: true,
+    message: 'Payment processed successfully',
+    data: {
+      account: {
+        id: account._id,
+        storeId: account.storeId,
+        totalEarned: account.totalEarned,
+        totalPaid: account.totalPaid,
+        dueBalance: account.dueBalance,
+        isPaused: account.isPaused,
+        lastPaymentDate: account.lastPaymentDate,
+        lastPaymentAmount: account.lastPaymentAmount,
+      },
+      payment: {
+        amount: paymentAmount,
+        description,
+      },
+    },
+  });
 });
 
 /**
@@ -275,53 +236,41 @@ export const toggleStoreAccountStatus = asyncHandler(async (req: AuthenticatedRe
     });
   }
 
-  try {
-    const account = await StoreAccount.findOne({ storeId: storeId.toLowerCase() });
+  const account = await StoreAccount.findOne({ storeId: storeId.toLowerCase() });
 
-    if (!account) {
-      return res.status(404).json({
-        success: false,
-        message: 'Store account not found',
-      });
-    }
-
-    account.isPaused = isPaused;
-    if (isPaused) {
-      account.pausedAt = new Date();
-      account.pausedReason = reason || 'Manually paused by admin';
-      
-      // Deactivate store
-      await Store.findOneAndUpdate(
-        { storeId: storeId.toLowerCase() },
-        { isActive: false }
-      );
-    } else {
-      account.pausedAt = undefined;
-      account.pausedReason = undefined;
-      
-      // Reactivate store
-      await Store.findOneAndUpdate(
-        { storeId: storeId.toLowerCase() },
-        { isActive: true }
-      );
-    }
-
-    await account.save();
-
-    res.status(200).json({
-      success: true,
-      message: `Store account ${isPaused ? 'paused' : 'unpaused'} successfully`,
-      data: {
-        account,
-      },
-    });
-  } catch (error: any) {
-    log.error('Error toggling store account status', error);
-    return res.status(500).json({
+  if (!account) {
+    return res.status(404).json({
       success: false,
-      message: error.message || 'Failed to toggle store account status',
+      message: 'Store account not found',
     });
   }
+
+  account.isPaused = isPaused;
+  if (isPaused) {
+    account.pausedAt = new Date();
+    account.pausedReason = reason || 'Manually paused by admin';
+    await Store.findOneAndUpdate(
+      { storeId: storeId.toLowerCase() },
+      { isActive: false }
+    );
+  } else {
+    account.pausedAt = undefined;
+    account.pausedReason = undefined;
+    await Store.findOneAndUpdate(
+      { storeId: storeId.toLowerCase() },
+      { isActive: true }
+    );
+  }
+
+  await account.save();
+
+  res.status(200).json({
+    success: true,
+    message: `Store account ${isPaused ? 'paused' : 'unpaused'} successfully`,
+    data: {
+      account,
+    },
+  });
 });
 
 // Validation middleware

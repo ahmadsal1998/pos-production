@@ -4,6 +4,7 @@ import { asyncHandler } from '../middleware/error.middleware';
 import { AuthenticatedRequest } from '../middleware/auth.middleware';
 import { getProductByBarcode as getCachedProductByBarcode, invalidateProductCache, invalidateStoreProductCache, invalidateAllProductBarcodeCaches, createPseudoProductFromUnit } from '../utils/productCache';
 import { getProductModelForStore } from '../utils/productModel';
+import { productService } from '../services/product.service';
 import Category from '../models/Category';
 import multer from 'multer';
 import { parse } from 'csv-parse/sync';
@@ -59,36 +60,7 @@ export const createProduct = asyncHandler(async (req: AuthenticatedRequest, res:
     });
   }
 
-  const {
-    name,
-    barcode,
-    costPrice,
-    price,
-    stock = 0,
-    initialQuantity, // Quantity in largest unit (for hierarchical units)
-    warehouseId,
-    categoryId,
-    brandId,
-    description,
-    lowStockAlert,
-    internalSKU,
-    vatPercentage = 0,
-    vatInclusive = false,
-    productionDate,
-    expiryDate,
-    batchNumber,
-    discountRules,
-    wholesalePrice,
-    units,
-    multiWarehouseDistribution,
-    status = 'active',
-    showInQuickProducts = false,
-  } = req.body;
-
-  // CRITICAL: storeId MUST come from JWT only (never from request body)
   const storeId = req.user?.storeId;
-
-  // Store users must have a storeId
   if (!storeId) {
     return res.status(400).json({
       success: false,
@@ -98,111 +70,15 @@ export const createProduct = asyncHandler(async (req: AuthenticatedRequest, res:
   }
 
   try {
-    // Get trial-aware Product model
-    const Product = await getProductModelForStore(storeId);
-    
-    // Check if product with same barcode exists for this store (using compound index)
-    const existingProduct = await Product.findOne({ 
-      storeId: storeId.toLowerCase(),
-      barcode: barcode.trim() 
-    });
-
-    if (existingProduct) {
-      return res.status(400).json({
-        success: false,
-        message: 'Product with this barcode already exists',
-      });
-    }
-
-    // Parse initial quantity (quantity in largest/main unit)
-    // CRITICAL: Stock should ALWAYS be stored in main units, not sub-units
-    const initialQty = initialQuantity !== undefined ? parseInt(initialQuantity) : (parseInt(stock) || 0);
-    
-    // Calculate total_units (in smallest unit) for reference/display purposes only
-    // This is calculated dynamically and should NOT override the main stock field
-    let totalUnitsInSmallest = 0;
-    
-    if (units && Array.isArray(units) && units.length > 0) {
-      // Sort units by order (0 = largest, higher = smaller)
-      const sortedUnits = [...units].sort((a: any, b: any) => (a.order || 0) - (b.order || 0));
-      
-      // If we have hierarchical units, calculate total_units for reference
-      if (sortedUnits.length > 1 && initialQty > 0) {
-        // Start with initial quantity (in largest unit)
-        let calculatedTotal = initialQty;
-        
-        // Multiply by unitsInPrevious for each sub-unit
-        for (let i = 1; i < sortedUnits.length; i++) {
-          const currentUnit = sortedUnits[i] as any;
-          const unitsInPrev = currentUnit.unitsInPrevious || 1;
-          if (unitsInPrev > 0) {
-            calculatedTotal = calculatedTotal * unitsInPrev;
-          }
-        }
-        
-        totalUnitsInSmallest = calculatedTotal;
-      } else {
-        // No sub-units or no initial quantity - total equals main unit quantity
-        totalUnitsInSmallest = initialQty;
-      }
-    } else {
-      // No units - total equals main unit quantity
-      totalUnitsInSmallest = initialQty;
-    }
-
-    // Prepare product data - ALWAYS include storeId
-    // CRITICAL: stock is stored in MAIN UNITS (largest unit), not sub-units
-    const productData: any = {
-      storeId: storeId.toLowerCase(), // REQUIRED for multi-tenant isolation
-      name: name.trim(),
-      barcode: barcode.trim(),
-      costPrice: parseFloat(costPrice),
-      price: parseFloat(price),
-      stock: initialQty, // ALWAYS in main units (largest unit) - this is the primary stock field
-      total_units: totalUnitsInSmallest, // Reference field - total in smallest unit (calculated dynamically)
-      status: status || 'active',
-    };
-
-    // Add optional fields if provided
-    if (warehouseId) productData.warehouseId = warehouseId.trim();
-    if (categoryId) productData.categoryId = categoryId.trim();
-    if (brandId) productData.brandId = brandId.trim();
-    if (description) productData.description = description.trim();
-    if (lowStockAlert !== undefined) productData.lowStockAlert = parseInt(lowStockAlert) || 10;
-    if (internalSKU) productData.internalSKU = internalSKU.trim();
-    if (vatPercentage !== undefined) productData.vatPercentage = parseFloat(vatPercentage) || 0;
-    if (vatInclusive !== undefined) productData.vatInclusive = Boolean(vatInclusive);
-    if (productionDate) productData.productionDate = new Date(productionDate);
-    if (expiryDate) productData.expiryDate = new Date(expiryDate);
-    if (batchNumber) productData.batchNumber = batchNumber.trim();
-    if (discountRules) productData.discountRules = discountRules;
-    if (wholesalePrice !== undefined && wholesalePrice > 0)
-      productData.wholesalePrice = parseFloat(wholesalePrice);
-    if (units && Array.isArray(units) && units.length > 0) productData.units = units;
-    if (
-      multiWarehouseDistribution &&
-      Array.isArray(multiWarehouseDistribution) &&
-      multiWarehouseDistribution.length > 0
-    )
-      productData.multiWarehouseDistribution = multiWarehouseDistribution;
-    if (showInQuickProducts !== undefined) productData.showInQuickProducts = Boolean(showInQuickProducts);
-
-    const product = await Product.create(productData);
-
-    // Invalidate cache for all barcodes (main + unit barcodes) to ensure fresh data
-    await invalidateAllProductBarcodeCaches(storeId, product);
-
+    const { product } = await productService.create(storeId, req.body);
     res.status(201).json({
       success: true,
       message: 'Product created successfully',
-      data: {
-        product,
-      },
+      data: { product },
     });
   } catch (error: any) {
     log.error('Error creating product', error, { storeId });
 
-    // Handle specific mongoose errors
     if (error.name === 'ValidationError') {
       const errorMessages = Object.values(error.errors || {}).map((e: any) => e.message);
       return res.status(400).json({
@@ -211,7 +87,7 @@ export const createProduct = asyncHandler(async (req: AuthenticatedRequest, res:
       });
     }
 
-    if (error.code === 11000) {
+    if (error.code === 'DUPLICATE_BARCODE' || error.code === 11000) {
       return res.status(400).json({
         success: false,
         message: 'Product with this barcode already exists',
@@ -242,15 +118,19 @@ export const getProducts = asyncHandler(async (req: AuthenticatedRequest, res: R
     
     // Pagination parameters with validation
     // Support "all" parameter to fetch all products (for single-store optimization)
+    // Cap for "all" mode is configurable via env MAX_PRODUCTS_FULL_SYNC (default 10000)
+    const maxProductsFullSync = Math.max(1000, parseInt(process.env.MAX_PRODUCTS_FULL_SYNC || '10000', 10));
     const allParam = req.query.all;
-    // Handle string values for "all" parameter (query params are always strings)
     const allParamStr = typeof allParam === 'string' ? allParam.toLowerCase() : '';
     const fetchAll = allParamStr === 'true' || allParamStr === '1' || allParamStr === 'yes';
     const page = Math.max(1, parseInt(req.query.page as string) || 1);
-    const limit = fetchAll 
-      ? 10000 // High limit for "all" mode
-      : Math.min(100, Math.max(1, parseInt(req.query.limit as string) || 20)); // Max 100 items per page
+    const limit = fetchAll
+      ? maxProductsFullSync
+      : Math.min(100, Math.max(1, parseInt(req.query.limit as string) || 20));
     const skip = fetchAll ? 0 : (page - 1) * limit;
+
+    // Incremental sync: only products modified since this date (ISO string)
+    const modifiedSince = (req.query.modifiedSince as string)?.trim() || '';
 
     // Search parameter
     const searchTerm = (req.query.search as string)?.trim() || '';
@@ -259,11 +139,21 @@ export const getProducts = asyncHandler(async (req: AuthenticatedRequest, res: R
     const showInQuickProducts = req.query.showInQuickProducts;
     const status = req.query.status as string;
     const includeCategories = req.query.includeCategories !== 'false'; // Default true for optimization
+    // List vs detail: view=list returns minimal fields (id, name, barcode, price, stock, status, categoryId) for list views
+    const viewParam = (req.query.view as string)?.toLowerCase();
+    const viewList = viewParam === 'list';
 
     // Build query filter - ALWAYS include storeId for isolation
     const queryFilter: any = {
       storeId: storeId.toLowerCase(),
     };
+
+    if (modifiedSince) {
+      const sinceDate = new Date(modifiedSince);
+      if (!isNaN(sinceDate.getTime())) {
+        queryFilter.updatedAt = { $gte: sinceDate };
+      }
+    }
 
     // Filter by showInQuickProducts if provided
     if (showInQuickProducts !== undefined) {
@@ -571,13 +461,18 @@ export const getProducts = asyncHandler(async (req: AuthenticatedRequest, res: R
     let totalPages = fetchAll ? 1 : Math.max(1, Math.ceil(totalProducts / limit));
 
     // Determine which fields to select (for optimization)
-    // If showInQuickProducts filter is used, only return essential fields
+    // view=list: minimal list representation (id, name, barcode, price, stock, status, categoryId) - no units, no nested objects
+    // showInQuickProducts: only return essential fields for quick product picker
     const showInQuickProductsValue = typeof showInQuickProducts === 'string' 
       ? (showInQuickProducts === 'true' || showInQuickProducts === '1')
       : Boolean(showInQuickProducts);
-    const fieldsToSelect = showInQuickProductsValue
-      ? 'name price stock barcode showInQuickProducts status units costPrice categoryId brandId description updatedAt'
-      : undefined; // Return all fields if not filtering for quick products
+    let fieldsToSelect: string | undefined;
+    if (viewList) {
+      fieldsToSelect = 'name price stock barcode status categoryId parentProductId updatedAt';
+    } else if (showInQuickProductsValue) {
+      fieldsToSelect = 'name price stock barcode showInQuickProducts status units costPrice categoryId brandId description updatedAt';
+    }
+    // Otherwise return all fields (detail)
 
     // Fetch products with pagination and search filter
     // Use compound index (storeId, createdAt) for optimal performance
@@ -1142,15 +1037,20 @@ export const getProducts = asyncHandler(async (req: AuthenticatedRequest, res: R
     // is preserved. The parentProduct field is only a reference for display purposes and does NOT replace child data.
     // This ensures the Products screen displays child product information when searching by child barcode,
     // matching the behavior of the POS screen.
+    const paginationPage = fetchAll ? 1 : page;
+    const paginationLimit = fetchAll ? totalProducts : limit;
     res.status(200).json({
       success: true,
       message: 'Products retrieved successfully',
       products: products || [],
+      items: products || [],
       pagination: {
-        currentPage: fetchAll ? 1 : page,
-        totalPages: totalPages,
-        totalProducts: totalProducts,
-        limit: fetchAll ? totalProducts : limit,
+        page: paginationPage,
+        limit: paginationLimit,
+        total: totalProducts,
+        totalPages,
+        currentPage: paginationPage,
+        totalProducts,
         hasNextPage: fetchAll ? false : page < totalPages,
         hasPreviousPage: fetchAll ? false : page > 1,
       },
@@ -1181,48 +1081,40 @@ export const getProduct = asyncHandler(async (req: AuthenticatedRequest, res: Re
     });
   }
 
-  try {
-    // Get trial-aware Product model
-    const Product = await getProductModelForStore(storeId);
-    
-    // Use unified model with storeId filter for isolation
-    const product = await Product.findOne({ 
-      _id: id,
-      storeId: storeId.toLowerCase() 
-    });
+  // Get trial-aware Product model
+  const Product = await getProductModelForStore(storeId);
+  
+  // Use unified model with storeId filter for isolation
+  const product = await Product.findOne({ 
+    _id: id,
+    storeId: storeId.toLowerCase() 
+  });
 
-    if (!product) {
-      return res.status(404).json({
-        success: false,
-        message: 'Product not found',
-      });
-    }
-
-    // Convert product to plain object and ensure categoryId and mainUnitId are strings
-    const productObj = product.toObject ? product.toObject() : product;
-    
-    // Ensure categoryId and mainUnitId are strings (handle ObjectId conversion if needed)
-    if (productObj.categoryId) {
-      productObj.categoryId = String(productObj.categoryId);
-    }
-    if (productObj.mainUnitId) {
-      productObj.mainUnitId = String(productObj.mainUnitId);
-    }
-
-    res.status(200).json({
-      success: true,
-      message: 'Product retrieved successfully',
-      data: {
-        product: productObj,
-      },
-    });
-  } catch (error: any) {
-    log.error('Error fetching product', error);
-    return res.status(500).json({
+  if (!product) {
+    return res.status(404).json({
       success: false,
-      message: error.message || 'Failed to fetch product',
+      message: 'Product not found',
     });
   }
+
+  // Convert product to plain object and ensure categoryId and mainUnitId are strings
+  const productObj = product.toObject ? product.toObject() : product;
+  
+  // Ensure categoryId and mainUnitId are strings (handle ObjectId conversion if needed)
+  if (productObj.categoryId) {
+    productObj.categoryId = String(productObj.categoryId);
+  }
+  if (productObj.mainUnitId) {
+    productObj.mainUnitId = String(productObj.mainUnitId);
+  }
+
+  res.status(200).json({
+    success: true,
+    message: 'Product retrieved successfully',
+    data: {
+      product: productObj,
+    },
+  });
 });
 
 export const updateProduct = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
@@ -1237,111 +1129,103 @@ export const updateProduct = asyncHandler(async (req: AuthenticatedRequest, res:
     });
   }
 
-  try {
-    // Get trial-aware Product model
-    const Product = await getProductModelForStore(storeId);
-    
-    // Get the old product before updating to invalidate old barcodes and get current units
-    const oldProduct = await Product.findOne({
-      _id: id,
-      storeId: storeId.toLowerCase(),
-    }).lean();
+  // Get trial-aware Product model
+  const Product = await getProductModelForStore(storeId);
+  
+  // Get the old product before updating to invalidate old barcodes and get current units
+  const oldProduct = await Product.findOne({
+    _id: id,
+    storeId: storeId.toLowerCase(),
+  }).lean();
 
-    if (!oldProduct) {
-      return res.status(404).json({
-        success: false,
-        message: 'Product not found',
-      });
-    }
-
-    // Ensure storeId is not overridden from request body
-    const updateData = { ...req.body };
-    delete updateData.storeId; // Never allow storeId from request body
-    
-    // Handle initialQuantity update - ensure stock is stored in main units
-    if (updateData.initialQuantity !== undefined || updateData.stock !== undefined) {
-      // Get the quantity to update (prefer initialQuantity, fallback to stock)
-      const newQuantity = updateData.initialQuantity !== undefined 
-        ? parseInt(updateData.initialQuantity) 
-        : (updateData.stock !== undefined ? parseInt(updateData.stock) : null);
-      
-      if (newQuantity !== null && !isNaN(newQuantity)) {
-        // CRITICAL: Stock should ALWAYS be stored in main units
-        updateData.stock = newQuantity;
-        
-        // Recalculate total_units if product has hierarchical units
-        const units = updateData.units || oldProduct.units;
-        if (units && Array.isArray(units) && units.length > 0) {
-          // Sort units by order (0 = largest, higher = smaller)
-          const sortedUnits = [...units].sort((a: any, b: any) => (a.order || 0) - (b.order || 0));
-          
-          // If we have hierarchical units, calculate total_units for reference
-          if (sortedUnits.length > 1 && newQuantity > 0) {
-            let calculatedTotal = newQuantity;
-            
-            // Multiply by unitsInPrevious for each sub-unit
-            for (let i = 1; i < sortedUnits.length; i++) {
-              const currentUnit = sortedUnits[i] as any;
-              const unitsInPrev = currentUnit.unitsInPrevious || 1;
-              if (unitsInPrev > 0) {
-                calculatedTotal = calculatedTotal * unitsInPrev;
-              }
-            }
-            
-            updateData.total_units = calculatedTotal;
-          } else {
-            // No sub-units or no quantity - total equals main unit quantity
-            updateData.total_units = newQuantity;
-          }
-        } else {
-          // No units - total equals main unit quantity
-          updateData.total_units = newQuantity;
-        }
-        
-        // Remove initialQuantity from updateData as it's been converted to stock
-        delete updateData.initialQuantity;
-      }
-    }
-
-    // Use unified model with storeId filter for isolation
-    const product = await Product.findOneAndUpdate(
-      { _id: id, storeId: storeId.toLowerCase() },
-      updateData,
-      { new: true, runValidators: true }
-    );
-
-    if (!product) {
-      return res.status(404).json({
-        success: false,
-        message: 'Product not found',
-      });
-    }
-
-    // Invalidate cache for all barcodes (old and new) to ensure fresh data
-    // This handles cases where:
-    // 1. Main barcode changed
-    // 2. Unit barcodes changed
-    // 3. Quantity or other fields changed (need fresh data)
-    if (oldProduct) {
-      await invalidateAllProductBarcodeCaches(storeId, oldProduct);
-    }
-    // Also invalidate new barcodes in case they're different
-    await invalidateAllProductBarcodeCaches(storeId, product);
-
-    res.status(200).json({
-      success: true,
-      message: 'Product updated successfully',
-      data: {
-        product,
-      },
-    });
-  } catch (error: any) {
-    log.error('Error updating product', error);
-    return res.status(500).json({
+  if (!oldProduct) {
+    return res.status(404).json({
       success: false,
-      message: error.message || 'Failed to update product',
+      message: 'Product not found',
     });
   }
+
+  // Ensure storeId is not overridden from request body
+  const updateData = { ...req.body };
+  delete updateData.storeId; // Never allow storeId from request body
+  
+  // Handle initialQuantity update - ensure stock is stored in main units
+  if (updateData.initialQuantity !== undefined || updateData.stock !== undefined) {
+    // Get the quantity to update (prefer initialQuantity, fallback to stock)
+    const newQuantity = updateData.initialQuantity !== undefined 
+      ? parseInt(updateData.initialQuantity) 
+      : (updateData.stock !== undefined ? parseInt(updateData.stock) : null);
+    
+    if (newQuantity !== null && !isNaN(newQuantity)) {
+      // CRITICAL: Stock should ALWAYS be stored in main units
+      updateData.stock = newQuantity;
+      
+      // Recalculate total_units if product has hierarchical units
+      const units = updateData.units || oldProduct.units;
+      if (units && Array.isArray(units) && units.length > 0) {
+        // Sort units by order (0 = largest, higher = smaller)
+        const sortedUnits = [...units].sort((a: any, b: any) => (a.order || 0) - (b.order || 0));
+        
+        // If we have hierarchical units, calculate total_units for reference
+        if (sortedUnits.length > 1 && newQuantity > 0) {
+          let calculatedTotal = newQuantity;
+          
+          // Multiply by unitsInPrevious for each sub-unit
+          for (let i = 1; i < sortedUnits.length; i++) {
+            const currentUnit = sortedUnits[i] as any;
+            const unitsInPrev = currentUnit.unitsInPrevious || 1;
+            if (unitsInPrev > 0) {
+              calculatedTotal = calculatedTotal * unitsInPrev;
+            }
+          }
+          
+          updateData.total_units = calculatedTotal;
+        } else {
+          // No sub-units or no quantity - total equals main unit quantity
+          updateData.total_units = newQuantity;
+        }
+      } else {
+        // No units - total equals main unit quantity
+        updateData.total_units = newQuantity;
+      }
+      
+      // Remove initialQuantity from updateData as it's been converted to stock
+      delete updateData.initialQuantity;
+    }
+  }
+
+  // Use unified model with storeId filter for isolation
+  const product = await Product.findOneAndUpdate(
+    { _id: id, storeId: storeId.toLowerCase() },
+    updateData,
+    { new: true, runValidators: true }
+  );
+
+  if (!product) {
+    return res.status(404).json({
+      success: false,
+      message: 'Product not found',
+    });
+  }
+
+  // Invalidate cache for all barcodes (old and new) to ensure fresh data
+  // This handles cases where:
+  // 1. Main barcode changed
+  // 2. Unit barcodes changed
+  // 3. Quantity or other fields changed (need fresh data)
+  if (oldProduct) {
+    await invalidateAllProductBarcodeCaches(storeId, oldProduct);
+  }
+  // Also invalidate new barcodes in case they're different
+  await invalidateAllProductBarcodeCaches(storeId, product);
+
+  res.status(200).json({
+    success: true,
+    message: 'Product updated successfully',
+    data: {
+      product,
+    },
+  });
 });
 
 export const deleteProduct = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
@@ -1356,44 +1240,36 @@ export const deleteProduct = asyncHandler(async (req: AuthenticatedRequest, res:
     });
   }
 
-  try {
-    // Get trial-aware Product model
-    const Product = await getProductModelForStore(storeId);
-    
-    // Get product first to get barcode for cache invalidation
-    const product = await Product.findOne({ 
-      _id: id,
-      storeId: storeId.toLowerCase() 
-    });
-    
-    if (!product) {
-      return res.status(404).json({
-        success: false,
-        message: 'Product not found',
-      });
-    }
-
-    const barcode = product.barcode;
-    
-    // Delete product
-    await Product.deleteOne({ _id: id, storeId: storeId.toLowerCase() });
-    
-    // Invalidate cache
-    if (barcode) {
-      await invalidateProductCache(storeId, barcode);
-    }
-
-    res.status(200).json({
-      success: true,
-      message: 'Product deleted successfully',
-    });
-  } catch (error: any) {
-    log.error('Error deleting product', error);
-    return res.status(500).json({
+  // Get trial-aware Product model
+  const Product = await getProductModelForStore(storeId);
+  
+  // Get product first to get barcode for cache invalidation
+  const product = await Product.findOne({ 
+    _id: id,
+    storeId: storeId.toLowerCase() 
+  });
+  
+  if (!product) {
+    return res.status(404).json({
       success: false,
-      message: error.message || 'Failed to delete product',
+      message: 'Product not found',
     });
   }
+
+  const barcode = product.barcode;
+  
+  // Delete product
+  await Product.deleteOne({ _id: id, storeId: storeId.toLowerCase() });
+  
+  // Invalidate cache
+  if (barcode) {
+    await invalidateProductCache(storeId, barcode);
+  }
+
+  res.status(200).json({
+    success: true,
+    message: 'Product deleted successfully',
+  });
 });
 
 // Configure multer for file uploads (memory storage)
@@ -1804,101 +1680,93 @@ export const getProductMetrics = asyncHandler(async (req: AuthenticatedRequest, 
     });
   }
 
-  try {
-    // Get trial-aware Product model
-    const Product = await getProductModelForStore(storeId);
-    
-    // Use unified model with storeId filter
-    const products = await Product.find({ 
-      storeId: storeId.toLowerCase(),
-      status: 'active' 
-    }).lean();
+  // Get trial-aware Product model
+  const Product = await getProductModelForStore(storeId);
+  
+  // Use unified model with storeId filter
+  const products = await Product.find({ 
+    storeId: storeId.toLowerCase(),
+    status: 'active' 
+  }).lean();
 
-    // Calculate total value of real products (cost price * stock)
-    let totalValue = 0;
-    let totalCostValue = 0;
-    let totalSellingValue = 0;
-    let productsWithProfit = 0;
-    let totalProfitMargin = 0;
+  // Calculate total value of real products (cost price * stock)
+  let totalValue = 0;
+  let totalCostValue = 0;
+  let totalSellingValue = 0;
+  let productsWithProfit = 0;
+  let totalProfitMargin = 0;
 
-    // Track low stock products
-    const lowStockProducts: Array<{
-      id: string;
-      name: string;
-      stock: number;
-      lowStockAlert: number;
-      unit: string;
-    }> = [];
+  // Track low stock products
+  const lowStockProducts: Array<{
+    id: string;
+    name: string;
+    stock: number;
+    lowStockAlert: number;
+    unit: string;
+  }> = [];
 
-    // Process each product
-    products.forEach((product) => {
-      // Calculate real stock quantity (considering main and secondary units)
-      // The stock field represents the main unit stock
-      let realStockQuantity = product.stock || 0;
+  // Process each product
+  products.forEach((product) => {
+    // Calculate real stock quantity (considering main and secondary units)
+    // The stock field represents the main unit stock
+    let realStockQuantity = product.stock || 0;
 
-      // If product has secondary units, we still use the main stock
-      // The units array contains conversion factors but stock is tracked in main unit
-      // For accurate calculation, we use the main stock value
-      // Note: If you track stock separately per unit, you would need to aggregate here
-      realStockQuantity = product.stock || 0;
+    // If product has secondary units, we still use the main stock
+    // The units array contains conversion factors but stock is tracked in main unit
+    // For accurate calculation, we use the main stock value
+    // Note: If you track stock separately per unit, you would need to aggregate here
+    realStockQuantity = product.stock || 0;
 
-      // Calculate product value (cost price * stock)
-      const productCostValue = (product.costPrice || 0) * realStockQuantity;
-      const productSellingValue = (product.price || 0) * realStockQuantity;
+    // Calculate product value (cost price * stock)
+    const productCostValue = (product.costPrice || 0) * realStockQuantity;
+    const productSellingValue = (product.price || 0) * realStockQuantity;
 
-      totalValue += productCostValue;
-      totalCostValue += productCostValue;
-      totalSellingValue += productSellingValue;
+    totalValue += productCostValue;
+    totalCostValue += productCostValue;
+    totalSellingValue += productSellingValue;
 
-      // Calculate profit margin for this product
-      if (product.costPrice > 0 && product.price > 0) {
-        const profitMargin = ((product.price - product.costPrice) / product.costPrice) * 100;
-        totalProfitMargin += profitMargin;
-        productsWithProfit++;
-      }
+    // Calculate profit margin for this product
+    if (product.costPrice > 0 && product.price > 0) {
+      const profitMargin = ((product.price - product.costPrice) / product.costPrice) * 100;
+      totalProfitMargin += profitMargin;
+      productsWithProfit++;
+    }
 
-      // Check for low stock
-      const lowStockAlert = product.lowStockAlert || 10;
-      if (realStockQuantity <= lowStockAlert) {
-        lowStockProducts.push({
-          id: product._id.toString(),
-          name: product.name,
-          stock: realStockQuantity,
-          lowStockAlert: lowStockAlert,
-          unit: product.mainUnitId || 'unit',
-        });
-      }
-    });
+    // Check for low stock
+    const lowStockAlert = product.lowStockAlert || 10;
+    if (realStockQuantity <= lowStockAlert) {
+      lowStockProducts.push({
+        id: product._id.toString(),
+        name: product.name,
+        stock: realStockQuantity,
+        lowStockAlert: lowStockAlert,
+        unit: product.mainUnitId || 'unit',
+      });
+    }
+  });
 
-    // Calculate average profit margin
-    const averageProfitMargin = productsWithProfit > 0 ? totalProfitMargin / productsWithProfit : 0;
+  // Calculate average profit margin
+  const averageProfitMargin = productsWithProfit > 0 ? totalProfitMargin / productsWithProfit : 0;
 
-    // Calculate overall profit margin (weighted by stock value)
-    const overallProfitMargin =
-      totalCostValue > 0 ? ((totalSellingValue - totalCostValue) / totalCostValue) * 100 : 0;
+  // Calculate overall profit margin (weighted by stock value)
+  const overallProfitMargin =
+    totalCostValue > 0 ? ((totalSellingValue - totalCostValue) / totalCostValue) * 100 : 0;
 
-    res.status(200).json({
-      success: true,
-      message: 'Product metrics retrieved successfully',
-      data: {
-        totalValue: parseFloat(totalValue.toFixed(2)),
-        totalCostValue: parseFloat(totalCostValue.toFixed(2)),
-        totalSellingValue: parseFloat(totalSellingValue.toFixed(2)),
-        averageProfitMargin: parseFloat(averageProfitMargin.toFixed(2)),
-        overallProfitMargin: parseFloat(overallProfitMargin.toFixed(2)),
-        lowStockCount: lowStockProducts.length,
-        lowStockProducts: lowStockProducts,
-        totalProducts: products.length,
-        productsWithStock: products.filter((p) => (p.stock || 0) > 0).length,
-      },
-    });
-  } catch (error: any) {
-    log.error('Error fetching product metrics', error);
-    return res.status(500).json({
-      success: false,
-      message: error.message || 'Failed to fetch product metrics',
-    });
-  }
+  res.status(200).json({
+    success: true,
+    message: 'Product metrics retrieved successfully',
+    data: {
+      totalValue: parseFloat(totalValue.toFixed(2)),
+      totalCostValue: parseFloat(totalCostValue.toFixed(2)),
+      totalSellingValue: parseFloat(totalSellingValue.toFixed(2)),
+      averageProfitMargin: parseFloat(averageProfitMargin.toFixed(2)),
+      overallProfitMargin: parseFloat(overallProfitMargin.toFixed(2)),
+      lowStockCount: lowStockProducts.length,
+      lowStockProducts: lowStockProducts,
+      totalProducts: products.length,
+      productsWithStock: products.filter((p) => (p.stock || 0) > 0).length,
+    },
+  });
 });
 
 /**
@@ -1908,15 +1776,10 @@ export const getProductMetrics = asyncHandler(async (req: AuthenticatedRequest, 
  */
 /**
  * Get product by barcode (exact match) - OPTIMIZED with Redis caching
- * This is the critical path for POS barcode scans - must be < 50ms end-to-end
- * Uses Redis cache for sub-5ms lookups when cached
+ * Delegates to productService for cache-aware lookup.
  */
 export const getProductByBarcode = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
-  const { barcode } = req.params;
-  
-  // CRITICAL: storeId MUST come from JWT only (never from request)
   const storeId = req.user?.storeId;
-
   if (!storeId) {
     return res.status(400).json({
       success: false,
@@ -1924,67 +1787,35 @@ export const getProductByBarcode = asyncHandler(async (req: AuthenticatedRequest
     });
   }
 
-  // Decode the barcode in case it was URL encoded (Express already decodes, but handle edge cases)
   let decodedBarcode: string;
   try {
-    decodedBarcode = decodeURIComponent(barcode || '');
-  } catch (decodeError) {
-    // If decode fails (invalid encoding), use the barcode as-is (Express already decoded it)
-    decodedBarcode = barcode || '';
+    decodedBarcode = decodeURIComponent((req.params.barcode || '').toString());
+  } catch {
+    decodedBarcode = (req.params.barcode || '').toString();
   }
 
-  if (!decodedBarcode || !decodedBarcode.trim()) {
+  if (!decodedBarcode?.trim()) {
     return res.status(400).json({
       success: false,
       message: 'Barcode is required',
     });
   }
 
-  try {
-    const trimmedBarcode = decodedBarcode.trim();
-
-    // Use cached lookup (Redis) - this is the critical performance path
-    const product = await getCachedProductByBarcode(storeId, trimmedBarcode);
-
-    if (!product) {
-      return res.status(404).json({
-        success: false,
-        message: 'Product not found',
-      });
-    }
-
-    // Convert product to plain object
-    const productObj = product as any;
-    
-    // Ensure categoryId and mainUnitId are strings
-    if (productObj.categoryId) {
-      productObj.categoryId = String(productObj.categoryId);
-    }
-    if (productObj.mainUnitId) {
-      productObj.mainUnitId = String(productObj.mainUnitId);
-    }
-
-    // Determine which unit matched (if any)
-    let matchedUnit = null;
-    if (productObj.units && Array.isArray(productObj.units)) {
-      matchedUnit = productObj.units.find((u: any) => u.barcode === trimmedBarcode);
-    }
-
-    res.status(200).json({
-      success: true,
-      message: 'Product retrieved successfully',
-      data: {
-        product: productObj,
-        matchedUnit: matchedUnit || null,
-        matchedBarcode: trimmedBarcode,
-      },
-    });
-  } catch (error: any) {
-    log.error('Error fetching product by barcode', error);
-    return res.status(500).json({
+  const result = await productService.getByBarcode(storeId, decodedBarcode);
+  if (!result) {
+    return res.status(404).json({
       success: false,
-      message: error.message || 'Failed to fetch product by barcode',
+      message: 'Product not found',
     });
   }
+  res.status(200).json({
+    success: true,
+    message: 'Product retrieved successfully',
+    data: {
+      product: result.product,
+      matchedUnit: result.matchedUnit,
+      matchedBarcode: result.matchedBarcode,
+    },
+  });
 });
 

@@ -1,10 +1,10 @@
 import mongoose from 'mongoose';
 import dotenv from 'dotenv';
 import { ensureAdminDatabase, sanitizeMongoUri } from '../config/database';
-import { getDatabaseConnection, getDatabaseName, DATABASE_CONFIG } from './databaseManager';
-import { getCustomerPaymentModel } from './customerPaymentModel';
+import { getDatabaseConnection, getDatabaseName, DATABASE_CONFIG } from '../utils/databaseManager';
+import { getCustomerPaymentModel } from '../utils/customerPaymentModel';
 import Store from '../models/Store';
-import { log } from './logger';
+import { log } from '../utils/logger';
 
 // Load environment variables
 dotenv.config();
@@ -38,7 +38,7 @@ interface RollbackInfo {
 }
 
 /**
- * Get storeId from store number or prefix
+ * Get storeId from store number
  */
 async function getStoreIdFromNumber(storeNumber: number): Promise<string | null> {
   try {
@@ -46,14 +46,6 @@ async function getStoreIdFromNumber(storeNumber: number): Promise<string | null>
     if (store) {
       return store.storeId.toLowerCase().trim();
     }
-    
-    // Try to find by prefix (in case storeNumber maps to prefix)
-    const stores = await Store.find().lean();
-    const storeByPrefix = stores.find(s => s.prefix === storeNumber.toString() || s.prefix === `store${storeNumber}`);
-    if (storeByPrefix) {
-      return storeByPrefix.storeId.toLowerCase().trim();
-    }
-    
     return null;
   } catch (error: any) {
     log.error(`Error finding store for number ${storeNumber}`, error);
@@ -62,18 +54,18 @@ async function getStoreIdFromNumber(storeNumber: number): Promise<string | null>
 }
 
 /**
- * Get storeId from prefix
+ * Get storeId from store identifier (extracted from collection name, e.g. "store1")
  */
-async function getStoreIdFromPrefix(prefix: string): Promise<string | null> {
+async function getStoreIdFromIdentifier(identifier: string): Promise<string | null> {
   try {
-    const normalizedPrefix = prefix.toLowerCase().trim();
-    const store = await Store.findOne({ prefix: normalizedPrefix }).lean();
+    const normalized = identifier.toLowerCase().trim();
+    const store = await Store.findOne({ storeId: normalized }).lean();
     if (store) {
       return store.storeId.toLowerCase().trim();
     }
     return null;
   } catch (error: any) {
-    log.error(`Error finding store for prefix ${prefix}`, error);
+    log.error(`Error finding store for identifier ${identifier}`, error);
     return null;
   }
 }
@@ -147,10 +139,10 @@ async function migrateCollection(
         storeId = storeNumber.toString();
       }
     } else if (prefix) {
-      storeId = await getStoreIdFromPrefix(prefix);
+      storeId = await getStoreIdFromIdentifier(prefix);
       if (!storeId) {
-        log.warn(`Could not find storeId for prefix ${prefix} from collection ${collectionName}`);
-        // Try using prefix as storeId (fallback)
+        log.warn(`Could not find storeId for identifier ${prefix} from collection ${collectionName}`);
+        // Try using extracted value as storeId (fallback)
         storeId = prefix;
       }
     } else {

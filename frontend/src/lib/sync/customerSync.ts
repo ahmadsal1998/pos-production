@@ -24,24 +24,7 @@ export interface CustomerSyncResult {
   customers?: any[];
 }
 
-/**
- * Get store ID from auth token
- */
-function getStoreIdFromToken(): string | null {
-  try {
-    const token = localStorage.getItem('auth-token');
-    if (!token) {
-      return null;
-    }
-    const payload = JSON.parse(atob(token.split('.')[1]));
-    const storeId = payload.storeId || null;
-    // Normalize storeId to lowercase to match backend behavior
-    return storeId ? storeId.toLowerCase().trim() : null;
-  } catch (error) {
-    console.error('[CustomerSync] Error getting storeId from token:', error);
-    return null;
-  }
-}
+import { getStoreIdFromToken } from '@/lib/utils/storeId';
 
 /**
  * Customer synchronization manager
@@ -117,21 +100,27 @@ class CustomerSyncManager {
       this.lastSyncTime = now;
 
       try {
-        // Fetch all customers from server
         console.log('[CustomerSync] Fetching customers from server with forceRefresh:', forceRefresh);
-        const response = await customersApi.getCustomers();
+        let customersData: any[] = [];
+        let page = 1;
+        const limit = 100;
+        let hasMore = true;
 
-        console.log('[CustomerSync] API response:', {
-          success: response.success,
-          hasData: !!response.data,
-          dataKeys: response.data ? Object.keys(response.data) : []
-        });
+        while (hasMore) {
+          const response = await customersApi.getCustomers({ page, limit });
+          if (!response.success) break;
+          const data = (response.data as any)?.data;
+          const items = data?.items ?? data?.customers ?? [];
+          const pagination = data?.pagination;
+          customersData = [...customersData, ...items];
+          hasMore = pagination?.hasNextPage === true && items.length === limit;
+          page++;
+          if (items.length < limit) hasMore = false;
+        }
 
-        if (response.success) {
-          const customersData = (response.data as any)?.data?.customers || [];
-          console.log(`[CustomerSync] Received ${customersData.length} customers from server`);
+        console.log(`[CustomerSync] Received ${customersData.length} customers from server`);
 
-          if (customersData.length > 0) {
+        if (customersData.length > 0) {
             // Store in IndexedDB (primary storage)
             try {
               console.log('[CustomerSync] Storing customers in IndexedDB...');
@@ -162,20 +151,12 @@ class CustomerSyncManager {
             }
 
             return result;
-          } else {
-            console.log('[CustomerSync] Server returned empty customer list');
-            return {
-              success: true,
-              syncedCount: 0,
-              customers: [],
-            };
-          }
         } else {
-          console.error('[CustomerSync] API response was not successful');
+          console.log('[CustomerSync] Server returned empty customer list');
           return {
-            success: false,
+            success: true,
             syncedCount: 0,
-            error: 'Failed to fetch customers from server',
+            customers: [],
           };
         }
       } catch (error: any) {

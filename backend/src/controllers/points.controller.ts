@@ -1,4 +1,4 @@
-import { Response } from 'express';
+import { Response, NextFunction } from 'express';
 import { body, validationResult } from 'express-validator';
 import { asyncHandler } from '../middleware/error.middleware';
 import { AuthenticatedRequest } from '../middleware/auth.middleware';
@@ -16,7 +16,7 @@ import { log } from '../utils/logger';
  * This is called by stores after completing a sale
  * Points are global and can be redeemed at any store
  */
-export const addPointsAfterSale = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+export const addPointsAfterSale = asyncHandler(async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
     return res.status(400).json({
@@ -197,11 +197,7 @@ export const addPointsAfterSale = asyncHandler(async (req: AuthenticatedRequest,
       },
     });
   } catch (error: any) {
-    log.error('Error adding points', error);
-    return res.status(500).json({
-      success: false,
-      message: error.message || 'Failed to add points',
-    });
+    next(error);
   }
 });
 
@@ -209,7 +205,7 @@ export const addPointsAfterSale = asyncHandler(async (req: AuthenticatedRequest,
  * Get customer points balance (global, works from any store)
  * Can be called with customerId (store-specific) or globalCustomerId (phone/email)
  */
-export const getCustomerPoints = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+export const getCustomerPoints = asyncHandler(async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   // Support both query parameters and path parameters
   const customerIdFromPath = req.params.customerId;
   const { customerId, globalCustomerId, phone, email } = req.query;
@@ -340,18 +336,14 @@ export const getCustomerPoints = asyncHandler(async (req: AuthenticatedRequest, 
       },
     });
   } catch (error: any) {
-    log.error('Error getting customer points', error);
-    return res.status(500).json({
-      success: false,
-      message: error.message || 'Failed to get customer points',
-    });
+    next(error);
   }
 });
 
 /**
  * Get customer points transaction history (global, across all stores)
  */
-export const getCustomerPointsHistory = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+export const getCustomerPointsHistory = asyncHandler(async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   // Support both query parameters and path parameters
   const customerIdFromPath = req.params.customerId;
   const { customerId, globalCustomerId, phone, email } = req.query;
@@ -451,11 +443,7 @@ export const getCustomerPointsHistory = asyncHandler(async (req: AuthenticatedRe
       },
     });
   } catch (error: any) {
-    log.error('Error getting customer points history', error);
-    return res.status(500).json({
-      success: false,
-      message: error.message || 'Failed to get customer points history',
-    });
+    next(error);
   }
 });
 
@@ -463,7 +451,7 @@ export const getCustomerPointsHistory = asyncHandler(async (req: AuthenticatedRe
  * Pay with points (deduct points from customer balance)
  * Points can be redeemed at any store, regardless of where they were earned
  */
-export const payWithPoints = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+export const payWithPoints = asyncHandler(async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
     return res.status(400).json({
@@ -611,11 +599,7 @@ export const payWithPoints = asyncHandler(async (req: AuthenticatedRequest, res:
       },
     });
   } catch (error: any) {
-    log.error('Error paying with points', error);
-    return res.status(500).json({
-      success: false,
-      message: error.message || 'Failed to process points payment',
-    });
+    next(error);
   }
 });
 

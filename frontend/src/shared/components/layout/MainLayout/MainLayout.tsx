@@ -1,14 +1,29 @@
 import React from 'react';
-import { Outlet, useLocation } from 'react-router-dom';
-import { useThemeStore, useAppStore } from '@/app/store';
+import { Outlet, useLocation, Navigate } from 'react-router-dom';
+import { useThemeStore, useAppStore, useAuthStore } from '@/app/store';
 import Sidebar from '../Sidebar/Sidebar';
 import Header from '../Header/Header';
+import { SyncBanner } from '@/shared/components/SyncBanner';
 import { DropdownProvider } from '@/shared/contexts/DropdownContext';
 
 const MainLayout: React.FC = () => {
   const { theme } = useThemeStore();
   const { isMobileMenuOpen, setMobileMenuOpen, isSidebarCollapsed } = useAppStore();
+  const { user } = useAuthStore();
   const location = useLocation();
+
+  // Immediately redirect "Other" store type users to simple POS
+  // Check case-insensitively in case of any casing issues
+  const isOtherStoreType = user && user.storeTypeName && 
+    user.storeTypeName.toLowerCase().trim() === 'other';
+  
+  if (isOtherStoreType) {
+    if (typeof window !== 'undefined') {
+      window.location.href = '/pos/simple';
+      return null;
+    }
+    return <Navigate to="/pos/simple" replace />;
+  }
 
   // Apply theme to document
   React.useEffect(() => {
@@ -48,6 +63,7 @@ const MainLayout: React.FC = () => {
 
         {/* Main Content Area */}
         <div className={`flex-1 flex flex-col w-full transition-all duration-300 ${isSidebarCollapsed ? 'lg:mr-20' : 'lg:mr-64'} min-w-0 overflow-hidden`}>
+          {user && <SyncBanner />}
           <Header 
             activePath={location.pathname} 
             setActivePath={() => {}} // No longer needed with router

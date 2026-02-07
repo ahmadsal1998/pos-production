@@ -87,17 +87,9 @@ async function syncUnsyncedData(): Promise<void> {
   try {
     console.log('[IndexedDBCleanup] Syncing unsynced sales before cleanup...');
     
-    // Get storeId from token if available
-    let storeId: string | undefined;
-    try {
-      const token = localStorage.getItem('auth-token');
-      if (token) {
-        const payload = JSON.parse(atob(token.split('.')[1]));
-        storeId = payload.storeId;
-      }
-    } catch (error) {
-      console.warn('[IndexedDBCleanup] Could not extract storeId from token:', error);
-    }
+    // Get storeId from token if available (safe decode; invalid tokens are cleared)
+    const { getStoreIdFromToken } = await import('@/lib/utils/storeId');
+    const storeId = getStoreIdFromToken() ?? undefined;
 
     // Sync unsynced sales
     const syncResult = await salesSync.syncUnsyncedSales(storeId);

@@ -5,8 +5,9 @@ import { Product } from '@/shared/types';
 import ProductQuickActions from '@/features/products/components/ProductQuickActions';
 import { formatDate, formatQuantityForDisplay } from '@/shared/utils';
 import { productsApi, categoriesApi } from '@/lib/api/client';
-import { getCachedProducts, setCachedProducts, getStoreIdFromToken, invalidateProductsCache } from '@/lib/cache/productsCache';
+import { getStoreIdFromToken } from '@/lib/utils/storeId';
 import { productSync } from '@/lib/sync/productSync';
+import { productsDB } from '@/lib/db/productsDB';
 import { Pagination } from '@/shared/components';
 import { useCurrency } from '@/shared/contexts/CurrencyContext';
 import { useConfirmDialog } from '@/shared/contexts';
@@ -150,47 +151,46 @@ const ProductListPage: React.FC<ProductListPageProps> = () => {
         const storeId = getStoreIdFromToken();
         
         // CRITICAL: Never use cache for barcode searches - always fetch fresh data from server
-        // This ensures child products are found correctly
         const isBarcodeSearch = searchTerm && searchTerm.trim() && /^[0-9]+$/.test(searchTerm.trim());
         
-        // Invalidate cache for barcode searches to ensure fresh data
+        // Invalidate in-memory barcode cache for barcode searches so next lookup is fresh
         if (isBarcodeSearch && storeId) {
-          invalidateProductsCache(storeId);
+          productSync.invalidateCache();
         }
         
-        // For regular pagination mode, check cache first (but NEVER for barcode searches)
+        // For regular pagination mode, try IndexedDB first (but NEVER for barcode searches)
         if (!isAdvancedMode && !searchTerm && currentPage === 1 && !isBarcodeSearch) {
-          const cached = storeId ? getCachedProducts(storeId) : null;
-          if (cached && cached.products.length > 0) {
-            // Use cached products for first page
-            const paginatedProducts = cached.products.slice(0, itemsPerPage);
-            // IMPORTANT: Use the product's own data, not parent product data
+          const cachedProducts = await productSync.getCachedProducts();
+          if (cachedProducts && cachedProducts.length > 0) {
+            const categoryMapFromProducts: Record<string, any> = {};
+            cachedProducts.forEach((p: any) => {
+              if (p.categoryId && p.category) categoryMapFromProducts[p.categoryId] = p.category;
+            });
+            const paginatedProducts = cachedProducts.slice(0, itemsPerPage);
             const mappedProducts: (Product & { categoryId?: string; backendId?: string; parentProduct?: any })[] = paginatedProducts.map((p: BackendProduct) => ({
               id: idToNumber(p.id || p._id),
-              name: p.name, // Use child product's own name
-              category: p.categoryId ? (cached.categories[p.categoryId]?.name || categories[p.categoryId] || 'غير محدد') : 'غير محدد',
+              name: p.name,
+              category: p.categoryId ? (categoryMapFromProducts[p.categoryId]?.name || categories[p.categoryId] || 'غير محدد') : 'غير محدد',
               brand: p.brandId || '',
-              price: p.price || 0, // Use child product's own price
-              cost: p.costPrice || 0, // Use child product's own cost
-              costPrice: p.costPrice || 0, // Use child product's own cost price
-              stock: p.stock || 0, // Use child product's own stock
-              barcode: p.barcode || '', // Use child product's own barcode
+              price: p.price || 0,
+              cost: p.costPrice || 0,
+              costPrice: p.costPrice || 0,
+              stock: p.stock || 0,
+              barcode: p.barcode || '',
               expiryDate: p.expiryDate || '',
               createdAt: p.createdAt || new Date().toISOString(),
               updatedAt: p.updatedAt || new Date().toISOString(),
               categoryId: p.categoryId,
               backendId: p.id || p._id,
-              parentProduct: (p as any).parentProduct, // Include parent reference if available
+              parentProduct: (p as any).parentProduct,
             }));
             
             setProducts(mappedProducts);
             setBackendProducts(paginatedProducts);
-            setTotalPages(Math.ceil(cached.products.length / itemsPerPage));
-            setTotalProducts(cached.products.length);
+            setTotalPages(Math.ceil(cachedProducts.length / itemsPerPage));
+            setTotalProducts(cachedProducts.length);
             setLoadingProducts(false);
-            
-            // Refresh cache in background
-            // Continue to API call below...
+            // Continue to API call below to refresh IndexedDB in background
           }
         }
 
@@ -200,14 +200,14 @@ const ProductListPage: React.FC<ProductListPageProps> = () => {
         const shouldFetchAllForBarcode = !isAdvancedMode && isBarcodeSearch;
         
         // Fetch from API (with pagination for regular mode, or all for advanced mode or barcode searches)
+        // Use view=list for list-only representation (id, name, barcode, price, stock, status, categoryId) when paginating
         const apiParams = {
           page: (isAdvancedMode || shouldFetchAllForBarcode) ? undefined : currentPage,
           limit: (isAdvancedMode || shouldFetchAllForBarcode) ? undefined : itemsPerPage,
           all: isAdvancedMode || shouldFetchAllForBarcode, // Fetch all for advanced mode or barcode searches
           includeCategories: true, // Include category data
+          view: !isAdvancedMode && !shouldFetchAllForBarcode ? 'list' as const : undefined, // Light list when paginating
           // CRITICAL: Always use server-side search for barcode searches
-          // The backend has direct query to find child products with exact barcode matches
-          // This ensures child products are returned, not parent products
           search: (!isAdvancedMode && searchTerm) ? searchTerm.trim() : undefined,
         };
         
@@ -281,9 +281,9 @@ const ProductListPage: React.FC<ProductListPageProps> = () => {
           
           if (!isAdvancedMode) {
             if (paginationData) {
-              // Use pagination data from API
-              const calculatedTotalPages = Math.max(1, paginationData.totalPages || 1);
-              const calculatedTotalProducts = paginationData.totalProducts || 0;
+              // Use pagination contract: totalPages / hasNextPage from API (do not assume all in one response)
+              const calculatedTotalPages = Math.max(1, paginationData.totalPages ?? 1);
+              const calculatedTotalProducts = paginationData.totalProducts ?? paginationData.total ?? 0;
               
               if (process.env.NODE_ENV === 'development') {
                 console.log('[ProductListPage] Setting pagination from API:', {
@@ -396,15 +396,13 @@ const ProductListPage: React.FC<ProductListPageProps> = () => {
 
           setProducts(mappedProducts);
           
-          // Cache products if fetching all
-          if (isAdvancedMode && storeId) {
-            const categoryCacheMap: Record<string, any> = {};
-            productsData.forEach((p: any) => {
-              if (p.category && p.categoryId) {
-                categoryCacheMap[p.categoryId] = p.category;
-              }
-            });
-            setCachedProducts(storeId, productsData, categoryCacheMap);
+          // Store in IndexedDB when fetching all (single source for product list)
+          if (isAdvancedMode && productsData.length > 0) {
+            try {
+              await productsDB.storeProducts(productsData);
+            } catch (e) {
+              console.warn('Failed to store products in IndexedDB:', e);
+            }
           }
         } else {
           setError('فشل تحميل المنتجات');
@@ -481,15 +479,13 @@ const ProductListPage: React.FC<ProductListPageProps> = () => {
         // Also store backend products for lookup
         setAllBackendProducts(productsData);
         
-        // Cache the products and categories
-        if (storeId) {
-          const categoryCacheMap: Record<string, any> = {};
-          productsData.forEach((p: any) => {
-            if (p.category && p.categoryId) {
-              categoryCacheMap[p.categoryId] = p.category;
-            }
-          });
-          setCachedProducts(storeId, productsData, categoryCacheMap);
+        // Store in IndexedDB (single source for product list)
+        if (productsData.length > 0) {
+          try {
+            await productsDB.storeProducts(productsData);
+          } catch (e) {
+            console.warn('Failed to store products in IndexedDB:', e);
+          }
         }
       }
     } catch (err: any) {
@@ -498,49 +494,45 @@ const ProductListPage: React.FC<ProductListPageProps> = () => {
     }
   }, []);
 
-  // Fetch all products for advanced search (optimized - single request with caching)
+  // Fetch all products for advanced search (IndexedDB first, then API)
   const fetchAllProductsForAdvancedSearch = useCallback(async (categoryMap: Record<string, string>, searchTerm?: string) => {
     try {
       const storeId = getStoreIdFromToken();
       
-      // Try cache first
-      const cached = storeId ? getCachedProducts(storeId) : null;
-      if (cached && cached.products.length > 0 && !searchTerm) {
-        // Use cached products if available and no search term
-        console.log(`Using ${cached.products.length} cached products for advanced search`);
-        // IMPORTANT: Use the product's own data, not parent product data
-        const mappedProducts: (Product & { categoryId?: string; backendId?: string; parentProduct?: any })[] = cached.products.map((p: BackendProduct) => ({
+      const cachedProducts = await productSync.getCachedProducts();
+      if (cachedProducts && cachedProducts.length > 0 && !searchTerm) {
+        const categoryMapFromProducts: Record<string, any> = {};
+        cachedProducts.forEach((p: any) => {
+          if (p.categoryId && p.category) categoryMapFromProducts[p.categoryId] = p.category;
+        });
+        console.log(`Using ${cachedProducts.length} products from IndexedDB for advanced search`);
+        const mappedProducts: (Product & { categoryId?: string; backendId?: string; parentProduct?: any })[] = cachedProducts.map((p: BackendProduct) => ({
           id: idToNumber(p.id || p._id),
-          name: p.name, // Use child product's own name
-          category: p.categoryId ? (cached.categories[p.categoryId]?.name || categoryMap[p.categoryId] || 'غير محدد') : 'غير محدد',
+          name: p.name,
+          category: p.categoryId ? (categoryMapFromProducts[p.categoryId]?.name || categoryMap[p.categoryId] || 'غير محدد') : 'غير محدد',
           brand: p.brandId || '',
-          price: p.price || 0, // Use child product's own price
-          cost: p.costPrice || 0, // Use child product's own cost
-          costPrice: p.costPrice || 0, // Use child product's own cost price
-          stock: p.stock || 0, // Use child product's own stock
-          barcode: p.barcode || '', // Use child product's own barcode
+          price: p.price || 0,
+          cost: p.costPrice || 0,
+          costPrice: p.costPrice || 0,
+          stock: p.stock || 0,
+          barcode: p.barcode || '',
           expiryDate: p.expiryDate || '',
           createdAt: p.createdAt || new Date().toISOString(),
           updatedAt: p.updatedAt || new Date().toISOString(),
           categoryId: p.categoryId,
           backendId: p.id || p._id,
-          parentProduct: (p as any).parentProduct, // Include parent reference if available
+          parentProduct: (p as any).parentProduct,
         }));
         
-        // Filter by search term if provided
         let filtered = mappedProducts;
         if (searchTerm) {
           const searchTermTrimmed = searchTerm.trim().toLowerCase();
           const isBarcodeSearch = /^[0-9]+$/.test(searchTermTrimmed);
-          
           filtered = mappedProducts.filter((product) => {
             if (isBarcodeSearch) {
-              // For barcode searches: exact match only (no partial matches)
-              // This ensures "00001" only matches "00001", not "00011" or "000012"
               const productBarcode = String(product.barcode || '').trim().toLowerCase();
               return productBarcode === searchTermTrimmed;
             } else {
-              // For name searches: partial match is allowed
               return product.name.toLowerCase().includes(searchTermTrimmed) ||
                      product.barcode.toLowerCase().includes(searchTermTrimmed);
             }
@@ -548,14 +540,11 @@ const ProductListPage: React.FC<ProductListPageProps> = () => {
         }
         
         setAllProducts(filtered);
-        setAllBackendProducts(cached.products);
-        
-        // Refresh cache in background
+        setAllBackendProducts(cachedProducts);
         fetchAllProductsFromAPI(storeId, categoryMap, searchTerm);
         return;
       }
       
-      // Fetch from API
       await fetchAllProductsFromAPI(storeId, categoryMap, searchTerm);
     } catch (err: any) {
       console.error('Error fetching all products for advanced search:', err);
@@ -954,11 +943,7 @@ const ProductListPage: React.FC<ProductListPageProps> = () => {
           // Continue anyway - the product was deleted successfully
         }
         
-        // Invalidate cache (backup)
-        const storeId = getStoreIdFromToken();
-        if (storeId) {
-          invalidateProductsCache(storeId);
-        }
+        productSync.invalidateCache();
         
         // Remove product from both local states
         setProducts((prev) => prev.filter((p) => p.id !== productId));

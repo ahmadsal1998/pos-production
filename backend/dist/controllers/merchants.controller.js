@@ -37,8 +37,8 @@ __export(merchants_controller_exports, {
 module.exports = __toCommonJS(merchants_controller_exports);
 var import_Merchant = require("../models/Merchant");
 var import_Store = __toESM(require("../models/Store"));
-var import_logger = require("../utils/logger");
-const getMerchants = async (req, res) => {
+var import_error = require("../middleware/error.middleware");
+const getMerchants = (0, import_error.asyncHandler)(async (req, res, next) => {
   try {
     const storeId = req.user?.storeId;
     const query = {};
@@ -51,15 +51,10 @@ const getMerchants = async (req, res) => {
       data: { merchants }
     });
   } catch (error) {
-    import_logger.log.error("Get merchants error", error);
-    res.status(500).json({
-      success: false,
-      message: "Internal server error",
-      error: error.message
-    });
+    next(error);
   }
-};
-const getMerchant = async (req, res) => {
+});
+const getMerchant = (0, import_error.asyncHandler)(async (req, res, next) => {
   try {
     const { id } = req.params;
     const storeId = req.user?.storeId;
@@ -94,15 +89,10 @@ const getMerchant = async (req, res) => {
       }
     });
   } catch (error) {
-    import_logger.log.error("Get merchant error", error);
-    res.status(500).json({
-      success: false,
-      message: "Internal server error",
-      error: error.message
-    });
+    next(error);
   }
-};
-const createMerchant = async (req, res) => {
+});
+const createMerchant = (0, import_error.asyncHandler)(async (req, res, next) => {
   try {
     const { name, merchantId, storeId, description, status } = req.body;
     const userStoreId = req.user?.storeId;
@@ -145,22 +135,10 @@ const createMerchant = async (req, res) => {
       data: { merchant }
     });
   } catch (error) {
-    console.error("Create merchant error:", error);
-    if (error.code === 11e3) {
-      res.status(400).json({
-        success: false,
-        message: "Merchant ID already exists"
-      });
-      return;
-    }
-    res.status(500).json({
-      success: false,
-      message: "Internal server error",
-      error: error.message
-    });
+    next(error);
   }
-};
-const updateMerchant = async (req, res) => {
+});
+const updateMerchant = (0, import_error.asyncHandler)(async (req, res, next) => {
   try {
     const { id } = req.params;
     const { name, merchantId, description, status } = req.body;
@@ -200,15 +178,10 @@ const updateMerchant = async (req, res) => {
       data: { merchant }
     });
   } catch (error) {
-    console.error("Update merchant error:", error);
-    res.status(500).json({
-      success: false,
-      message: "Internal server error",
-      error: error.message
-    });
+    next(error);
   }
-};
-const deleteMerchant = async (req, res) => {
+});
+const deleteMerchant = (0, import_error.asyncHandler)(async (req, res, next) => {
   try {
     const { id } = req.params;
     const storeId = req.user?.storeId;
@@ -245,14 +218,9 @@ const deleteMerchant = async (req, res) => {
       message: "Merchant deleted successfully"
     });
   } catch (error) {
-    console.error("Delete merchant error:", error);
-    res.status(500).json({
-      success: false,
-      message: "Internal server error",
-      error: error.message
-    });
+    next(error);
   }
-};
+});
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
   createMerchant,

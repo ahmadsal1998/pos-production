@@ -417,7 +417,6 @@ export const AR_LABELS = {
   editStore: 'تعديل المتجر',
   storeName: 'اسم المتجر',
   storeNumber: 'رقم المتجر',
-  prefix: 'البادئة',
   createdAt: 'تاريخ الإنشاء',
   noStoresFound: 'لم يتم العثور على متاجر. قم بإنشاء متجرك الأول للبدء.',
   areYouSureDeleteStore: 'هل أنت متأكد من حذف هذا المتجر؟ لا يمكن التراجع عن هذا الإجراء.',
@@ -431,10 +430,19 @@ export const AR_LABELS = {
   adminNamePlaceholder: 'مسؤول المتجر - {name}',
   defaultAdminDescription: 'سيتم إنشاء مستخدم مسؤول افتراضي لهذا المتجر. سيتم إنشاء اسم المستخدم تلقائياً من البريد الإلكتروني.',
   lowercaseLettersNumbersOnly: 'أحرف صغيرة وأرقام وشرطة سفلية فقط',
-  usedForCollectionNames: 'تُستخدم لأسماء المجموعات (مثل {prefix}_products)',
   failedToLoadStores: 'فشل تحميل المتاجر',
   failedToSaveStore: 'فشل حفظ المتجر',
   failedToDeleteStore: 'فشل حذف المتجر',
+  storeType: 'نوع المتجر',
+  storeTypes: 'أنواع المتاجر',
+  storeTypesDescription: 'إدارة أنواع المتاجر (مطعم، سوبرماركت، صيدلية، إلخ)',
+  addStoreType: 'إضافة نوع متجر',
+  editStoreType: 'تعديل نوع المتجر',
+  createStoreType: 'إنشاء نوع متجر',
+  storeTypeName: 'الاسم',
+  storeTypeDescription: 'الوصف (اختياري)',
+  noStoreTypesFound: 'لا توجد أنواع متاجر. أضف النوع الأول للبدء.',
+  selectStoreType: 'اختر نوع المتجر',
   
   // Merchant & Terminal Management
   merchantTerminals: 'إدارة أجهزة الدفع',
@@ -670,4 +678,13 @@ export const AR_LABELS = {
   // Customer Account Vouchers
   journalVoucher: 'سند قيد', // Debt from customer (increases customer debt)
   receiptVoucher: 'سند قبض', // Payment from customer (decreases customer debt)
+
+  // Customer Statement – Edit/Delete
+  selectTransactionToEditOrDelete: 'اختر حركة للتعديل أو الحذف',
+  editTransaction: 'تعديل الحركة',
+  deleteTransaction: 'حذف الحركة',
+  onlyPaymentTransactionsEditable: 'يمكن تعديل أو حذف حركات الدفع/السندات فقط.',
+  confirmDeletePaymentTitle: 'تأكيد حذف الحركة',
+  confirmDeletePaymentMessage: 'هل أنت متأكد من حذف هذه الحركة؟ سيتم تحديث رصيد العميل تلقائياً.',
+  reference: 'المرجع (فاتورة)',
 };

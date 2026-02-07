@@ -4,7 +4,9 @@ import { AR_LABELS, PlusIcon, SearchIcon, FilterIcon, GridViewIcon, TableViewIco
 import { Product } from '../../shared/types';
 import { MetricCard } from '../../shared/components/ui/MetricCard';
 import { productsApi, ApiError } from '@/lib/api/client';
-import { getCachedProducts, setCachedProducts, invalidateProductsCache, getStoreIdFromToken } from '@/lib/cache/productsCache';
+import { getStoreIdFromToken } from '@/lib/utils/storeId';
+import { productSync } from '@/lib/sync/productSync';
+import { productsDB } from '@/lib/db/productsDB';
 import { useResponsiveViewMode } from '../../shared/hooks';
 import { formatQuantityForDisplay } from '../../shared/utils';
 
@@ -75,15 +77,13 @@ const ProductsPage: React.FC<ProductsPageProps> = ({ onAddProduct, onProductClic
         setProducts(transformedProducts);
         console.log(`Loaded ${transformedProducts.length} products from API`);
         
-        // Cache the products and categories
-        if (storeId) {
-          const categoryMap: Record<string, any> = {};
-          backendResponse.products.forEach((p: any) => {
-            if (p.category && p.categoryId) {
-              categoryMap[p.categoryId] = p.category;
-            }
-          });
-          setCachedProducts(storeId, backendResponse.products, categoryMap);
+        // Store in IndexedDB (single source for product list)
+        if (storeId && backendResponse.products.length > 0) {
+          try {
+            await productsDB.storeProducts(backendResponse.products);
+          } catch (e) {
+            console.warn('Failed to store products in IndexedDB:', e);
+          }
         }
       } else {
         setProducts([]);
@@ -96,20 +96,18 @@ const ProductsPage: React.FC<ProductsPageProps> = ({ onAddProduct, onProductClic
     }
   };
 
-  // Fetch products from API with caching
+  // Fetch products: IndexedDB first, then API
   const fetchProducts = useCallback(async () => {
     setIsLoading(true);
     setError(null);
     
     try {
-      // Try to get from cache first
       const storeId = getStoreIdFromToken();
-      const cached = storeId ? getCachedProducts(storeId) : null;
+      const cachedProducts = await productSync.getCachedProducts();
       
-      if (cached && cached.products.length > 0) {
-        console.log(`Loading ${cached.products.length} products from cache`);
-        // Transform cached products to EnhancedProduct format
-        const transformedProducts: EnhancedProduct[] = cached.products.map((p: any) => {
+      if (cachedProducts && cachedProducts.length > 0) {
+        console.log(`Loading ${cachedProducts.length} products from IndexedDB`);
+        const transformedProducts: EnhancedProduct[] = cachedProducts.map((p: any) => {
           let status: 'available' | 'out_of_stock' | 'low_stock' = 'available';
           const stock = p.stock || p.quantity || 0;
           if (stock === 0) {
@@ -138,12 +136,11 @@ const ProductsPage: React.FC<ProductsPageProps> = ({ onAddProduct, onProductClic
         setProducts(transformedProducts);
         setIsLoading(false);
         
-        // Fetch fresh data in background to update cache
+        // Fetch fresh data in background to update IndexedDB
         fetchProductsFromAPI(storeId);
         return;
       }
 
-      // No cache, fetch from API
       await fetchProductsFromAPI(storeId);
     } catch (err: any) {
       const apiError = err as ApiError;

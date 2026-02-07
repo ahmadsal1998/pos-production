@@ -23,6 +23,7 @@ __export(admin_routes_exports, {
 module.exports = __toCommonJS(admin_routes_exports);
 var import_express = require("express");
 var import_admin = require("../controllers/admin.controller");
+var import_storeType = require("../controllers/storeType.controller");
 var import_auth = require("../middleware/auth.middleware");
 const router = (0, import_express.Router)();
 router.use(import_auth.authenticate);
@@ -36,6 +37,10 @@ const isAdmin = (req, res, next) => {
   });
 };
 router.use(isAdmin);
+router.get("/store-types", import_storeType.getStoreTypes);
+router.post("/store-types", import_storeType.validateCreateStoreType, import_storeType.createStoreType);
+router.put("/store-types/:id", import_storeType.validateUpdateStoreType, import_storeType.updateStoreType);
+router.delete("/store-types/:id", import_storeType.deleteStoreType);
 router.get("/stores", import_admin.getStores);
 router.get("/stores/:id", import_admin.getStore);
 router.post("/stores", import_admin.validateCreateStore, import_admin.createStore);

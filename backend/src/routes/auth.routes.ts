@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import {
   login,
+  refresh,
   getMe,
   logout,
   forgotPassword,
@@ -18,6 +19,7 @@ const router = Router();
 
 // Public routes
 router.post('/login', validateLogin, login);
+router.post('/refresh', refresh);
 router.post('/logout', authenticate, logout);
 router.get('/contact-number', getContactNumber); // Public endpoint for expired subscription page
 

@@ -45,7 +45,7 @@ const validateCreateCategory = [
   (0, import_express_validator.body)("name").trim().notEmpty().withMessage("Category name is required").isLength({ max: 120 }).withMessage("Category name cannot exceed 120 characters"),
   (0, import_express_validator.body)("description").optional({ nullable: true }).isString().withMessage("Description must be a string").isLength({ max: 500 }).withMessage("Description cannot exceed 500 characters")
 ];
-const createCategory = (0, import_error.asyncHandler)(async (req, res) => {
+const createCategory = (0, import_error.asyncHandler)(async (req, res, next) => {
   const errors = (0, import_express_validator.validationResult)(req);
   if (!errors.isEmpty()) {
     return res.status(400).json({
@@ -104,32 +104,10 @@ const createCategory = (0, import_error.asyncHandler)(async (req, res) => {
       category
     });
   } catch (error) {
-    import_logger.log.error("Create Category - Error", error, {
-      stack: error.stack,
-      storeId,
-      name: error.name,
-      code: error.code
-    });
-    if (error.name === "ValidationError") {
-      const errorMessages = Object.values(error.errors || {}).map((e) => e.message);
-      return res.status(400).json({
-        success: false,
-        message: errorMessages.join(", ") || "Validation error"
-      });
-    }
-    if (error.code === 11e3) {
-      return res.status(400).json({
-        success: false,
-        message: "Category with this name already exists"
-      });
-    }
-    return res.status(500).json({
-      success: false,
-      message: error.message || "Failed to create category. Please try again."
-    });
+    next(error);
   }
 });
-const getCategories = (0, import_error.asyncHandler)(async (req, res) => {
+const getCategories = (0, import_error.asyncHandler)(async (req, res, next) => {
   const storeId = req.user?.storeId || null;
   if (!storeId) {
     return res.status(400).json({
@@ -164,7 +142,7 @@ const escapeCsvValue = (value) => {
 };
 const normalizeHeaderKey = (key) => key.replace(/^\uFEFF/, "").trim().toLowerCase();
 const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-const exportCategories = (0, import_error.asyncHandler)(async (req, res) => {
+const exportCategories = (0, import_error.asyncHandler)(async (req, res, next) => {
   const storeId = req.user?.storeId || null;
   if (!storeId) {
     return res.status(400).json({
@@ -191,14 +169,10 @@ const exportCategories = (0, import_error.asyncHandler)(async (req, res) => {
     );
     res.status(200).send(utf8WithBom);
   } catch (error) {
-    import_logger.log.error("Error exporting categories", error);
-    return res.status(500).json({
-      success: false,
-      message: error.message || "Failed to export categories. Please try again."
-    });
+    next(error);
   }
 });
-const importCategories = (0, import_error.asyncHandler)(async (req, res) => {
+const importCategories = (0, import_error.asyncHandler)(async (req, res, next) => {
   const file = req.file;
   const storeId = req.user?.storeId || null;
   if (!file) {
@@ -223,10 +197,7 @@ const importCategories = (0, import_error.asyncHandler)(async (req, res) => {
       trim: true
     });
   } catch (error) {
-    return res.status(400).json({
-      success: false,
-      message: "Invalid CSV format"
-    });
+    return next(new import_error.AppError("Invalid CSV format", 400));
   }
   let created = 0;
   let updated = 0;
@@ -307,18 +278,7 @@ const importCategories = (0, import_error.asyncHandler)(async (req, res) => {
       categories
     });
   } catch (error) {
-    import_logger.log.error("Error importing categories", error);
-    return res.status(500).json({
-      success: false,
-      message: error.message || "Failed to import categories. Please try again.",
-      summary: {
-        created: 0,
-        updated: 0,
-        failed: normalizedRecords.length
-      },
-      errors: normalizedRecords.map((_, index) => ({ row: index + 1, message: "Import error" })),
-      categories: []
-    });
+    next(error);
   }
 });
 // Annotate the CommonJS export names for ESM import in node:

@@ -42,43 +42,60 @@ var import_Store = __toESM(require("../models/Store"));
 var import_error = require("../middleware/error.middleware");
 var import_User = __toESM(require("../models/User"));
 var import_logger = require("../utils/logger");
+var import_pagination = require("../types/pagination");
 const getUsers = (0, import_error.asyncHandler)(
   async (req, res, next) => {
     const requesterRole = req.user?.role;
     const requesterStoreId = req.user?.storeId;
-    let allUsers = [];
-    if (requesterRole === "Admin") {
-      const users = await import_User.default.find({}).sort({ createdAt: -1 }).lean();
-      allUsers = users;
-    } else {
-      if (!requesterStoreId) {
-        return res.status(403).json({
-          success: false,
-          message: "Access denied. Store ID is required for non-admin users."
-        });
-      }
-      const users = await import_User.default.find({
-        storeId: requesterStoreId.toLowerCase()
-      }).sort({ createdAt: -1 }).lean();
-      allUsers = users;
+    const { page, limit, skip } = (0, import_pagination.parsePaginationQuery)(req.query, import_pagination.MAX_PAGE_SIZE);
+    const searchTerm = req.query.search?.trim() || "";
+    const roleFilter = req.query.role?.trim() || "";
+    let baseQuery = requesterRole === "Admin" ? {} : requesterStoreId ? { storeId: requesterStoreId.toLowerCase() } : null;
+    if (baseQuery === null) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied. Store ID is required for non-admin users."
+      });
     }
+    if (roleFilter) {
+      baseQuery = { ...baseQuery, role: roleFilter };
+    }
+    if (searchTerm) {
+      const escaped = searchTerm.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      baseQuery = {
+        ...baseQuery,
+        $or: [
+          { fullName: { $regex: escaped, $options: "i" } },
+          { username: { $regex: escaped, $options: "i" } },
+          { email: { $regex: escaped, $options: "i" } }
+        ]
+      };
+    }
+    const [users, total] = await Promise.all([
+      import_User.default.find(baseQuery).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
+      import_User.default.countDocuments(baseQuery)
+    ]);
+    const items = users.map((user) => ({
+      id: user._id.toString(),
+      fullName: user.fullName,
+      username: user.username,
+      email: user.email,
+      role: user.role,
+      permissions: user.permissions,
+      status: user.status,
+      storeId: user.storeId,
+      lastLogin: user.lastLogin,
+      createdAt: user.createdAt,
+      updatedAt: user.updatedAt
+    }));
+    const pagination = (0, import_pagination.buildPaginationMeta)(page, limit, total);
     res.status(200).json({
       success: true,
       data: {
-        users: allUsers.map((user) => ({
-          id: user._id.toString(),
-          fullName: user.fullName,
-          username: user.username,
-          email: user.email,
-          role: user.role,
-          permissions: user.permissions,
-          status: user.status,
-          storeId: user.storeId,
-          // Include storeId in response
-          lastLogin: user.lastLogin,
-          createdAt: user.createdAt,
-          updatedAt: user.updatedAt
-        }))
+        items,
+        pagination,
+        // Legacy: keep users for backward compatibility during transition
+        users: items
       }
     });
   }
@@ -143,12 +160,7 @@ const createUser = (0, import_error.asyncHandler)(
     if (requesterRole === "Admin") {
       if (requestStoreId) {
         finalStoreId = requestStoreId.toLowerCase();
-        const store = await import_Store.default.findOne({
-          $or: [
-            { storeId: finalStoreId },
-            { prefix: finalStoreId }
-          ]
-        });
+        const store = await import_Store.default.findOne({ storeId: finalStoreId });
         if (!store) {
           return res.status(400).json({
             success: false,
@@ -282,12 +294,7 @@ const updateUser = (0, import_error.asyncHandler)(
         targetStoreId = null;
       } else {
         const normalizedStoreId = requestStoreId.toLowerCase();
-        const store = await import_Store.default.findOne({
-          $or: [
-            { storeId: normalizedStoreId },
-            { prefix: normalizedStoreId }
-          ]
-        });
+        const store = await import_Store.default.findOne({ storeId: normalizedStoreId });
         if (!store) {
           return res.status(400).json({
             success: false,

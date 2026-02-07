@@ -10,7 +10,7 @@ interface Store {
   storeNumber: number;
   storeId: string;
   name: string;
-  prefix: string;
+  storeTypeId?: string | { id: string; name: string; description?: string };
   createdAt: string;
   updatedAt: string;
   isActive?: boolean;
@@ -22,6 +22,14 @@ interface Store {
   address?: string;
   city?: string;
   country?: string;
+}
+
+interface StoreType {
+  id: string;
+  name: string;
+  description?: string;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 const AdminDashboard = () => {
@@ -36,7 +44,7 @@ const AdminDashboard = () => {
   const [formData, setFormData] = useState({
     name: '',
     storeId: '',
-    prefix: '',
+    storeTypeId: '',
     email: '',
     phone: '',
     address: '',
@@ -60,6 +68,11 @@ const AdminDashboard = () => {
   const [settingsLoading, setSettingsLoading] = useState(false);
   const [contactNumber, setContactNumber] = useState('');
   const [savingSettings, setSavingSettings] = useState(false);
+  const [storeTypes, setStoreTypes] = useState<StoreType[]>([]);
+  const [storeTypesLoading, setStoreTypesLoading] = useState(false);
+  const [showStoreTypeModal, setShowStoreTypeModal] = useState(false);
+  const [editingStoreType, setEditingStoreType] = useState<StoreType | null>(null);
+  const [storeTypeForm, setStoreTypeForm] = useState({ name: '', description: '' });
 
   useEffect(() => {
     // Only load stores if we're on the stores or dashboard page
@@ -67,6 +80,10 @@ const AdminDashboard = () => {
       loadStores();
     } else {
       setLoading(false);
+    }
+    
+    if (location.pathname === '/admin/store-types' || location.pathname === '/admin/dashboard' || location.pathname === '/admin/stores') {
+      loadStoreTypes();
     }
     
     // Load settings if on settings page
@@ -106,6 +123,21 @@ const AdminDashboard = () => {
     }
   };
 
+  const loadStoreTypes = async () => {
+    try {
+      setStoreTypesLoading(true);
+      setError(null);
+      const response = await adminApi.getStoreTypes();
+      if (response.data.success) {
+        setStoreTypes(response.data.data.storeTypes);
+      }
+    } catch (err: any) {
+      setError(err.message || 'فشل تحميل أنواع المتاجر');
+    } finally {
+      setStoreTypesLoading(false);
+    }
+  };
+
   const handleSaveContactNumber = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
@@ -130,7 +162,7 @@ const AdminDashboard = () => {
       setFormData({
         name: store.name,
         storeId: store.storeId,
-        prefix: store.prefix,
+        storeTypeId: typeof store.storeTypeId === 'object' && store.storeTypeId?.id ? store.storeTypeId.id : (store.storeTypeId as string) || '',
         email: store.email || '',
         phone: store.phone || '',
         address: store.address || '',
@@ -150,7 +182,7 @@ const AdminDashboard = () => {
       setFormData({
         name: '',
         storeId: '',
-        prefix: '',
+        storeTypeId: storeTypes[0]?.id || '',
         email: '',
         phone: '',
         address: '',
@@ -195,21 +227,21 @@ const AdminDashboard = () => {
     setFormData({
       name: '',
       storeId: '',
-      prefix: '',
+      storeTypeId: '',
       email: '',
       phone: '',
       address: '',
       city: '',
       country: '',
-        createDefaultAdmin: false,
-        defaultAdminEmail: '',
-        defaultAdminPassword: '',
-        defaultAdminName: '',
-        subscriptionType: 'duration',
-        subscriptionDuration: '1month',
-        subscriptionEndDate: '',
-        isTrialAccount: false,
-      });
+      createDefaultAdmin: false,
+      defaultAdminEmail: '',
+      defaultAdminPassword: '',
+      defaultAdminName: '',
+      subscriptionType: 'duration',
+      subscriptionDuration: '1month',
+      subscriptionEndDate: '',
+      isTrialAccount: false,
+    });
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -217,19 +249,21 @@ const AdminDashboard = () => {
     try {
       setError(null);
       if (editingStore) {
-        await adminApi.updateStore(editingStore.id, {
+        const updatePayload: any = {
           name: formData.name,
           email: formData.email || undefined,
           phone: formData.phone || undefined,
           address: formData.address || undefined,
           city: formData.city || undefined,
           country: formData.country || undefined,
-        });
+        };
+        if (formData.storeTypeId) updatePayload.storeTypeId = formData.storeTypeId;
+        await adminApi.updateStore(editingStore.id, updatePayload);
       } else {
         const payload: any = {
           name: formData.name,
           storeId: formData.storeId,
-          prefix: formData.prefix,
+          storeTypeId: formData.storeTypeId,
         };
         
         // Include subscription information
@@ -303,6 +337,58 @@ const AdminDashboard = () => {
     }
   };
 
+  const handleOpenStoreTypeModal = (st?: StoreType) => {
+    if (st) {
+      setEditingStoreType(st);
+      setStoreTypeForm({ name: st.name, description: st.description || '' });
+    } else {
+      setEditingStoreType(null);
+      setStoreTypeForm({ name: '', description: '' });
+    }
+    setShowStoreTypeModal(true);
+  };
+
+  const handleCloseStoreTypeModal = () => {
+    setShowStoreTypeModal(false);
+    setEditingStoreType(null);
+    setStoreTypeForm({ name: '', description: '' });
+  };
+
+  const handleStoreTypeSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      setError(null);
+      if (editingStoreType) {
+        await adminApi.updateStoreType(editingStoreType.id, {
+          name: storeTypeForm.name.trim(),
+          description: storeTypeForm.description?.trim() || undefined,
+        });
+      } else {
+        await adminApi.createStoreType({
+          name: storeTypeForm.name.trim(),
+          description: storeTypeForm.description?.trim() || undefined,
+        });
+      }
+      handleCloseStoreTypeModal();
+      loadStoreTypes();
+      if (location.pathname === '/admin/dashboard' || location.pathname === '/admin/stores') {
+        loadStores();
+      }
+    } catch (err: any) {
+      setError((err as any)?.response?.data?.message || (err as any)?.message || 'فشل حفظ نوع المتجر');
+    }
+  };
+
+  const handleDeleteStoreType = async (id: string) => {
+    if (!confirm('هل أنت متأكد من حذف هذا النوع؟ لا يمكن الحذف إذا كان مستخدماً من متاجر.')) return;
+    try {
+      await adminApi.deleteStoreType(id);
+      loadStoreTypes();
+      setError(null);
+    } catch (err: any) {
+      setError((err as any)?.response?.data?.message || (err as any)?.message || 'فشل حذف نوع المتجر');
+    }
+  };
 
   // Helper function to get store status
   const getStoreStatus = (store: Store) => {
@@ -412,6 +498,134 @@ const AdminDashboard = () => {
     );
   }
 
+  if (location.pathname === '/admin/store-types') {
+    return (
+      <div className="p-6 space-y-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-3xl font-bold text-white">{AR_LABELS.storeTypes}</h1>
+            <p className="mt-2 text-slate-400">{AR_LABELS.storeTypesDescription}</p>
+          </div>
+          <button
+            onClick={() => handleOpenStoreTypeModal()}
+            className="inline-flex items-center gap-2 px-5 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-all duration-200 shadow-lg shadow-blue-500/25 hover:shadow-blue-500/40 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-slate-900 font-medium"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+            </svg>
+            {AR_LABELS.addStoreType}
+          </button>
+        </div>
+        {error && (
+          <div className="p-4 bg-red-900/20 border border-red-500/30 rounded-lg text-red-300 flex items-center justify-between">
+            <span>{error}</span>
+            <button onClick={() => setError(null)} className="text-red-400 hover:text-red-300 ml-4" aria-label="إغلاق">
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+        )}
+        <div className="bg-slate-800 rounded-lg shadow-lg overflow-hidden">
+          <div className="overflow-x-auto">
+            {storeTypesLoading ? (
+              <div className="flex justify-center py-16">
+                <div className="text-slate-400">{AR_LABELS.loading}</div>
+              </div>
+            ) : storeTypes.length === 0 ? (
+              <div className="px-6 py-16 text-center text-slate-400">{AR_LABELS.noStoreTypesFound}</div>
+            ) : (
+              <table className="min-w-full divide-y divide-slate-700">
+                <thead className="bg-slate-900">
+                  <tr>
+                    <th className="px-6 py-3 text-right text-xs font-medium text-slate-300 uppercase tracking-wider">{AR_LABELS.storeTypeName}</th>
+                    <th className="px-6 py-3 text-right text-xs font-medium text-slate-300 uppercase tracking-wider">{AR_LABELS.storeTypeDescription}</th>
+                    <th className="px-6 py-3 text-right text-xs font-medium text-slate-300 uppercase tracking-wider">{AR_LABELS.actions}</th>
+                  </tr>
+                </thead>
+                <tbody className="bg-slate-800 divide-y divide-slate-700">
+                  {storeTypes.map((t) => (
+                    <tr key={t.id} className="hover:bg-slate-700/50 transition-colors">
+                      <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-white">{t.name}</td>
+                      <td className="px-6 py-4 text-sm text-slate-300">{t.description || '—'}</td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <div className="flex items-center justify-end gap-2">
+                          <button
+                            onClick={() => handleOpenStoreTypeModal(t)}
+                            className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 text-sm font-medium text-white bg-slate-600 border border-slate-500 rounded-lg hover:bg-slate-500 transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500/50"
+                            title={AR_LABELS.editStoreType}
+                          >
+                            <EditIcon />
+                            <span>{AR_LABELS.editStoreType}</span>
+                          </button>
+                          <button
+                            onClick={() => handleDeleteStoreType(t.id)}
+                            className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 text-sm font-medium text-white bg-red-600 border border-red-500 rounded-lg hover:bg-red-700 transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-red-500/50"
+                            title={AR_LABELS.delete}
+                          >
+                            <DeleteIcon />
+                            <span>{AR_LABELS.delete}</span>
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+        {showStoreTypeModal && (
+          <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50">
+            <div className="bg-slate-800 border border-slate-700 rounded-lg p-6 w-full max-w-md">
+              <h2 className="text-xl font-bold mb-4 text-white">
+                {editingStoreType ? AR_LABELS.editStoreType : AR_LABELS.createStoreType}
+              </h2>
+              <form onSubmit={handleStoreTypeSubmit} className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-slate-300 mb-1">{AR_LABELS.storeTypeName}</label>
+                  <input
+                    type="text"
+                    required
+                    value={storeTypeForm.name}
+                    onChange={(e) => setStoreTypeForm({ ...storeTypeForm, name: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    placeholder="مثال: Restaurant"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-300 mb-1">{AR_LABELS.storeTypeDescription}</label>
+                  <input
+                    type="text"
+                    value={storeTypeForm.description}
+                    onChange={(e) => setStoreTypeForm({ ...storeTypeForm, description: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    placeholder="مثال: مطعم"
+                  />
+                </div>
+                <div className="flex gap-3 pt-2">
+                  <button
+                    type="submit"
+                    className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    {editingStoreType ? 'حفظ' : 'إنشاء'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleCloseStoreTypeModal}
+                    className="px-4 py-2 bg-slate-600 text-white rounded-lg hover:bg-slate-500 font-medium focus:outline-none focus:ring-2 focus:ring-slate-500"
+                  >
+                    إلغاء
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -479,7 +693,7 @@ const AdminDashboard = () => {
                   {AR_LABELS.storeId}
                 </th>
                 <th className="px-6 py-3 text-right text-xs font-medium text-slate-300 uppercase tracking-wider">
-                  {AR_LABELS.prefix}
+                  {AR_LABELS.storeType}
                 </th>
                 <th className="px-6 py-3 text-right text-xs font-medium text-slate-300 uppercase tracking-wider">
                   الحالة
@@ -517,7 +731,13 @@ const AdminDashboard = () => {
                         <div className="text-sm text-slate-300">{store.storeId}</div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="text-sm text-slate-300">{store.prefix}</div>
+                        <div className="text-sm text-slate-300">
+                          {typeof store.storeTypeId === 'object' && store.storeTypeId?.name
+                            ? store.storeTypeId.name
+                            : store.storeTypeId
+                              ? String(store.storeTypeId)
+                              : '—'}
+                        </div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border ${status.className}`}>
@@ -625,6 +845,23 @@ const AdminDashboard = () => {
               
               {editingStore && (
                 <>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-300 mb-1">
+                      {AR_LABELS.storeType}
+                    </label>
+                    <select
+                      value={formData.storeTypeId}
+                      onChange={(e) => setFormData({ ...formData, storeTypeId: e.target.value })}
+                      className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    >
+                      <option value="">{AR_LABELS.selectStoreType}</option>
+                      {storeTypes.map((t) => (
+                        <option key={t.id} value={t.id}>
+                          {t.name}{t.description ? ` — ${t.description}` : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
                   <div className="mt-4 pt-4 border-t border-slate-600">
                     <h3 className="text-sm font-semibold text-slate-300 mb-3">معلومات الاتصال</h3>
                     <div className="space-y-3">
@@ -716,20 +953,21 @@ const AdminDashboard = () => {
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-slate-300 mb-1">
-                      {AR_LABELS.prefix}
+                      {AR_LABELS.storeType}
                     </label>
-                    <input
-                      type="text"
+                    <select
                       required
-                      value={formData.prefix}
-                      onChange={(e) => setFormData({ ...formData, prefix: e.target.value.toLowerCase() })}
-                      pattern="[a-z0-9_]+"
+                      value={formData.storeTypeId}
+                      onChange={(e) => setFormData({ ...formData, storeTypeId: e.target.value })}
                       className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                      placeholder="مثال: store1"
-                    />
-                    <p className="mt-1 text-xs text-slate-400">
-                      {AR_LABELS.usedForCollectionNames.replace('{prefix}', formData.prefix || 'store1')}
-                    </p>
+                    >
+                      <option value="">{AR_LABELS.selectStoreType}</option>
+                      {storeTypes.map((t) => (
+                        <option key={t.id} value={t.id}>
+                          {t.name}{t.description ? ` — ${t.description}` : ''}
+                        </option>
+                      ))}
+                    </select>
                   </div>
                   
                   {/* Trial Account Option */}

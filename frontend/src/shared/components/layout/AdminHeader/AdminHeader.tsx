@@ -17,6 +17,7 @@ const getAdminHeaderTitleFromPath = (pathname: string): string => {
 
   if (path === '/admin' || path === '/admin/' || path.startsWith('/admin/dashboard')) return AR_LABELS.adminDashboard;
   if (path.startsWith('/admin/stores')) return AR_LABELS.storeManagement;
+  if (path.startsWith('/admin/store-types')) return AR_LABELS.storeTypes;
   if (path.startsWith('/admin/settings')) return AR_LABELS.systemSettings;
   if (path.startsWith('/admin/users')) return AR_LABELS.usersAndPermissions;
   if (path.startsWith('/admin/trial-accounts')) return AR_LABELS.trialAccounts;

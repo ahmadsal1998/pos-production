@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import {
   createSale,
+  createSimpleSale,
   getSales,
   getSalesSummary,
   getSale,
@@ -25,6 +26,7 @@ router.use(requireStoreAccess);
 
 router.get('/current-invoice-number', getCurrentInvoiceNumber);
 router.get('/next-invoice-number', getNextInvoiceNumber);
+router.post('/simple', createSimpleSale); // Simplified sale for "Other" store type
 router.post('/', createSale);
 router.post('/return', processReturn);
 router.get('/summary', getSalesSummary);

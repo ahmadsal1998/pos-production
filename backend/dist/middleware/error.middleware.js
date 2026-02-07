@@ -28,15 +28,27 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 var error_middleware_exports = {};
 __export(error_middleware_exports, {
+  AppError: () => AppError,
   asyncHandler: () => asyncHandler,
   errorHandler: () => errorHandler
 });
 module.exports = __toCommonJS(error_middleware_exports);
 var import_mongoose = __toESM(require("mongoose"));
 var import_logger = require("../utils/logger");
+class AppError extends Error {
+  constructor(message, statusCode = 500, options) {
+    super(message);
+    this.name = "AppError";
+    this.statusCode = statusCode;
+    this.isOperational = options?.isOperational ?? (statusCode >= 400 && statusCode < 500);
+    this.data = options?.data;
+    Object.setPrototypeOf(this, AppError.prototype);
+  }
+}
 const errorHandler = (err, req, res, next) => {
   let statusCode = err.statusCode || 500;
   let message = err.message || "Internal Server Error";
+  let responseData = err.data;
   if (err instanceof import_mongoose.default.Error.ValidationError) {
     const errorMessages = Object.values(err.errors).map((e) => e.message);
     message = errorMessages.join(", ");
@@ -59,16 +71,17 @@ const errorHandler = (err, req, res, next) => {
     message = "Invalid ID format";
     statusCode = 400;
   }
-  const isClientError = statusCode >= 400 && statusCode < 500;
-  const isProduction = process.env.NODE_ENV === "production";
-  if (isProduction && isClientError) {
-    import_logger.log.debug("API Client Error (4xx)", { statusCode, message, errorType: err.constructor.name });
+  const isOperational = err.isOperational ?? (statusCode >= 400 && statusCode < 500);
+  const isServerError = statusCode >= 500 || isOperational === false;
+  if (isServerError) {
+    import_logger.log.error("API Error", err, { statusCode, message, stack: err.stack });
   } else {
-    import_logger.log.error("API Error", err, { statusCode, message });
+    import_logger.log.debug("API Client Error (4xx)", { statusCode, message, errorType: err.constructor?.name ?? "Error" });
   }
   res.status(statusCode).json({
     success: false,
     message,
+    ...responseData && { data: responseData },
     ...process.env.NODE_ENV === "development" && { stack: err.stack }
   });
 };
@@ -79,6 +92,7 @@ const asyncHandler = (fn) => {
 };
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
+  AppError,
   asyncHandler,
   errorHandler
 });

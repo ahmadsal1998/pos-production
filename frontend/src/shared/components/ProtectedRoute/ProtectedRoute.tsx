@@ -1,4 +1,4 @@
-import { Navigate } from 'react-router-dom';
+import { Navigate, useLocation } from 'react-router-dom';
 import { useEffect } from 'react';
 import { useAuthStore } from '@/app/store';
 
@@ -11,9 +11,12 @@ interface ProtectedRouteProps {
  * If user is not authenticated, redirects to /login.
  * If user is authenticated but subscription is expired, redirects to /subscription-expired.
  * If user is authenticated and subscription is active, renders the children.
+ * 
+ * Also handles "Other" store type users - redirects them to /pos/simple if they try to access other routes.
  */
 export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children }) => {
   const { isAuthenticated, user, subscriptionStatus, checkSubscriptionStatus } = useAuthStore();
+  const location = useLocation();
 
   // Check subscription status on mount and when user changes
   useEffect(() => {
@@ -34,6 +37,21 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children }) => {
     if (subscriptionStatus && (subscriptionStatus.subscriptionExpired || !subscriptionStatus.isActive)) {
       return <Navigate to="/subscription-expired" replace />;
     }
+  }
+
+  // If user has "Other" store type, only allow access to /pos/simple
+  // This check is here as a fallback, but StoreTypeProtectedRoute should handle it
+  // Check case-insensitively in case of any casing issues
+  const isOtherStoreType = user && user.storeTypeName && 
+    user.storeTypeName.toLowerCase().trim() === 'other';
+  
+  if (isOtherStoreType && location.pathname !== '/pos/simple') {
+    // Use window.location for immediate redirect to prevent any rendering
+    if (typeof window !== 'undefined') {
+      window.location.href = '/pos/simple';
+      return null;
+    }
+    return <Navigate to="/pos/simple" replace />;
   }
 
   return <>{children}</>;

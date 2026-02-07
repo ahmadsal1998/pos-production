@@ -5,6 +5,31 @@ import { log } from '../utils/logger';
 export interface ApiError extends Error {
   statusCode?: number;
   isOperational?: boolean;
+  data?: Record<string, unknown>;
+}
+
+/**
+ * Operational error for validation / business rules (4xx).
+ * Use for expected client errors so they are logged at debug, not error.
+ * Programming errors (unexpected) should not use AppError so they get 5xx and full stack logging.
+ */
+export class AppError extends Error implements ApiError {
+  statusCode: number;
+  isOperational: boolean;
+  data?: Record<string, unknown>;
+
+  constructor(
+    message: string,
+    statusCode: number = 500,
+    options?: { isOperational?: boolean; data?: Record<string, unknown> }
+  ) {
+    super(message);
+    this.name = 'AppError';
+    this.statusCode = statusCode;
+    this.isOperational = options?.isOperational ?? (statusCode >= 400 && statusCode < 500);
+    this.data = options?.data;
+    Object.setPrototypeOf(this, AppError.prototype);
+  }
 }
 
 export const errorHandler = (
@@ -15,6 +40,7 @@ export const errorHandler = (
 ): void => {
   let statusCode = err.statusCode || 500;
   let message = err.message || 'Internal Server Error';
+  let responseData: Record<string, unknown> | undefined = err.data;
 
   // Mongoose validation error
   if (err instanceof mongoose.Error.ValidationError) {
@@ -49,24 +75,20 @@ export const errorHandler = (
     statusCode = 400;
   }
 
-  // Log error based on severity and environment
-  // In production, don't log client errors (4xx) as errors - they're expected validation/bad request errors
-  // Only log server errors (5xx) as errors in production
-  const isClientError = statusCode >= 400 && statusCode < 500;
-  const isProduction = process.env.NODE_ENV === 'production';
-  
-  if (isProduction && isClientError) {
-    // Client errors in production: only log at debug level to avoid log spam
-    // These are expected validation errors (e.g., "stock cannot be negative", "invoice number already exists")
-    log.debug('API Client Error (4xx)', { statusCode, message, errorType: err.constructor.name });
+  // Log: 5xx or non-operational = error with stack; 4xx operational = debug
+  const isOperational = err.isOperational ?? (statusCode >= 400 && statusCode < 500);
+  const isServerError = statusCode >= 500 || isOperational === false;
+
+  if (isServerError) {
+    log.error('API Error', err, { statusCode, message, stack: err.stack });
   } else {
-    // Server errors (5xx) or all errors in development: log at error level
-    log.error('API Error', err, { statusCode, message });
+    log.debug('API Client Error (4xx)', { statusCode, message, errorType: err.constructor?.name ?? 'Error' });
   }
 
   res.status(statusCode).json({
     success: false,
     message,
+    ...(responseData && { data: responseData }),
     ...(process.env.NODE_ENV === 'development' && { stack: err.stack }),
   });
 };

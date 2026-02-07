@@ -21,7 +21,15 @@ import {
   updatePointsSettings,
   validatePointsSettings,
 } from '../controllers/admin.controller';
-import { authenticate, authorize } from '../middleware/auth.middleware';
+import {
+  getStoreTypes,
+  createStoreType,
+  updateStoreType,
+  deleteStoreType,
+  validateCreateStoreType,
+  validateUpdateStoreType,
+} from '../controllers/storeType.controller';
+import { authenticate } from '../middleware/auth.middleware';
 
 const router = Router();
 
@@ -45,6 +53,12 @@ const isAdmin = (req: any, res: any, next: any) => {
 };
 
 router.use(isAdmin);
+
+// Store types management (before /stores/:id)
+router.get('/store-types', getStoreTypes);
+router.post('/store-types', validateCreateStoreType, createStoreType);
+router.put('/store-types/:id', validateUpdateStoreType, updateStoreType);
+router.delete('/store-types/:id', deleteStoreType);
 
 // Store management routes
 router.get('/stores', getStores);

@@ -5,6 +5,7 @@ export { Sidebar } from './layout/Sidebar';
 
 // Route Components
 export { ProtectedRoute, PermissionProtectedRoute, AdminProtectedRoute } from './ProtectedRoute';
+export { StoreTypeProtectedRoute } from './ProtectedRoute/StoreTypeProtectedRoute';
 
 // UI Components
 export { MetricCard } from './ui/MetricCard';

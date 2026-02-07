@@ -1,7 +1,7 @@
-import { Response } from 'express';
+import { Response, NextFunction } from 'express';
 import { body, validationResult } from 'express-validator';
 import { parse } from 'csv-parse/sync';
-import { asyncHandler } from '../middleware/error.middleware';
+import { asyncHandler, AppError } from '../middleware/error.middleware';
 import { AuthenticatedRequest } from '../middleware/auth.middleware';
 import Brand from '../models/Brand';
 import User from '../models/User';
@@ -22,7 +22,7 @@ export const validateCreateBrand = [
     .withMessage('Description cannot exceed 500 characters')
 ];
 
-export const createBrand = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+export const createBrand = asyncHandler(async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
     return res.status(400).json({
@@ -96,32 +96,11 @@ export const createBrand = asyncHandler(async (req: AuthenticatedRequest, res: R
       brand,
     });
   } catch (error: any) {
-    log.error('Create Brand - Error', error, { storeId });
-    
-    // Handle specific mongoose errors
-    if (error.name === 'ValidationError') {
-      const errorMessages = Object.values(error.errors || {}).map((e: any) => e.message);
-      return res.status(400).json({
-        success: false,
-        message: errorMessages.join(', ') || 'Validation error',
-      });
-    }
-    
-    if (error.code === 11000) {
-      return res.status(400).json({
-        success: false,
-        message: 'Brand with this name already exists',
-      });
-    }
-    
-    return res.status(500).json({
-      success: false,
-      message: error.message || 'Failed to create brand. Please try again.',
-    });
+    next(error);
   }
 });
 
-export const getBrands = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+export const getBrands = asyncHandler(async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   const storeId = req.user?.storeId || null;
   
   // Store users must have a storeId
@@ -146,12 +125,7 @@ export const getBrands = asyncHandler(async (req: AuthenticatedRequest, res: Res
       brands,
     });
   } catch (error: any) {
-    log.error('Error fetching brands', error);
-    return res.status(500).json({
-      success: false,
-      message: error.message || 'Failed to fetch brands. Please try again.',
-      brands: [],
-    });
+    next(error);
   }
 });
 
@@ -166,7 +140,7 @@ const escapeCsvValue = (value: string): string => {
 const normalizeHeaderKey = (key: string): string =>
   key.replace(/^\uFEFF/, '').trim().toLowerCase();
 
-export const exportBrands = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+export const exportBrands = asyncHandler(async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   const storeId = req.user?.storeId || null;
   
   // Store users must have a storeId
@@ -201,15 +175,11 @@ export const exportBrands = asyncHandler(async (req: AuthenticatedRequest, res: 
     );
     res.status(200).send(utf8WithBom);
   } catch (error: any) {
-    log.error('Error exporting brands', error);
-    return res.status(500).json({
-      success: false,
-      message: error.message || 'Failed to export brands. Please try again.',
-    });
+    next(error);
   }
 });
 
-export const importBrands = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+export const importBrands = asyncHandler(async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   const file = req.file;
   const storeId = req.user?.storeId || null;
 
@@ -239,10 +209,7 @@ export const importBrands = asyncHandler(async (req: AuthenticatedRequest, res: 
       trim: true,
     });
   } catch (error) {
-    return res.status(400).json({
-      success: false,
-      message: 'Invalid CSV format',
-    });
+    return next(new AppError('Invalid CSV format', 400));
   }
 
   let created = 0;
@@ -332,18 +299,7 @@ export const importBrands = asyncHandler(async (req: AuthenticatedRequest, res: 
       brands,
     });
   } catch (error: any) {
-    log.error('Error importing brands', error);
-    return res.status(500).json({
-      success: false,
-      message: error.message || 'Failed to import brands. Please try again.',
-      summary: {
-        created: 0,
-        updated: 0,
-        failed: normalizedRecords.length,
-      },
-      errors: normalizedRecords.map((_, index) => ({ row: index + 1, message: 'Import error' })),
-      brands: [],
-    });
+    next(error);
   }
 });
 

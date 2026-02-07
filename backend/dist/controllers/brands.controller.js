@@ -45,7 +45,7 @@ const validateCreateBrand = [
   (0, import_express_validator.body)("name").trim().notEmpty().withMessage("Brand name is required").isLength({ max: 120 }).withMessage("Brand name cannot exceed 120 characters"),
   (0, import_express_validator.body)("description").optional({ nullable: true }).isString().withMessage("Description must be a string").isLength({ max: 500 }).withMessage("Description cannot exceed 500 characters")
 ];
-const createBrand = (0, import_error.asyncHandler)(async (req, res) => {
+const createBrand = (0, import_error.asyncHandler)(async (req, res, next) => {
   const errors = (0, import_express_validator.validationResult)(req);
   if (!errors.isEmpty()) {
     return res.status(400).json({
@@ -105,27 +105,10 @@ const createBrand = (0, import_error.asyncHandler)(async (req, res) => {
       brand
     });
   } catch (error) {
-    import_logger.log.error("Create Brand - Error", error, { storeId });
-    if (error.name === "ValidationError") {
-      const errorMessages = Object.values(error.errors || {}).map((e) => e.message);
-      return res.status(400).json({
-        success: false,
-        message: errorMessages.join(", ") || "Validation error"
-      });
-    }
-    if (error.code === 11e3) {
-      return res.status(400).json({
-        success: false,
-        message: "Brand with this name already exists"
-      });
-    }
-    return res.status(500).json({
-      success: false,
-      message: error.message || "Failed to create brand. Please try again."
-    });
+    next(error);
   }
 });
-const getBrands = (0, import_error.asyncHandler)(async (req, res) => {
+const getBrands = (0, import_error.asyncHandler)(async (req, res, next) => {
   const storeId = req.user?.storeId || null;
   if (!storeId) {
     return res.status(400).json({
@@ -143,12 +126,7 @@ const getBrands = (0, import_error.asyncHandler)(async (req, res) => {
       brands
     });
   } catch (error) {
-    import_logger.log.error("Error fetching brands", error);
-    return res.status(500).json({
-      success: false,
-      message: error.message || "Failed to fetch brands. Please try again.",
-      brands: []
-    });
+    next(error);
   }
 });
 const escapeCsvValue = (value) => {
@@ -159,7 +137,7 @@ const escapeCsvValue = (value) => {
   return stringValue;
 };
 const normalizeHeaderKey = (key) => key.replace(/^\uFEFF/, "").trim().toLowerCase();
-const exportBrands = (0, import_error.asyncHandler)(async (req, res) => {
+const exportBrands = (0, import_error.asyncHandler)(async (req, res, next) => {
   const storeId = req.user?.storeId || null;
   if (!storeId) {
     return res.status(400).json({
@@ -185,14 +163,10 @@ const exportBrands = (0, import_error.asyncHandler)(async (req, res) => {
     );
     res.status(200).send(utf8WithBom);
   } catch (error) {
-    import_logger.log.error("Error exporting brands", error);
-    return res.status(500).json({
-      success: false,
-      message: error.message || "Failed to export brands. Please try again."
-    });
+    next(error);
   }
 });
-const importBrands = (0, import_error.asyncHandler)(async (req, res) => {
+const importBrands = (0, import_error.asyncHandler)(async (req, res, next) => {
   const file = req.file;
   const storeId = req.user?.storeId || null;
   if (!file) {
@@ -217,10 +191,7 @@ const importBrands = (0, import_error.asyncHandler)(async (req, res) => {
       trim: true
     });
   } catch (error) {
-    return res.status(400).json({
-      success: false,
-      message: "Invalid CSV format"
-    });
+    return next(new import_error.AppError("Invalid CSV format", 400));
   }
   let created = 0;
   let updated = 0;
@@ -294,18 +265,7 @@ const importBrands = (0, import_error.asyncHandler)(async (req, res) => {
       brands
     });
   } catch (error) {
-    import_logger.log.error("Error importing brands", error);
-    return res.status(500).json({
-      success: false,
-      message: error.message || "Failed to import brands. Please try again.",
-      summary: {
-        created: 0,
-        updated: 0,
-        failed: normalizedRecords.length
-      },
-      errors: normalizedRecords.map((_, index) => ({ row: index + 1, message: "Import error" })),
-      brands: []
-    });
+    next(error);
   }
 });
 // Annotate the CommonJS export names for ESM import in node:

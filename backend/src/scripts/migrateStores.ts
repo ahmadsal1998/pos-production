@@ -1,22 +1,22 @@
 /**
  * Migration script to assign existing stores to distributed databases
- * 
+ *
  * Usage:
- *   npx ts-node src/utils/migrateStores.ts
- * 
+ *   npx ts-node src/scripts/migrateStores.ts
+ *
  * This script:
  * 1. Connects to the main database
  * 2. Finds all stores without databaseId
  * 3. Assigns them to databases based on store count
  * 4. Updates store records with databaseId
- * 
+ *
  * IMPORTANT: Backup your database before running this script!
  */
 
 import mongoose from 'mongoose';
 import dotenv from 'dotenv';
 import Store from '../models/Store';
-import { DATABASE_CONFIG } from './databaseManager';
+import { DATABASE_CONFIG } from '../utils/databaseManager';
 import { ensureAdminDatabase } from '../config/database';
 
 dotenv.config();
@@ -25,7 +25,6 @@ const migrateExistingStores = async () => {
   try {
     console.log('🔄 Starting store migration...\n');
 
-    // Connect to main database
     const mongoUri = process.env.MONGODB_URI as string;
     if (!mongoUri) {
       throw new Error('MONGODB_URI environment variable is not set');
@@ -34,11 +33,9 @@ const migrateExistingStores = async () => {
     await mongoose.connect(uriWithAdminDb);
     console.log('✅ Connected to main database\n');
 
-    // Find all stores
     const allStores = await Store.find({}).sort({ createdAt: 1 });
     console.log(`📊 Found ${allStores.length} total stores\n`);
 
-    // Separate stores with and without databaseId
     const storesWithoutDb = allStores.filter(store => !store.databaseId);
     const storesWithDb = allStores.filter(store => store.databaseId);
 
@@ -51,7 +48,6 @@ const migrateExistingStores = async () => {
       return;
     }
 
-    // Count stores per database to maintain distribution
     const storesPerDatabase: { [key: number]: number } = {};
     for (let i = 1; i <= DATABASE_CONFIG.DATABASE_COUNT; i++) {
       storesPerDatabase[i] = storesWithDb.filter(s => s.databaseId === i).length;
@@ -63,10 +59,8 @@ const migrateExistingStores = async () => {
     });
     console.log('');
 
-    // Assign stores to databases
     let assignedCount = 0;
     for (const store of storesWithoutDb) {
-      // Find database with least stores
       let targetDatabase = 1;
       let minCount = storesPerDatabase[1];
 
@@ -77,15 +71,13 @@ const migrateExistingStores = async () => {
         }
       }
 
-      // Assign store to target database
       store.databaseId = targetDatabase;
       await store.save();
       storesPerDatabase[targetDatabase]++;
 
       assignedCount++;
-      console.log(`✅ Store "${store.name}" (${store.prefix}) → Database ${targetDatabase}`);
+      console.log(`✅ Store "${store.name}" (${store.storeId}) → Database ${targetDatabase}`);
 
-      // Show progress every 10 stores
       if (assignedCount % 10 === 0) {
         console.log(`   Progress: ${assignedCount}/${storesWithoutDb.length} stores migrated\n`);
       }
@@ -94,13 +86,11 @@ const migrateExistingStores = async () => {
     console.log(`\n✅ Migration completed!`);
     console.log(`   Migrated ${assignedCount} stores\n`);
 
-    // Show final distribution
     console.log('📊 Final distribution:');
     Object.entries(storesPerDatabase).forEach(([dbId, count]) => {
       console.log(`   Database ${dbId}: ${count} stores`);
     });
 
-    // Verify all stores have databaseId
     const remaining = await Store.countDocuments({ databaseId: { $exists: false } });
     if (remaining > 0) {
       console.log(`\n⚠️  Warning: ${remaining} stores still without databaseId`);
@@ -118,7 +108,6 @@ const migrateExistingStores = async () => {
   }
 };
 
-// Run migration
 if (require.main === module) {
   migrateExistingStores()
     .then(() => {
@@ -132,4 +121,3 @@ if (require.main === module) {
 }
 
 export default migrateExistingStores;
-

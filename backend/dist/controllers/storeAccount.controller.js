@@ -41,7 +41,6 @@ var import_express_validator = require("express-validator");
 var import_error = require("../middleware/error.middleware");
 var import_StoreAccount = __toESM(require("../models/StoreAccount"));
 var import_Store = __toESM(require("../models/Store"));
-var import_logger = require("../utils/logger");
 const getStoreAccounts = (0, import_error.asyncHandler)(async (req, res) => {
   const userRole = req.user?.role;
   if (userRole !== "Admin") {
@@ -50,21 +49,13 @@ const getStoreAccounts = (0, import_error.asyncHandler)(async (req, res) => {
       message: "Access denied. Admin role required."
     });
   }
-  try {
-    const accounts = await import_StoreAccount.default.find().sort({ dueBalance: -1 });
-    res.status(200).json({
-      success: true,
-      data: {
-        accounts
-      }
-    });
-  } catch (error) {
-    import_logger.log.error("Error getting store accounts", error);
-    return res.status(500).json({
-      success: false,
-      message: error.message || "Failed to get store accounts"
-    });
-  }
+  const accounts = await import_StoreAccount.default.find().sort({ dueBalance: -1 });
+  res.status(200).json({
+    success: true,
+    data: {
+      accounts
+    }
+  });
 });
 const getStoreAccount = (0, import_error.asyncHandler)(async (req, res) => {
   const userRole = req.user?.role;
@@ -82,27 +73,19 @@ const getStoreAccount = (0, import_error.asyncHandler)(async (req, res) => {
   } else {
     query.storeId = id.toLowerCase();
   }
-  try {
-    const account = await import_StoreAccount.default.findOne(query);
-    if (!account) {
-      return res.status(404).json({
-        success: false,
-        message: "Store account not found"
-      });
-    }
-    res.status(200).json({
-      success: true,
-      data: {
-        account
-      }
-    });
-  } catch (error) {
-    import_logger.log.error("Error getting store account", error);
-    return res.status(500).json({
+  const account = await import_StoreAccount.default.findOne(query);
+  if (!account) {
+    return res.status(404).json({
       success: false,
-      message: error.message || "Failed to get store account"
+      message: "Store account not found"
     });
   }
+  res.status(200).json({
+    success: true,
+    data: {
+      account
+    }
+  });
 });
 const updateStoreAccountThreshold = (0, import_error.asyncHandler)(async (req, res) => {
   const errors = (0, import_express_validator.validationResult)(req);
@@ -128,39 +111,31 @@ const updateStoreAccountThreshold = (0, import_error.asyncHandler)(async (req, r
       message: "Store ID and valid threshold are required"
     });
   }
-  try {
-    const account = await import_StoreAccount.default.findOne({ storeId: storeId.toLowerCase() });
-    if (!account) {
-      return res.status(404).json({
-        success: false,
-        message: "Store account not found"
-      });
-    }
-    account.threshold = threshold;
-    if (account.isPaused && account.dueBalance < threshold) {
-      account.isPaused = false;
-      account.pausedAt = void 0;
-      account.pausedReason = void 0;
-      await import_Store.default.findOneAndUpdate(
-        { storeId: storeId.toLowerCase() },
-        { isActive: true }
-      );
-    }
-    await account.save();
-    res.status(200).json({
-      success: true,
-      message: "Store account threshold updated successfully",
-      data: {
-        account
-      }
-    });
-  } catch (error) {
-    import_logger.log.error("Error updating store account threshold", error);
-    return res.status(500).json({
+  const account = await import_StoreAccount.default.findOne({ storeId: storeId.toLowerCase() });
+  if (!account) {
+    return res.status(404).json({
       success: false,
-      message: error.message || "Failed to update store account threshold"
+      message: "Store account not found"
     });
   }
+  account.threshold = threshold;
+  if (account.isPaused && account.dueBalance < threshold) {
+    account.isPaused = false;
+    account.pausedAt = void 0;
+    account.pausedReason = void 0;
+    await import_Store.default.findOneAndUpdate(
+      { storeId: storeId.toLowerCase() },
+      { isActive: true }
+    );
+  }
+  await account.save();
+  res.status(200).json({
+    success: true,
+    message: "Store account threshold updated successfully",
+    data: {
+      account
+    }
+  });
 });
 const makePaymentToStore = (0, import_error.asyncHandler)(async (req, res) => {
   const errors = (0, import_express_validator.validationResult)(req);
@@ -186,56 +161,48 @@ const makePaymentToStore = (0, import_error.asyncHandler)(async (req, res) => {
       message: "Store ID and valid payment amount are required"
     });
   }
-  try {
-    const account = await import_StoreAccount.default.findOne({ storeId: storeId.toLowerCase() });
-    if (!account) {
-      return res.status(404).json({
-        success: false,
-        message: "Store account not found"
-      });
-    }
-    const paymentAmount = Math.min(amount, account.dueBalance);
-    account.totalPaid += paymentAmount;
-    account.dueBalance -= paymentAmount;
-    account.lastPaymentDate = /* @__PURE__ */ new Date();
-    account.lastPaymentAmount = paymentAmount;
-    if (account.isPaused && account.dueBalance < account.threshold) {
-      account.isPaused = false;
-      account.pausedAt = void 0;
-      account.pausedReason = void 0;
-      await import_Store.default.findOneAndUpdate(
-        { storeId: storeId.toLowerCase() },
-        { isActive: true }
-      );
-    }
-    await account.save();
-    res.status(200).json({
-      success: true,
-      message: "Payment processed successfully",
-      data: {
-        account: {
-          id: account._id,
-          storeId: account.storeId,
-          totalEarned: account.totalEarned,
-          totalPaid: account.totalPaid,
-          dueBalance: account.dueBalance,
-          isPaused: account.isPaused,
-          lastPaymentDate: account.lastPaymentDate,
-          lastPaymentAmount: account.lastPaymentAmount
-        },
-        payment: {
-          amount: paymentAmount,
-          description
-        }
-      }
-    });
-  } catch (error) {
-    import_logger.log.error("Error making payment to store", error);
-    return res.status(500).json({
+  const account = await import_StoreAccount.default.findOne({ storeId: storeId.toLowerCase() });
+  if (!account) {
+    return res.status(404).json({
       success: false,
-      message: error.message || "Failed to process payment"
+      message: "Store account not found"
     });
   }
+  const paymentAmount = Math.min(amount, account.dueBalance);
+  account.totalPaid += paymentAmount;
+  account.dueBalance -= paymentAmount;
+  account.lastPaymentDate = /* @__PURE__ */ new Date();
+  account.lastPaymentAmount = paymentAmount;
+  if (account.isPaused && account.dueBalance < account.threshold) {
+    account.isPaused = false;
+    account.pausedAt = void 0;
+    account.pausedReason = void 0;
+    await import_Store.default.findOneAndUpdate(
+      { storeId: storeId.toLowerCase() },
+      { isActive: true }
+    );
+  }
+  await account.save();
+  res.status(200).json({
+    success: true,
+    message: "Payment processed successfully",
+    data: {
+      account: {
+        id: account._id,
+        storeId: account.storeId,
+        totalEarned: account.totalEarned,
+        totalPaid: account.totalPaid,
+        dueBalance: account.dueBalance,
+        isPaused: account.isPaused,
+        lastPaymentDate: account.lastPaymentDate,
+        lastPaymentAmount: account.lastPaymentAmount
+      },
+      payment: {
+        amount: paymentAmount,
+        description
+      }
+    }
+  });
 });
 const toggleStoreAccountStatus = (0, import_error.asyncHandler)(async (req, res) => {
   const userRole = req.user?.role;
@@ -253,45 +220,37 @@ const toggleStoreAccountStatus = (0, import_error.asyncHandler)(async (req, res)
       message: "Store ID and isPaused status are required"
     });
   }
-  try {
-    const account = await import_StoreAccount.default.findOne({ storeId: storeId.toLowerCase() });
-    if (!account) {
-      return res.status(404).json({
-        success: false,
-        message: "Store account not found"
-      });
-    }
-    account.isPaused = isPaused;
-    if (isPaused) {
-      account.pausedAt = /* @__PURE__ */ new Date();
-      account.pausedReason = reason || "Manually paused by admin";
-      await import_Store.default.findOneAndUpdate(
-        { storeId: storeId.toLowerCase() },
-        { isActive: false }
-      );
-    } else {
-      account.pausedAt = void 0;
-      account.pausedReason = void 0;
-      await import_Store.default.findOneAndUpdate(
-        { storeId: storeId.toLowerCase() },
-        { isActive: true }
-      );
-    }
-    await account.save();
-    res.status(200).json({
-      success: true,
-      message: `Store account ${isPaused ? "paused" : "unpaused"} successfully`,
-      data: {
-        account
-      }
-    });
-  } catch (error) {
-    import_logger.log.error("Error toggling store account status", error);
-    return res.status(500).json({
+  const account = await import_StoreAccount.default.findOne({ storeId: storeId.toLowerCase() });
+  if (!account) {
+    return res.status(404).json({
       success: false,
-      message: error.message || "Failed to toggle store account status"
+      message: "Store account not found"
     });
   }
+  account.isPaused = isPaused;
+  if (isPaused) {
+    account.pausedAt = /* @__PURE__ */ new Date();
+    account.pausedReason = reason || "Manually paused by admin";
+    await import_Store.default.findOneAndUpdate(
+      { storeId: storeId.toLowerCase() },
+      { isActive: false }
+    );
+  } else {
+    account.pausedAt = void 0;
+    account.pausedReason = void 0;
+    await import_Store.default.findOneAndUpdate(
+      { storeId: storeId.toLowerCase() },
+      { isActive: true }
+    );
+  }
+  await account.save();
+  res.status(200).json({
+    success: true,
+    message: `Store account ${isPaused ? "paused" : "unpaused"} successfully`,
+    data: {
+      account
+    }
+  });
 });
 const validateUpdateThreshold = [
   (0, import_express_validator.body)("threshold").isFloat({ min: 0 }).withMessage("Threshold must be a non-negative number")

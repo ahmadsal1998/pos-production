@@ -1,26 +1,44 @@
 "use strict";
-/**
- * @deprecated This file is deprecated. Use the unified Unit model directly from ../models/Unit
- *
- * All units are now stored in a single unified 'units' collection with storeId field.
- * Use Unit model directly and filter by storeId in queries.
- */
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
+var __create = Object.create;
+var __defProp = Object.defineProperty;
+var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __getProtoOf = Object.getPrototypeOf;
+var __hasOwnProp = Object.prototype.hasOwnProperty;
+var __export = (target, all) => {
+  for (var name in all)
+    __defProp(target, name, { get: all[name], enumerable: true });
 };
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.getUnitModelForStore = getUnitModelForStore;
-const Unit_1 = __importDefault(require("../models/Unit"));
-/**
- * @deprecated Use Unit model directly from ../models/Unit
- * Get Unit model - returns the unified Unit model
- * All units are stored in a single collection with storeId field
- */
+var __copyProps = (to, from, except, desc) => {
+  if (from && typeof from === "object" || typeof from === "function") {
+    for (let key of __getOwnPropNames(from))
+      if (!__hasOwnProp.call(to, key) && key !== except)
+        __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
+  }
+  return to;
+};
+var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__getProtoOf(mod)) : {}, __copyProps(
+  // If the importer is in node compatibility mode or this is not an ESM
+  // file that has been converted to a CommonJS file using a Babel-
+  // compatible transform (i.e. "__esModule" has not been set), then set
+  // "default" to the CommonJS "module.exports" for node compatibility.
+  isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
+  mod
+));
+var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
+var unitModel_exports = {};
+__export(unitModel_exports, {
+  getUnitModelForStore: () => getUnitModelForStore
+});
+module.exports = __toCommonJS(unitModel_exports);
+var import_Unit = __toESM(require("../models/Unit"));
 async function getUnitModelForStore(storeId) {
-    if (!storeId) {
-        throw new Error('Store ID is required to access units');
-    }
-    // Return the unified Unit model
-    // Always filter queries by storeId when using this model
-    return Unit_1.default;
+  if (!storeId) {
+    throw new Error("Store ID is required to access units");
+  }
+  return import_Unit.default;
 }
+// Annotate the CommonJS export names for ESM import in node:
+0 && (module.exports = {
+  getUnitModelForStore
+});

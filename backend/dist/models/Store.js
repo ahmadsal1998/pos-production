@@ -125,12 +125,10 @@ const storeSchema = new import_mongoose.Schema(
       required: [true, "Store name is required"],
       trim: true
     },
-    prefix: {
-      type: String,
-      required: [true, "Store prefix is required"],
-      trim: true,
-      lowercase: true,
-      match: [/^[a-z0-9_]+$/, "Prefix must contain only lowercase letters, numbers, and underscores"]
+    storeTypeId: {
+      type: import_mongoose.Schema.Types.ObjectId,
+      ref: "StoreType",
+      default: null
     },
     databaseId: {
       type: Number,
@@ -212,7 +210,7 @@ const storeSchema = new import_mongoose.Schema(
 );
 storeSchema.index({ storeNumber: 1 }, { unique: true });
 storeSchema.index({ storeId: 1 });
-storeSchema.index({ prefix: 1 });
 storeSchema.index({ databaseId: 1 });
+storeSchema.index({ storeTypeId: 1 });
 const Store = import_mongoose.default.model("Store", storeSchema);
 var Store_default = Store;

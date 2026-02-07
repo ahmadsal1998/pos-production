@@ -1,12 +1,19 @@
-import { Response } from 'express';
+import { Response, NextFunction } from 'express';
 import { body, validationResult } from 'express-validator';
 import mongoose from 'mongoose';
 import { asyncHandler } from '../middleware/error.middleware';
 import { AuthenticatedRequest } from '../middleware/auth.middleware';
 import { getCustomerPaymentModelForStore } from '../utils/customerPaymentModel';
 import { getCustomerModelForStore } from '../utils/customerModel';
+import { getSaleModelForStore } from '../utils/saleModel';
 import User from '../models/User';
 import { log } from '../utils/logger';
+import {
+  parsePaginationQuery,
+  buildPaginationMeta,
+  MAX_PAGE_SIZE,
+  MAX_PAGE_SIZE_LIGHT,
+} from '../types/pagination';
 
 export const validateCreateCustomer = [
   body('name')
@@ -31,7 +38,7 @@ export const validateCreateCustomer = [
     .withMessage('Previous balance must be a valid number'),
 ];
 
-export const createCustomer = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+export const createCustomer = asyncHandler(async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
     return res.status(400).json({
@@ -142,109 +149,74 @@ export const createCustomer = asyncHandler(async (req: AuthenticatedRequest, res
       },
     });
   } catch (error: any) {
-    log.error('Error creating customer', error);
-    
-    // Handle specific mongoose errors
-    if (error.name === 'ValidationError') {
-      const errorMessages = Object.values(error.errors || {}).map((e: any) => e.message);
-      return res.status(400).json({
-        success: false,
-        message: errorMessages.join(', ') || 'Validation error',
-      });
-    }
-    
-    if (error.code === 11000) {
-      return res.status(400).json({
-        success: false,
-        message: 'Customer with this phone number already exists',
-      });
-    }
-    
-    return res.status(500).json({
-      success: false,
-      message: error.message || 'Failed to create customer. Please try again.',
-    });
+    next(error);
   }
 });
 
-export const getCustomers = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+export const getCustomers = asyncHandler(async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   const storeId = req.user?.storeId || null;
-  
-  // Store users must have a storeId
+
   if (!storeId) {
     return res.status(400).json({
       success: false,
       message: 'Store ID is required. Please ensure you are logged in as a store user.',
-      data: {
-        customers: [],
-      },
+      data: { items: [], pagination: buildPaginationMeta(1, 50, 0), customers: [] },
     });
   }
 
   try {
-    // Normalize storeId to lowercase for consistency
     const normalizedStoreId = storeId.toLowerCase().trim();
-    
-    // Search parameter
     const searchTerm = (req.query.search as string)?.trim() || '';
-    
-    // Get trial-aware Customer model
+    const lightParam = (req.query.light as string)?.toLowerCase();
+    const light = lightParam === 'true' || lightParam === '1' || lightParam === 'yes';
+
+    const maxLimit = light ? MAX_PAGE_SIZE_LIGHT : MAX_PAGE_SIZE;
+    const { page, limit, skip } = parsePaginationQuery(req.query as { page?: string; limit?: string }, maxLimit);
+
     const Customer = await getCustomerModelForStore(storeId);
-    
-    // Build query filter - always filter by storeId for store isolation
-    const queryFilter: any = {
-      storeId: normalizedStoreId,
-    };
-    
-    // If search term is provided, search in name, phone, and address
+
+    const queryFilter: any = { storeId: normalizedStoreId };
+
     if (searchTerm) {
-      // Normalize search term: remove extra spaces
       const normalizedSearchTerm = searchTerm.replace(/\s+/g, ' ').trim();
-      
-      // Create regex pattern for case-insensitive search
-      // Escape special regex characters
       const escapedSearchTerm = normalizedSearchTerm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      
-      // Search in name, phone, and address fields
-      // Using $or to search in multiple fields
-      // Using $regex with 'i' flag for case-insensitive search
       queryFilter.$or = [
         { name: { $regex: escapedSearchTerm, $options: 'i' } },
         { phone: { $regex: escapedSearchTerm, $options: 'i' } },
         { address: { $regex: escapedSearchTerm, $options: 'i' } },
       ];
     }
-    
-    const customers = await Customer.find(queryFilter).sort({ createdAt: -1 });
+
+    const [customers, total] = await Promise.all([
+      Customer.find(queryFilter).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
+      Customer.countDocuments(queryFilter),
+    ]);
+
+    const mapCustomer = (c: any) => ({
+      id: (c._id as mongoose.Types.ObjectId).toString(),
+      name: c.name,
+      phone: c.phone,
+      ...(light ? {} : { address: c.address, previousBalance: c.previousBalance, createdAt: c.createdAt, updatedAt: c.updatedAt }),
+    });
+
+    const items = customers.map(mapCustomer);
+    const pagination = buildPaginationMeta(page, limit, total);
 
     res.status(200).json({
       success: true,
       message: 'Customers fetched successfully',
       data: {
-        customers: customers.map(customer => ({
-          id: (customer._id as mongoose.Types.ObjectId).toString(),
-          name: customer.name,
-          phone: customer.phone,
-          address: customer.address,
-          previousBalance: customer.previousBalance,
-          createdAt: customer.createdAt,
-          updatedAt: customer.updatedAt,
-        })),
+        items,
+        pagination,
+        customers: items,
       },
     });
   } catch (error: any) {
-    log.error('Error fetching customers', error);
-    return res.status(500).json({
-      success: false,
-      message: error.message || 'Failed to fetch customers. Please try again.',
-      data: {
-        customers: [],
-      },
-    });
+    next(error);
   }
 });
 
-export const getCustomerById = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+export const getCustomerById = asyncHandler(async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   const { id } = req.params;
   const storeId = req.user?.storeId || null;
 
@@ -291,11 +263,7 @@ export const getCustomerById = asyncHandler(async (req: AuthenticatedRequest, re
       },
     });
   } catch (error: any) {
-    log.error('Error fetching customer', error);
-    return res.status(500).json({
-      success: false,
-      message: error.message || 'Failed to fetch customer. Please try again.',
-    });
+    next(error);
   }
 });
 
@@ -321,7 +289,7 @@ export const validateUpdateCustomer = [
     .withMessage('Previous balance must be a valid number'),
 ];
 
-export const updateCustomer = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+export const updateCustomer = asyncHandler(async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
     return res.status(400).json({
@@ -427,32 +395,11 @@ export const updateCustomer = asyncHandler(async (req: AuthenticatedRequest, res
       },
     });
   } catch (error: any) {
-    log.error('Error updating customer', error);
-
-    // Handle specific mongoose errors
-    if (error.name === 'ValidationError') {
-      const errorMessages = Object.values(error.errors || {}).map((e: any) => e.message);
-      return res.status(400).json({
-        success: false,
-        message: errorMessages.join(', ') || 'Validation error',
-      });
-    }
-
-    if (error.code === 11000) {
-      return res.status(400).json({
-        success: false,
-        message: 'Customer with this phone number already exists',
-      });
-    }
-
-    return res.status(500).json({
-      success: false,
-      message: error.message || 'Failed to update customer. Please try again.',
-    });
+    next(error);
   }
 });
 
-export const deleteCustomer = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+export const deleteCustomer = asyncHandler(async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   const { id } = req.params;
   const storeId = req.user?.storeId || null;
 
@@ -494,11 +441,7 @@ export const deleteCustomer = asyncHandler(async (req: AuthenticatedRequest, res
       message: 'Customer deleted successfully',
     });
   } catch (error: any) {
-    log.error('Error deleting customer', error);
-    return res.status(500).json({
-      success: false,
-      message: error.message || 'Failed to delete customer. Please try again.',
-    });
+    next(error);
   }
 });
 
@@ -533,7 +476,7 @@ export const validateCreateCustomerPayment = [
     .withMessage('Notes cannot exceed 1000 characters'),
 ];
 
-export const createCustomerPayment = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+export const createCustomerPayment = asyncHandler(async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
     return res.status(400).json({
@@ -618,25 +561,137 @@ export const createCustomerPayment = asyncHandler(async (req: AuthenticatedReque
       },
     });
   } catch (error: any) {
-    log.error('Error creating customer payment', error);
-    
-    // Handle specific mongoose errors
-    if (error.name === 'ValidationError') {
-      const errorMessages = Object.values(error.errors || {}).map((e: any) => e.message);
-      return res.status(400).json({
-        success: false,
-        message: errorMessages.join(', ') || 'Validation error',
-      });
-    }
-    
-    return res.status(500).json({
-      success: false,
-      message: error.message || 'Failed to create customer payment. Please try again.',
-    });
+    next(error);
   }
 });
 
-export const getCustomerPayments = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+/**
+ * Get customer account summaries (totals per customer) using aggregation.
+ * Returns lightweight summary rows only - no full payment/sale documents.
+ * Use this for the customer accounts list to avoid timeouts and heavy payloads.
+ */
+export const getCustomerAccountsSummary = asyncHandler(async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  const storeId = req.user?.storeId || null;
+  if (!storeId) {
+    return res.status(400).json({
+      success: false,
+      message: 'Store ID is required.',
+      data: { summaries: [] },
+    });
+  }
+
+  try {
+    const normalizedStoreId = storeId.toLowerCase().trim();
+    const Customer = await getCustomerModelForStore(storeId);
+    const Sale = await getSaleModelForStore(storeId);
+    const CustomerPayment = getCustomerPaymentModelForStore(storeId);
+
+    const [customers, salesByCustomer, paymentsByCustomer] = await Promise.all([
+      Customer.find({ storeId: normalizedStoreId })
+        .select('_id name phone address previousBalance')
+        .lean(),
+      Sale.aggregate([
+        { $match: { storeId: normalizedStoreId } },
+        {
+          $group: {
+            _id: '$customerId',
+            totalRemainingFromSales: { $sum: '$remainingAmount' },
+            totalPaidAtSale: { $sum: '$paidAmount' },
+            totalPurchases: { $sum: '$total' },
+          },
+        },
+      ]),
+      CustomerPayment.aggregate([
+        { $match: { storeId: normalizedStoreId } },
+        {
+          $group: {
+            _id: '$customerId',
+            receiptTotal: { $sum: { $cond: [{ $gt: ['$amount', 0] }, '$amount', 0] } },
+            journalTotal: { $sum: { $cond: [{ $lt: ['$amount', 0] }, { $abs: '$amount' }, 0] } },
+            receiptExclInitial: {
+              $sum: {
+                $cond: [
+                  {
+                    $and: [
+                      { $gt: ['$amount', 0] },
+                      { $not: { $regexMatch: { input: { $ifNull: ['$notes', ''] }, regex: 'رصيد أولي' } } },
+                    ],
+                  },
+                  '$amount',
+                  0,
+                ],
+              },
+            },
+            journalExclInitial: {
+              $sum: {
+                $cond: [
+                  {
+                    $and: [
+                      { $lt: ['$amount', 0] },
+                      { $not: { $regexMatch: { input: { $ifNull: ['$notes', ''] }, regex: 'رصيد أولي' } } },
+                    ],
+                  },
+                  { $abs: '$amount' },
+                  0,
+                ],
+              },
+            },
+            lastPaymentDate: { $max: '$date' },
+          },
+        },
+      ]),
+    ]);
+
+    const salesMap = new Map<string | null, { totalRemainingFromSales: number; totalPaidAtSale: number; totalPurchases: number }>();
+    salesByCustomer.forEach((row: any) => {
+      salesMap.set(row._id || null, {
+        totalRemainingFromSales: row.totalRemainingFromSales ?? 0,
+        totalPaidAtSale: row.totalPaidAtSale ?? 0,
+        totalPurchases: row.totalPurchases ?? 0,
+      });
+    });
+    const paymentsMap = new Map<string | null, { receiptTotal: number; journalTotal: number; receiptExclInitial: number; journalExclInitial: number; lastPaymentDate: Date | null }>();
+    paymentsByCustomer.forEach((row: any) => {
+      paymentsMap.set(row._id || null, {
+        receiptTotal: row.receiptTotal ?? 0,
+        journalTotal: row.journalTotal ?? 0,
+        receiptExclInitial: row.receiptExclInitial ?? 0,
+        journalExclInitial: row.journalExclInitial ?? 0,
+        lastPaymentDate: row.lastPaymentDate ?? null,
+      });
+    });
+
+    const summaries = customers.map((c: any) => {
+      const id = c._id.toString();
+      const sales = salesMap.get(id) || { totalRemainingFromSales: 0, totalPaidAtSale: 0, totalPurchases: 0 };
+      const pay = paymentsMap.get(id) || { receiptTotal: 0, journalTotal: 0, receiptExclInitial: 0, journalExclInitial: 0, lastPaymentDate: null };
+      const totalSales = sales.totalPurchases + pay.journalTotal;
+      const totalPaid = sales.totalPaidAtSale + pay.receiptTotal;
+      // Balance = Total Debt - Total Payments
+      // If Total Debt > Total Payments → Debit (مدين). If Total Payments > Total Debt → Credit (دائن)
+      const balance = totalSales - totalPaid;
+      return {
+        customerId: id,
+        customerName: c.name || '',
+        address: c.address,
+        totalSales,
+        totalPaid,
+        balance,
+        lastPaymentDate: pay.lastPaymentDate ? new Date(pay.lastPaymentDate).toISOString() : null,
+      };
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'Customer account summaries fetched successfully',
+      data: { summaries },
+    });
+  } catch (error: any) {
+    next(error);
+  }
+});
+
+export const getCustomerPayments = asyncHandler(async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   const storeId = req.user?.storeId || null;
   const { customerId } = req.query;
 
@@ -687,14 +742,208 @@ export const getCustomerPayments = asyncHandler(async (req: AuthenticatedRequest
       },
     });
   } catch (error: any) {
-    log.error('Error fetching customer payments', error);
-    return res.status(500).json({
+    next(error);
+  }
+});
+
+// Validation for updating a customer payment (all fields optional except validation rules)
+export const validateUpdateCustomerPayment = [
+  body('amount')
+    .optional()
+    .isFloat()
+    .custom((value) => {
+      if (value !== undefined && value === 0) {
+        throw new Error('Payment amount cannot be zero');
+      }
+      return true;
+    })
+    .withMessage('Payment amount cannot be zero'),
+  body('method')
+    .optional()
+    .isIn(['Cash', 'Bank Transfer', 'Cheque'])
+    .withMessage('Payment method must be Cash, Bank Transfer, or Cheque'),
+  body('date')
+    .optional()
+    .isISO8601()
+    .withMessage('Date must be a valid ISO 8601 date'),
+  body('invoiceId')
+    .optional()
+    .trim(),
+  body('notes')
+    .optional()
+    .trim()
+    .isLength({ max: 1000 })
+    .withMessage('Notes cannot exceed 1000 characters'),
+];
+
+export const updateCustomerPayment = asyncHandler(async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({
       success: false,
-      message: error.message || 'Failed to fetch customer payments. Please try again.',
+      message: 'Validation failed',
+      errors: errors.array(),
+    });
+  }
+
+  const paymentId = req.params.id;
+  const { amount, method, date, invoiceId, notes } = req.body;
+  let storeId = req.user?.storeId || null;
+
+  if (!storeId && req.user?.userId && req.user.userId !== 'admin') {
+    try {
+      const user = await User.findById(req.user.userId);
+      if (user && user.storeId) {
+        storeId = user.storeId;
+      }
+    } catch (error: any) {
+      log.error('Error fetching user', error);
+    }
+  }
+
+  if (!storeId) {
+    return res.status(400).json({
+      success: false,
+      message: 'Store ID is required. Please ensure you are logged in as a store user.',
+    });
+  }
+
+  if (!paymentId || !mongoose.Types.ObjectId.isValid(paymentId)) {
+    return res.status(400).json({
+      success: false,
+      message: 'Valid payment ID is required',
+    });
+  }
+
+  try {
+    const normalizedStoreId = storeId.toLowerCase().trim();
+    const CustomerPayment = getCustomerPaymentModelForStore(storeId);
+
+    const existing = await CustomerPayment.findOne({
+      _id: new mongoose.Types.ObjectId(paymentId),
+      storeId: normalizedStoreId,
+    }).lean();
+
+    if (!existing) {
+      return res.status(404).json({
+        success: false,
+        message: 'Payment not found or access denied',
+      });
+    }
+
+    const oldValues = {
+      amount: existing.amount,
+      method: existing.method,
+      date: existing.date,
+      invoiceId: existing.invoiceId,
+      notes: existing.notes,
+    };
+
+    const updateFields: Record<string, unknown> = {};
+    if (amount !== undefined) updateFields.amount = parseFloat(amount);
+    if (method !== undefined) updateFields.method = method;
+    if (date !== undefined) updateFields.date = new Date(date);
+    if (invoiceId !== undefined) updateFields.invoiceId = invoiceId?.trim() || null;
+    if (notes !== undefined) updateFields.notes = notes?.trim() || null;
+
+    if (Object.keys(updateFields).length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'No valid fields to update',
+      });
+    }
+
+    const updated = await CustomerPayment.findByIdAndUpdate(
+      paymentId,
+      { $set: updateFields },
+      { new: true, runValidators: true }
+    ).lean();
+
+    const userId = req.user?.userId?.toString() ?? 'unknown';
+    log.info(
+      `[CustomerPayment] Updated payment ${paymentId} by user ${userId}: old=${JSON.stringify(oldValues)} new=${JSON.stringify(updateFields)}`
+    );
+
+    res.status(200).json({
+      success: true,
+      message: 'Customer payment updated successfully',
       data: {
-        payments: [],
+        payment: {
+          id: updated._id.toString(),
+          customerId: updated.customerId,
+          date: updated.date,
+          amount: updated.amount,
+          method: updated.method,
+          invoiceId: updated.invoiceId,
+          notes: updated.notes,
+          createdAt: updated.createdAt,
+          updatedAt: updated.updatedAt,
+        },
       },
     });
+  } catch (error: any) {
+    next(error);
+  }
+});
+
+export const deleteCustomerPayment = asyncHandler(async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  const paymentId = req.params.id;
+  let storeId = req.user?.storeId || null;
+
+  if (!storeId && req.user?.userId && req.user.userId !== 'admin') {
+    try {
+      const user = await User.findById(req.user.userId);
+      if (user && user.storeId) {
+        storeId = user.storeId;
+      }
+    } catch (error: any) {
+      log.error('Error fetching user', error);
+    }
+  }
+
+  if (!storeId) {
+    return res.status(400).json({
+      success: false,
+      message: 'Store ID is required. Please ensure you are logged in as a store user.',
+    });
+  }
+
+  if (!paymentId || !mongoose.Types.ObjectId.isValid(paymentId)) {
+    return res.status(400).json({
+      success: false,
+      message: 'Valid payment ID is required',
+    });
+  }
+
+  try {
+    const normalizedStoreId = storeId.toLowerCase().trim();
+    const CustomerPayment = getCustomerPaymentModelForStore(storeId);
+
+    const existing = await CustomerPayment.findOne({
+      _id: new mongoose.Types.ObjectId(paymentId),
+      storeId: normalizedStoreId,
+    }).lean();
+
+    if (!existing) {
+      return res.status(404).json({
+        success: false,
+        message: 'Payment not found or access denied',
+      });
+    }
+
+    await CustomerPayment.deleteOne({ _id: new mongoose.Types.ObjectId(paymentId), storeId: normalizedStoreId });
+
+    const userId = req.user?.userId?.toString() ?? 'unknown';
+    log.info(
+      `[CustomerPayment] Deleted payment ${paymentId} (customerId=${existing.customerId} amount=${existing.amount}) by user ${userId}`
+    );
+
+    res.status(200).json({
+      success: true,
+      message: 'Customer payment deleted successfully',
+    });
+  } catch (error: any) {
+    next(error);
   }
 });
 

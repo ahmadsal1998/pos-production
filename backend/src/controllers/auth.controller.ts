@@ -1,20 +1,12 @@
-import { Response, NextFunction } from 'express';
+import { Response, NextFunction, Request } from 'express';
 import { body, validationResult } from 'express-validator';
-import OTP from '../models/OTP';
-import Settings from '../models/Settings';
-import { generateToken, generateRefreshToken } from '../utils/jwt';
 import { AuthenticatedRequest } from '../middleware/auth.middleware';
 import { asyncHandler } from '../middleware/error.middleware';
-import { generateOTP, getOTPExpiration } from '../utils/otp';
-import { sendOTPEmail } from '../utils/email';
-import User, { UserDocument } from '../models/User';
-import { checkAndUpdateStoreSubscription } from '../utils/subscriptionManager';
-import { log } from '../utils/logger';
+import { authService } from '../services/auth.service';
 
-// Login controller
+// Login controller — validation, call service, format response
 export const login = asyncHandler(
   async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
-    // Check for validation errors
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
       return res.status(400).json({
@@ -24,131 +16,53 @@ export const login = asyncHandler(
       });
     }
 
-    const { emailOrUsername, password, storeId } = req.body;
+    const { emailOrUsername, password } = req.body;
+    const result = await authService.login(emailOrUsername, password);
 
-    // Check admin credentials first (from .env)
-    const adminUsername = process.env.ADMIN_USERNAME;
-    const adminPassword = process.env.ADMIN_PASSWORD;
-
-    if (adminUsername && adminPassword) {
-      if (
-        emailOrUsername.toLowerCase() === adminUsername.toLowerCase() &&
-        password === adminPassword
-      ) {
-        // Admin login successful
-        const tokenPayload = {
-          userId: 'admin',
-          email: adminUsername,
-          role: 'Admin' as const,
-          storeId: null, // Admin users don't have a store
-        };
-
-        const token = generateToken(tokenPayload);
-        const refreshToken = generateRefreshToken(tokenPayload);
-
-        return res.status(200).json({
-          success: true,
-          message: 'Admin login successful',
-          data: {
-            user: {
-              id: 'admin',
-              fullName: 'System Admin',
-              username: adminUsername,
-              email: adminUsername,
-              role: 'Admin',
-              permissions: [],
-              isAdmin: true,
-            },
-            token,
-            refreshToken,
-          },
-        });
-      }
-    }
-
-    // Continue with regular store user login
-    // Use unified User model - email is globally unique, username is per-store
-    // Find user by email or username in unified collection
-    const user = await User.findOne({
-      $or: [
-        { email: emailOrUsername.toLowerCase() },
-        { username: emailOrUsername.toLowerCase() },
-      ],
-    }).select('+password');
-
-    if (!user) {
-      return res.status(401).json({
+    if (!result.success) {
+      const status = result.message.includes('deactivated') ? 403 : 401;
+      return res.status(status).json({
         success: false,
-        message: 'Invalid email or password',
+        message: result.message,
       });
     }
 
-    // Check if user is active
-    if (user.status !== 'Active') {
-      return res.status(401).json({
-        success: false,
-        message: 'Your account has been deactivated. Please contact admin.',
-      });
-    }
-
-    // Check store subscription status if user belongs to a store
-    // Note: We allow login even if subscription expired, but include status in response
-    let subscriptionStatus = null;
-    if (user.storeId) {
-      try {
-        subscriptionStatus = await checkAndUpdateStoreSubscription(user.storeId);
-      } catch (error: any) {
-        // If store not found, log but continue (shouldn't happen in normal flow)
-        console.error(`Error checking subscription for store ${user.storeId}:`, error.message);
-      }
-    }
-
-    // Verify password
-    const isPasswordValid = await user.comparePassword(password);
-    if (!isPasswordValid) {
-      return res.status(401).json({
-        success: false,
-        message: 'Invalid email or password',
-      });
-    }
-
-    // Update last login
-    user.lastLogin = new Date();
-    await user.save({ validateBeforeSave: false });
-
-    // Generate tokens
-    const tokenPayload = {
-      userId: user._id.toString(),
-      email: user.email,
-      role: user.role,
-      storeId: user.storeId || null,
-    };
-
-    const token = generateToken(tokenPayload);
-    const refreshToken = generateRefreshToken(tokenPayload);
-
-    // Send response
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
-      message: 'Login successful',
+      message: result.message,
       data: {
-        user: {
-          id: user._id.toString(),
-          fullName: user.fullName,
-          username: user.username,
-          email: user.email,
-          role: user.role,
-          permissions: user.permissions,
-          storeId: user.storeId || null,
-        },
-        token,
-        refreshToken,
-        subscriptionStatus: subscriptionStatus ? {
-          isActive: subscriptionStatus.isActive,
-          subscriptionExpired: subscriptionStatus.subscriptionExpired,
-          subscriptionEndDate: subscriptionStatus.subscriptionEndDate,
-        } : null,
+        user: result.user,
+        token: result.token,
+        refreshToken: result.refreshToken,
+        subscriptionStatus: result.subscriptionStatus ?? null,
       },
+    });
+  }
+);
+
+// Refresh access token using refresh token (no auth header required)
+export const refresh = asyncHandler(
+  async (req: Request, res: Response) => {
+    const refreshTokenFromBody = (req.body?.refreshToken as string)?.trim();
+    if (!refreshTokenFromBody) {
+      return res.status(400).json({
+        success: false,
+        message: 'Refresh token is required',
+      });
+    }
+    const result = await authService.refresh(refreshTokenFromBody);
+    if ('token' in result && result.token) {
+      return res.status(200).json({
+        success: true,
+        data: {
+          token: result.token,
+          refreshToken: result.refreshToken,
+        },
+      });
+    }
+    return res.status(401).json({
+      success: false,
+      message: (result as { message?: string }).message || 'Invalid or expired refresh token',
     });
   }
 );
@@ -157,8 +71,6 @@ export const login = asyncHandler(
 export const getMe = asyncHandler(
   async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
     const userId = req.user?.userId;
-    const storeId = req.user?.storeId;
-
     if (!userId) {
       return res.status(401).json({
         success: false,
@@ -166,51 +78,24 @@ export const getMe = asyncHandler(
       });
     }
 
-    // Find user in unified collection
-    const user = await User.findById(userId);
-
-    if (!user) {
+    const data = await authService.getMe(userId);
+    if (!data) {
       return res.status(404).json({
         success: false,
         message: 'User not found',
       });
     }
 
-    // Check store subscription status if user belongs to a store
-    let subscriptionStatus = null;
-    if (user.storeId) {
-      try {
-        subscriptionStatus = await checkAndUpdateStoreSubscription(user.storeId);
-      } catch (error: any) {
-        // If store not found, log but continue (shouldn't happen in normal flow)
-        console.error(`Error checking subscription for store ${user.storeId}:`, error.message);
-      }
-    }
-
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
       data: {
-        user: {
-          id: user._id.toString(),
-          fullName: user.fullName,
-          username: user.username,
-          email: user.email,
-          role: user.role,
-          permissions: user.permissions,
-          status: user.status,
-          lastLogin: user.lastLogin,
-        },
-        subscriptionStatus: subscriptionStatus ? {
-          isActive: subscriptionStatus.isActive,
-          subscriptionExpired: subscriptionStatus.subscriptionExpired,
-          subscriptionEndDate: subscriptionStatus.subscriptionEndDate,
-        } : null,
+        user: data.user,
+        subscriptionStatus: data.subscriptionStatus ?? null,
       },
     });
   }
 );
 
-// Logout controller (mostly client-side, but can be used for refresh token invalidation)
 export const logout = asyncHandler(
   async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
     res.status(200).json({
@@ -220,27 +105,20 @@ export const logout = asyncHandler(
   }
 );
 
-// Get contact number for expired subscription page (public endpoint)
+// Get contact number for expired subscription page (public)
 export const getContactNumber = asyncHandler(
   async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
-    const setting = await Settings.findOne({ key: 'subscription_contact_number' });
-    
-    // Default contact number if not set
-    const contactNumber = setting?.value || '0593202029';
-
+    const data = await authService.getContactNumber();
     res.status(200).json({
       success: true,
-      data: {
-        contactNumber,
-      },
+      data: { contactNumber: data.contactNumber },
     });
   }
 );
 
-// Forgot Password controller (Send OTP)
+// Forgot Password — send OTP
 export const forgotPassword = asyncHandler(
   async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
-    // Check for validation errors
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
       return res.status(400).json({
@@ -251,73 +129,25 @@ export const forgotPassword = asyncHandler(
     }
 
     const { email } = req.body;
+    const result = await authService.forgotPassword(email);
 
-    // Find user by email in unified collection (email is globally unique)
-    const user = await User.findOne({
-      email: email.toLowerCase(),
-    });
-
-    if (!user) {
-      // For security, don't reveal if email exists or not
-      return res.status(200).json({
-        success: true,
-        message: 'OTP sent successfully',
-      });
-    }
-
-    // Check if user is active
-    if (user.status !== 'Active') {
+    if (!result.success) {
       return res.status(403).json({
         success: false,
-        message: 'Your account has been deactivated. Please contact admin.',
+        message: result.message,
       });
     }
 
-    // Delete any existing OTP for this email
-    await OTP.deleteMany({ email: email.toLowerCase() });
-
-    // Generate new OTP
-    const code = generateOTP();
-    const expiresAt = getOTPExpiration();
-
-    // Save OTP to database
-    await OTP.create({
-      email: email.toLowerCase(),
-      code,
-      expiresAt,
-    });
-
-    // Send OTP via email
-    console.log(`📨 Sending OTP email to: ${email}`);
-    const emailResult = await sendOTPEmail(email, code);
-    if (!emailResult.success) {
-      // If email fails, still return success for security
-      // Log error for debugging
-      console.error('❌ Failed to send OTP email:', {
-        email,
-        error: emailResult.error,
-        message: emailResult.message,
-        hasApiKey: !!process.env.RESEND_API_KEY,
-        apiKeyLength: process.env.RESEND_API_KEY?.length || 0,
-      });
-      // Optionally, you could delete the OTP here if email fails
-      // await OTP.deleteMany({ email: email.toLowerCase() });
-    } else {
-      console.log(`✅ OTP email sent successfully to: ${email}`);
-    }
-
-    // Return success response
     res.status(200).json({
       success: true,
-      message: 'OTP sent successfully',
+      message: result.message,
     });
   }
 );
 
-// Verify OTP controller
+// Verify OTP
 export const verifyOTP = asyncHandler(
   async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
-    // Check for validation errors
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
       return res.status(400).json({
@@ -328,41 +158,25 @@ export const verifyOTP = asyncHandler(
     }
 
     const { email, code } = req.body;
+    const result = await authService.verifyOTP(email, code);
 
-    // Find OTP record
-    const otpRecord = await OTP.findOne({
-      email: email.toLowerCase(),
-      code,
-    });
-
-    if (!otpRecord) {
+    if (!result.success) {
       return res.status(400).json({
         success: false,
-        message: 'Invalid or expired OTP code',
+        message: result.message,
       });
     }
 
-    // Check if OTP has expired
-    if (otpRecord.expiresAt < new Date()) {
-      await OTP.deleteOne({ _id: otpRecord._id });
-      return res.status(400).json({
-        success: false,
-        message: 'OTP code has expired',
-      });
-    }
-
-    // OTP is valid
     res.status(200).json({
       success: true,
-      message: 'OTP verified successfully',
+      message: result.message,
     });
   }
 );
 
-// Reset Password controller
+// Reset Password
 export const resetPassword = asyncHandler(
   async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
-    // Check for validation errors
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
       return res.status(400).json({
@@ -373,58 +187,19 @@ export const resetPassword = asyncHandler(
     }
 
     const { email, newPassword } = req.body;
+    const result = await authService.resetPassword(email, newPassword);
 
-    // Find user by email in unified collection (email is globally unique)
-    const user = await User.findOne({
-      email: email.toLowerCase(),
-    });
-
-    if (!user) {
-      return res.status(404).json({
+    if (!result.success) {
+      const status = result.message.includes('not found') ? 404 : 400;
+      return res.status(status).json({
         success: false,
-        message: 'User not found',
+        message: result.message,
       });
     }
 
-    // Verify that a valid OTP exists for this email
-    // User should have verified OTP using /verify-otp endpoint first
-    const otpRecord = await OTP.findOne({
-      email: email.toLowerCase(),
-    });
-
-    if (!otpRecord) {
-      return res.status(400).json({
-        success: false,
-        message: 'OTP verification required. Please verify OTP first.',
-      });
-    }
-
-    // Check if OTP has expired
-    if (otpRecord.expiresAt < new Date()) {
-      await OTP.deleteOne({ _id: otpRecord._id });
-      return res.status(400).json({
-        success: false,
-        message: 'OTP has expired. Please request a new one.',
-      });
-    }
-
-    // Update user password directly (the pre-save hook will hash it)
-    // We set the plain password so the pre-save hook can hash it properly
-    user.password = newPassword;
-    
-    // Mark password as modified so pre-save hook runs
-    user.markModified('password');
-    
-    // Save user (pre-save hook will hash the password)
-    await user.save({ validateBeforeSave: false });
-
-    // Delete all OTP records for this email (used or expired)
-    await OTP.deleteMany({ email: email.toLowerCase() });
-
-    // Return success response
     res.status(200).json({
       success: true,
-      message: 'Password reset successfully',
+      message: result.message,
     });
   }
 );
@@ -442,7 +217,6 @@ export const validateLogin = [
     .withMessage('Password must be at least 6 characters'),
 ];
 
-// Validation middleware for forgot password
 export const validateForgotPassword = [
   body('email')
     .notEmpty()
@@ -453,7 +227,6 @@ export const validateForgotPassword = [
     .trim(),
 ];
 
-// Validation middleware for verify OTP
 export const validateVerifyOTP = [
   body('email')
     .notEmpty()
@@ -471,7 +244,6 @@ export const validateVerifyOTP = [
     .withMessage('OTP code must contain only numbers'),
 ];
 
-// Validation middleware for reset password
 export const validateResetPassword = [
   body('email')
     .notEmpty()
@@ -486,4 +258,3 @@ export const validateResetPassword = [
     .isLength({ min: 6 })
     .withMessage('Password must be at least 6 characters'),
 ];
-

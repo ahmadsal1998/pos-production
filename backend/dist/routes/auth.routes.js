@@ -26,6 +26,7 @@ var import_auth = require("../controllers/auth.controller");
 var import_auth2 = require("../middleware/auth.middleware");
 const router = (0, import_express.Router)();
 router.post("/login", import_auth.validateLogin, import_auth.login);
+router.post("/refresh", import_auth.refresh);
 router.post("/logout", import_auth2.authenticate, import_auth.logout);
 router.get("/contact-number", import_auth.getContactNumber);
 router.post("/forgot-password", import_auth.validateForgotPassword, import_auth.forgotPassword);

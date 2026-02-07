@@ -3,7 +3,8 @@
 // Uses IndexedDB for efficient storage and fast search
 
 import { productsApi, ApiError, apiClient } from '@/lib/api/client';
-import { getCachedProducts, setCachedProducts, invalidateProductsCache, getStoreIdFromToken } from '@/lib/cache/productsCache';
+import { getStoreIdFromToken } from '@/lib/utils/storeId';
+import { clearAllProductsCaches } from '@/lib/cache/productsCache';
 import { productsDB } from '@/lib/db/productsDB';
 
 export interface ProductSyncOptions {
@@ -150,22 +151,54 @@ class ProductSyncManager {
 
     this.syncInProgress.add(storeId);
     this.lastSyncTime = now;
-    
+
     console.log(`[ProductSync] 🚀 Starting sync for storeId: ${storeId} (forceRefresh: ${forceRefresh})`);
 
     try {
-      // Try to fetch all products in one request using all=true (more efficient, up to 10,000 products)
-      // Falls back to pagination if needed for stores with more than 10,000 products
-      let allProducts: any[] = [];
       const startTime = Date.now();
+      const lastSyncAt = productsDB.getLastSyncAt();
+
+      // Incremental sync: fetch only products modified since last sync (when we have a previous sync and not forcing full refresh)
+      if (lastSyncAt && !forceRefresh) {
+        try {
+          console.log(`[ProductSync] Attempting incremental sync (modifiedSince: ${lastSyncAt})...`);
+          const incResponse = await productsApi.getProducts({
+            modifiedSince: lastSyncAt,
+            all: true,
+            includeCategories: true,
+          });
+          if (incResponse.success) {
+            const incData = (incResponse.data as any)?.products ?? (incResponse.data as any)?.items ?? [];
+            if (incData.length > 0) {
+              await productsDB.storeProducts(incData, { clearAll: false });
+              const maxUpdatedAt = incData.reduce((max: string, p: any) => {
+                const u = p.updatedAt ? new Date(p.updatedAt).toISOString() : '';
+                return u > max ? u : max;
+              }, '');
+              if (maxUpdatedAt) productsDB.setLastSyncAt(maxUpdatedAt);
+              (productsDB as any).notifyOtherTabs?.();
+              console.log(`[ProductSync] ✅ Incremental sync completed: ${incData.length} product(s) updated`);
+              if (onSyncComplete) onSyncComplete(incData.length);
+              return { success: true, syncedCount: incData.length, products: incData };
+            }
+            console.log(`[ProductSync] No changes since last sync (modifiedSince: ${lastSyncAt})`);
+            if (onSyncComplete) onSyncComplete(0);
+            return { success: true, syncedCount: 0 };
+          }
+        } catch (incErr: any) {
+          console.warn(`[ProductSync] Incremental sync failed, falling back to full sync:`, incErr?.message || incErr);
+        }
+      }
+
+      // Full sync: fetch all products (all=true, cap configurable via backend MAX_PRODUCTS_FULL_SYNC)
+      let allProducts: any[] = [];
       let totalProductsFromServer: number | null = null;
 
       try {
-        // First, try fetching all products at once (up to 10,000)
         console.log(`[ProductSync] Attempting to fetch all products at once (all=true)...`);
-        const allResponse = await productsApi.getProducts({ 
+        const allResponse = await productsApi.getProducts({
           all: true,
-          includeCategories: true 
+          includeCategories: true,
         });
 
         if (allResponse.success) {
@@ -288,30 +321,28 @@ class ProductSyncManager {
             hasToken: !!localStorage.getItem('auth-token'),
           });
           
-          // For 401 errors, check if token is still valid
+          // For 401 errors, check if token is still valid (safe decode clears invalid tokens)
           if (pageError.status === 401) {
-            const token = localStorage.getItem('auth-token');
-            if (token) {
-              try {
-                // Check if token is expired
-                const payload = JSON.parse(atob(token.split('.')[1]));
-                const exp = payload.exp * 1000;
-                const now = Date.now();
-                if (exp < now) {
-                  console.error(`[ProductSync] Token expired during pagination. Stopping at page ${currentPage}`);
-                  hasMorePages = false;
-                } else {
-                  // Token is still valid but got 401 - might be temporary server issue
-                  // Retry once for pagination requests
-                  console.warn(`[ProductSync] ⚠️ Got 401 but token is valid. Retrying page ${currentPage} once...`);
-                  try {
-                    await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second
-                    const retryResponse = await productsApi.getProducts({ 
-                      page: currentPage, 
-                      limit: pageSize,
-                      includeCategories: true 
-                    });
-                    if (retryResponse.success) {
+            const { safeDecodeAuthToken } = await import('@/lib/utils/authToken');
+            const payload = safeDecodeAuthToken();
+            if (payload) {
+              const exp = (payload.exp as number) * 1000;
+              const now = Date.now();
+              if (exp < now) {
+                console.error(`[ProductSync] Token expired during pagination. Stopping at page ${currentPage}`);
+                hasMorePages = false;
+              } else {
+                // Token is still valid but got 401 - might be temporary server issue
+                // Retry once for pagination requests
+                console.warn(`[ProductSync] ⚠️ Got 401 but token is valid. Retrying page ${currentPage} once...`);
+                try {
+                  await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second
+                  const retryResponse = await productsApi.getProducts({ 
+                    page: currentPage, 
+                    limit: pageSize,
+                    includeCategories: true 
+                  });
+                  if (retryResponse.success) {
                       const retryResponseData = retryResponse.data as any;
                       const productsData = retryResponseData?.products || [];
                       allProducts = [...allProducts, ...productsData];
@@ -333,10 +364,6 @@ class ProductSyncManager {
                   }
                   hasMorePages = false;
                 }
-              } catch (e) {
-                console.error(`[ProductSync] Error decoding token:`, e);
-                hasMorePages = false;
-              }
             } else {
               console.error(`[ProductSync] No token found after 401 error. Stopping pagination.`);
               hasMorePages = false;
@@ -369,11 +396,15 @@ class ProductSyncManager {
       console.log(`[ProductSync] ✅ Sync completed: ${allProducts.length} products fetched in ${syncDuration}s${totalProductsFromServer !== null ? ` (server total: ${totalProductsFromServer})` : ''}`);
 
       if (allProducts.length > 0) {
-        // Store in IndexedDB (primary storage)
-        // Use incremental updates by default (faster) - only clearAll for forced full refresh
         try {
           await productsDB.storeProducts(allProducts, { clearAll: forceRefresh });
-          
+          const maxUpdatedAt = allProducts.reduce((max: string, p: any) => {
+            const u = p.updatedAt ? new Date(p.updatedAt).toISOString() : '';
+            return u > max ? u : max;
+          }, '');
+          if (maxUpdatedAt) productsDB.setLastSyncAt(maxUpdatedAt);
+          else productsDB.setLastSyncAt(new Date().toISOString());
+
           // Verify the count matches (safety check)
           const storedCount = await productsDB.getProductCount();
           if (storedCount !== allProducts.length) {
@@ -400,19 +431,6 @@ class ProductSyncManager {
           (productsDB as any).notifyOtherTabs();
         } catch (dbError) {
           console.error('[ProductSync] Error storing products in IndexedDB:', dbError);
-        }
-
-        // Also update localStorage cache for backward compatibility
-        try {
-          const categories: Record<string, any> = {};
-          allProducts.forEach((p: any) => {
-            if (p.categoryId && p.category) {
-              categories[p.categoryId] = p.category;
-            }
-          });
-          setCachedProducts(storeId, allProducts, categories);
-        } catch (cacheError) {
-          console.warn('[ProductSync] Error updating localStorage cache:', cacheError);
         }
 
         const result: ProductSyncResult = {
@@ -514,34 +532,6 @@ class ProductSyncManager {
           (productsDB as any).notifyOtherTabs();
         } catch (dbError) {
           console.error('[ProductSync] Error updating IndexedDB:', dbError);
-        }
-
-        // Also update localStorage cache for backward compatibility
-        try {
-          const cached = getCachedProducts(storeId);
-          if (cached) {
-            const productMap = new Map(
-              cached.products.map((p: any) => [String(p.id || p._id), p])
-            );
-
-            updatedProducts.forEach((product: any) => {
-              const productId = String(product.id || product._id);
-              productMap.set(productId, product);
-            });
-
-            const mergedProducts = Array.from(productMap.values());
-            const categories: Record<string, any> = { ...cached.categories };
-            
-            updatedProducts.forEach((p: any) => {
-              if (p.categoryId && p.category) {
-                categories[p.categoryId] = p.category;
-              }
-            });
-
-            setCachedProducts(storeId, mergedProducts, categories);
-          }
-        } catch (cacheError) {
-          console.warn('[ProductSync] Error updating localStorage cache:', cacheError);
         }
 
         // Get all products from IndexedDB to return
@@ -661,14 +651,16 @@ class ProductSyncManager {
   }
 
   /**
-   * Invalidate cache and force refresh
+   * Invalidate cache: clear in-memory barcode cache and legacy localStorage keys.
+   * Next read will use IndexedDB (and API if sync is triggered).
    */
   invalidateCache(): void {
     const storeId = getStoreIdFromToken();
     if (storeId) {
-      invalidateProductsCache(storeId);
-      console.log('[ProductSync] Cache invalidated');
+      productsDB.clearBarcodeCache(storeId);
     }
+    clearAllProductsCaches();
+    console.log('[ProductSync] Cache invalidated');
   }
 
   /**
@@ -736,19 +728,6 @@ class ProductSyncManager {
       (productsDB as any).notifyOtherTabs();
       console.log(`[ProductSync] Deleted product ${productId} from IndexedDB`);
 
-      // Also update localStorage cache for backward compatibility
-      try {
-        const cached = getCachedProducts(storeId);
-        if (cached) {
-          const filteredProducts = cached.products.filter(
-            (p: any) => String(p.id || p._id) !== String(productId)
-          );
-          setCachedProducts(storeId, filteredProducts, cached.categories);
-        }
-      } catch (cacheError) {
-        console.warn('[ProductSync] Error updating localStorage cache:', cacheError);
-      }
-
       return {
         success: true,
         syncedCount: 1,
@@ -764,19 +743,13 @@ class ProductSyncManager {
   }
 
   /**
-   * Get cached products from IndexedDB (if available)
+   * Get cached products from IndexedDB (single source for product list).
    */
   async getCachedProducts(): Promise<any[]> {
     try {
       return await productsDB.getAllProducts();
     } catch (error) {
       console.error('[ProductSync] Error getting products from IndexedDB:', error);
-      // Fallback to localStorage
-      const storeId = getStoreIdFromToken();
-      if (storeId) {
-        const cached = getCachedProducts(storeId);
-        return cached ? cached.products : [];
-      }
       return [];
     }
   }

@@ -9,7 +9,7 @@ import CustomDropdown from '@/shared/components/ui/CustomDropdown/CustomDropdown
 import { useDropdown } from '@/shared/contexts/DropdownContext';
 import { MetricCard } from '@/shared/components';
 import { formatDate } from '@/shared/utils';
-import { customersApi, salesApi, ApiError, storeSettingsApi, productsApi, usersApi } from '@/lib/api/client';
+import { customersApi, salesApi, ApiError, getApiErrorMessage, storeSettingsApi, productsApi, usersApi } from '@/lib/api/client';
 import { useCurrency } from '@/shared/contexts/CurrencyContext';
 import { useAuthStore } from '@/app/store';
 import { printReceipt } from '@/shared/utils/printUtils';
@@ -697,9 +697,11 @@ const CustomerDetailsModal: React.FC<{
     sales: SaleTransaction[];
     payments: CustomerPayment[];
     onClose: () => void;
-}> = ({ summary, sales, payments, onClose }) => {
+    onStatementUpdated?: () => void;
+}> = ({ summary, sales, payments, onClose, onStatementUpdated }) => {
     const { formatCurrency } = useCurrency();
     const { user } = useAuthStore();
+    const confirmDialog = useConfirmDialog();
     const [storeAddress, setStoreAddress] = useState<string>('');
     const [businessName, setBusinessName] = useState<string>('');
     const [allCustomerSales, setAllCustomerSales] = useState<SaleTransaction[]>([]);
@@ -707,6 +709,17 @@ const CustomerDetailsModal: React.FC<{
     const [rawSalesData, setRawSalesData] = useState<any[]>([]); // Store raw API data to access createdAt
     const [rawPaymentsData, setRawPaymentsData] = useState<any[]>([]); // Store raw API data to access createdAt
     const [isLoadingTransactions, setIsLoadingTransactions] = useState(false);
+    const [selectedTransaction, setSelectedTransaction] = useState<{ index: number; transaction: any } | null>(null);
+    const [showEditPaymentModal, setShowEditPaymentModal] = useState(false);
+    const [isSavingPayment, setIsSavingPayment] = useState(false);
+    const [paymentEditForm, setPaymentEditForm] = useState<{ amount: number; method: 'Cash' | 'Bank Transfer' | 'Cheque'; date: string; notes: string; invoiceId: string }>({ amount: 0, method: 'Cash', date: '', notes: '', invoiceId: '' });
+
+    useEffect(() => {
+        if (!summary) {
+            setSelectedTransaction(null);
+            setShowEditPaymentModal(false);
+        }
+    }, [summary]);
 
     // Prevent body scroll when modal is open and lock scroll position
     useEffect(() => {
@@ -946,7 +959,8 @@ const CustomerDetailsModal: React.FC<{
                     invoiceNumber: s.invoiceNumber || s.id || null,
                     debit: isReturn ? 0 : amount,
                     credit: isReturn ? amount : 0,
-                    // Explicitly exclude: items, product details, item-level discounts, etc.
+                    sourceType: 'sale' as const,
+                    sourceId: s.id || s.invoiceNumber || '',
                 };
             });
 
@@ -998,6 +1012,8 @@ const CustomerDetailsModal: React.FC<{
                     invoiceNumber: p.invoiceId || null,
                     debit: isCredit ? 0 : absoluteAmount,
                     credit: isCredit ? absoluteAmount : 0,
+                    sourceType: 'payment' as const,
+                    sourceId: p.id,
                 };
             });
         
@@ -1093,6 +1109,87 @@ const CustomerDetailsModal: React.FC<{
         return transactionsWithBalance;
 
     }, [summary?.customerId, allCustomerSales, allCustomerPayments, rawSalesData, rawPaymentsData, sales, payments]);
+
+    const refetchPayments = useCallback(async () => {
+        if (!summary?.customerId) return;
+        try {
+            const paymentsResponse = await customersApi.getCustomerPayments({ customerId: summary.customerId });
+            const backendResponse = paymentsResponse.data as any;
+            if (backendResponse?.success && Array.isArray(backendResponse.data?.payments)) {
+                setRawPaymentsData(backendResponse.data.payments);
+                const apiPayments: CustomerPayment[] = backendResponse.data.payments.map((payment: any) => ({
+                    id: payment.id || payment._id,
+                    customerId: payment.customerId,
+                    date: payment.date || payment.createdAt || new Date().toISOString(),
+                    amount: payment.amount || 0,
+                    method: payment.method || 'Cash',
+                    invoiceId: payment.invoiceId || null,
+                    notes: payment.notes || '',
+                }));
+                setAllCustomerPayments(apiPayments);
+            }
+        } catch (e) {
+            console.error('[CustomerDetailsModal] Error refetching payments', e);
+        }
+    }, [summary?.customerId]);
+
+    const handleOpenEditPayment = useCallback(() => {
+        if (!selectedTransaction || selectedTransaction.transaction.sourceType !== 'payment') return;
+        const payment = allCustomerPayments.find(p => p.id === selectedTransaction.transaction.sourceId);
+        if (!payment) return;
+        const dateStr = typeof payment.date === 'string' ? payment.date.slice(0, 16) : new Date(payment.date).toISOString().slice(0, 16);
+        setPaymentEditForm({
+            amount: payment.amount,
+            method: payment.method || 'Cash',
+            date: dateStr,
+            notes: payment.notes || '',
+            invoiceId: payment.invoiceId || '',
+        });
+        setShowEditPaymentModal(true);
+    }, [selectedTransaction, allCustomerPayments]);
+
+    const handleSaveEditPayment = useCallback(async () => {
+        if (!selectedTransaction || selectedTransaction.transaction.sourceType !== 'payment') return;
+        setIsSavingPayment(true);
+        try {
+            await customersApi.updateCustomerPayment(selectedTransaction.transaction.sourceId, {
+                amount: paymentEditForm.amount,
+                method: paymentEditForm.method,
+                date: paymentEditForm.date ? new Date(paymentEditForm.date).toISOString() : undefined,
+                notes: paymentEditForm.notes || null,
+                invoiceId: paymentEditForm.invoiceId?.trim() || null,
+            });
+            await refetchPayments();
+            await onStatementUpdated?.();
+            setSelectedTransaction(null);
+            setShowEditPaymentModal(false);
+        } catch (err: any) {
+            console.error('[CustomerDetailsModal] Error updating payment', err);
+            const msg = err?.response?.data?.message || err?.message || 'فشل تحديث الحركة';
+            alert(msg);
+        } finally {
+            setIsSavingPayment(false);
+        }
+    }, [selectedTransaction, paymentEditForm, refetchPayments, onStatementUpdated]);
+
+    const handleDeletePayment = useCallback(async () => {
+        if (!selectedTransaction || selectedTransaction.transaction.sourceType !== 'payment') return;
+        const confirmed = await confirmDialog({
+            title: AR_LABELS.confirmDeletePaymentTitle,
+            message: AR_LABELS.confirmDeletePaymentMessage,
+        });
+        if (!confirmed) return;
+        try {
+            await customersApi.deleteCustomerPayment(selectedTransaction.transaction.sourceId);
+            await refetchPayments();
+            await onStatementUpdated?.();
+            setSelectedTransaction(null);
+        } catch (err: any) {
+            console.error('[CustomerDetailsModal] Error deleting payment', err);
+            const msg = err?.response?.data?.message || err?.message || 'فشل حذف الحركة';
+            alert(msg);
+        }
+    }, [selectedTransaction, refetchPayments, onStatementUpdated, confirmDialog]);
 
     // Helper function to render description with clickable invoice numbers
     const renderDescriptionWithInvoiceLink = (transaction: any) => {
@@ -1212,10 +1309,10 @@ const CustomerDetailsModal: React.FC<{
                         <div className="text-left text-sm print-hidden">
                             <p><strong>{AR_LABELS.totalDebt}:</strong> {formatCurrency(summary.totalSales)}</p>
                             <p><strong>{AR_LABELS.totalPayments}:</strong> {formatCurrency(summary.totalPaid)}</p>
-                            <p className="font-bold text-lg">{AR_LABELS.balance}: <span className={summary.balance > 0 ? 'text-blue-600' : summary.balance < 0 ? 'text-red-600' : 'text-gray-600'}>
+                            <p className="font-bold text-lg">{AR_LABELS.balance}: <span className={summary.balance > 0 ? 'text-red-600' : summary.balance < 0 ? 'text-blue-600' : 'text-gray-600'}>
                                 {formatCurrency(Math.abs(summary.balance))}
-                                {summary.balance > 0 && ' (دائن)'}
-                                {summary.balance < 0 && ' (مدين)'}
+                                {summary.balance > 0 && ' (مدين)'}
+                                {summary.balance < 0 && ' (دائن)'}
                             </span></p>
                         </div>
                     </div>
@@ -1233,13 +1330,39 @@ const CustomerDetailsModal: React.FC<{
                             <span>{AR_LABELS.balance}:</span>
                             <span>
                                 {formatCurrency(Math.abs(summary.balance))}
-                                {summary.balance > 0 && ' (دائن)'}
-                                {summary.balance < 0 && ' (مدين)'}
+                                {summary.balance > 0 && ' (مدين)'}
+                                {summary.balance < 0 && ' (دائن)'}
                             </span>
                         </div>
                     </div>
                     {/* Transaction History Table - Only shows transaction summaries, NOT full invoice details */}
                     <div className="mt-4 max-h-[50vh] overflow-y-auto statement-table-container">
+                        {!isLoadingTransactions && transactions.length > 0 && (
+                            <div className="flex flex-wrap items-center gap-2 mb-2 print-hidden sticky top-0 z-10 py-2 bg-white dark:bg-gray-800">
+                                <span className="text-xs text-gray-500 dark:text-gray-400">{AR_LABELS.selectTransactionToEditOrDelete}</span>
+                                <button
+                                    type="button"
+                                    onClick={handleOpenEditPayment}
+                                    disabled={!selectedTransaction || selectedTransaction.transaction.sourceType !== 'payment'}
+                                    className="inline-flex items-center px-3 py-1.5 text-sm bg-blue-500 text-white rounded-md hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                                >
+                                    <EditIcon className="w-4 h-4 ml-1" />
+                                    {AR_LABELS.editTransaction}
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={handleDeletePayment}
+                                    disabled={!selectedTransaction || selectedTransaction.transaction.sourceType !== 'payment'}
+                                    className="inline-flex items-center px-3 py-1.5 text-sm bg-red-500 text-white rounded-md hover:bg-red-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                                >
+                                    <DeleteIcon className="w-4 h-4 ml-1" />
+                                    {AR_LABELS.deleteTransaction}
+                                </button>
+                                {selectedTransaction && selectedTransaction.transaction.sourceType !== 'payment' && (
+                                    <span className="text-xs text-amber-600 dark:text-amber-400">{AR_LABELS.onlyPaymentTransactionsEditable}</span>
+                                )}
+                            </div>
+                        )}
                         {isLoadingTransactions ? (
                             <div className="text-center py-8 text-gray-500 dark:text-gray-400">
                                 <p>جاري تحميل جميع المعاملات...</p>
@@ -1261,6 +1384,7 @@ const CustomerDetailsModal: React.FC<{
                                 </thead>
                                  <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
                                      {transactions.map((t, i) => {
+                                         const isSelected = selectedTransaction?.index === i;
                                          // Display debit and credit as separate positive values
                                          const debitDisplay = t.debit > 0 
                                              ? formatStatementNumber(t.debit, (val) => formatCurrency(val, { minimumFractionDigits: 0, maximumFractionDigits: 2, showSymbol: false }))
@@ -1269,7 +1393,11 @@ const CustomerDetailsModal: React.FC<{
                                              ? formatStatementNumber(t.credit, (val) => formatCurrency(val, { minimumFractionDigits: 0, maximumFractionDigits: 2, showSymbol: false }))
                                              : '-';
                                          return (
-                                             <tr key={i}>
+                                             <tr
+                                                 key={i}
+                                                 onClick={() => setSelectedTransaction({ index: i, transaction: t })}
+                                                 className={`cursor-pointer print:cursor-default ${isSelected ? 'bg-blue-100 dark:bg-blue-900/30 ring-1 ring-blue-300 dark:ring-blue-700' : 'hover:bg-gray-50 dark:hover:bg-gray-700/50'}`}
+                                             >
                                                  <td className="p-2 text-sm text-right statement-col-date print-text-black text-gray-900 dark:text-gray-100 font-medium">{formatDate(t.date)}</td>
                                                  <td className="p-2 text-sm statement-col-description">
                                                      <div>{renderDescriptionWithInvoiceLink(t)}</div>
@@ -1289,6 +1417,75 @@ const CustomerDetailsModal: React.FC<{
                         )}
                     </div>
                 </div>
+                {/* Edit Payment Modal */}
+                {showEditPaymentModal && (
+                    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[10000]" onClick={() => !isSavingPayment && setShowEditPaymentModal(false)}>
+                        <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-md mx-4 p-6 text-right" onClick={e => e.stopPropagation()}>
+                            <h3 className="text-lg font-bold text-gray-900 dark:text-gray-100 mb-4">{AR_LABELS.editTransaction}</h3>
+                            <div className="space-y-4">
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{AR_LABELS.amount}</label>
+                                    <input
+                                        type="number"
+                                        step="0.01"
+                                        value={paymentEditForm.amount}
+                                        onChange={e => setPaymentEditForm(prev => ({ ...prev, amount: parseFloat(e.target.value) || 0 }))}
+                                        className="w-full border border-gray-300 dark:border-gray-600 rounded-md px-3 py-2 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{AR_LABELS.date}</label>
+                                    <input
+                                        type="datetime-local"
+                                        value={paymentEditForm.date}
+                                        onChange={e => setPaymentEditForm(prev => ({ ...prev, date: e.target.value }))}
+                                        className="w-full border border-gray-300 dark:border-gray-600 rounded-md px-3 py-2 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{AR_LABELS.paymentMethod}</label>
+                                    <select
+                                        value={paymentEditForm.method}
+                                        onChange={e => setPaymentEditForm(prev => ({ ...prev, method: e.target.value as 'Cash' | 'Bank Transfer' | 'Cheque' }))}
+                                        className="w-full border border-gray-300 dark:border-gray-600 rounded-md px-3 py-2 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
+                                    >
+                                        <option value="Cash">{AR_LABELS.cash}</option>
+                                        <option value="Bank Transfer">تحويل بنكي</option>
+                                        <option value="Cheque">شيك</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{AR_LABELS.reference}</label>
+                                    <input
+                                        type="text"
+                                        value={paymentEditForm.invoiceId}
+                                        onChange={e => setPaymentEditForm(prev => ({ ...prev, invoiceId: e.target.value }))}
+                                        placeholder={AR_LABELS.invoice}
+                                        className="w-full border border-gray-300 dark:border-gray-600 rounded-md px-3 py-2 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">ملاحظات</label>
+                                    <input
+                                        type="text"
+                                        value={paymentEditForm.notes}
+                                        onChange={e => setPaymentEditForm(prev => ({ ...prev, notes: e.target.value }))}
+                                        className="w-full border border-gray-300 dark:border-gray-600 rounded-md px-3 py-2 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
+                                    />
+                                </div>
+                            </div>
+                            <div className="flex justify-start gap-2 mt-6">
+                                <button onClick={handleSaveEditPayment} disabled={isSavingPayment} className="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 disabled:opacity-50">
+                                    {isSavingPayment ? '...' : AR_LABELS.save}
+                                </button>
+                                <button onClick={() => setShowEditPaymentModal(false)} disabled={isSavingPayment} className="px-4 py-2 bg-gray-200 dark:bg-gray-600 text-gray-800 dark:text-gray-200 rounded-md">
+                                    {AR_LABELS.cancel}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
                  <div className="flex justify-start space-x-4 space-x-reverse p-4 bg-gray-50 dark:bg-gray-800/50 border-t dark:border-gray-700 rounded-b-lg print-hidden flex-shrink-0">
                     <button onClick={() => printReceipt('printable-receipt')} className="inline-flex items-center px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 transition-colors"><PrintIcon/><span className="mr-2">{AR_LABELS.printReceipt}</span></button>
                     <button onClick={() => {
@@ -2097,13 +2294,9 @@ const SalesPage: React.FC<SalesPageProps> = ({ setActivePath }) => {
         }
     }, [confirmDialog, fetchSales, currentPage, filters.dateRange, formatCurrency, navigate]);
 
-    // Load customers from IndexedDB on mount
+    // Load customers from IndexedDB on mount (do not fetch all payments on load - defer to Reports tab to avoid timeout)
     useEffect(() => {
-        // Load customers from IndexedDB (fast, handles large datasets)
         loadCustomersFromDB();
-        fetchPayments();
-        
-        // Also sync customers in background
         const timer = setTimeout(() => {
             customerSync.syncCustomers({ forceRefresh: false }).then((result) => {
                 if (result.success && result.customers) {
@@ -2118,9 +2311,15 @@ const SalesPage: React.FC<SalesPageProps> = ({ setActivePath }) => {
                 }
             });
         }, 500);
-        
         return () => clearTimeout(timer);
-    }, [loadCustomersFromDB, fetchPayments]);
+    }, [loadCustomersFromDB]);
+
+    // Defer heavy payments fetch until user opens Reports tab (avoids 30s timeout on page load)
+    useEffect(() => {
+        if (activeTab === 'reports') {
+            fetchPayments();
+        }
+    }, [activeTab, fetchPayments]);
 
     // Listen for customer changes from other tabs
     useEffect(() => {
@@ -2178,8 +2377,9 @@ const SalesPage: React.FC<SalesPageProps> = ({ setActivePath }) => {
     // Fetch all users from the store to populate seller filter
     const fetchSellers = useCallback(async () => {
         try {
-            const response = await usersApi.getUsers();
-            const usersData = (response.data as any)?.data?.users || [];
+            const response = await usersApi.getUsers({ page: 1, limit: 100 });
+            const data = (response.data as any)?.data;
+            const usersData = data?.items ?? data?.users ?? [];
             
             if (Array.isArray(usersData) && usersData.length > 0) {
                 // Extract seller names from users (use fullName or username)
@@ -2889,8 +3089,7 @@ const SalesPage: React.FC<SalesPageProps> = ({ setActivePath }) => {
                                         navigate('/login', { replace: true });
                                         return;
                                     }
-                                    const errorMessage = apiError.message || 'فشل حفظ العميل. يرجى المحاولة مرة أخرى.';
-                                    alert(errorMessage);
+                                    alert(getApiErrorMessage(err, 'فشل حفظ العميل. يرجى المحاولة مرة أخرى.'));
                                     console.error('Error saving customer:', err);
                                     throw err; // Re-throw to let modal handle it
                                 }
@@ -4138,19 +4337,19 @@ const CustomerGridCard: React.FC<{
                 </div>
                 <div className={`flex justify-between items-center text-sm py-2 px-3 rounded-lg border ${
                     summary && summary.balance > 0 
-                        ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800' 
+                        ? 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800' 
                         : summary && summary.balance < 0
-                        ? 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800'
+                        ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800'
                         : 'bg-gray-50 dark:bg-gray-800 border-gray-200 dark:border-gray-700'
                 }`}>
                     <span className="text-gray-700 dark:text-gray-300 font-medium flex items-center gap-1.5">
                         {summary && summary.balance > 0 ? (
-                            <span className="inline-flex items-center justify-center w-5 h-5 bg-blue-200 dark:bg-blue-800 rounded-full" title="العميل له رصيد دائن">
-                                <span className="text-blue-700 dark:text-blue-400 text-xs font-bold">+</span>
-                            </span>
-                        ) : summary && summary.balance < 0 ? (
                             <span className="inline-flex items-center justify-center w-5 h-5 bg-red-200 dark:bg-red-800 rounded-full" title="العميل مدين">
                                 <span className="text-red-700 dark:text-red-400 text-xs font-bold">-</span>
+                            </span>
+                        ) : summary && summary.balance < 0 ? (
+                            <span className="inline-flex items-center justify-center w-5 h-5 bg-blue-200 dark:bg-blue-800 rounded-full" title="العميل له رصيد دائن">
+                                <span className="text-blue-700 dark:text-blue-400 text-xs font-bold">+</span>
                             </span>
                         ) : (
                             <span className="inline-flex items-center justify-center w-5 h-5 bg-gray-200 dark:bg-gray-700 rounded-full" title="لا يوجد رصيد">
@@ -4161,17 +4360,17 @@ const CustomerGridCard: React.FC<{
                     </span>
                     <span className={`font-bold text-base ${
                         summary && summary.balance > 0 
-                            ? 'text-blue-700 dark:text-blue-400' 
+                            ? 'text-red-700 dark:text-red-400' 
                             : summary && summary.balance < 0
-                            ? 'text-red-700 dark:text-red-400'
+                            ? 'text-blue-700 dark:text-blue-400'
                             : 'text-gray-700 dark:text-gray-300'
                     }`}>
                         {summary ? formatCurrency(Math.abs(summary.balance)) : formatCurrency(0)}
                         {summary && summary.balance > 0 && (
-                            <span className="text-xs ml-1 text-blue-600 dark:text-blue-400">(دائن)</span>
+                            <span className="text-xs ml-1 text-red-600 dark:text-red-400">(مدين)</span>
                         )}
                         {summary && summary.balance < 0 && (
-                            <span className="text-xs ml-1 text-red-600 dark:text-red-400">(مدين)</span>
+                            <span className="text-xs ml-1 text-blue-600 dark:text-blue-400">(دائن)</span>
                         )}
                     </span>
                 </div>
@@ -4464,9 +4663,10 @@ const CustomerAccountsView: React.FC<{
         }, 3000); // Auto-hide after 3 seconds
     }, []);
     
-    // State for all sales (for accurate balance calculations)
-    const [allSales, setAllSales] = useState<SaleTransaction[]>([]);
-    const [isLoadingAllSales, setIsLoadingAllSales] = useState(false);
+    // Customer account summaries from dedicated API (avoids loading all sales/payments)
+    const [apiSummaries, setApiSummaries] = useState<CustomerAccountSummary[]>([]);
+    const [isLoadingSummaries, setIsLoadingSummaries] = useState(true);
+    const [summariesError, setSummariesError] = useState<string | null>(null);
     
     // Pagination state
     const [currentPage, setCurrentPage] = useState(1);
@@ -4477,61 +4677,41 @@ const CustomerAccountsView: React.FC<{
     const [datePreset, setDatePreset] = useState<'today' | 'week' | 'month' | 'custom'>('today');
     const [dateRange, setDateRange] = useState<{ start: string; end: string }>({ start: today, end: today });
 
-    // Fetch all sales for accurate balance calculations (not filtered by date)
-    const fetchAllSales = useCallback(async () => {
-        setIsLoadingAllSales(true);
+    const fetchSummaries = useCallback(async () => {
+        setIsLoadingSummaries(true);
+        setSummariesError(null);
         try {
-            // Fetch all sales without date filters for accurate account balances
-            const response = await salesApi.getSales({ limit: 10000 });
-            const backendResponse = response.data as any;
-            
-            if (backendResponse?.success && Array.isArray(backendResponse.data?.sales)) {
-                const apiSales: SaleTransaction[] = backendResponse.data.sales.map((sale: any) => ({
-                    id: sale.id || sale._id || sale.invoiceNumber,
-                    invoiceNumber: sale.invoiceNumber || sale.id || sale._id,
-                    date: sale.date || sale.createdAt || new Date().toISOString(),
-                    customerName: sale.customerName || 'عميل نقدي',
-                    customerId: sale.customerId || 'walk-in-customer',
-                    totalAmount: sale.total || sale.totalAmount || 0,
-                    paidAmount: sale.paidAmount || 0,
-                    remainingAmount: sale.remainingAmount || (sale.total - (sale.paidAmount || 0)),
-                    paymentMethod: (sale.paymentMethod?.charAt(0).toUpperCase() + sale.paymentMethod?.slice(1).toLowerCase()) as SalePaymentMethod || 'Cash',
-                    status: sale.status === 'completed' ? 'Paid' : sale.status === 'partial_payment' ? 'Partial' : sale.status === 'pending' ? 'Due' : sale.status === 'refunded' || sale.status === 'partial_refund' ? 'Returned' : (sale.status as SaleStatus) || 'Paid',
-                    seller: sale.seller || sale.cashier || currentUserName,
-                        items: Array.isArray(sale.items) ? sale.items.map((item: any) => ({
-                            productId: typeof item.productId === 'string' ? parseInt(item.productId) || 0 : item.productId || 0,
-                            name: item.productName || item.name || '',
-                            unit: item.unit || 'قطعة',
-                            quantity: item.quantity || 0,
-                            unitPrice: item.unitPrice || 0,
-                            total: item.totalPrice || item.total || 0,
-                            discount: item.discount || 0,
-                            conversionFactor: item.conversionFactor,
-                            costPrice: item.costPrice, // Include costPrice from API
-                            cost: item.cost || item.costPrice, // Include cost (legacy) or costPrice
-                        })) : [],
-                        subtotal: sale.subtotal || 0,
-                    totalItemDiscount: sale.totalItemDiscount || 0,
-                    invoiceDiscount: sale.invoiceDiscount || sale.discount || 0,
-                    tax: sale.tax || 0,
-                }));
-                
-                setAllSales(apiSales);
-            } else {
-                setAllSales([]);
-            }
+            const response = await customersApi.getCustomerAccountsSummary({ _t: Date.now() });
+            const data = (response.data as any)?.data;
+            const summaries = Array.isArray(data?.summaries) ? data.summaries : [];
+            const mapped = summaries.map((s: any) => ({
+                customerId: s.customerId,
+                customerName: s.customerName || '',
+                address: s.address,
+                totalSales: s.totalSales ?? 0,
+                totalPaid: s.totalPaid ?? 0,
+                balance: s.balance ?? 0,
+                lastPaymentDate: s.lastPaymentDate ? (typeof s.lastPaymentDate === 'string' ? formatDate(s.lastPaymentDate) : s.lastPaymentDate) : null,
+            }));
+            setApiSummaries(mapped);
+            // If the statement modal is open, refresh its summary so balances/totals update immediately
+            setStatementModalTarget(prev => {
+                if (!prev) return null;
+                const updated = mapped.find((s: any) => s.customerId === prev.customerId);
+                return updated ?? prev;
+            });
         } catch (error: any) {
-            console.error('Error fetching all sales for customer accounts:', error);
-            setAllSales([]);
+            console.error('Error fetching customer account summaries:', error);
+            setSummariesError(error?.message || 'فشل تحميل ملخصات الحسابات');
+            setApiSummaries([]);
         } finally {
-            setIsLoadingAllSales(false);
+            setIsLoadingSummaries(false);
         }
-    }, [currentUserName]);
+    }, []);
 
-    // Fetch all sales on mount
     useEffect(() => {
-        fetchAllSales();
-    }, [fetchAllSales]);
+        fetchSummaries();
+    }, [fetchSummaries]);
 
     // Handle date preset changes
     const handleDatePresetChange = useCallback((preset: 'today' | 'week' | 'month' | 'custom') => {
@@ -4583,76 +4763,32 @@ const CustomerAccountsView: React.FC<{
         });
     }, [payments, dateRange]);
 
+    // Merge API summaries with customers list (totals from backend aggregation; no full payments/sales load)
     const customerSummaries = useMemo<CustomerAccountSummary[]>(() => {
-        // Use allSales for accurate balance calculations (not filtered by date)
-        const salesForCalculation = allSales.length > 0 ? allSales : sales;
-        
-        return customers.map(customer => {
-            const customerSales = salesForCalculation.filter(s => s.customerId === customer.id);
-            const customerPayments = payments.filter(p => p.customerId === customer.id);
-
-            // Calculate total sales (purchases) - sum of all invoice totals
-            const totalPurchases = customerSales.reduce((sum, s) => sum + Math.abs(s.totalAmount), 0);
-            
-            // Calculate Journal Vouchers (سند قيد) - negative payments that increase debt
-            // These are payments with negative amounts, we sum their absolute values as positive
-            const journalVouchers = customerPayments
-                .filter(p => p.amount < 0) // Only negative payments (Journal Vouchers)
-                .reduce((sum, p) => sum + Math.abs(p.amount), 0);
-            
-            // Total Sales = Purchases + Journal Vouchers (both as positive values)
-            const totalSales = totalPurchases + journalVouchers;
-            
-            // Calculate total paid amount:
-            // 1. Sum of paidAmount from sales (paid at time of sale)
-            // 2. Plus ALL receipt vouchers (positive payments from customer, INCLUDING initial balance payments)
-            const totalPaidAtSale = customerSales.reduce((sum, s) => sum + s.paidAmount, 0);
-            // Include ALL receipt vouchers (positive amounts) in total payments, including initial balance
-            const receiptVouchers = customerPayments
-                .filter(p => p.amount > 0) // All positive payments (receipt vouchers), including initial balance
-                .reduce((sum, p) => sum + p.amount, 0);
-            const totalPaid = totalPaidAtSale + receiptVouchers;
-            
-            // Calculate balance:
-            // Balance represents: positive = customer has credit (we owe them), negative = customer owes us
-            // Receipt Vouchers (positive) = customer paid us = increases credit (positive balance)
-            // Journal Vouchers (negative) = customer owes us = increases debt (negative balance)
-            // Sales remaining amounts = customer owes us = increases debt (negative balance)
-            const totalRemainingFromSales = customerSales.reduce((sum, s) => sum + s.remainingAmount, 0);
-            const previousBalance = customer.previousBalance || 0;
-            
-            // Note: previousBalance convention is:
-            // - Positive = customer owes us (journal voucher initial)
-            // - Negative = customer has credit (receipt voucher initial)
-            // We need to convert this to our convention where positive = credit, negative = debt
-            
-            // Calculate payment contributions separately:
-            // Receipt vouchers (positive) increase credit (add to balance)
-            // Journal vouchers (negative) increase debt (subtract from balance)
-            const receiptVouchersTotal = customerPayments
-                .filter(p => p.amount > 0 && (!p.notes || !p.notes.includes('رصيد أولي')))
-                .reduce((sum, p) => sum + p.amount, 0);
-            const journalVouchersTotal = customerPayments
-                .filter(p => p.amount < 0 && (!p.notes || !p.notes.includes('رصيد أولي')))
-                .reduce((sum, p) => sum + Math.abs(p.amount), 0);
-            
-            // Balance = -previousBalance (convert convention) + receipt vouchers (credit) - journal vouchers (debt) - remaining from sales (debt)
-            // Positive balance = customer has credit, Negative balance = customer owes us
-            const balance = -previousBalance + receiptVouchersTotal - journalVouchersTotal - totalRemainingFromSales;
-            
-            const lastPayment = customerPayments.sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0];
-
-            return {
-                customerId: customer.id,
-                customerName: customer.name,
-                address: customer.address,
-                totalSales,
-                totalPaid,
-                balance,
-                lastPaymentDate: lastPayment ? formatDate(lastPayment.date) : null,
-            };
-        });
-    }, [customers, allSales, sales, payments]);
+        if (apiSummaries.length > 0) {
+            return customers.map(customer => {
+                const s = apiSummaries.find(sum => sum.customerId === customer.id);
+                return s ?? {
+                    customerId: customer.id,
+                    customerName: customer.name,
+                    address: customer.address,
+                    totalSales: 0,
+                    totalPaid: 0,
+                    balance: 0,
+                    lastPaymentDate: null,
+                };
+            });
+        }
+        return customers.map(c => ({
+            customerId: c.id,
+            customerName: c.name,
+            address: c.address,
+            totalSales: 0,
+            totalPaid: 0,
+            balance: 0,
+            lastPaymentDate: null as string | null,
+        }));
+    }, [customers, apiSummaries]);
 
     const filteredAndSortedCustomers = useMemo(() => {
         // Filter customers
@@ -4666,14 +4802,15 @@ const CustomerAccountsView: React.FC<{
             if (!matchesSearch) return false;
             
             // Apply balance filter using summaries
-            // Positive balance = customer has credit (we owe them) = creditor
-            // Negative balance = customer owes us = debtor
+            // Balance = Total Debt - Total Payments
+            // Positive balance = Total Debt > Total Payments = debtor (مدين)
+            // Negative balance = Total Payments > Total Debt = creditor (دائن)
             const summary = customerSummaries.find(s => s.customerId === customer.id);
             if (!summary) return false;
             
             const balance = summary.balance || 0;
-            const isDebtor = balance < 0; // Customer owes us
-            const isCreditor = balance > 0; // We owe customer
+            const isDebtor = balance > 0; // Customer owes us (Total Debt > Total Payments)
+            const isCreditor = balance < 0; // We owe customer (Total Payments > Total Debt)
             
             // If neither debtor nor creditor is selected, show nothing
             if (!balanceFilter.debtor && !balanceFilter.creditor) return false;
@@ -4764,20 +4901,20 @@ const CustomerAccountsView: React.FC<{
         // Total number of customers
         const totalCustomers = customers.length;
 
-        // Total due amount (sum of all customer debts - negative balances mean customer owes us)
+        // Total due amount (sum of all customer debts - positive balance means customer owes us)
         const totalDueAmount = customerSummaries.reduce((sum, summary) => {
-            return sum + (summary.balance < 0 ? Math.abs(summary.balance) : 0);
-        }, 0);
-
-        // Total credit amount (sum of all customer credits - positive balances mean we owe them)
-        const totalCreditAmount = customerSummaries.reduce((sum, summary) => {
             return sum + (summary.balance > 0 ? summary.balance : 0);
         }, 0);
 
-        // Number of customers with outstanding debt (based on current filters - negative balance means customer owes us)
+        // Total credit amount (sum of all customer credits - negative balance means we owe them)
+        const totalCreditAmount = customerSummaries.reduce((sum, summary) => {
+            return sum + (summary.balance < 0 ? Math.abs(summary.balance) : 0);
+        }, 0);
+
+        // Number of customers with outstanding debt (based on current filters - positive balance means customer owes us)
         const customersWithDebt = filteredAndSortedCustomers.filter(customer => {
             const summary = customerSummaries.find(s => s.customerId === customer.id);
-            return summary && summary.balance < 0;
+            return summary && summary.balance > 0;
         }).length;
 
         // Number of payments (based on date filter)
@@ -4849,6 +4986,7 @@ const CustomerAccountsView: React.FC<{
                 
                 setCustomers(transformedCustomers);
                 setEditingCustomer(null);
+                await fetchSummaries();
             }
         } catch (err: any) {
             const apiError = err as ApiError;
@@ -4856,8 +4994,7 @@ const CustomerAccountsView: React.FC<{
                 // Handle auth errors if needed
                 console.error('Authentication error:', apiError);
             }
-            const errorMessage = apiError.message || 'فشل تحديث العميل. يرجى المحاولة مرة أخرى.';
-            alert(errorMessage);
+            alert(getApiErrorMessage(err, 'فشل تحديث العميل. يرجى المحاولة مرة أخرى.'));
             throw err;
         }
     };
@@ -4890,6 +5027,8 @@ const CustomerAccountsView: React.FC<{
                 // Remove customer from local state
                 setCustomers((prev) => prev.filter((c) => c.id !== customerId));
                 showToast('تم حذف العميل بنجاح', 'success');
+                await fetchSummaries();
+                if (onRefreshPayments) await onRefreshPayments();
             } else {
                 showToast('فشل حذف العميل. يرجى المحاولة مرة أخرى.', 'error');
             }
@@ -4906,6 +5045,8 @@ const CustomerAccountsView: React.FC<{
                     setCustomers((prev) => prev.filter((c) => c.id !== customerId));
                     console.log('[CustomerAccountsView] Successfully synced IndexedDB after 404');
                     showToast('تم حذف العميل بنجاح', 'success');
+                    await fetchSummaries();
+                    if (onRefreshPayments) await onRefreshPayments();
                 } catch (syncError) {
                     console.error('[CustomerAccountsView] Error syncing IndexedDB after 404:', syncError);
                 }
@@ -4917,8 +5058,7 @@ const CustomerAccountsView: React.FC<{
                 // Handle auth errors if needed
                 console.error('Authentication error:', apiError);
             }
-            const errorMessage = apiError.message || 'فشل حذف العميل. يرجى المحاولة مرة أخرى.';
-            showToast(errorMessage, 'error');
+            showToast(getApiErrorMessage(err, 'فشل حذف العميل. يرجى المحاولة مرة أخرى.'), 'error');
         }
     };
 
@@ -4957,8 +5097,8 @@ const CustomerAccountsView: React.FC<{
                     await onRefreshPayments();
                 }
                 
-                // Refresh all sales to update customer balances
-                await fetchAllSales();
+                // Refresh account summaries to update totals
+                await fetchSummaries();
             } else {
                 alert('فشل حفظ الدفعة. الرجاء المحاولة مرة أخرى.');
                 console.error('Failed to save payment:', backendResponse?.message);
@@ -4966,7 +5106,7 @@ const CustomerAccountsView: React.FC<{
         } catch (err: any) {
             const apiError = err as ApiError;
             console.error('Error saving customer payment:', apiError);
-            alert(`فشل حفظ الدفعة: ${apiError.message || 'حدث خطأ غير متوقع'}`);
+            alert(`فشل حفظ الدفعة: ${getApiErrorMessage(err, 'حدث خطأ غير متوقع')}`);
         }
     };
 
@@ -5184,26 +5324,32 @@ const CustomerAccountsView: React.FC<{
                     />
                 </div>
             </div>
-            {isLoadingCustomers ? (
+            {(isLoadingCustomers || isLoadingSummaries) ? (
                 <div className="flex items-center justify-center py-12">
                     <div className="flex flex-col items-center gap-4">
                         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
-                        <p className="text-sm text-gray-600 dark:text-gray-400">جاري تحميل العملاء...</p>
+                        <p className="text-sm text-gray-600 dark:text-gray-400">
+                            {isLoadingSummaries ? 'جاري تحميل ملخصات الحسابات...' : 'جاري تحميل العملاء...'}
+                        </p>
                     </div>
                 </div>
-            ) : customersError ? (
+            ) : (customersError || summariesError) ? (
                 <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4">
                     <div className="text-sm text-red-600 dark:text-red-400">
-                        <p className="font-medium mb-2">خطأ في تحميل العملاء</p>
-                        <p className="text-gray-600 dark:text-gray-400">{customersError}</p>
-                        {onRefreshCustomers && (
-                            <button
-                                onClick={onRefreshCustomers}
-                                className="mt-3 px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 text-sm"
-                            >
-                                إعادة المحاولة
-                            </button>
-                        )}
+                        <p className="font-medium mb-2">{summariesError ? 'خطأ في تحميل ملخصات الحسابات' : 'خطأ في تحميل العملاء'}</p>
+                        <p className="text-gray-600 dark:text-gray-400">{summariesError || customersError}</p>
+                        <div className="mt-3 flex gap-2">
+                            {summariesError && (
+                                <button onClick={fetchSummaries} className="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 text-sm">
+                                    إعادة تحميل الملخصات
+                                </button>
+                            )}
+                            {customersError && onRefreshCustomers && (
+                                <button onClick={onRefreshCustomers} className="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 text-sm">
+                                    إعادة المحاولة
+                                </button>
+                            )}
+                        </div>
                     </div>
                 </div>
             ) : filteredAndSortedCustomers.length === 0 ? (
@@ -5308,12 +5454,12 @@ const CustomerAccountsView: React.FC<{
                                 <td className="px-6 py-4 whitespace-nowrap text-sm font-bold">
                                             {summary ? (
                                                 summary.balance > 0 ? (
-                                                    <span className="text-blue-600 dark:text-blue-400" title="العميل له رصيد دائن">
-                                                        {formatCurrency(Math.abs(summary.balance))} (دائن)
-                                                    </span>
-                                                ) : summary.balance < 0 ? (
                                                     <span className="text-red-600 dark:text-red-400" title="العميل مدين">
                                                         {formatCurrency(Math.abs(summary.balance))} (مدين)
+                                                    </span>
+                                                ) : summary.balance < 0 ? (
+                                                    <span className="text-blue-600 dark:text-blue-400" title="العميل له رصيد دائن">
+                                                        {formatCurrency(Math.abs(summary.balance))} (دائن)
                                                     </span>
                                                 ) : (
                                                     <span className="text-gray-600 dark:text-gray-400">{formatCurrency(0)}</span>
@@ -5437,11 +5583,14 @@ const CustomerAccountsView: React.FC<{
             )}
             
             <AddPaymentModal customerSummary={paymentModalTarget} onClose={() => setPaymentModalTarget(null)} onSave={handleSavePayment} />
-            <CustomerDetailsModal summary={statementModalTarget} sales={allSales.length > 0 ? allSales : sales} payments={payments} onClose={() => setStatementModalTarget(null)} />
+            <CustomerDetailsModal summary={statementModalTarget} sales={sales} payments={payments} onClose={() => setStatementModalTarget(null)} onStatementUpdated={async () => { await fetchSummaries(); if (onRefreshPayments) await onRefreshPayments(); }} />
             {showAddCustomerModal && (
                 <AddCustomerModal 
                     onClose={() => setShowAddCustomerModal(false)} 
-                    onSave={onSaveCustomer} 
+                    onSave={async (customer) => {
+                        await onSaveCustomer(customer);
+                        await fetchSummaries();
+                    }} 
                 />
             )}
             {editingCustomer && (

@@ -2,6 +2,7 @@
 // Handles unit data efficiently with fast local search
 
 import { openIndexedDB, isIndexedDBAvailable } from './indexedDBUtils';
+import { getStoreIdFromToken } from '@/lib/utils/storeId';
 
 interface UnitRecord {
   id: string;
@@ -65,17 +66,7 @@ class UnitsDB {
   }
 
   private getStoreId(): string | null {
-    try {
-      const token = localStorage.getItem('auth-token');
-      if (!token) {
-        return null;
-      }
-      const payload = JSON.parse(atob(token.split('.')[1]));
-      return payload.storeId || null;
-    } catch (error) {
-      console.error('[UnitsDB] Error getting storeId from token:', error);
-      return null;
-    }
+    return getStoreIdFromToken();
   }
 
   private getUnitId(unit: any, storeId: string): string {

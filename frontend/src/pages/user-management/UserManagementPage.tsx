@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useCallback } from 'react';
+import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { User, SystemRole, ScreenPermission, ALL_PERMISSIONS } from '@/shared/types';
 import { 
@@ -259,37 +259,42 @@ const UserManagementPage: React.FC = () => {
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [isSubmitting, setIsSubmitting] = useState(false);
+    const [currentPage, setCurrentPage] = useState(1);
+    const [pagination, setPagination] = useState<{ page: number; limit: number; total: number; totalPages: number }>({ page: 1, limit: 50, total: 0, totalPages: 1 });
 
-    // Fetch users from API
-    const fetchUsers = useCallback(async () => {
+    const fetchUsers = useCallback(async (page: number = 1, limit: number = 50, search?: string, role?: string) => {
         setIsLoading(true);
         setError(null);
         try {
-            const response = await usersApi.getUsers();
-            // The API client wraps the backend response
-            // Backend returns: { success: true, data: { users: [...] } }
-            // API client returns: { data: { success: true, data: { users: [...] } }, ... }
-            // So we access: response.data.data.users
-            const usersData = (response.data as any)?.data?.users || [];
-            
-            // Transform backend data to frontend User format
+            const response = await usersApi.getUsers({ page, limit, search: search || undefined, role: role && role !== 'all' ? role : undefined });
+            const data = (response.data as any)?.data;
+            const usersData = data?.items ?? data?.users ?? [];
+            const pag = data?.pagination;
+
             const transformedUsers: User[] = Array.isArray(usersData) ? usersData.map((user: any) => ({
                 id: user.id,
                 fullName: user.fullName,
                 username: user.username,
-                password: '', // Never include password in state
+                password: '',
                 role: user.role,
                 permissions: user.permissions || [],
                 createdAt: user.createdAt || new Date().toISOString(),
                 lastLogin: user.lastLogin || null,
                 status: user.status,
             })) : [];
-            
+
             setUsers(transformedUsers);
+            if (pag) {
+                setPagination({
+                    page: pag.page ?? page,
+                    limit: pag.limit ?? limit,
+                    total: pag.total ?? transformedUsers.length,
+                    totalPages: pag.totalPages ?? 1,
+                });
+            }
         } catch (err: any) {
             const apiError = err as ApiError;
             if (apiError.status === 401 || apiError.status === 403) {
-                // Unauthorized or Forbidden - redirect to login
                 navigate('/login', { replace: true });
                 return;
             }
@@ -300,10 +305,19 @@ const UserManagementPage: React.FC = () => {
         }
     }, [navigate]);
 
-    // Fetch users on component mount
+    const prevSearchRef = useRef(searchTerm);
+    const prevRoleRef = useRef(filters.role);
     useEffect(() => {
-        fetchUsers();
-    }, [fetchUsers]);
+        const searchOrRoleChanged = prevSearchRef.current !== searchTerm || prevRoleRef.current !== filters.role;
+        if (searchOrRoleChanged) {
+            prevSearchRef.current = searchTerm;
+            prevRoleRef.current = filters.role;
+            setCurrentPage(1);
+            fetchUsers(1, pagination.limit, searchTerm, filters.role);
+            return;
+        }
+        fetchUsers(currentPage, pagination.limit, searchTerm, filters.role);
+    }, [currentPage, searchTerm, filters.role, pagination.limit, fetchUsers]);
 
     const handleSaveUser = async (userData: User) => {
         setIsSubmitting(true);
@@ -348,8 +362,8 @@ const UserManagementPage: React.FC = () => {
                 response = await usersApi.createUser(payload);
             }
 
-            // Refresh users list
-            await fetchUsers();
+            // Refresh users list (keep current search/role)
+            await fetchUsers(currentPage, pagination.limit, searchTerm, filters.role);
             setModal({ isOpen: false, data: null });
         } catch (err: any) {
             const apiError = err as ApiError;
@@ -373,8 +387,8 @@ const UserManagementPage: React.FC = () => {
         setError(null);
         try {
             await usersApi.deleteUser(userId);
-            // Refresh users list
-            await fetchUsers();
+            // Refresh users list (keep current search/role)
+            await fetchUsers(currentPage, pagination.limit, searchTerm, filters.role);
         } catch (err: any) {
             const apiError = err as ApiError;
             if (apiError.status === 401 || apiError.status === 403) {
@@ -386,16 +400,13 @@ const UserManagementPage: React.FC = () => {
         }
     };
 
+    // Search and role are applied server-side; status filter remains client-side for current page
     const filteredUsers = useMemo(() => {
         return users.filter(user => {
-            const matchesSearch = searchTerm ?
-                user.fullName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                user.username.toLowerCase().includes(searchTerm.toLowerCase()) : true;
             const matchesStatus = filters.status !== 'all' ? user.status.toLowerCase() === filters.status : true;
-            const matchesRole = filters.role !== 'all' ? user.role === filters.role : true;
-            return matchesSearch && matchesStatus && matchesRole;
+            return matchesStatus;
         });
-    }, [users, searchTerm, filters]);
+    }, [users, filters.status]);
 
     return (
         <div className="relative min-h-screen overflow-hidden">
@@ -423,7 +434,7 @@ const UserManagementPage: React.FC = () => {
                                         <p className="text-sm font-semibold text-slate-500 dark:text-slate-400">المستخدمين</p>
                                     </div>
                                     <p className="text-2xl font-bold text-slate-900 dark:text-white">
-                                        {users.length}
+                                        {pagination.total > 0 ? pagination.total : users.length}
                                     </p>
                                     <div className="flex items-center justify-end space-x-2 space-x-reverse mt-2">
                                         <div className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
@@ -586,6 +597,31 @@ const UserManagementPage: React.FC = () => {
                                    ))}
                                     </tbody>
                                 </table>
+                            </div>
+                        )}
+                        {!isLoading && filteredUsers.length > 0 && pagination.totalPages > 1 && (
+                            <div className="flex items-center justify-between px-6 py-4 border-t border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-800/50">
+                                <p className="text-sm text-slate-600 dark:text-slate-400">
+                                    الصفحة {pagination.page} من {pagination.totalPages} ({pagination.total} مستخدم)
+                                </p>
+                                <div className="flex gap-2">
+                                    <button
+                                        type="button"
+                                        onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                                        disabled={pagination.page <= 1}
+                                        className="px-4 py-2 text-sm font-medium rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-slate-50 dark:hover:bg-slate-700"
+                                    >
+                                        السابق
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setCurrentPage(p => Math.min(pagination.totalPages, p + 1))}
+                                        disabled={pagination.page >= pagination.totalPages}
+                                        className="px-4 py-2 text-sm font-medium rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-slate-50 dark:hover:bg-slate-700"
+                                    >
+                                        التالي
+                                    </button>
+                                </div>
                             </div>
                         )}
                     </div>
