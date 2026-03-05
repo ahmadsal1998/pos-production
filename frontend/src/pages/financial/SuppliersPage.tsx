@@ -217,6 +217,13 @@ const SuppliersPage: React.FC<SuppliersPageProps> = ({
   );
 };
 
+// Shared input styles for consistent modal fields
+const inputClass =
+  'w-full px-3 py-2.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200 placeholder-gray-400 dark:placeholder-gray-500 text-right focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-orange-500 transition-colors';
+const labelClass = 'block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5 text-right';
+
+type OpeningBalanceType = 'credit' | 'debit' | null;
+
 // Supplier Form Modal Component
 const SupplierFormModal: React.FC<{
   isOpen: boolean;
@@ -233,12 +240,27 @@ const SupplierFormModal: React.FC<{
     notes: '',
     previousBalance: 0,
   });
+  const [openingBalanceType, setOpeningBalanceType] = useState<OpeningBalanceType>(null);
+  const [openingBalanceAmount, setOpeningBalanceAmount] = useState<string>('');
 
   React.useEffect(() => {
     if (supplierToEdit) {
       setFormData(supplierToEdit);
+      const bal = supplierToEdit.previousBalance ?? 0;
+      if (bal > 0) {
+        setOpeningBalanceType('debit');
+        setOpeningBalanceAmount(String(bal));
+      } else if (bal < 0) {
+        setOpeningBalanceType('credit');
+        setOpeningBalanceAmount(String(Math.abs(bal)));
+      } else {
+        setOpeningBalanceType(null);
+        setOpeningBalanceAmount('');
+      }
     } else {
       setFormData({ name: '', contactPerson: '', phone: '', email: '', address: '', notes: '', previousBalance: 0 });
+      setOpeningBalanceType(null);
+      setOpeningBalanceAmount('');
     }
   }, [supplierToEdit, isOpen]);
 
@@ -248,8 +270,18 @@ const SupplierFormModal: React.FC<{
       alert('اسم المورد مطلوب');
       return;
     }
+    if (!formData.phone.trim()) {
+      alert('رقم الهاتف مطلوب');
+      return;
+    }
+    let previousBalance = 0;
+    if (openingBalanceType && openingBalanceAmount) {
+      const amount = parseFloat(openingBalanceAmount) || 0;
+      previousBalance = openingBalanceType === 'debit' ? amount : -amount;
+    }
     const supplierData: Supplier = {
       ...formData,
+      previousBalance,
       id: supplierToEdit?.id || UUID(),
       createdAt: supplierToEdit?.createdAt || new Date().toISOString(),
       updatedAt: new Date().toISOString(),
@@ -260,70 +292,143 @@ const SupplierFormModal: React.FC<{
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4" onClick={onClose}>
-      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl p-6 w-full max-w-lg text-right" onClick={e => e.stopPropagation()}>
-        <h2 className="text-xl font-bold text-gray-800 dark:text-gray-100 mb-4">{supplierToEdit ? 'تعديل مورد' : 'إضافة مورد جديد'}</h2>
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">اسم المورد *</label>
-            <input
-              type="text"
-              value={formData.name}
-              onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-              required
-              className="w-full border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200 rounded-md shadow-sm"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">الشخص المسؤول</label>
-            <input
-              type="text"
-              value={formData.contactPerson || ''}
-              onChange={(e) => setFormData({ ...formData, contactPerson: e.target.value })}
-              className="w-full border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200 rounded-md shadow-sm"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">الهاتف</label>
-            <input
-              type="text"
-              value={formData.phone}
-              onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-              className="w-full border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200 rounded-md shadow-sm"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">البريد الإلكتروني</label>
-            <input
-              type="email"
-              value={formData.email || ''}
-              onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-              className="w-full border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200 rounded-md shadow-sm"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">العنوان</label>
-            <textarea
-              value={formData.address || ''}
-              onChange={(e) => setFormData({ ...formData, address: e.target.value })}
-              rows={2}
-              className="w-full border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200 rounded-md shadow-sm"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">الرصيد السابق</label>
-            <input
-              type="number"
-              value={formData.previousBalance || 0}
-              onChange={(e) => setFormData({ ...formData, previousBalance: parseFloat(e.target.value) || 0 })}
-              className="w-full border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200 rounded-md shadow-sm"
-            />
-          </div>
-          <div className="flex justify-start space-x-4 space-x-reverse pt-4">
-            <button type="submit" className="px-4 py-2 bg-orange-500 text-white rounded-md">{AR_LABELS.save}</button>
-            <button type="button" onClick={onClose} className="px-4 py-2 bg-gray-200 dark:bg-gray-600 text-gray-800 dark:text-gray-200 rounded-md">{AR_LABELS.cancel}</button>
-          </div>
-        </form>
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[60] p-4" onClick={onClose}>
+      <div className="bg-white dark:bg-gray-800 rounded-xl shadow-xl w-full max-w-md text-right overflow-hidden" onClick={e => e.stopPropagation()}>
+        <div className="p-6 pb-4">
+          <h2 className="text-xl font-bold text-gray-800 dark:text-gray-100 mb-6">{supplierToEdit ? 'تعديل مورد' : 'إضافة مورد جديد'}</h2>
+          <form onSubmit={handleSubmit} className="space-y-5" noValidate>
+            <div>
+              <label htmlFor="supplier-name" className={labelClass}>اسم المورد *</label>
+              <input
+                id="supplier-name"
+                type="text"
+                value={formData.name}
+                onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                className={inputClass}
+                placeholder="أدخل اسم المورد"
+              />
+            </div>
+            <div>
+              <label htmlFor="supplier-contact" className={labelClass}>{AR_LABELS.contactPerson}</label>
+              <input
+                id="supplier-contact"
+                type="text"
+                value={formData.contactPerson || ''}
+                onChange={(e) => setFormData({ ...formData, contactPerson: e.target.value })}
+                className={inputClass}
+                placeholder="اسم الشخص المسؤول"
+              />
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label htmlFor="supplier-phone" className={labelClass}>{AR_LABELS.phone} *</label>
+                <input
+                  id="supplier-phone"
+                  type="text"
+                  value={formData.phone}
+                  onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
+                  className={inputClass}
+                  placeholder="05xxxxxxxx"
+                />
+              </div>
+              <div>
+                <label htmlFor="supplier-email" className={labelClass}>البريد الإلكتروني (اختياري)</label>
+                <input
+                  id="supplier-email"
+                  type="text"
+                  inputMode="email"
+                  value={formData.email || ''}
+                  onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                  className={inputClass}
+                  placeholder="example@domain.com"
+                />
+              </div>
+            </div>
+            <div>
+              <label htmlFor="supplier-address" className={labelClass}>{AR_LABELS.address}</label>
+              <textarea
+                id="supplier-address"
+                value={formData.address || ''}
+                onChange={(e) => setFormData({ ...formData, address: e.target.value })}
+                rows={2}
+                className={`${inputClass} resize-none`}
+                placeholder="العنوان"
+              />
+            </div>
+            <div>
+              <label htmlFor="supplier-notes" className={labelClass}>{AR_LABELS.notes}</label>
+              <textarea
+                id="supplier-notes"
+                value={formData.notes || ''}
+                onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
+                rows={2}
+                className={`${inputClass} resize-none`}
+                placeholder="ملاحظات اختيارية"
+              />
+            </div>
+
+            {/* Opening balance: two-step flow */}
+            <div className="border-t border-gray-200 dark:border-gray-700 pt-5 mt-2">
+              <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2 text-right">{AR_LABELS.openingBalance}</h3>
+              <p className="text-xs text-gray-500 dark:text-gray-400 mb-3 text-right">{AR_LABELS.openingBalanceHint}</p>
+              <div className="space-y-4">
+                <div>
+                  <span className={labelClass}>{AR_LABELS.transactionType}</span>
+                  <div className="flex gap-3 flex-row-reverse">
+                    <label className="flex-1 cursor-pointer flex flex-col">
+                      <input
+                        type="radio"
+                        name="openingBalanceType"
+                        checked={openingBalanceType === 'credit'}
+                        onChange={() => setOpeningBalanceType('credit')}
+                        className="sr-only peer"
+                      />
+                      <span className="flex items-center justify-center gap-2 py-2.5 px-3 rounded-lg border-2 border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 text-sm font-medium transition-all peer-checked:border-orange-500 peer-checked:bg-orange-50 dark:peer-checked:bg-orange-900/20 peer-checked:text-orange-700 dark:peer-checked:text-orange-300">
+                        {AR_LABELS.receiptVoucherCredit}
+                      </span>
+                    </label>
+                    <label className="flex-1 cursor-pointer flex flex-col">
+                      <input
+                        type="radio"
+                        name="openingBalanceType"
+                        checked={openingBalanceType === 'debit'}
+                        onChange={() => setOpeningBalanceType('debit')}
+                        className="sr-only peer"
+                      />
+                      <span className="flex items-center justify-center gap-2 py-2.5 px-3 rounded-lg border-2 border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 text-sm font-medium transition-all peer-checked:border-orange-500 peer-checked:bg-orange-50 dark:peer-checked:bg-orange-900/20 peer-checked:text-orange-700 dark:peer-checked:text-orange-300">
+                        {AR_LABELS.debitVoucher}
+                      </span>
+                    </label>
+                  </div>
+                </div>
+                {openingBalanceType && (
+                  <div>
+                    <label htmlFor="opening-amount" className={labelClass}>{AR_LABELS.openingBalanceAmount}</label>
+                    <input
+                      id="opening-amount"
+                      type="number"
+                      min={0}
+                      step={0.01}
+                      value={openingBalanceAmount}
+                      onChange={(e) => setOpeningBalanceAmount(e.target.value)}
+                      className={inputClass}
+                      placeholder="0.00"
+                    />
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="flex justify-start gap-3 pt-4">
+              <button type="submit" className="px-5 py-2.5 bg-orange-500 hover:bg-orange-600 text-white font-medium rounded-lg transition-colors">
+                {AR_LABELS.save}
+              </button>
+              <button type="button" onClick={onClose} className="px-5 py-2.5 bg-gray-200 dark:bg-gray-600 hover:bg-gray-300 dark:hover:bg-gray-500 text-gray-800 dark:text-gray-200 font-medium rounded-lg transition-colors">
+                {AR_LABELS.cancel}
+              </button>
+            </div>
+          </form>
+        </div>
       </div>
     </div>
   );

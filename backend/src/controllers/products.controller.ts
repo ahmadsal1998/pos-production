@@ -461,14 +461,14 @@ export const getProducts = asyncHandler(async (req: AuthenticatedRequest, res: R
     let totalPages = fetchAll ? 1 : Math.max(1, Math.ceil(totalProducts / limit));
 
     // Determine which fields to select (for optimization)
-    // view=list: minimal list representation (id, name, barcode, price, stock, status, categoryId) - no units, no nested objects
+    // view=list: minimal list representation including costPrice (weighted average from purchases)
     // showInQuickProducts: only return essential fields for quick product picker
     const showInQuickProductsValue = typeof showInQuickProducts === 'string' 
       ? (showInQuickProducts === 'true' || showInQuickProducts === '1')
       : Boolean(showInQuickProducts);
     let fieldsToSelect: string | undefined;
     if (viewList) {
-      fieldsToSelect = 'name price stock barcode status categoryId parentProductId updatedAt';
+      fieldsToSelect = 'name price stock barcode status categoryId parentProductId costPrice updatedAt';
     } else if (showInQuickProductsValue) {
       fieldsToSelect = 'name price stock barcode showInQuickProducts status units costPrice categoryId brandId description updatedAt';
     }

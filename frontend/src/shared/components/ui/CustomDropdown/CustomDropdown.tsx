@@ -17,6 +17,8 @@ export interface CustomDropdownProps {
   id?: string;
   placement?: 'bottom' | 'top' | 'left' | 'right' | 'auto';
   maxHeight?: string;
+  /** 'sm' = compact (e.g. table cells), 'md' = default */
+  size?: 'sm' | 'md';
 }
 
 const CustomDropdown: React.FC<CustomDropdownProps> = ({
@@ -29,6 +31,7 @@ const CustomDropdown: React.FC<CustomDropdownProps> = ({
   id,
   placement = 'auto',
   maxHeight = '15rem',
+  size = 'md',
 }) => {
   const dropdownId = useMemo(() => id || `dropdown-${Math.random().toString(36).substr(2, 9)}`, [id]);
   const { openDropdownId, setOpenDropdownId, closeAllDropdowns } = useDropdown();
@@ -43,6 +46,7 @@ const CustomDropdown: React.FC<CustomDropdownProps> = ({
   const isOpen = openDropdownId === dropdownId;
 
   const selectedOption = options.find(option => option.value === value);
+  const displayLabel = selectedOption ? selectedOption.label : (value && value.trim() ? value.trim() : placeholder);
 
   const handleSelect = (optionValue: string, event?: React.MouseEvent | React.TouchEvent) => {
     if (event) {
@@ -223,6 +227,12 @@ const CustomDropdown: React.FC<CustomDropdownProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, dropdownId, closeAllDropdowns]);
 
+  const isCompact = size === 'sm';
+  const buttonSizeClasses = isCompact
+    ? 'px-2 py-1.5 text-xs rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700'
+    : 'px-4 py-3 text-sm rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 shadow-sm backdrop-blur-xl';
+  const iconSizeClasses = isCompact ? 'ml-1 h-3.5 w-3.5' : 'ml-2 h-4 w-4';
+
   return (
     <div className={`relative ${className}`}>
       <button
@@ -232,21 +242,21 @@ const CustomDropdown: React.FC<CustomDropdownProps> = ({
         data-dropdown-id={dropdownId}
         onClick={handleToggle}
         className={`
-          relative w-full rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-4 py-3 text-sm font-medium shadow-sm backdrop-blur-xl 
-          transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-orange-500/50 focus:border-orange-500
-          ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:shadow-md hover:border-slate-400 dark:hover:border-slate-500'}
-          ${isOpen ? 'ring-2 ring-orange-500/50 border-orange-500 shadow-md' : ''}
+          relative w-full font-medium transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-orange-500/50 focus:border-orange-500
+          ${buttonSizeClasses}
+          ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:border-gray-400 dark:hover:border-gray-500'}
+          ${isOpen ? 'ring-2 ring-orange-500/50 border-orange-500' : ''}
         `}
         aria-haspopup="listbox"
         aria-expanded={isOpen}
-        aria-label={placeholder}
+        aria-label={displayLabel || placeholder}
       >
-        <div className="flex items-center justify-between">
-          <span className="truncate text-right">
-            {selectedOption ? selectedOption.label : placeholder}
+        <div className="flex items-center justify-between gap-1">
+          <span className="truncate text-right min-w-0">
+            {displayLabel}
           </span>
           <svg
-            className={`ml-2 h-4 w-4 transition-transform duration-200 flex-shrink-0 ${
+            className={`${iconSizeClasses} transition-transform duration-200 flex-shrink-0 ${
               isOpen ? 'rotate-180' : ''
             }`}
             fill="none"

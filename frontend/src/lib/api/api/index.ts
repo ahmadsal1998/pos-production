@@ -5,6 +5,8 @@ export { pointsApi } from './pointsApi';
 export { dashboardApi } from './dashboardApi';
 export { usersApi } from './usersApi';
 export { customersApi } from './customersApi';
+export { suppliersApi, type SupplierSummary } from './suppliersApi';
+export { purchasesApi, type PurchaseItemPayload } from './purchasesApi';
 export { categoriesApi } from './categoriesApi';
 export { brandsApi } from './brandsApi';
 export { unitsApi } from './unitsApi';

@@ -49,6 +49,7 @@ const getHeaderTitleFromPath = (pathname: string): string => {
   if (path.startsWith('/products')) return AR_LABELS.products;
 
   // Financial
+  if (path === '/financial/purchases/invoices' || path === '/purchases/invoices') return AR_LABELS.purchaseInvoicesList;
   if (path.startsWith('/financial/purchases') || path.startsWith('/purchases')) return AR_LABELS.purchases;
   if (path.startsWith('/financial/expenses') || path.startsWith('/expenses')) return AR_LABELS.expenses;
   if (path.startsWith('/financial/cheques') || path.startsWith('/cheques')) return AR_LABELS.cheques;

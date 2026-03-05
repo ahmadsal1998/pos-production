@@ -155,6 +155,12 @@ const saleSchema = new Schema<SaleDocument>(
       default: false,
       index: true,
     },
+    invoiceType: {
+      type: String,
+      enum: ['retail', 'wholesale'],
+      default: 'retail',
+      index: true,
+    },
   },
   {
     timestamps: true,

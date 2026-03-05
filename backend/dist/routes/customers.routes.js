@@ -36,4 +36,6 @@ router.put("/:id", import_customers.validateUpdateCustomer, import_customers.upd
 router.delete("/:id", import_customers.deleteCustomer);
 router.get("/payments/list", import_customers.getCustomerPayments);
 router.post("/payments", import_customers.validateCreateCustomerPayment, import_customers.createCustomerPayment);
+router.put("/payments/:id", import_customers.validateUpdateCustomerPayment, import_customers.updateCustomerPayment);
+router.delete("/payments/:id", import_customers.deleteCustomerPayment);
 var customers_routes_default = router;

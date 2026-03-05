@@ -24,6 +24,57 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
     });
   }, []);
 
+  // Global behavior for all numeric inputs: replace 0 when typing first digit, disable wheel, select on focus when 0
+  useEffect(() => {
+    const onWheel = (e: WheelEvent) => {
+      const target = e.target as HTMLElement;
+      if (target?.tagName === 'INPUT' && (target as HTMLInputElement).type === 'number') {
+        e.preventDefault();
+      }
+    };
+
+    const onFocus = (e: FocusEvent) => {
+      const target = e.target as HTMLInputElement;
+      if (
+        target?.tagName === 'INPUT' &&
+        target.type === 'number' &&
+        (target.value === '' || target.value === '0' || Number(target.value) === 0)
+      ) {
+        target.select();
+      }
+    };
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLInputElement;
+      if (
+        target?.tagName !== 'INPUT' ||
+        target.type !== 'number' ||
+        e.ctrlKey ||
+        e.metaKey ||
+        e.altKey
+      ) {
+        return;
+      }
+      const val = target.value;
+      const isZero = val === '' || val === '0' || Number(val) === 0;
+      if (isZero && /^[1-9]$/.test(e.key)) {
+        e.preventDefault();
+        target.value = e.key;
+        target.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+    };
+
+    document.addEventListener('wheel', onWheel, { capture: true, passive: false });
+    document.addEventListener('focus', onFocus, true);
+    document.addEventListener('keydown', onKeyDown, true);
+
+    return () => {
+      document.removeEventListener('wheel', onWheel, { capture: true });
+      document.removeEventListener('focus', onFocus, true);
+      document.removeEventListener('keydown', onKeyDown, true);
+    };
+  }, []);
+
   return (
     <CurrencyProvider>
       <DropdownProvider>

@@ -3024,6 +3024,185 @@ const generateUniversalInvoiceStyles = (printSettings: ReturnType<typeof getPrin
 };
 
 /**
+ * A4-optimized print styles for Purchase Invoice (matches PurchaseInvoiceDetailPage on-screen design).
+ * Used when building the iframe document so the printed output is identical to the screen layout.
+ */
+const PURCHASE_INVOICE_PRINT_STYLES = `
+  @page { size: A4; margin: 14mm; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: #fff;
+    color: #1e293b;
+    font-family: 'Segoe UI', 'Tahoma', 'Arial', sans-serif;
+    font-size: 11pt;
+    line-height: 1.4;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  * { box-sizing: border-box; }
+  .purchase-invoice-print-wrap {
+    max-width: 210mm;
+    margin: 0 auto;
+    background: #fff;
+    padding: 0;
+  }
+  .purchase-invoice-print-wrap .inv-page {
+    padding: 14mm 16mm;
+    min-height: 100%;
+  }
+  .purchase-invoice-print-wrap .inv-header {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 16px;
+    padding-bottom: 12px;
+    margin-bottom: 14px;
+    border-bottom: 2px solid #0f172a;
+  }
+  .purchase-invoice-print-wrap .inv-company { text-align: right; }
+  .purchase-invoice-print-wrap .inv-company-name {
+    font-size: 16pt;
+    font-weight: 700;
+    color: #0f172a;
+    margin: 0 0 2px 0;
+  }
+  .purchase-invoice-print-wrap .inv-doc-title {
+    font-size: 12pt;
+    color: #475569;
+    margin: 0;
+  }
+  .purchase-invoice-print-wrap .inv-meta { text-align: left; }
+  .purchase-invoice-print-wrap .inv-meta-row { margin-bottom: 4px; }
+  .purchase-invoice-print-wrap .inv-meta-label { font-size: 9pt; color: #64748b; }
+  .purchase-invoice-print-wrap .inv-meta-value { font-weight: 600; font-size: 11pt; color: #0f172a; }
+  .purchase-invoice-print-wrap .inv-status {
+    display: inline-block;
+    padding: 3px 10px;
+    font-size: 9pt;
+    font-weight: 700;
+    border-radius: 4px;
+    margin-top: 4px;
+  }
+  .purchase-invoice-print-wrap .inv-status-pending { background: #fef3c7; color: #92400e; }
+  .purchase-invoice-print-wrap .inv-status-completed { background: #d1fae5; color: #065f46; }
+  .purchase-invoice-print-wrap .inv-status-cancelled { background: #fee2e2; color: #991b1b; }
+  .purchase-invoice-print-wrap .inv-section-title {
+    font-size: 9pt;
+    font-weight: 700;
+    color: #475569;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin: 0 0 6px 0;
+  }
+  .purchase-invoice-print-wrap .inv-supplier-box {
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 6px;
+    padding: 10px 12px;
+    margin-bottom: 16px;
+  }
+  .purchase-invoice-print-wrap .inv-supplier-name { font-weight: 700; font-size: 12pt; color: #0f172a; margin: 0; }
+  .purchase-invoice-print-wrap .inv-table-wrap {
+    width: 100%;
+    overflow: hidden;
+    border: 1px solid #cbd5e1;
+    border-radius: 6px;
+    margin-bottom: 16px;
+  }
+  .purchase-invoice-print-wrap .inv-table {
+    width: 100%;
+    border-collapse: collapse;
+    text-align: right;
+    font-size: 10pt;
+  }
+  .purchase-invoice-print-wrap .inv-table th {
+    background: #0f172a;
+    color: #fff;
+    padding: 8px 10px;
+    font-weight: 600;
+    border: 1px solid #0f172a;
+  }
+  .purchase-invoice-print-wrap .inv-table td {
+    padding: 8px 10px;
+    border: 1px solid #e2e8f0;
+  }
+  .purchase-invoice-print-wrap .inv-table tbody tr:nth-child(even) { background: #f8fafc; }
+  .purchase-invoice-print-wrap .inv-totals {
+    width: 100%;
+    max-width: 280px;
+    margin: 0 0 0 auto;
+    border: 1px solid #e2e8f0;
+    border-radius: 6px;
+    overflow: hidden;
+    margin-bottom: 16px;
+  }
+  .purchase-invoice-print-wrap .inv-totals-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 6px 12px;
+    border-bottom: 1px solid #e2e8f0;
+    font-size: 10pt;
+  }
+  .purchase-invoice-print-wrap .inv-totals-row.grand {
+    background: #0f172a;
+    color: #fff;
+    font-size: 12pt;
+    font-weight: 700;
+    border-bottom: none;
+    padding: 10px 12px;
+  }
+  .purchase-invoice-print-wrap .inv-payment-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px;
+    margin-top: 8px;
+  }
+  .purchase-invoice-print-wrap .inv-payment-cell {
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 6px;
+    padding: 8px 10px;
+    font-size: 10pt;
+  }
+  .purchase-invoice-print-wrap .inv-payment-cell strong { display: block; font-size: 9pt; color: #64748b; margin-bottom: 2px; }
+  .purchase-invoice-print-wrap .inv-notes { margin-top: 14px; padding-top: 10px; border-top: 1px solid #e2e8f0; font-size: 10pt; color: #475569; }
+  .purchase-invoice-print-wrap .inv-cheque { margin-top: 10px; padding: 10px; background: #fffbeb; border: 1px solid #f59e0b; border-radius: 6px; font-size: 10pt; }
+  @media print {
+    .purchase-invoice-print-wrap { max-width: none !important; padding: 0 !important; }
+    .purchase-invoice-print-wrap .inv-page { padding: 0 14mm 0 16mm !important; }
+    .purchase-invoice-print-wrap .inv-table { page-break-inside: avoid; }
+    .purchase-invoice-print-wrap .inv-totals-row.grand { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  }
+`;
+
+/**
+ * Builds the full HTML document for printing the Purchase Invoice.
+ * Uses only invoice-specific A4 styles (no generic receipt styles) so the printed layout matches the screen.
+ */
+const getPurchaseInvoicePrintContent = (element: HTMLElement): string => {
+  const clone = element.cloneNode(true) as HTMLElement;
+  const footerElements = clone.querySelectorAll('.receipt-footer');
+  footerElements.forEach((el) => el.remove());
+  const content = clone.outerHTML;
+  return `
+<!DOCTYPE html>
+<html dir="rtl" lang="ar">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>فاتورة شراء - Purchase Invoice</title>
+  <style>${PURCHASE_INVOICE_PRINT_STYLES}</style>
+</head>
+<body>
+  ${content}
+</body>
+</html>
+  `.trim();
+};
+
+/**
  * Extracts the HTML content of a printable element
  * @param elementId - The ID of the element to print
  * @returns The HTML content as a string
@@ -3033,6 +3212,11 @@ const getPrintableContent = (elementId: string): string => {
   if (!element) {
     console.warn(`Element with id "${elementId}" not found`);
     return '';
+  }
+
+  // Purchase Invoice: use dedicated A4 layout so printed output matches the screen design
+  if (element.id === 'printable-purchase-invoice') {
+    return getPurchaseInvoicePrintContent(element);
   }
 
   // Get print settings from preferences (with printer type awareness)
@@ -3054,6 +3238,11 @@ const getPrintableContent = (elementId: string): string => {
     
     // Process the cloned element to remove currency symbols only from table cells (keep summary)
     removeCurrencySymbolsFromTable(clone);
+    
+    // Normalize id so injected styles (targeting #printable-receipt) apply to account statement modal too
+    if (element.id === 'printable-statement-acc') {
+      clone.id = 'printable-receipt';
+    }
     
     // Detect if this is a thermal printer
     const isThermal = printSettings.paperSize === '80mm' || printSettings.paperSize === '58mm';

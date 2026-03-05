@@ -32,6 +32,8 @@ export interface ISale extends Document {
   // Return-related fields
   originalInvoiceId?: string; // For return transactions, link to original invoice
   isReturn?: boolean; // Flag to identify return transactions
+  /** Invoice type for reporting: 'retail' (default) or 'wholesale' */
+  invoiceType?: 'retail' | 'wholesale';
   createdAt: Date;
   updatedAt: Date;
 }
@@ -181,6 +183,12 @@ const saleSchema = new Schema<ISale>(
     isReturn: {
       type: Boolean,
       default: false,
+      index: true,
+    },
+    invoiceType: {
+      type: String,
+      enum: ['retail', 'wholesale'],
+      default: 'retail',
       index: true,
     },
   },

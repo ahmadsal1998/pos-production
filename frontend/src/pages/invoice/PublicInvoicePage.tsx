@@ -4,6 +4,7 @@ import { AR_LABELS } from '@/shared/constants';
 import { useCurrency } from '@/shared/contexts/CurrencyContext';
 import { SaleTransaction } from '@/shared/types';
 import { formatQuantityForDisplay } from '@/shared/utils';
+import { printReceipt } from '@/shared/utils/printUtils';
 
 const PublicInvoicePage: React.FC = () => {
   const { invoiceNumber, storeId } = useParams<{ invoiceNumber: string; storeId?: string }>();
@@ -117,10 +118,41 @@ const PublicInvoicePage: React.FC = () => {
 
   const isReturn = invoice.status === 'Returned' || invoice.id?.startsWith('RET-');
 
+  const handlePrint = () => {
+    printReceipt('printable-receipt').catch(() => {
+      window.print();
+    });
+  };
+
+  const invoiceDate = invoice.date ? new Date(invoice.date) : new Date();
+  const paymentMethod = (invoice as any).paymentMethod;
+  const paidAmount = (invoice as any).paidAmount;
+  const remainingAmount = (invoice as any).remainingAmount;
+
   return (
     <div className="min-h-screen bg-gray-100 dark:bg-gray-900 py-8 px-4">
       <div className="max-w-2xl mx-auto">
-        <div className="bg-white dark:bg-gray-800 rounded-lg shadow-lg p-6 sm:p-8">
+        {/* Print button - not part of printable content */}
+        <div className="flex justify-end mb-4">
+          <button
+            type="button"
+            onClick={handlePrint}
+            className="inline-flex items-center gap-2 px-5 py-2.5 bg-orange-500 hover:bg-orange-600 text-white font-medium rounded-lg shadow-sm transition-colors focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-offset-2"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
+            </svg>
+            طباعة
+          </button>
+        </div>
+        <div
+          id="printable-receipt"
+          className="bg-white dark:bg-gray-800 rounded-lg shadow-lg p-6 sm:p-8 w-full max-w-2xl mx-auto text-right"
+          data-invoice-date={invoiceDate.toISOString()}
+          data-payment-method={paymentMethod || undefined}
+          data-paid-amount={paidAmount != null ? paidAmount : undefined}
+          data-remaining-amount={remainingAmount != null ? remainingAmount : undefined}
+        >
           {/* Header */}
           <div className="text-center mb-6">
             <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 dark:text-gray-100 mb-2">
@@ -128,10 +160,10 @@ const PublicInvoicePage: React.FC = () => {
             </h1>
           </div>
 
-          {/* Invoice Info */}
+          {/* Invoice Info - structure matches Sales Invoice for print extraction */}
           <div className="invoice-info text-sm mb-6 space-y-2 border-b border-gray-200 dark:border-gray-700 pb-4">
             <p><strong>{AR_LABELS.invoiceNumber}:</strong> {invoice.invoiceNumber || invoice.id}</p>
-            <p><strong>{AR_LABELS.date}:</strong> {new Date(invoice.date).toLocaleString('ar-SA')}</p>
+            <p data-date={invoiceDate.toISOString()}><strong>{AR_LABELS.date}:</strong> {invoiceDate.toLocaleString('ar-SA')}</p>
             <p><strong>{AR_LABELS.customerName}:</strong> {invoice.customerName || 'عميل نقدي'}</p>
           </div>
 

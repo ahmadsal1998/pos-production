@@ -26,8 +26,13 @@ const CRITICAL_403_CODES: string[] = ['SUBSCRIPTION_EXPIRED'];
 export function getApiErrorMessage(error: unknown, fallback: string = 'An error occurred'): string {
   if (error == null) return fallback;
   const err = error as any;
+  const data = err?.response?.data;
+  if (data?.errors && Array.isArray(data.errors) && data.errors.length > 0) {
+    const parts = data.errors.map((e: any) => e?.msg ?? e?.message ?? String(e)).filter(Boolean);
+    if (parts.length) return parts.join('\n');
+  }
   if (err?.message && typeof err.message === 'string' && err.message !== 'Error') return err.message;
-  if (err?.response?.data?.message) return err.response.data.message;
+  if (data?.message) return data.message;
   if (err?.details?.message) return err.details.message;
   if (err?.details?.errors && Array.isArray(err.details.errors)) {
     const parts = err.details.errors.map((e: any) => e?.msg ?? e?.message ?? String(e)).filter(Boolean);

@@ -177,6 +177,7 @@ export interface CreateSaleInput {
   status?: string;
   seller?: string;
   isReturn?: boolean;
+  invoiceType?: 'retail' | 'wholesale';
 }
 
 export interface CreateSaleResult {
@@ -354,6 +355,7 @@ export const salesService = {
         paymentMethod: normalizedPaymentMethod,
         status: saleStatus,
         seller: body.seller || 'Unknown',
+        invoiceType: body.invoiceType === 'wholesale' ? 'wholesale' : 'retail',
       });
 
       try {
@@ -455,6 +457,215 @@ export const salesService = {
       requestedInvoiceNumber,
       finalInvoiceNumber: sale.invoiceNumber,
       invoiceAutoAdjusted: sale.invoiceNumber !== requestedInvoiceNumber,
+    };
+  },
+
+  /**
+   * Update an existing sale: revert stock for old items, update document with new items/totals, apply stock for new items.
+   */
+  async updateSale(
+    storeId: string,
+    saleId: string,
+    body: {
+      items?: any[];
+      subtotal?: number;
+      totalItemDiscount?: number;
+      invoiceDiscount?: number;
+      tax?: number;
+      total?: number;
+      customerId?: string;
+      customerName?: string;
+      seller?: string;
+      paidAmount?: number;
+      remainingAmount?: number;
+      paymentMethod?: string;
+      status?: string;
+      date?: string;
+      invoiceType?: 'retail' | 'wholesale';
+    }
+  ): Promise<{ sale: any }> {
+    const mongoose = (await import('mongoose')).default;
+    if (!mongoose.Types.ObjectId.isValid(saleId)) {
+      const err = new Error('Invalid sale ID') as any;
+      err.statusCode = 400;
+      throw err;
+    }
+
+    const Sale = await getSaleModelForStore(storeId);
+    const Product = await getProductModelForStore(storeId);
+    const normalizedStoreId = storeId.toLowerCase().trim();
+
+    const existing = await Sale.findOne({
+      _id: new mongoose.Types.ObjectId(saleId),
+      storeId: normalizedStoreId,
+    });
+    if (!existing) {
+      const err = new Error('Sale not found') as any;
+      err.statusCode = 404;
+      throw err;
+    }
+
+    const existingSale = existing as any;
+    const oldItems = existingSale.items || [];
+    const isReturn = !!existingSale.isReturn;
+
+    // 1. Revert stock for old items (reverse what create did: add back for normal sale, subtract for return)
+    for (const item of oldItems) {
+      const productId = item.productId;
+      const itemQuantity = item.quantity;
+      const itemUnit = item.unit;
+      if (!productId || itemQuantity == null || itemQuantity <= 0) continue;
+      try {
+        let product: any = null;
+        if (mongoose.Types.ObjectId.isValid(productId) && productId.length === 24) {
+          product = await Product.findOne({ _id: productId, storeId: normalizedStoreId });
+        }
+        if (!product) {
+          product = await Product.findOne({ id: productId, storeId: normalizedStoreId });
+        }
+        if (!product) {
+          log.warn(`[Sales Service] Update revert: product not found: ${productId}`);
+          continue;
+        }
+        const unit = itemUnit || 'قطعة';
+        let stockChange: number;
+        if (product.units && product.units.length > 0) {
+          stockChange = convertQuantityToMainUnits(product, unit, itemQuantity);
+        } else if (item.conversionFactor && item.conversionFactor > 1) {
+          stockChange = itemQuantity / item.conversionFactor;
+        } else {
+          stockChange = itemQuantity;
+        }
+        const currentStock = product.stock || 0;
+        const newStock = isReturn
+          ? Math.max(0, currentStock - stockChange)
+          : currentStock + stockChange;
+        await Product.findByIdAndUpdate(product._id, { stock: newStock }, { new: true });
+        await invalidateAllProductBarcodeCaches(storeId, product);
+      } catch (error: any) {
+        log.error(`[Sales Service] Update revert stock error for ${productId}:`, error);
+      }
+    }
+
+    // 2. If full body with items provided, update document with new items and totals
+    const hasItems = body.items && Array.isArray(body.items) && body.items.length > 0;
+    const normalizedPaymentMethod = ((body.paymentMethod ?? existingSale.paymentMethod) || 'cash').toLowerCase();
+    if (!validPaymentMethods.includes(normalizedPaymentMethod)) {
+      const err = new Error(`Payment method must be one of: ${validPaymentMethods.join(', ')}`) as any;
+      err.code = 'INVALID_PAYMENT_METHOD';
+      throw err;
+    }
+
+    let saleStatus = body.status ?? existingSale.status;
+    if (body.remainingAmount !== undefined || body.paidAmount !== undefined) {
+      const remaining = body.remainingAmount ?? (body.total ?? existingSale.total) - (body.paidAmount ?? existingSale.paidAmount ?? 0);
+      if (remaining <= 0) saleStatus = 'completed';
+      else if ((body.paidAmount ?? existingSale.paidAmount ?? 0) > 0) saleStatus = 'partial_payment';
+      else saleStatus = 'pending';
+    }
+
+    const updateFields: any = {
+      paidAmount: body.paidAmount !== undefined ? body.paidAmount : existingSale.paidAmount,
+      remainingAmount: body.remainingAmount !== undefined ? body.remainingAmount : existingSale.remainingAmount,
+      status: saleStatus,
+      paymentMethod: normalizedPaymentMethod,
+      updatedAt: new Date(),
+    };
+    if (body.customerId !== undefined) updateFields.customerId = body.customerId;
+    if (body.customerName !== undefined) updateFields.customerName = body.customerName;
+    if (body.seller !== undefined) updateFields.seller = body.seller;
+    if (body.date !== undefined) updateFields.date = new Date(body.date);
+    if (body.invoiceType !== undefined) updateFields.invoiceType = body.invoiceType === 'wholesale' ? 'wholesale' : 'retail';
+
+    if (hasItems) {
+      const itemsWithCostPrice = await Promise.all(
+        (body.items as any[]).map(async (item: any) => {
+          const costPrice = item.costPrice !== undefined && item.costPrice != null
+            ? Number(item.costPrice)
+            : 0;
+          return {
+            productId: String(item.productId),
+            productName: item.productName || item.name || '',
+            quantity: item.quantity || 0,
+            unitPrice: item.unitPrice || 0,
+            totalPrice: item.totalPrice ?? (item.total ?? 0),
+            costPrice: costPrice || 0,
+            unit: item.unit || 'قطعة',
+            discount: item.discount || 0,
+            conversionFactor: item.conversionFactor || 1,
+          };
+        })
+      );
+      updateFields.items = itemsWithCostPrice;
+      updateFields.subtotal = body.subtotal ?? 0;
+      updateFields.totalItemDiscount = body.totalItemDiscount ?? 0;
+      updateFields.invoiceDiscount = body.invoiceDiscount ?? 0;
+      updateFields.tax = body.tax ?? 0;
+      updateFields.total = body.total ?? 0;
+    }
+
+    Object.assign(existingSale, updateFields);
+    await existingSale.save();
+
+    // 3. Apply stock for new items (if items were updated)
+    if (hasItems && body.items && body.items.length > 0) {
+      for (const item of body.items as any[]) {
+        const productId = item.productId;
+        const itemQuantity = item.quantity;
+        const itemUnit = item.unit;
+        if (!productId || !itemQuantity || itemQuantity <= 0) continue;
+        try {
+          let product: any = null;
+          if (mongoose.Types.ObjectId.isValid(productId) && productId.length === 24) {
+            product = await Product.findOne({ _id: productId, storeId: normalizedStoreId });
+          }
+          if (!product) {
+            product = await Product.findOne({ id: productId, storeId: normalizedStoreId });
+          }
+          if (!product) {
+            log.warn(`[Sales Service] Update apply: product not found: ${productId}`);
+            continue;
+          }
+          const unit = itemUnit || 'قطعة';
+          let stockChange: number;
+          if (product.units && product.units.length > 0) {
+            stockChange = convertQuantityToMainUnits(product, unit, itemQuantity);
+          } else if (item.conversionFactor && item.conversionFactor > 1) {
+            stockChange = itemQuantity / item.conversionFactor;
+          } else {
+            stockChange = itemQuantity;
+          }
+          const currentStock = product.stock || 0;
+          const newStock = isReturn
+            ? currentStock + stockChange
+            : Math.max(0, currentStock - stockChange);
+          await Product.findByIdAndUpdate(product._id, { stock: newStock }, { new: true });
+          await invalidateAllProductBarcodeCaches(storeId, product);
+        } catch (error: any) {
+          log.error(`[Sales Service] Update apply stock error for ${productId}:`, error);
+        }
+      }
+    }
+
+    return {
+      sale: {
+        id: existingSale._id.toString(),
+        invoiceNumber: existingSale.invoiceNumber,
+        date: existingSale.date,
+        customerName: existingSale.customerName,
+        customerId: existingSale.customerId,
+        total: existingSale.total,
+        paidAmount: existingSale.paidAmount,
+        remainingAmount: existingSale.remainingAmount,
+        paymentMethod: existingSale.paymentMethod,
+        status: existingSale.status,
+        seller: existingSale.seller,
+        items: existingSale.items,
+        subtotal: existingSale.subtotal,
+        totalItemDiscount: existingSale.totalItemDiscount,
+        invoiceDiscount: existingSale.invoiceDiscount,
+        tax: existingSale.tax,
+      },
     };
   },
 };

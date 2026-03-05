@@ -256,8 +256,11 @@ export const AR_LABELS = {
   invoiceNumber: 'رقم الفاتورة',
   // FIX: Renamed 'cashier' to 'posCashier' to avoid duplicate key error.
   posCashier: 'الكاشير',
+  invoiceTypeRetail: 'تجزئة',
+  invoiceTypeWholesale: 'جملة',
   searchProductPlaceholder: 'ابحث بالاسم أو امسح الباركود...',
   unit: 'الوحدة',
+  unitLevel: 'مستوى الوحدة',
   quantity: 'الكمية',
   discount: 'الخصم',
   invoiceDiscount: 'خصم على الفاتورة',
@@ -538,6 +541,7 @@ export const AR_LABELS = {
   // Purchases Page Specific
   purchases: 'المشتريات',
   purchaseManagement: 'إدارة المشتريات',
+  purchaseInvoicesList: 'قائمة فواتير الشراء',
   purchaseManagementDescription: 'تسجيل وتتبع وإدارة جميع مشتريات الموردين.',
   poNumber: 'رقم طلب الشراء',
   supplier: 'المورد',
@@ -594,6 +598,13 @@ export const AR_LABELS = {
   totalPurchaseReport: 'تقرير إجمالي المشتريات',
   searchBySupplierNameOrPhone: 'ابحث بالاسم أو رقم الهاتف...',
   purchaseOrder: 'أمر شراء',
+  // Opening balance (supplier form)
+  openingBalance: 'الرصيد الافتتاحي',
+  transactionType: 'نوع المعاملة',
+  receiptVoucherCredit: 'سند قبض (ائتمان)',
+  debitVoucher: 'سند صرف (مدين)',
+  openingBalanceAmount: 'المبلغ',
+  openingBalanceHint: 'اختر نوع المعاملة ثم أدخل المبلغ',
 
   // Expenses Page Specific
   expenses: 'المصروفات',

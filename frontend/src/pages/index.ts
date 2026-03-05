@@ -26,6 +26,8 @@ export { default as SalesTodayPage } from './sales/SalesTodayPage';
 
 // Financial Pages
 export { default as PurchasesPage } from './financial/PurchasesPage';
+export { default as PurchaseInvoicesListPage } from './financial/PurchaseInvoicesListPage';
+export { default as PurchaseInvoiceDetailPage } from './financial/PurchaseInvoiceDetailPage';
 export { default as ExpensesPage } from './financial/ExpensesPage';
 export { default as ChequesPage } from './financial/ChequesPage';
 export { default as PaymentMethodsPage } from './financial/PaymentMethodsPage';
@@ -37,5 +39,4 @@ export { default as AccountSettingsForm } from './user-management/AccountSetting
 export { default as ProfileBanner } from './user-management/ProfileBanner';
 export { default as ProfileCard } from './user-management/ProfileCard';
 
-// Payment Pages
-export * from './payments';
+// Payment Pages (removed deprecated payments exports)

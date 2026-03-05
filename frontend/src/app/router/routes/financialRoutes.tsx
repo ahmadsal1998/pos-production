@@ -1,9 +1,14 @@
+import { Outlet } from 'react-router-dom';
 import { RouteObject } from 'react-router-dom';
 import { PermissionProtectedRoute } from '@/shared/components';
 import PurchasesPage from '@/pages/financial/PurchasesPage';
+import PurchaseInvoicesListPage from '@/pages/financial/PurchaseInvoicesListPage';
+import PurchaseInvoiceDetailPage from '@/pages/financial/PurchaseInvoiceDetailPage';
 import ExpensesPage from '@/pages/financial/ExpensesPage';
 import ChequesPage from '@/pages/financial/ChequesPage';
 import PaymentMethodsPage from '@/pages/financial/PaymentMethodsPage';
+
+const PurchasesLayout = () => <Outlet />;
 
 export const financialRoutes: RouteObject[] = [
   {
@@ -11,11 +16,33 @@ export const financialRoutes: RouteObject[] = [
     children: [
       {
         path: 'purchases',
-        element: (
-          <PermissionProtectedRoute>
-            <PurchasesPage />
-          </PermissionProtectedRoute>
-        ),
+        element: <PurchasesLayout />,
+        children: [
+          {
+            index: true,
+            element: (
+              <PermissionProtectedRoute>
+                <PurchasesPage />
+              </PermissionProtectedRoute>
+            ),
+          },
+          {
+            path: 'invoices',
+            element: (
+              <PermissionProtectedRoute>
+                <PurchaseInvoicesListPage />
+              </PermissionProtectedRoute>
+            ),
+          },
+          {
+            path: 'invoices/:id',
+            element: (
+              <PermissionProtectedRoute>
+                <PurchaseInvoiceDetailPage />
+              </PermissionProtectedRoute>
+            ),
+          },
+        ],
       },
       {
         path: 'expenses',
@@ -45,6 +72,44 @@ export const financialRoutes: RouteObject[] = [
   },
   {
     path: 'purchases',
+    element: <PurchasesLayout />,
+    children: [
+      {
+        index: true,
+        element: (
+          <PermissionProtectedRoute>
+            <PurchasesPage />
+          </PermissionProtectedRoute>
+        ),
+      },
+      {
+        path: 'invoices',
+        element: (
+          <PermissionProtectedRoute>
+            <PurchaseInvoicesListPage />
+          </PermissionProtectedRoute>
+        ),
+      },
+      {
+        path: 'invoices/:id',
+        element: (
+          <PermissionProtectedRoute>
+            <PurchaseInvoiceDetailPage />
+          </PermissionProtectedRoute>
+        ),
+      },
+    ],
+  },
+  {
+    path: 'suppliers',
+    element: (
+      <PermissionProtectedRoute>
+        <PurchasesPage />
+      </PermissionProtectedRoute>
+    ),
+  },
+  {
+    path: 'reports',
     element: (
       <PermissionProtectedRoute>
         <PurchasesPage />

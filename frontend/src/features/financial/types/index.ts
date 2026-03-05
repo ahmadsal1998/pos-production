@@ -60,6 +60,8 @@ export interface PurchaseItem {
   unitCost: number;
   totalCost: number;
   unit: string;
+  sellingPrice?: number;
+  quantityInMainUnit?: number;
 }
 
 export interface PurchaseOrder {

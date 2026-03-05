@@ -1,25 +1,24 @@
-import React, { useState, useMemo, useEffect } from 'react';
-import { PurchaseOrder, Supplier, PurchaseItem, PurchaseStatus, PurchasePaymentMethod, ChequeDetails, SupplierPayment } from '@/features/financial/types';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
+import { Link, useLocation, useSearchParams } from 'react-router-dom';
+import { PurchaseOrder, Supplier, PurchaseStatus, PurchasePaymentMethod, SupplierPayment } from '@/features/financial/types';
 import { Product } from '@/shared/types';
 import { 
-  AR_LABELS, UUID, SearchIcon, PlusIcon, EditIcon, DeleteIcon, ViewIcon, CancelIcon, AddPaymentIcon, PrintIcon, ExportIcon, GridViewIcon, TableViewIcon
+  AR_LABELS, UUID, PlusIcon, DeleteIcon, PrintIcon
 } from '@/shared/constants';
-import PurchaseAnalytics from '@/features/financial/components/PurchaseAnalytics';
 import PurchaseQuickActions from '@/features/financial/components/PurchaseQuickActions';
-import SuppliersAnalytics from '@/features/financial/components/SuppliersAnalytics';
-import SuppliersQuickActions from '@/features/financial/components/SuppliersQuickActions';
+import { PurchasePOSView } from '@/features/financial/components/PurchasePOSView';
 import { formatDate } from '@/shared/utils';
 import { printReceipt } from '@/shared/utils/printUtils';
 import PaymentsAnalytics from '@/features/financial/components/PaymentsAnalytics';
 import PaymentsQuickActions from '@/features/financial/components/PaymentsQuickActions';
 import QuickReports from '@/features/financial/components/QuickReports';
-import SuppliersPage from './SuppliersPage';
 import SupplierPaymentsPage from './SupplierPaymentsPage';
 import PurchaseReportsPage from './PurchaseReportsPage';
-import { useResponsiveViewMode } from '@/shared/hooks';
+import { suppliersApi, purchasesApi, getApiErrorMessage } from '@/lib/api';
+import { AccountsModule, SUPPLIER_ACCOUNTS_LABELS } from '@/features/accounts';
+import type { AccountEntity } from '@/features/accounts';
 
-type LayoutType = 'table' | 'grid';
-type TabType = 'purchases' | 'suppliers' | 'payments' | 'reports';
+type TabType = 'purchases' | 'suppliers' | 'reports';
 
 // --- MOCK DATA ---
 const MOCK_SUPPLIERS_DATA: Supplier[] = [
@@ -49,20 +48,137 @@ const MOCK_PAYMENTS_DATA: SupplierPayment[] = [
 interface SupplierAccountSummary { supplierId: string; supplierName: string; totalPurchases: number; totalPaid: number; balance: number; lastPaymentDate: string | null; }
 
 // --- UTILS & CONSTANTS ---
-const STATUS_STYLES: Record<PurchaseStatus, string> = { 'Pending': 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/50 dark:text-yellow-300', 'Completed': 'bg-green-100 text-green-800 dark:bg-green-900/50 dark:text-green-300', 'Cancelled': 'bg-red-100 text-red-800 dark:bg-red-900/50 dark:text-red-300', };
-const STATUS_LABELS: Record<PurchaseStatus, string> = { 'Pending': AR_LABELS.pending, 'Completed': AR_LABELS.completed, 'Cancelled': AR_LABELS.cancelled, };
 const PAYMENT_METHOD_LABELS: Record<PurchasePaymentMethod, string> = { 'Cash': AR_LABELS.cash, 'Bank Transfer': AR_LABELS.bankTransfer, 'Credit': AR_LABELS.credit, 'Cheque': AR_LABELS.cheque, };
 const EMPTY_PURCHASE_ORDER: Omit<PurchaseOrder, 'id' | 'poNumber' | 'createdAt' | 'updatedAt'> = { supplierId: '', supplierName: '', items: [], subtotal: 0, tax: 15, discount: 0, totalAmount: 0, status: 'Pending', purchaseDate: new Date().toISOString().split('T')[0], paymentMethod: 'Cash', notes: '', };
 type PaymentTarget = { supplier: Supplier; purchaseId?: string; defaultAmount: number; } | null;
 
+// Shared input styles for supplier modal (aligned with SuppliersPage)
+const supplierInputClass = 'w-full px-3 py-2.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200 placeholder-gray-400 dark:placeholder-gray-500 text-right focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-orange-500 transition-colors';
+const supplierLabelClass = 'block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5 text-right';
+type OpeningBalanceType = 'credit' | 'debit' | null;
+
 // --- MODAL COMPONENTS ---
-const SupplierFormModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (newSupplier: Supplier) => void; }> = ({ isOpen, onClose, onSave }) => {
+const SupplierFormModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (newSupplier: Supplier) => void; supplierToEdit?: Supplier | null; }> = ({ isOpen, onClose, onSave, supplierToEdit }) => {
     const [name, setName] = useState('');
     const [contactPerson, setContactPerson] = useState('');
     const [phone, setPhone] = useState('');
-    const handleSave = () => { if (!name.trim()) { alert('اسم المورد مطلوب.'); return; } onSave({ id: UUID(), name, contactPerson, email: '', phone, address: '', previousBalance: 0, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }); setName(''); setContactPerson(''); setPhone(''); };
+    const [email, setEmail] = useState('');
+    const [address, setAddress] = useState('');
+    const [notes, setNotes] = useState('');
+    const [openingBalanceType, setOpeningBalanceType] = useState<OpeningBalanceType>(null);
+    const [openingBalanceAmount, setOpeningBalanceAmount] = useState('');
+    useEffect(() => {
+        if (supplierToEdit) {
+            setName(supplierToEdit.name);
+            setContactPerson(supplierToEdit.contactPerson || '');
+            setPhone(supplierToEdit.phone || '');
+            setEmail(supplierToEdit.email || '');
+            setAddress(supplierToEdit.address || '');
+            setNotes(supplierToEdit.notes || '');
+            const bal = supplierToEdit.previousBalance ?? 0;
+            if (bal > 0) {
+                setOpeningBalanceType('debit');
+                setOpeningBalanceAmount(String(bal));
+            } else if (bal < 0) {
+                setOpeningBalanceType('credit');
+                setOpeningBalanceAmount(String(Math.abs(bal)));
+            } else {
+                setOpeningBalanceType(null);
+                setOpeningBalanceAmount('');
+            }
+        } else {
+            setName('');
+            setContactPerson('');
+            setPhone('');
+            setEmail('');
+            setAddress('');
+            setNotes('');
+            setOpeningBalanceType(null);
+            setOpeningBalanceAmount('');
+        }
+    }, [supplierToEdit, isOpen]);
+    const handleSave = () => {
+        if (!name.trim()) { alert('اسم المورد مطلوب.'); return; }
+        if (!phone.trim()) { alert('رقم الهاتف مطلوب.'); return; }
+        let previousBalance = 0;
+        if (openingBalanceType && openingBalanceAmount) {
+            const amount = parseFloat(openingBalanceAmount) || 0;
+            previousBalance = openingBalanceType === 'debit' ? amount : -amount;
+        }
+        const payload = { name, contactPerson, email, phone, address, notes, previousBalance, updatedAt: new Date().toISOString() };
+        if (supplierToEdit) {
+            onSave({ ...supplierToEdit, ...payload });
+        } else {
+            onSave({ id: UUID(), ...payload, createdAt: new Date().toISOString() });
+        }
+    };
     if (!isOpen) return null;
-    return (<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[60] p-4" onClick={onClose}><div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl p-6 w-full max-w-md text-right" onClick={e => e.stopPropagation()}><h2 className="text-xl font-bold text-gray-900 dark:text-gray-100 mb-4">{AR_LABELS.addNewSupplier}</h2><div className="space-y-4"><input type="text" placeholder={AR_LABELS.supplier} value={name} onChange={e => setName(e.target.value)} className="w-full border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200 rounded-md shadow-sm"/><input type="text" placeholder={AR_LABELS.contactPerson} value={contactPerson} onChange={e => setContactPerson(e.target.value)} className="w-full border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200 rounded-md shadow-sm"/><input type="text" placeholder={AR_LABELS.phone} value={phone} onChange={e => setPhone(e.target.value)} className="w-full border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200 rounded-md shadow-sm"/></div><div className="flex justify-start space-x-4 space-x-reverse pt-4"><button onClick={handleSave} className="px-4 py-2 bg-orange-500 text-white rounded-md">{AR_LABELS.save}</button><button onClick={onClose} className="px-4 py-2 bg-gray-200 dark:bg-gray-600 text-gray-800 dark:text-gray-200 rounded-md">{AR_LABELS.cancel}</button></div></div></div>);
+    return (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[60] p-4" onClick={onClose}>
+            <div className="bg-white dark:bg-gray-800 rounded-xl shadow-xl w-full max-w-md text-right overflow-hidden" onClick={e => e.stopPropagation()}>
+                <div className="p-6 pb-4">
+                    <h2 className="text-xl font-bold text-gray-900 dark:text-gray-100 mb-6">{supplierToEdit ? 'تعديل مورد' : AR_LABELS.addNewSupplier}</h2>
+                    <div className="space-y-5">
+                        <div>
+                            <label htmlFor="purch-supplier-name" className={supplierLabelClass}>اسم المورد *</label>
+                            <input id="purch-supplier-name" type="text" value={name} onChange={e => setName(e.target.value)} className={supplierInputClass} placeholder="اسم المورد" />
+                        </div>
+                        <div>
+                            <label htmlFor="purch-supplier-contact" className={supplierLabelClass}>{AR_LABELS.contactPerson}</label>
+                            <input id="purch-supplier-contact" type="text" value={contactPerson} onChange={e => setContactPerson(e.target.value)} className={supplierInputClass} placeholder="الشخص المسؤول" />
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            <div>
+                                <label htmlFor="purch-supplier-phone" className={supplierLabelClass}>{AR_LABELS.phone} *</label>
+                                <input id="purch-supplier-phone" type="text" value={phone} onChange={e => setPhone(e.target.value)} className={supplierInputClass} placeholder="05xxxxxxxx" />
+                            </div>
+                            <div>
+                                <label htmlFor="purch-supplier-email" className={supplierLabelClass}>البريد الإلكتروني (اختياري)</label>
+                                <input id="purch-supplier-email" type="text" inputMode="email" value={email} onChange={e => setEmail(e.target.value)} className={supplierInputClass} placeholder="example@domain.com" />
+                            </div>
+                        </div>
+                        <div>
+                            <label htmlFor="purch-supplier-address" className={supplierLabelClass}>{AR_LABELS.address}</label>
+                            <input id="purch-supplier-address" type="text" value={address} onChange={e => setAddress(e.target.value)} className={supplierInputClass} placeholder="العنوان" />
+                        </div>
+                        <div>
+                            <label htmlFor="purch-supplier-notes" className={supplierLabelClass}>{AR_LABELS.notes}</label>
+                            <textarea id="purch-supplier-notes" rows={2} value={notes} onChange={e => setNotes(e.target.value)} className={`${supplierInputClass} resize-none`} placeholder="ملاحظات اختيارية" />
+                        </div>
+                        <div className="border-t border-gray-200 dark:border-gray-700 pt-5 mt-2">
+                            <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2 text-right">{AR_LABELS.openingBalance}</h3>
+                            <p className="text-xs text-gray-500 dark:text-gray-400 mb-3 text-right">{AR_LABELS.openingBalanceHint}</p>
+                            <div className="space-y-4">
+                                <div>
+                                    <span className={supplierLabelClass}>{AR_LABELS.transactionType}</span>
+                                    <div className="flex gap-3 flex-row-reverse">
+                                        <label className="flex-1 cursor-pointer flex flex-col">
+                                            <input type="radio" name="purchOpeningBalanceType" checked={openingBalanceType === 'credit'} onChange={() => setOpeningBalanceType('credit')} className="sr-only peer" />
+                                            <span className="flex items-center justify-center gap-2 py-2.5 px-3 rounded-lg border-2 border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 text-sm font-medium transition-all peer-checked:border-orange-500 peer-checked:bg-orange-50 dark:peer-checked:bg-orange-900/20 peer-checked:text-orange-700 dark:peer-checked:text-orange-300">{AR_LABELS.receiptVoucherCredit}</span>
+                                        </label>
+                                        <label className="flex-1 cursor-pointer flex flex-col">
+                                            <input type="radio" name="purchOpeningBalanceType" checked={openingBalanceType === 'debit'} onChange={() => setOpeningBalanceType('debit')} className="sr-only peer" />
+                                            <span className="flex items-center justify-center gap-2 py-2.5 px-3 rounded-lg border-2 border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 text-sm font-medium transition-all peer-checked:border-orange-500 peer-checked:bg-orange-50 dark:peer-checked:bg-orange-900/20 peer-checked:text-orange-700 dark:peer-checked:text-orange-300">{AR_LABELS.debitVoucher}</span>
+                                        </label>
+                                    </div>
+                                </div>
+                                {openingBalanceType && (
+                                    <div>
+                                        <label htmlFor="purch-opening-amount" className={supplierLabelClass}>{AR_LABELS.openingBalanceAmount}</label>
+                                        <input id="purch-opening-amount" type="number" min={0} step={0.01} value={openingBalanceAmount} onChange={e => setOpeningBalanceAmount(e.target.value)} className={supplierInputClass} placeholder="0.00" />
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                        <div className="flex justify-start gap-3 pt-4">
+                            <button type="button" onClick={handleSave} className="px-5 py-2.5 bg-orange-500 hover:bg-orange-600 text-white font-medium rounded-lg transition-colors">{AR_LABELS.save}</button>
+                            <button type="button" onClick={onClose} className="px-5 py-2.5 bg-gray-200 dark:bg-gray-600 hover:bg-gray-300 dark:hover:bg-gray-500 text-gray-800 dark:text-gray-200 font-medium rounded-lg transition-colors">{AR_LABELS.cancel}</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
 }
 
 const SimpleAddProductModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (newProduct: Product) => void; }> = ({ isOpen, onClose, onSave }) => {
@@ -169,7 +285,13 @@ const SupplierStatementModal: React.FC<{ summary: SupplierAccountSummary | null;
     const transactions = useMemo(() => {
         type TransactionType = { date: string; type: 'purchase' | 'payment'; description: string; debit: number; credit: number; balance: number };
         const supplierPurchases: TransactionType[] = purchases.filter(p => p.supplierId === summary.supplierId).map(p => ({ date: p.purchaseDate, type: 'purchase' as const, description: `${AR_LABELS.purchaseOrder} #${p.id}`, debit: p.totalAmount, credit: 0, balance: 0 }));
-        const supplierPayments: TransactionType[] = payments.filter(p => p.supplierId === summary.supplierId).map(p => ({ date: p.date, type: 'payment' as const, description: `${AR_LABELS.paymentMade} - ${p.method}`, debit: 0, credit: p.amount, balance: 0 }));
+        const supplierPayments: TransactionType[] = payments.filter(p => p.supplierId === summary.supplierId).map(p => {
+            const amt = typeof p.amount === 'number' ? p.amount : 0;
+            if (amt < 0) {
+                return { date: p.date, type: 'payment' as const, description: (p as any).notes || 'رصيد أولي - سند قيد', debit: Math.abs(amt), credit: 0, balance: 0 };
+            }
+            return { date: p.date, type: 'payment' as const, description: (p as any).notes || `${AR_LABELS.paymentMade} - ${p.method}`, debit: 0, credit: amt, balance: 0 };
+        });
         return [...supplierPurchases, ...supplierPayments].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()).reduce((acc, trans) => { const prevBalance = acc.length > 0 ? acc[acc.length - 1].balance : 0; const newBalance = prevBalance + trans.debit - trans.credit; acc.push({ ...trans, balance: newBalance }); return acc; }, [] as TransactionType[]);
     }, [summary, purchases, payments]);
     return (<div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4" onClick={onClose}><div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-3xl text-right" onClick={e => e.stopPropagation()}><div id="printable-receipt" className="p-6">
@@ -213,14 +335,69 @@ const SupplierStatementModal: React.FC<{ summary: SupplierAccountSummary | null;
 
 // FIX: Added the main component and default export to fix the error.
 const PurchasesPage: React.FC = () => {
-    const [purchases, setPurchases] = useState<PurchaseOrder[]>(createInitialPurchases());
-    const [suppliers, setSuppliers] = useState<Supplier[]>(MOCK_SUPPLIERS_DATA);
+    const [searchParams] = useSearchParams();
+    const editPurchaseId = searchParams.get('edit') || undefined;
+    const [purchases, setPurchases] = useState<PurchaseOrder[]>([]);
+    const [suppliers, setSuppliers] = useState<Supplier[]>([]);
     const [products, setProducts] = useState<Product[]>(MOCK_PRODUCTS);
-    const [payments, setPayments] = useState<SupplierPayment[]>(MOCK_PAYMENTS_DATA);
+    const [payments, setPayments] = useState<SupplierPayment[]>([]);
     const [purchaseModal, setPurchaseModal] = useState<{isOpen: boolean, data: PurchaseOrder | null}>({isOpen: false, data: null});
     const [supplierModalOpen, setSupplierModalOpen] = useState(false);
+    const [editingSupplier, setEditingSupplier] = useState<Supplier | null>(null);
     const [paymentModalTarget, setPaymentModalTarget] = useState<PaymentTarget>(null);
     const [statementModalTarget, setStatementModalTarget] = useState<SupplierAccountSummary | null>(null);
+    const [purchasesLoading, setPurchasesLoading] = useState(false);
+    const [supplierSummaries, setSupplierSummaries] = useState<SupplierAccountSummary[]>([]);
+
+    const loadFromApi = useCallback(async () => {
+        setPurchasesLoading(true);
+        try {
+            const [suppRes, purRes, payRes, sumRes] = await Promise.all([
+                suppliersApi.getSuppliers().catch(() => ({ data: { suppliers: [] } })),
+                purchasesApi.getPurchases().catch(() => ({ data: { purchases: [] } })),
+                suppliersApi.getSupplierPayments().catch(() => ({ data: { payments: [] } })),
+                suppliersApi.getSupplierAccountsSummary().catch(() => ({ data: { summaries: [] } })),
+            ]);
+            const suppList = (suppRes as any)?.data?.data?.suppliers ?? (suppRes as any)?.data?.suppliers ?? [];
+            const purList = (purRes as any)?.data?.data?.purchases ?? (purRes as any)?.data?.purchases ?? [];
+            const payList = (payRes as any)?.data?.data?.payments ?? (payRes as any)?.data?.payments ?? [];
+            const sumList = (sumRes as any)?.data?.data?.summaries ?? (sumRes as any)?.data?.summaries ?? [];
+            setSuppliers(Array.isArray(suppList) ? suppList : []);
+            setSupplierSummaries(Array.isArray(sumList) ? sumList.map((s: any) => ({
+                supplierId: s.supplierId,
+                supplierName: s.supplierName,
+                totalPurchases: s.totalPurchases ?? 0,
+                totalPaid: s.totalPaid ?? 0,
+                balance: s.balance ?? 0,
+                lastPaymentDate: s.lastPaymentDate ?? null,
+            })) : []);
+            setPurchases(Array.isArray(purList) ? purList.map((p: any) => ({
+                id: p.id,
+                poNumber: p.poNumber ?? p.id,
+                supplierId: p.supplierId,
+                supplierName: p.supplierName,
+                items: p.items ?? [],
+                subtotal: p.subtotal ?? 0,
+                tax: p.tax ?? 0,
+                discount: p.discount ?? 0,
+                totalAmount: p.totalAmount ?? 0,
+                status: p.status ?? 'Pending',
+                purchaseDate: p.purchaseDate ?? p.createdAt,
+                paymentMethod: p.paymentMethod ?? 'Cash',
+                chequeDetails: p.chequeDetails,
+                createdAt: p.createdAt,
+                updatedAt: p.updatedAt,
+                notes: p.notes,
+            })) : []);
+            setPayments(Array.isArray(payList) ? payList : []);
+        } finally {
+            setPurchasesLoading(false);
+        }
+    }, []);
+
+    useEffect(() => {
+        loadFromApi();
+    }, [loadFromApi]);
 
     const handleSavePurchase = (purchase: PurchaseOrder) => {
         setPurchases(prev => {
@@ -231,11 +408,32 @@ const PurchasesPage: React.FC = () => {
             return [purchase, ...prev];
         });
         setPurchaseModal({isOpen: false, data: null});
+        loadFromApi();
     };
     
-    const handleSaveSupplier = (supplier: Supplier) => {
-        setSuppliers(prev => [supplier, ...prev]);
-        setSupplierModalOpen(false);
+    const handleSaveSupplier = async (supplier: Supplier) => {
+        try {
+            if (editingSupplier) {
+                await suppliersApi.updateSupplier(editingSupplier.id, { name: supplier.name, contactPerson: supplier.contactPerson, email: supplier.email, phone: supplier.phone, address: supplier.address, previousBalance: supplier.previousBalance, notes: supplier.notes });
+                setSuppliers(prev => prev.map(s => s.id === editingSupplier.id ? { ...supplier, id: editingSupplier.id, createdAt: s.createdAt, updatedAt: new Date().toISOString() } : s));
+                setEditingSupplier(null);
+            } else {
+                const res = await suppliersApi.createSupplier({ name: supplier.name, contactPerson: supplier.contactPerson, email: supplier.email, phone: supplier.phone, address: supplier.address, previousBalance: supplier.previousBalance ?? 0, notes: supplier.notes });
+                const created = (res.data as any)?.data?.supplier;
+                if (created) setSuppliers(prev => [{ ...created, id: created.id || created._id }, ...prev]);
+                setSupplierModalOpen(false);
+            }
+            loadFromApi();
+        } catch (e: any) {
+            alert(getApiErrorMessage(e, 'فشل حفظ المورد'));
+        }
+    };
+
+    const handleDeleteSupplier = async (id: string) => {
+        await suppliersApi.deleteSupplier(id);
+        setSuppliers(prev => prev.filter(s => s.id !== id));
+        setPayments(prev => prev.filter(p => p.supplierId !== id));
+        loadFromApi();
     };
 
     const handleSavePayment = (payment: SupplierPayment) => {
@@ -282,7 +480,12 @@ const PurchasesPage: React.FC = () => {
         }
     };
 
-    const [activeTab, setActiveTab] = useState<TabType>('purchases');
+    const location = useLocation();
+    const pathname = location.pathname;
+    const activeTab: TabType =
+        pathname.endsWith('/suppliers') ? 'suppliers'
+        : pathname.endsWith('/reports') ? 'reports'
+        : 'purchases';
 
     return (
         <div className="relative min-h-screen overflow-hidden">
@@ -297,30 +500,45 @@ const PurchasesPage: React.FC = () => {
                 <div className="flex flex-col items-start justify-between gap-8 lg:flex-row lg:items-center">
                     <div />
                     
-                    {/* Modern Navigation Tabs */}
+                    {/* Modern Navigation Tabs - each button has its own route */}
                     <div className="w-full overflow-x-auto scroll-smooth horizontal-nav-scroll">
-                        <div className="flex gap-2 sm:gap-3 min-w-max pb-2">
+                        <div className="flex gap-2 sm:gap-3 min-w-max pb-2 items-center">
                             {[
-                                { id: 'purchases', label: 'المشتريات' },
-                                { id: 'suppliers', label: 'الموردين' },
-                                { id: 'payments', label: 'المدفوعات' },
-                                { id: 'reports', label: 'التقارير' },
-                            ].map((tab) => (
-                                <button
-                                    key={tab.id}
-                                    onClick={() => setActiveTab(tab.id as TabType)}
-                                    className={`group relative px-4 sm:px-6 py-2 sm:py-3 rounded-xl text-xs sm:text-sm font-medium transition-all duration-300 whitespace-nowrap ${
-                                        activeTab === tab.id
-                                            ? 'bg-gradient-to-r from-orange-500 to-amber-500 text-white shadow-lg shadow-orange-500/50'
-                                            : 'bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl text-slate-700 dark:text-slate-200 border border-slate-200/50 dark:border-slate-700/50 hover:shadow-md'
-                                    }`}
-                                >
-                                    {activeTab === tab.id && (
-                                        <div className="absolute -inset-0.5 rounded-xl bg-gradient-to-r from-orange-500 to-amber-500 opacity-20 blur" />
-                                    )}
-                                    <span className="relative">{tab.label}</span>
-                                </button>
-                            ))}
+                                { id: 'purchases', label: 'المشتريات', to: '/purchases' },
+                                { id: 'suppliers', label: 'الموردين', to: '/suppliers' },
+                                { id: 'reports', label: 'التقارير', to: '/reports' },
+                            ].map((tab) => {
+                                const isActive = activeTab === tab.id;
+                                return (
+                                    <Link
+                                        key={tab.id}
+                                        to={tab.to}
+                                        className={`group relative px-4 sm:px-6 py-2 sm:py-3 rounded-xl text-xs sm:text-sm font-medium transition-all duration-300 whitespace-nowrap ${
+                                            isActive
+                                                ? 'bg-gradient-to-r from-orange-500 to-amber-500 text-white shadow-lg shadow-orange-500/50'
+                                                : 'bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl text-slate-700 dark:text-slate-200 border border-slate-200/50 dark:border-slate-700/50 hover:shadow-md'
+                                        }`}
+                                    >
+                                        {isActive && (
+                                            <div className="absolute -inset-0.5 rounded-xl bg-gradient-to-r from-orange-500 to-amber-500 opacity-20 blur" />
+                                        )}
+                                        <span className="relative">{tab.label}</span>
+                                    </Link>
+                                );
+                            })}
+                            <Link
+                                to="/purchases/invoices"
+                                className={`group relative px-4 sm:px-6 py-2 sm:py-3 rounded-xl text-xs sm:text-sm font-medium transition-all duration-300 whitespace-nowrap ${
+                                    pathname.includes('/purchases/invoices')
+                                        ? 'bg-gradient-to-r from-orange-500 to-amber-500 text-white shadow-lg shadow-orange-500/50'
+                                        : 'bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl text-slate-700 dark:text-slate-200 border border-slate-200/50 dark:border-slate-700/50 hover:shadow-md'
+                                }`}
+                            >
+                                {pathname.includes('/purchases/invoices') && (
+                                    <div className="absolute -inset-0.5 rounded-xl bg-gradient-to-r from-orange-500 to-amber-500 opacity-20 blur" />
+                                )}
+                                <span className="relative">{AR_LABELS.purchaseInvoicesList}</span>
+                            </Link>
                         </div>
                     </div>
                 </div>
@@ -328,55 +546,74 @@ const PurchasesPage: React.FC = () => {
                 {/* Tab Content */}
                 <div>
                 {activeTab === 'purchases' && (
-                    <div className="space-y-8">
-                        {/* Analytics and Quick Actions */}
-                        <div className="space-y-6">
-                            <PurchaseAnalytics purchases={purchases} />
-                            <PurchaseQuickActions
-                                onAddPurchase={() => handleQuickAction('add-purchase')}
-                                onImportPurchases={() => handleQuickAction('import')}
-                                onExportPurchases={() => handleQuickAction('export')}
-                                onPrintPurchases={() => handleQuickAction('print')}
-                                onSearchPurchases={() => handleQuickAction('search')}
+                    <div className="space-y-6">
+                        {/* POS-style New Purchase (same layout as POS screen) */}
+                        <div className="h-[calc(100vh-14rem)] min-h-[420px]">
+                            <PurchasePOSView
+                                editPurchaseId={editPurchaseId}
+                                onPurchaseCreated={loadFromApi}
+                                onViewStatement={(supplierId) => {
+                                    const summary = supplierSummaries.find(s => s.supplierId === supplierId);
+                                    if (summary) {
+                                        setStatementModalTarget(summary);
+                                    } else {
+                                        const supp = suppliers.find(s => s.id === supplierId);
+                                        if (supp) {
+                                            setStatementModalTarget({
+                                                supplierId: supp.id,
+                                                supplierName: supp.name,
+                                                totalPurchases: 0,
+                                                totalPaid: 0,
+                                                balance: 0,
+                                                lastPaymentDate: null,
+                                            });
+                                        }
+                                    }
+                                }}
                             />
                         </div>
-
-                        {/* Purchase Orders View */}
-                        <PurchaseOrdersView 
-                            purchases={purchases} 
-                            onAdd={() => setPurchaseModal({isOpen: true, data: null})} 
-                            onEdit={(p) => setPurchaseModal({isOpen: true, data: p})} 
-                        />
                     </div>
                 )}
 
                 {activeTab === 'suppliers' && (
-                    <div className="space-y-8">
-                        {/* Analytics and Quick Actions */}
-                        <div className="space-y-6">
-                            <SuppliersAnalytics 
-                                suppliers={suppliers}
-                                purchases={purchases}
-                                payments={payments}
-                            />
-                            <SuppliersQuickActions
-                                onAddSupplier={() => handleQuickAction('add-supplier')}
-                                onViewSuppliers={() => handleQuickAction('view-suppliers')}
-                                onImportSuppliers={() => handleQuickAction('import')}
-                                onExportSuppliers={() => handleQuickAction('export')}
-                            />
-                        </div>
-
-                        {/* Suppliers View */}
-                        <SuppliersPage 
-                            purchases={purchases} 
-                            payments={payments}
-                            suppliers={suppliers}
-                            onSuppliersUpdated={(updatedSuppliers) => {
-                                setSuppliers(updatedSuppliers);
-                            }}
-                        />
-                    </div>
+                    <AccountsModule
+                        mode="supplier"
+                        entities={suppliers.map(s => ({ id: s.id, name: s.name, phone: s.phone, address: s.address }))}
+                        setEntities={(updater) => {
+                            setSuppliers(prev => {
+                                const next = typeof updater === 'function' ? updater(prev.map(s => ({ id: s.id, name: s.name, phone: s.phone, address: s.address }))) : updater;
+                                return next.map(e => {
+                                    const full = prev.find(s => s.id === e.id);
+                                    return full ? { ...full, ...e } : { ...e, contactPerson: '', email: '', previousBalance: 0, createdAt: '', updatedAt: '', notes: '' } as Supplier;
+                                });
+                            });
+                        }}
+                        payments={payments.map(p => ({ entityId: p.supplierId, date: p.date, amount: p.amount, method: p.method }))}
+                        setPayments={(updater) => {
+                            setPayments(prev => {
+                                const next = typeof updater === 'function' ? updater(prev) : updater;
+                                return (next || []).map((p: any) => ({ id: p.id || UUID(), supplierId: p.entityId, date: p.date, amount: p.amount, method: p.method, createdAt: p.createdAt || new Date().toISOString() }));
+                            });
+                        }}
+                        onRefreshPayments={loadFromApi}
+                        onSaveNewEntity={async (entity) => {
+                            await suppliersApi.createSupplier({ name: entity.name, contactPerson: (entity as any).contactPerson, email: (entity as any).email, phone: entity.phone, address: entity.address, previousBalance: (entity as any).previousBalance ?? 0, notes: (entity as any).notes });
+                            loadFromApi();
+                        }}
+                        onUpdateEntity={async (entity) => {
+                            const full = suppliers.find(s => s.id === entity.id);
+                            if (full) await handleSaveSupplier({ ...full, ...entity, updatedAt: new Date().toISOString() });
+                        }}
+                        onDeleteEntity={handleDeleteSupplier}
+                        onOpenAddEntity={() => { setEditingSupplier(null); setSupplierModalOpen(true); }}
+                        onOpenEditEntity={(entity) => {
+                            const full = suppliers.find(s => s.id === entity.id);
+                            if (full) setEditingSupplier(full);
+                        }}
+                        labels={SUPPLIER_ACCOUNTS_LABELS}
+                        isLoadingEntities={purchasesLoading}
+                        onRefreshEntities={loadFromApi}
+                    />
                 )}
 
                 {activeTab === 'payments' && (
@@ -435,9 +672,10 @@ const PurchasesPage: React.FC = () => {
                     onAddNewSupplier={() => setSupplierModalOpen(true)}
                 />
                 <SupplierFormModal
-                    isOpen={supplierModalOpen}
-                    onClose={() => setSupplierModalOpen(false)}
+                    isOpen={supplierModalOpen || !!editingSupplier}
+                    onClose={() => { setSupplierModalOpen(false); setEditingSupplier(null); }}
                     onSave={handleSaveSupplier}
+                    supplierToEdit={editingSupplier}
                 />
                  <AddPaymentModal 
                     isOpen={!!paymentModalTarget}
@@ -452,134 +690,6 @@ const PurchasesPage: React.FC = () => {
                     onClose={() => setStatementModalTarget(null)}
                 />
             </div>
-        </div>
-    );
-};
-
-const PurchaseOrdersView: React.FC<{
-    purchases: PurchaseOrder[];
-    onAdd: () => void;
-    onEdit: (p: PurchaseOrder) => void;
-}> = ({ purchases, onAdd, onEdit }) => {
-    const [searchTerm, setSearchTerm] = useState('');
-    const { viewMode: layout, setViewMode: setLayout } = useResponsiveViewMode('purchases', 'table', 'grid');
-
-    const filteredPurchases = useMemo(() => {
-        return purchases.filter(p => {
-            const matchesSearch = searchTerm ? 
-                p.id.toLowerCase().includes(searchTerm.toLowerCase()) || 
-                p.supplierName.toLowerCase().includes(searchTerm.toLowerCase()) : true;
-            return matchesSearch;
-        }).sort((a,b) => new Date(b.purchaseDate).getTime() - new Date(a.purchaseDate).getTime());
-    }, [purchases, searchTerm]);
-
-    return (
-        <div>
-            {/* Control Bar: Search */}
-            <div className="bg-white/95 dark:bg-gray-800/95 rounded-2xl shadow-sm p-4 sm:p-6 backdrop-blur-xl border border-slate-200/50 dark:border-slate-700/50">
-                <div className="flex flex-col sm:flex-row justify-between items-stretch sm:items-center gap-4">
-                    {/* Search Bar */}
-                    <div className="relative flex-1 w-full sm:w-auto">
-                        <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400 dark:text-gray-500" />
-                        <input
-                            type="text"
-                            placeholder={AR_LABELS.searchByPOorSupplier || 'ابحث برقم الطلب أو المورد...'}
-                            value={searchTerm}
-                            onChange={(e) => setSearchTerm(e.target.value)}
-                            className="w-full pl-10 pr-4 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-orange-500 focus:border-transparent text-right"
-                        />
-                    </div>
-                    {/* Layout Toggle */}
-                    <div className="flex border border-gray-300 dark:border-gray-600 rounded-lg overflow-hidden w-full sm:w-auto flex-shrink-0">
-                        <button 
-                            onClick={() => setLayout('table')} 
-                            className={`flex-1 sm:flex-none px-3 py-2 ${layout === 'table' ? 'bg-orange-500 text-white' : 'bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300'}`}
-                            title="عرض الجدول"
-                        >
-                            <TableViewIcon />
-                        </button>
-                        <button 
-                            onClick={() => setLayout('grid')} 
-                            className={`flex-1 sm:flex-none px-3 py-2 ${layout === 'grid' ? 'bg-orange-500 text-white' : 'bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300'}`}
-                            title="عرض الشبكة"
-                        >
-                            <GridViewIcon/>
-                        </button>
-                    </div>
-                </div>
-            </div>
-
-            {/* Purchase Table/Grid */}
-            {layout === 'table' ? (
-                <div className="bg-white/95 dark:bg-gray-800/95 rounded-2xl shadow-sm overflow-hidden backdrop-blur-xl border border-slate-200/50 dark:border-slate-700/50">
-                    <div className="overflow-x-auto overscroll-contain">
-                        <table className="w-full divide-y divide-gray-200 dark:divide-gray-700 text-right">
-                            <thead className="bg-gray-50 dark:bg-gray-700">
-                                <tr>
-                                    <th scope="col" className="px-2 py-3 sm:px-4 sm:py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">{AR_LABELS.poNumber}</th>
-                                    <th scope="col" className="px-2 py-3 sm:px-4 sm:py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">{AR_LABELS.purchaseDate}</th>
-                                    <th scope="col" className="px-2 py-3 sm:px-4 sm:py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">{AR_LABELS.supplier}</th>
-                                    <th scope="col" className="px-2 py-3 sm:px-4 sm:py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">{AR_LABELS.totalAmount}</th>
-                                    <th scope="col" className="px-2 py-3 sm:px-4 sm:py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">{AR_LABELS.paymentMethod}</th>
-                                    <th scope="col" className="px-2 py-3 sm:px-4 sm:py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">{AR_LABELS.status}</th>
-                                    <th scope="col" className="px-2 py-3 sm:px-4 sm:py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider text-center">{AR_LABELS.actions}</th>
-                                </tr>
-                            </thead>
-                            <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
-                                {filteredPurchases.length > 0 ? filteredPurchases.map((purchase) => (
-                                    <tr key={purchase.id} className="hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors duration-150">
-                                        <td className="px-2 py-3 sm:px-4 sm:py-4 whitespace-nowrap"><div className="text-xs sm:text-sm font-medium text-blue-600 dark:text-blue-400">{purchase.id}</div></td>
-                                        <td className="px-2 py-3 sm:px-4 sm:py-4 whitespace-nowrap"><div className="text-xs sm:text-sm text-gray-700 dark:text-gray-300">{formatDate(purchase.purchaseDate)}</div></td>
-                                        <td className="px-2 py-3 sm:px-4 sm:py-4 whitespace-nowrap"><div className="text-xs sm:text-sm font-medium text-gray-900 dark:text-gray-100 truncate max-w-[120px] sm:max-w-none" title={purchase.supplierName}>{purchase.supplierName}</div></td>
-                                        <td className="px-2 py-3 sm:px-4 sm:py-4 whitespace-nowrap"><div className="text-xs sm:text-sm font-semibold text-orange-600">{purchase.totalAmount.toFixed(2)} ر.س</div></td>
-                                        <td className="px-2 py-3 sm:px-4 sm:py-4 whitespace-nowrap"><div className="text-xs sm:text-sm text-gray-700 dark:text-gray-300">{PAYMENT_METHOD_LABELS[purchase.paymentMethod]}</div></td>
-                                        <td className="px-2 py-3 sm:px-4 sm:py-4 whitespace-nowrap">
-                                            <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${STATUS_STYLES[purchase.status]}`}>
-                                                {STATUS_LABELS[purchase.status]}
-                                            </span>
-                                        </td>
-                                        <td className="px-2 py-3 sm:px-4 sm:py-4 whitespace-nowrap text-center text-xs sm:text-sm font-medium">
-                                            <button onClick={() => alert('View details for ' + purchase.id)} className="text-blue-600 hover:text-blue-900 dark:text-blue-400 dark:hover:text-blue-300 ml-2 sm:ml-4 p-1 sm:p-2 rounded-full hover:bg-blue-50 dark:hover:bg-gray-700 transition-colors duration-200" aria-label={`${AR_LABELS.viewDetails} ${purchase.id}`}><ViewIcon /></button>
-                                            <button onClick={() => onEdit(purchase)} className="text-indigo-600 hover:text-indigo-900 dark:text-indigo-400 dark:hover:text-indigo-300 p-1 sm:p-2 rounded-full hover:bg-indigo-50 dark:hover:bg-gray-700 transition-colors duration-200" aria-label={`${AR_LABELS.edit} ${purchase.id}`}><EditIcon /></button>
-                                        </td>
-                                    </tr>
-                                )) : (
-                                    <tr>
-                                        <td colSpan={7} className="px-4 py-10 text-center text-xs sm:text-sm text-gray-500 dark:text-gray-400">{AR_LABELS.noSalesFound}</td>
-                                    </tr>
-                                )}
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-            ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-                    {filteredPurchases.length > 0 ? filteredPurchases.map((purchase) => (
-                        <div key={purchase.id} className="bg-white/95 dark:bg-gray-800/95 rounded-2xl shadow-sm p-6 space-y-3 flex flex-col justify-between backdrop-blur-xl border border-slate-200/50 dark:border-slate-700/50 hover:shadow-md transition-shadow">
-                            <div>
-                                <div className="flex justify-between items-start mb-3">
-                                    <h3 className="text-lg font-bold text-blue-600 dark:text-blue-400">{purchase.id}</h3>
-                                    <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${STATUS_STYLES[purchase.status]}`}>
-                                        {STATUS_LABELS[purchase.status]}
-                                    </span>
-                                </div>
-                                <div className="space-y-2 text-sm text-gray-600 dark:text-gray-400">
-                                    <p><span className="font-medium">{AR_LABELS.supplier}:</span> {purchase.supplierName}</p>
-                                    <p><span className="font-medium">{AR_LABELS.purchaseDate}:</span> {formatDate(purchase.purchaseDate)}</p>
-                                    <p><span className="font-medium">{AR_LABELS.totalAmount}:</span> <span className="font-bold text-orange-600">{purchase.totalAmount.toFixed(2)} ر.س</span></p>
-                                    <p><span className="font-medium">{AR_LABELS.paymentMethod}:</span> {PAYMENT_METHOD_LABELS[purchase.paymentMethod]}</p>
-                                </div>
-                            </div>
-                            <div className="border-t dark:border-gray-700 pt-3 flex justify-end gap-2">
-                                <button onClick={() => alert('View details for ' + purchase.id)} className="text-blue-600 hover:text-blue-900 dark:text-blue-400 dark:hover:text-blue-300 p-2 rounded-lg hover:bg-blue-50 dark:hover:bg-gray-700 transition-colors"><ViewIcon /></button>
-                                <button onClick={() => onEdit(purchase)} className="text-indigo-600 hover:text-indigo-900 dark:text-indigo-400 dark:hover:text-indigo-300 p-2 rounded-lg hover:bg-indigo-50 dark:hover:bg-gray-700 transition-colors"><EditIcon /></button>
-                            </div>
-                        </div>
-                    )) : (
-                        <div className="col-span-full text-center text-gray-500 dark:text-gray-400 py-10">{AR_LABELS.noSalesFound}</div>
-                    )}
-                </div>
-            )}
         </div>
     );
 };

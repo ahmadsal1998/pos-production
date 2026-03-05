@@ -34,12 +34,22 @@ module.exports = __toCommonJS(server_exports);
 var import_express = __toESM(require("express"));
 var import_cors = __toESM(require("cors"));
 var import_dotenv = __toESM(require("dotenv"));
+var import_mongoose = __toESM(require("mongoose"));
 var import_database = __toESM(require("./config/database"));
 var import_redis = require("./utils/redis");
 var import_error = require("./middleware/error.middleware");
 var import_logger = require("./utils/logger");
 var import_routes = require("./routes");
 import_dotenv.default.config();
+if (process.env.NODE_ENV === "production") {
+  const adminUser = process.env.ADMIN_USERNAME;
+  const adminPass = process.env.ADMIN_PASSWORD;
+  if (!adminUser || !adminPass) {
+    import_logger.log.warn("Admin login disabled: ADMIN_USERNAME and ADMIN_PASSWORD must both be set in production. Use strong values and do not commit them.");
+  } else if (adminPass.length < 12) {
+    import_logger.log.warn("Admin password is short: consider using at least 12 characters. Prefer DB-backed admin user with hashed password and MFA later.");
+  }
+}
 const app = (0, import_express.default)();
 const PORT = process.env.PORT || 5e3;
 (0, import_database.default)().catch((error) => {
@@ -113,10 +123,8 @@ const corsOptions = {
           }
         }
       }
-      import_logger.log.warn(`CORS: Origin not explicitly allowed: ${origin}`);
-      import_logger.log.debug(`CORS: CLIENT_URL env var: ${process.env.CLIENT_URL || "not set"}`);
-      import_logger.log.warn(`CORS: Temporarily allowing origin for debugging: ${origin}`);
-      return callback(null, true);
+      import_logger.log.warn(`CORS: Origin not allowed: ${origin}`);
+      return callback(new Error(`Not allowed by CORS: ${origin}`));
     } catch (error) {
       import_logger.log.error("CORS validation error", error);
       import_logger.log.warn("CORS: Allowing origin due to validation error");
@@ -171,34 +179,56 @@ app.get("/health", async (req, res) => {
     const { getRedisStatus, isRedisAvailable } = await import("./utils/redis");
     const redisStatus = getRedisStatus();
     const redisHealthy = await isRedisAvailable();
+    let dbHealthy = false;
+    if (import_mongoose.default.connection.readyState === 1 && import_mongoose.default.connection.db) {
+      try {
+        await import_mongoose.default.connection.db.admin().command({ ping: 1 });
+        dbHealthy = true;
+      } catch {
+        dbHealthy = false;
+      }
+    }
+    if (!dbHealthy) {
+      res.status(503).json({
+        success: false,
+        message: "Service Unavailable: database unreachable",
+        timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+        services: {
+          database: "disconnected",
+          redis: {
+            available: redisStatus.available,
+            connected: redisStatus.connected,
+            healthy: redisHealthy,
+            url: redisStatus.url?.replace(/:[^:@]+@/, ":****@")
+          }
+        }
+      });
+      return;
+    }
     res.json({
       success: true,
       message: "POS System API is running",
       timestamp: (/* @__PURE__ */ new Date()).toISOString(),
       services: {
         database: "connected",
-        // MongoDB connection is checked elsewhere
         redis: {
           available: redisStatus.available,
           connected: redisStatus.connected,
           healthy: redisHealthy,
           url: redisStatus.url?.replace(/:[^:@]+@/, ":****@")
-          // Hide password in URL
         }
       }
     });
   } catch (error) {
-    res.status(200).json({
-      success: true,
-      message: "POS System API is running",
+    const dbHealthy = import_mongoose.default.connection.readyState === 1;
+    const status = dbHealthy ? 200 : 503;
+    res.status(status).json({
+      success: dbHealthy,
+      message: dbHealthy ? "POS System API is running" : "Service Unavailable",
       timestamp: (/* @__PURE__ */ new Date()).toISOString(),
       services: {
-        database: "connected",
-        redis: {
-          available: false,
-          connected: false,
-          healthy: false
-        }
+        database: dbHealthy ? "connected" : "unknown",
+        redis: { available: false, connected: false, healthy: false }
       }
     });
   }
@@ -251,8 +281,9 @@ server.on("error", (error) => {
     import_logger.log.error("Server error", error);
   }
 });
-process.on("unhandledRejection", (err) => {
-  import_logger.log.error("Unhandled Rejection", err);
+process.on("unhandledRejection", (reason, promise) => {
+  const err = reason instanceof Error ? reason : new Error(String(reason));
+  import_logger.log.error("Unhandled Rejection", err, { promise: String(promise) });
   if (process.env.NODE_ENV === "development") {
     process.exit(1);
   }

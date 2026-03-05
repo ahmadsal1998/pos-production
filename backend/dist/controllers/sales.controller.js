@@ -749,6 +749,41 @@ const updateSale = (0, import_error.asyncHandler)(async (req, res) => {
       message: "Store ID is required to update sales"
     });
   }
+  const body = req.body;
+  const hasFullUpdate = body.items && Array.isArray(body.items) && body.items.length > 0;
+  if (hasFullUpdate) {
+    try {
+      const result = await import_sales.salesService.updateSale(storeId, id, {
+        items: body.items,
+        subtotal: body.subtotal,
+        totalItemDiscount: body.totalItemDiscount,
+        invoiceDiscount: body.invoiceDiscount,
+        tax: body.tax,
+        total: body.total,
+        customerId: body.customerId,
+        customerName: body.customerName,
+        seller: body.seller,
+        paidAmount: body.paidAmount,
+        remainingAmount: body.remainingAmount,
+        paymentMethod: body.paymentMethod,
+        status: body.status,
+        date: body.date
+      });
+      return res.status(200).json({
+        success: true,
+        message: "Sale updated successfully",
+        data: { sale: result.sale }
+      });
+    } catch (error) {
+      if (error.statusCode === 404) {
+        return res.status(404).json({ success: false, message: error.message || "Sale not found" });
+      }
+      if (error.statusCode === 400) {
+        return res.status(400).json({ success: false, message: error.message || "Invalid request" });
+      }
+      throw error;
+    }
+  }
   const Sale = await (0, import_saleModel.getSaleModelForStore)(storeId);
   const sale = await Sale.findOne({
     _id: id,
@@ -760,15 +795,10 @@ const updateSale = (0, import_error.asyncHandler)(async (req, res) => {
       message: "Sale not found"
     });
   }
-  const allowedUpdates = [
-    "paidAmount",
-    "remainingAmount",
-    "status",
-    "paymentMethod"
-  ];
+  const allowedUpdates = ["paidAmount", "remainingAmount", "status", "paymentMethod"];
   allowedUpdates.forEach((field) => {
-    if (req.body[field] !== void 0) {
-      sale[field] = req.body[field];
+    if (body[field] !== void 0) {
+      sale[field] = body[field];
     }
   });
   await sale.save();

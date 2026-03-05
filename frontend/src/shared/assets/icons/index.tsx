@@ -1,5 +1,9 @@
 import * as React from 'react';
 
+export interface IconProps extends React.SVGProps<SVGSVGElement> {
+  className?: string;
+}
+
 // Icons (simplified SVG for demonstration)
 export const DashboardIcon = () => (
   <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -252,9 +256,9 @@ export const ViewReportsIcon = () => (
   </svg>
 );
 
-// Product action icons
-export const EditIcon = () => (
-  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+// Product action icons (IconProps is defined below)
+export const EditIcon = ({ className = 'h-4 w-4', ...props }: IconProps) => (
+  <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" {...props}>
     <path
       strokeLinecap="round"
       strokeLinejoin="round"
@@ -264,8 +268,8 @@ export const EditIcon = () => (
   </svg>
 );
 
-export const DeleteIcon = () => (
-  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+export const DeleteIcon = ({ className = 'h-4 w-4', ...props }: IconProps) => (
+  <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" {...props}>
     <path
       strokeLinecap="round"
       strokeLinejoin="round"
@@ -274,11 +278,6 @@ export const DeleteIcon = () => (
     />
   </svg>
 );
-
-// Interface for icon props
-interface IconProps extends React.SVGProps<SVGSVGElement> {
-  className?: string;
-}
 
 export const SearchIcon = ({ className, ...props }: IconProps) => (
   <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" {...props}>
@@ -320,8 +319,8 @@ export const MinusIcon = () => (
   </svg>
 );
 
-export const PrintIcon = () => (
-  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+export const PrintIcon = ({ className = 'h-4 w-4', ...props }: IconProps) => (
+  <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" {...props}>
     <path
       strokeLinecap="round"
       strokeLinejoin="round"
@@ -331,8 +330,8 @@ export const PrintIcon = () => (
   </svg>
 );
 
-export const ViewIcon = () => (
-  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+export const ViewIcon = ({ className = 'h-4 w-4', ...props }: IconProps) => (
+  <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" {...props}>
     <path
       strokeLinecap="round"
       strokeLinejoin="round"
@@ -457,8 +456,8 @@ export const MoonIcon = () => (
   </svg>
 );
 
-export const AddPaymentIcon = () => (
-  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+export const AddPaymentIcon = ({ className = 'h-4 w-4', ...props }: IconProps) => (
+  <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" {...props}>
     <path
       strokeLinecap="round"
       strokeLinejoin="round"

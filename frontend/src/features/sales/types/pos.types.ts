@@ -23,6 +23,9 @@ export interface POSCartItem {
   cost?: number; // Legacy alias for costPrice (optional, for backward compatibility)
 }
 
+/** Invoice type: retail uses retail price, wholesale uses wholesale price per product */
+export type InvoiceType = 'retail' | 'wholesale';
+
 export interface POSInvoice {
   id: string;
   date: Date;
@@ -36,6 +39,8 @@ export interface POSInvoice {
   grandTotal: number;
   paymentMethod: string | null;
   originalInvoiceId?: string; // For return invoices - links to original sale
+  /** Invoice type for pricing: retail (default) or wholesale. Stored in DB for reporting. */
+  invoiceType?: InvoiceType;
 }
 
 export interface WholesalePOSCartItem {

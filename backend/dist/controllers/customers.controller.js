@@ -31,17 +31,21 @@ __export(customers_controller_exports, {
   createCustomer: () => createCustomer,
   createCustomerPayment: () => createCustomerPayment,
   deleteCustomer: () => deleteCustomer,
+  deleteCustomerPayment: () => deleteCustomerPayment,
   getCustomerAccountsSummary: () => getCustomerAccountsSummary,
   getCustomerById: () => getCustomerById,
   getCustomerPayments: () => getCustomerPayments,
   getCustomers: () => getCustomers,
   updateCustomer: () => updateCustomer,
+  updateCustomerPayment: () => updateCustomerPayment,
   validateCreateCustomer: () => validateCreateCustomer,
   validateCreateCustomerPayment: () => validateCreateCustomerPayment,
-  validateUpdateCustomer: () => validateUpdateCustomer
+  validateUpdateCustomer: () => validateUpdateCustomer,
+  validateUpdateCustomerPayment: () => validateUpdateCustomerPayment
 });
 module.exports = __toCommonJS(customers_controller_exports);
 var import_express_validator = require("express-validator");
+var import_mongoose = __toESM(require("mongoose"));
 var import_error = require("../middleware/error.middleware");
 var import_customerPaymentModel = require("../utils/customerPaymentModel");
 var import_customerModel = require("../utils/customerModel");
@@ -538,10 +542,9 @@ const getCustomerAccountsSummary = (0, import_error.asyncHandler)(async (req, re
       const id = c._id.toString();
       const sales = salesMap.get(id) || { totalRemainingFromSales: 0, totalPaidAtSale: 0, totalPurchases: 0 };
       const pay = paymentsMap.get(id) || { receiptTotal: 0, journalTotal: 0, receiptExclInitial: 0, journalExclInitial: 0, lastPaymentDate: null };
-      const previousBalance = Number(c.previousBalance) || 0;
       const totalSales = sales.totalPurchases + pay.journalTotal;
       const totalPaid = sales.totalPaidAtSale + pay.receiptTotal;
-      const balance = -previousBalance + pay.receiptExclInitial - pay.journalExclInitial - sales.totalRemainingFromSales;
+      const balance = totalSales - totalPaid;
       return {
         customerId: id,
         customerName: c.name || "",
@@ -605,17 +608,179 @@ const getCustomerPayments = (0, import_error.asyncHandler)(async (req, res, next
     next(error);
   }
 });
+const validateUpdateCustomerPayment = [
+  (0, import_express_validator.body)("amount").optional().isFloat().custom((value) => {
+    if (value !== void 0 && value === 0) {
+      throw new Error("Payment amount cannot be zero");
+    }
+    return true;
+  }).withMessage("Payment amount cannot be zero"),
+  (0, import_express_validator.body)("method").optional().isIn(["Cash", "Bank Transfer", "Cheque"]).withMessage("Payment method must be Cash, Bank Transfer, or Cheque"),
+  (0, import_express_validator.body)("date").optional().isISO8601().withMessage("Date must be a valid ISO 8601 date"),
+  (0, import_express_validator.body)("invoiceId").optional().trim(),
+  (0, import_express_validator.body)("notes").optional().trim().isLength({ max: 1e3 }).withMessage("Notes cannot exceed 1000 characters")
+];
+const updateCustomerPayment = (0, import_error.asyncHandler)(async (req, res, next) => {
+  const errors = (0, import_express_validator.validationResult)(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({
+      success: false,
+      message: "Validation failed",
+      errors: errors.array()
+    });
+  }
+  const paymentId = req.params.id;
+  const { amount, method, date, invoiceId, notes } = req.body;
+  let storeId = req.user?.storeId || null;
+  if (!storeId && req.user?.userId && req.user.userId !== "admin") {
+    try {
+      const user = await import_User.default.findById(req.user.userId);
+      if (user && user.storeId) {
+        storeId = user.storeId;
+      }
+    } catch (error) {
+      import_logger.log.error("Error fetching user", error);
+    }
+  }
+  if (!storeId) {
+    return res.status(400).json({
+      success: false,
+      message: "Store ID is required. Please ensure you are logged in as a store user."
+    });
+  }
+  if (!paymentId || !import_mongoose.default.Types.ObjectId.isValid(paymentId)) {
+    return res.status(400).json({
+      success: false,
+      message: "Valid payment ID is required"
+    });
+  }
+  try {
+    const normalizedStoreId = storeId.toLowerCase().trim();
+    const CustomerPayment = (0, import_customerPaymentModel.getCustomerPaymentModelForStore)(storeId);
+    const existing = await CustomerPayment.findOne({
+      _id: new import_mongoose.default.Types.ObjectId(paymentId),
+      storeId: normalizedStoreId
+    }).lean();
+    if (!existing) {
+      return res.status(404).json({
+        success: false,
+        message: "Payment not found or access denied"
+      });
+    }
+    const oldValues = {
+      amount: existing.amount,
+      method: existing.method,
+      date: existing.date,
+      invoiceId: existing.invoiceId,
+      notes: existing.notes
+    };
+    const updateFields = {};
+    if (amount !== void 0) updateFields.amount = parseFloat(amount);
+    if (method !== void 0) updateFields.method = method;
+    if (date !== void 0) updateFields.date = new Date(date);
+    if (invoiceId !== void 0) updateFields.invoiceId = invoiceId?.trim() || null;
+    if (notes !== void 0) updateFields.notes = notes?.trim() || null;
+    if (Object.keys(updateFields).length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "No valid fields to update"
+      });
+    }
+    const updated = await CustomerPayment.findByIdAndUpdate(
+      paymentId,
+      { $set: updateFields },
+      { new: true, runValidators: true }
+    ).lean();
+    const userId = req.user?.userId?.toString() ?? "unknown";
+    import_logger.log.info(
+      `[CustomerPayment] Updated payment ${paymentId} by user ${userId}: old=${JSON.stringify(oldValues)} new=${JSON.stringify(updateFields)}`
+    );
+    res.status(200).json({
+      success: true,
+      message: "Customer payment updated successfully",
+      data: {
+        payment: {
+          id: updated._id.toString(),
+          customerId: updated.customerId,
+          date: updated.date,
+          amount: updated.amount,
+          method: updated.method,
+          invoiceId: updated.invoiceId,
+          notes: updated.notes,
+          createdAt: updated.createdAt,
+          updatedAt: updated.updatedAt
+        }
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+const deleteCustomerPayment = (0, import_error.asyncHandler)(async (req, res, next) => {
+  const paymentId = req.params.id;
+  let storeId = req.user?.storeId || null;
+  if (!storeId && req.user?.userId && req.user.userId !== "admin") {
+    try {
+      const user = await import_User.default.findById(req.user.userId);
+      if (user && user.storeId) {
+        storeId = user.storeId;
+      }
+    } catch (error) {
+      import_logger.log.error("Error fetching user", error);
+    }
+  }
+  if (!storeId) {
+    return res.status(400).json({
+      success: false,
+      message: "Store ID is required. Please ensure you are logged in as a store user."
+    });
+  }
+  if (!paymentId || !import_mongoose.default.Types.ObjectId.isValid(paymentId)) {
+    return res.status(400).json({
+      success: false,
+      message: "Valid payment ID is required"
+    });
+  }
+  try {
+    const normalizedStoreId = storeId.toLowerCase().trim();
+    const CustomerPayment = (0, import_customerPaymentModel.getCustomerPaymentModelForStore)(storeId);
+    const existing = await CustomerPayment.findOne({
+      _id: new import_mongoose.default.Types.ObjectId(paymentId),
+      storeId: normalizedStoreId
+    }).lean();
+    if (!existing) {
+      return res.status(404).json({
+        success: false,
+        message: "Payment not found or access denied"
+      });
+    }
+    await CustomerPayment.deleteOne({ _id: new import_mongoose.default.Types.ObjectId(paymentId), storeId: normalizedStoreId });
+    const userId = req.user?.userId?.toString() ?? "unknown";
+    import_logger.log.info(
+      `[CustomerPayment] Deleted payment ${paymentId} (customerId=${existing.customerId} amount=${existing.amount}) by user ${userId}`
+    );
+    res.status(200).json({
+      success: true,
+      message: "Customer payment deleted successfully"
+    });
+  } catch (error) {
+    next(error);
+  }
+});
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
   createCustomer,
   createCustomerPayment,
   deleteCustomer,
+  deleteCustomerPayment,
   getCustomerAccountsSummary,
   getCustomerById,
   getCustomerPayments,
   getCustomers,
   updateCustomer,
+  updateCustomerPayment,
   validateCreateCustomer,
   validateCreateCustomerPayment,
-  validateUpdateCustomer
+  validateUpdateCustomer,
+  validateUpdateCustomerPayment
 });

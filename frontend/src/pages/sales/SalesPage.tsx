@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { SaleTransaction, Customer, CustomerPayment, CustomerAccountSummary, SalePaymentMethod, SaleStatus } from '@/shared/types';
 import { AR_LABELS, UUID, SearchIcon, PlusIcon, EditIcon, DeleteIcon, PrintIcon, ViewIcon, ExportIcon, AddPaymentIcon } from '@/shared/constants';
 import { GridViewIcon, TableViewIcon } from '@/shared/constants/routes';
@@ -21,6 +21,8 @@ import { loadSettings, saveSettings } from '@/shared/utils/settingsStorage';
 import { getBusinessDateFilterRange, getBusinessDayStartTime, getBusinessDayTimezone } from '@/shared/utils/businessDate';
 import { useResponsiveViewMode } from '@/shared/hooks';
 import { useConfirmDialog } from '@/shared/contexts/ConfirmDialogContext';
+import { AccountsModule, CUSTOMER_ACCOUNTS_LABELS } from '@/features/accounts';
+import type { AccountEntity } from '@/features/accounts';
 
 // Filter icon component
 const FilterIcon = () => (
@@ -1742,7 +1744,12 @@ const SalesPage: React.FC<SalesPageProps> = ({ setActivePath }) => {
     const { formatCurrency } = useCurrency();
     const { user } = useAuthStore();
     const currentUserName = user?.fullName || user?.username || 'Unknown';
-    const [activeTab, setActiveTab] = useState('sales'); // 'sales', 'reports', 'customers'
+    const location = useLocation();
+    const pathname = location.pathname;
+    const activeTab: 'sales' | 'reports' | 'customers' =
+        pathname.includes('/sales/reports') ? 'reports'
+        : pathname.includes('/sales/customer-accounts') ? 'customers'
+        : 'sales';
     const [sales, setSales] = useState<SaleTransaction[]>([]);
     const [customers, setCustomers] = useState<Customer[]>([]);
     const [payments, setPayments] = useState<CustomerPayment[]>([]);
@@ -1765,6 +1772,8 @@ const SalesPage: React.FC<SalesPageProps> = ({ setActivePath }) => {
     };
     const [filters, setFilters] = useState(defaultFilters);
     const [isFilterModalOpen, setIsFilterModalOpen] = useState(false);
+    const [showAddCustomerModal, setShowAddCustomerModal] = useState(false);
+    const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
 
     // Summary statistics state - loaded first for fast display
     // Initialize with 0 values so cards show immediately
@@ -1804,6 +1813,7 @@ const SalesPage: React.FC<SalesPageProps> = ({ setActivePath }) => {
     // Pagination state
     const [currentPage, setCurrentPage] = useState(1);
     const [pageSize, setPageSize] = useState(25); // Items per page (20-25 as requested)
+    const [salesSearchTerm, setSalesSearchTerm] = useState('');
     const [totalSales, setTotalSales] = useState(0);
     const [totalPages, setTotalPages] = useState(0);
 
@@ -1818,7 +1828,7 @@ const SalesPage: React.FC<SalesPageProps> = ({ setActivePath }) => {
     // Fetch sales from database with server-side filtering and pagination
     const fetchSales = useCallback(async (page: number = 1) => {
         // Create a unique request key to prevent duplicate requests
-        const requestKey = `${page}-${pageSize}-${JSON.stringify(filters)}`;
+        const requestKey = `${page}-${pageSize}-${JSON.stringify(filters)}-${salesSearchTerm.trim()}`;
         
         // If we're already fetching the exact same request, skip it
         if (fetchingRef.current && lastRequestKeyRef.current === requestKey) {
@@ -1839,12 +1849,14 @@ const SalesPage: React.FC<SalesPageProps> = ({ setActivePath }) => {
                 limit: pageSize,
             };
 
-            // Add date filters - ensure dates are in YYYY-MM-DD format
-            if (filters.dateRange.start) {
-                params.startDate = filters.dateRange.start;
-            }
-            if (filters.dateRange.end) {
-                params.endDate = filters.dateRange.end;
+            // Add date filters only when not searching (search runs across all dates, server-side)
+            if (!salesSearchTerm.trim()) {
+                if (filters.dateRange.start) {
+                    params.startDate = filters.dateRange.start;
+                }
+                if (filters.dateRange.end) {
+                    params.endDate = filters.dateRange.end;
+                }
             }
 
             // Add payment method filter
@@ -1865,6 +1877,11 @@ const SalesPage: React.FC<SalesPageProps> = ({ setActivePath }) => {
             // Add seller filter
             if (filters.seller !== 'all') {
                 params.seller = filters.seller;
+            }
+
+            // Add search (invoice number or customer name)
+            if (salesSearchTerm.trim()) {
+                params.search = salesSearchTerm.trim();
             }
 
             // Fetch from API with server-side filtering and pagination
@@ -2075,13 +2092,12 @@ const SalesPage: React.FC<SalesPageProps> = ({ setActivePath }) => {
             setIsLoadingSales(false);
             fetchingRef.current = false;
         }
-    }, [filters, pageSize, currentUserName, user]);
+    }, [filters, pageSize, salesSearchTerm, currentUserName, user]);
 
-    // Reset to page 1 when filters or page size change, then fetch
-    // Combine both operations in a single effect to avoid duplicate calls
+    // Reset to page 1 when filters, page size, or search change, then fetch
     useEffect(() => {
         setCurrentPage(1);
-    }, [filters, pageSize]);
+    }, [filters, pageSize, salesSearchTerm]);
 
     // Fetch sales when page, filters, or pageSize change
     // The ref-based deduplication prevents duplicate requests even if this effect runs multiple times
@@ -2293,6 +2309,81 @@ const SalesPage: React.FC<SalesPageProps> = ({ setActivePath }) => {
             setIsLoadingSales(false);
         }
     }, [confirmDialog, fetchSales, currentPage, filters.dateRange, formatCurrency, navigate]);
+
+    const [customerAccountsRefreshTrigger, setCustomerAccountsRefreshTrigger] = useState(0);
+    const handleUpdateCustomerForAccounts = useCallback(async (customer: Customer) => {
+        try {
+            const response = await customersApi.updateCustomer(customer.id, {
+                name: customer.name,
+                phone: customer.phone,
+                address: customer.address,
+                previousBalance: customer.previousBalance || 0,
+            });
+            const backendResponse = response.data as any;
+            if (response.success && backendResponse?.data?.customer) {
+                const updatedCustomerData = backendResponse.data.customer;
+                try {
+                    await customerSync.syncAfterCreateOrUpdate(updatedCustomerData);
+                } catch (syncError) {
+                    console.error('Error syncing customer to IndexedDB:', syncError);
+                }
+                const dbCustomers = await customersDB.getAllCustomers();
+                const transformedCustomers: Customer[] = dbCustomers.map((c: any) => ({
+                    id: c.id,
+                    name: c.name,
+                    phone: c.phone,
+                    previousBalance: c.previousBalance || 0,
+                    ...(c.address && { address: c.address }),
+                }));
+                setCustomers(transformedCustomers);
+                setEditingCustomer(null);
+                setCustomerAccountsRefreshTrigger(t => t + 1);
+            }
+        } catch (err: any) {
+            if ((err as ApiError).status === 401 || (err as ApiError).status === 403) {
+                navigate('/login', { replace: true });
+                return;
+            }
+            alert(getApiErrorMessage(err, 'فشل تحديث العميل. يرجى المحاولة مرة أخرى.'));
+            throw err;
+        }
+    }, [navigate]);
+
+    const handleDeleteCustomerForAccounts = useCallback(async (customerId: string) => {
+        const confirmed = await confirmDialog({
+            message: 'هل أنت متأكد من حذف هذا العميل؟',
+            confirmLabel: AR_LABELS.delete,
+            cancelLabel: AR_LABELS.cancel,
+        });
+        if (!confirmed) return;
+        try {
+            const response = await customersApi.deleteCustomer(customerId);
+            if (response.success) {
+                try {
+                    await customerSync.syncAfterDelete(customerId);
+                } catch (syncError) {
+                    console.error('Error syncing IndexedDB after delete:', syncError);
+                }
+                setCustomers((prev) => prev.filter((c) => c.id !== customerId));
+                setCustomerAccountsRefreshTrigger(t => t + 1);
+                await fetchPayments();
+            }
+        } catch (err: any) {
+            const apiError = err as ApiError;
+            if (apiError.status === 404) {
+                try {
+                    await customerSync.syncAfterDelete(customerId);
+                    setCustomers((prev) => prev.filter((c) => c.id !== customerId));
+                    setCustomerAccountsRefreshTrigger(t => t + 1);
+                    await fetchPayments();
+                } catch (syncError) {
+                    console.error('Error syncing IndexedDB after 404:', syncError);
+                }
+                return;
+            }
+            throw err;
+        }
+    }, [confirmDialog, fetchPayments]);
 
     // Load customers from IndexedDB on mount (do not fetch all payments on load - defer to Reports tab to avoid timeout)
     useEffect(() => {
@@ -2819,12 +2910,48 @@ const SalesPage: React.FC<SalesPageProps> = ({ setActivePath }) => {
                 <div className="flex flex-col items-start justify-between gap-8 lg:flex-row lg:items-center">
                     <div />
                     
-                    {/* Modern Navigation Tabs */}
+                    {/* Modern Navigation Tabs - each button has its own route */}
                     <div className="w-full overflow-x-auto scroll-smooth horizontal-nav-scroll">
                         <div className="flex gap-3 min-w-max pb-2">
-                            <TabButton label={AR_LABELS.viewAllSales} isActive={activeTab === 'sales'} onClick={() => setActiveTab('sales')} />
-                            <TabButton label={AR_LABELS.salesReports} isActive={activeTab === 'reports'} onClick={() => setActiveTab('reports')} />
-                            <TabButton label={AR_LABELS.customerAccounts} isActive={activeTab === 'customers'} onClick={() => setActiveTab('customers')} />
+                            <Link
+                                to="/sales"
+                                className={`group relative px-6 py-3 rounded-xl text-sm font-medium transition-all duration-300 whitespace-nowrap ${
+                                    activeTab === 'sales'
+                                        ? 'bg-gradient-to-r from-orange-500 to-amber-500 text-white shadow-lg shadow-orange-500/50'
+                                        : 'bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl text-slate-700 dark:text-slate-200 border border-slate-200/50 dark:border-slate-700/50 hover:shadow-md'
+                                }`}
+                            >
+                                {activeTab === 'sales' && (
+                                    <div className="absolute -inset-0.5 rounded-xl bg-gradient-to-r from-orange-500 to-amber-500 opacity-20 blur" />
+                                )}
+                                <span className="relative">{AR_LABELS.viewAllSales}</span>
+                            </Link>
+                            <Link
+                                to="/sales/reports"
+                                className={`group relative px-6 py-3 rounded-xl text-sm font-medium transition-all duration-300 whitespace-nowrap ${
+                                    activeTab === 'reports'
+                                        ? 'bg-gradient-to-r from-orange-500 to-amber-500 text-white shadow-lg shadow-orange-500/50'
+                                        : 'bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl text-slate-700 dark:text-slate-200 border border-slate-200/50 dark:border-slate-700/50 hover:shadow-md'
+                                }`}
+                            >
+                                {activeTab === 'reports' && (
+                                    <div className="absolute -inset-0.5 rounded-xl bg-gradient-to-r from-orange-500 to-amber-500 opacity-20 blur" />
+                                )}
+                                <span className="relative">{AR_LABELS.salesReports}</span>
+                            </Link>
+                            <Link
+                                to="/sales/customer-accounts"
+                                className={`group relative px-6 py-3 rounded-xl text-sm font-medium transition-all duration-300 whitespace-nowrap ${
+                                    activeTab === 'customers'
+                                        ? 'bg-gradient-to-r from-orange-500 to-amber-500 text-white shadow-lg shadow-orange-500/50'
+                                        : 'bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl text-slate-700 dark:text-slate-200 border border-slate-200/50 dark:border-slate-700/50 hover:shadow-md'
+                                }`}
+                            >
+                                {activeTab === 'customers' && (
+                                    <div className="absolute -inset-0.5 rounded-xl bg-gradient-to-r from-orange-500 to-amber-500 opacity-20 blur" />
+                                )}
+                                <span className="relative">{AR_LABELS.customerAccounts}</span>
+                            </Link>
                         </div>
                     </div>
                 </div>
@@ -3033,45 +3160,44 @@ const SalesPage: React.FC<SalesPageProps> = ({ setActivePath }) => {
                             }}
                             filters={filters}
                             customers={customers}
+                            searchTerm={salesSearchTerm}
+                            onSearchChange={setSalesSearchTerm}
                         />
                     )}
                     {activeTab === 'reports' && <ReportsView sales={sales} customers={customers} payments={payments} />}
                     {activeTab === 'customers' && (
-                        <CustomerAccountsView 
-                            sales={sales} 
-                            customers={customers} 
-                            payments={payments} 
-                            setPayments={setPayments}
-                            onRefreshPayments={fetchPayments}
-                            setCustomers={setCustomers}
-                            isLoadingCustomers={isLoadingCustomers}
-                            customersError={customersError}
-                            onRefreshCustomers={fetchCustomers}
-                            onSaveCustomer={async (customer: Customer) => {
-                                try {
-                                    // Save customer to API - extract customer data (name, phone, address)
-                                    const response = await customersApi.createCustomer({
-                                        name: customer.name,
-                                        phone: customer.phone,
-                                        address: customer.address,
-                                        previousBalance: customer.previousBalance || 0,
+                        <>
+                            <AccountsModule
+                                mode="customer"
+                                entities={customers.map(c => ({ id: c.id, name: c.name, phone: c.phone, address: c.address }))}
+                                setEntities={(updater) => {
+                                    setCustomers(prev => {
+                                        const accountList = prev.map(c => ({ id: c.id, name: c.name, phone: c.phone, address: c.address }));
+                                        const next = typeof updater === 'function' ? updater(accountList) : updater;
+                                        return next.map(e => {
+                                            const full = prev.find(c => c.id === e.id);
+                                            return full ? { ...full, ...e } : { ...e, previousBalance: 0 } as Customer;
+                                        });
                                     });
-
+                                }}
+                                payments={payments}
+                                setPayments={setPayments}
+                                onRefreshPayments={fetchPayments}
+                                onSaveNewEntity={async (entity) => {
+                                    const response = await customersApi.createCustomer({
+                                        name: entity.name,
+                                        phone: entity.phone || '',
+                                        address: entity.address,
+                                        previousBalance: (entity as Customer).previousBalance || 0,
+                                    });
                                     const backendResponse = response.data as any;
                                     if (response.success && backendResponse?.data?.customer) {
                                         const newCustomerData = backendResponse.data.customer;
-                                        
-                                        // Store the new customer directly in IndexedDB immediately (we already have it from the response)
-                                        // Use syncAfterCreateOrUpdate for proper sync handling and cross-tab notification
                                         try {
                                             await customerSync.syncAfterCreateOrUpdate(newCustomerData);
-                                            console.log('[SalesPage] Successfully synced customer to IndexedDB');
                                         } catch (syncError) {
                                             console.error('[SalesPage] Error syncing customer to IndexedDB:', syncError);
-                                            // Continue anyway - the customer was created successfully
                                         }
-                                        
-                                        // Reload customers from IndexedDB to get updated list
                                         const dbCustomers = await customersDB.getAllCustomers();
                                         const transformedCustomers: Customer[] = dbCustomers.map((c: any) => ({
                                             id: c.id,
@@ -3080,21 +3206,71 @@ const SalesPage: React.FC<SalesPageProps> = ({ setActivePath }) => {
                                             previousBalance: c.previousBalance || 0,
                                             ...(c.address && { address: c.address }),
                                         }));
-                                        
                                         setCustomers(transformedCustomers);
+                                        setShowAddCustomerModal(false);
+                                        setCustomerAccountsRefreshTrigger(t => t + 1);
                                     }
-                                } catch (err: any) {
-                                    const apiError = err as ApiError;
-                                    if (apiError.status === 401 || apiError.status === 403) {
-                                        navigate('/login', { replace: true });
-                                        return;
-                                    }
-                                    alert(getApiErrorMessage(err, 'فشل حفظ العميل. يرجى المحاولة مرة أخرى.'));
-                                    console.error('Error saving customer:', err);
-                                    throw err; // Re-throw to let modal handle it
-                                }
-                            }} 
-                        />
+                                }}
+                                onUpdateEntity={async (entity) => {
+                                    const full = customers.find(c => c.id === entity.id);
+                                    if (full) await handleUpdateCustomerForAccounts({ ...full, ...entity });
+                                }}
+                                onDeleteEntity={handleDeleteCustomerForAccounts}
+                                onOpenAddEntity={() => setShowAddCustomerModal(true)}
+                                onOpenEditEntity={(entity) => {
+                                    const full = customers.find(c => c.id === entity.id);
+                                    if (full) setEditingCustomer(full);
+                                }}
+                                labels={CUSTOMER_ACCOUNTS_LABELS}
+                                isLoadingEntities={isLoadingCustomers}
+                                entitiesError={customersError}
+                                onRefreshEntities={fetchCustomers}
+                                refreshTrigger={customerAccountsRefreshTrigger}
+                            />
+                            {showAddCustomerModal && (
+                                <AddCustomerModal
+                                    onClose={() => setShowAddCustomerModal(false)}
+                                    onSave={async (customer) => {
+                                        try {
+                                            const response = await customersApi.createCustomer({
+                                                name: customer.name,
+                                                phone: customer.phone,
+                                                address: customer.address,
+                                                previousBalance: customer.previousBalance || 0,
+                                            });
+                                            const backendResponse = response.data as any;
+                                            if (response.success && backendResponse?.data?.customer) {
+                                                try {
+                                                    await customerSync.syncAfterCreateOrUpdate(backendResponse.data.customer);
+                                                } catch (syncError) {
+                                                    console.error('[SalesPage] Error syncing customer to IndexedDB:', syncError);
+                                                }
+                                                const dbCustomers = await customersDB.getAllCustomers();
+                                                setCustomers(dbCustomers.map((c: any) => ({
+                                                    id: c.id,
+                                                    name: c.name,
+                                                    phone: c.phone,
+                                                    previousBalance: c.previousBalance || 0,
+                                                    ...(c.address && { address: c.address }),
+                                                })));
+                                                setShowAddCustomerModal(false);
+                                                setCustomerAccountsRefreshTrigger(t => t + 1);
+                                            }
+                                        } catch (err: any) {
+                                            alert(getApiErrorMessage(err, 'فشل حفظ العميل. يرجى المحاولة مرة أخرى.'));
+                                            throw err;
+                                        }
+                                    }}
+                                />
+                            )}
+                            {editingCustomer && (
+                                <EditCustomerModal
+                                    customer={editingCustomer}
+                                    onClose={() => setEditingCustomer(null)}
+                                    onSave={handleUpdateCustomerForAccounts}
+                                />
+                            )}
+                        </>
                     )}
                 </div>
 
@@ -3126,22 +3302,6 @@ const SalesPage: React.FC<SalesPageProps> = ({ setActivePath }) => {
         </div>
     );
 };
-
-const TabButton: React.FC<{ label: string, isActive: boolean, onClick: () => void }> = ({ label, isActive, onClick }) => (
-    <button 
-        onClick={onClick} 
-        className={`group relative px-6 py-3 rounded-xl text-sm font-medium transition-all duration-300 whitespace-nowrap ${
-            isActive
-                ? 'bg-gradient-to-r from-orange-500 to-amber-500 text-white shadow-lg shadow-orange-500/50'
-                : 'bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl text-slate-700 dark:text-slate-200 border border-slate-200/50 dark:border-slate-700/50 hover:shadow-md'
-        }`}
-    >
-        {isActive && (
-            <div className="absolute -inset-0.5 rounded-xl bg-gradient-to-r from-orange-500 to-amber-500 opacity-20 blur" />
-        )}
-        <span className="relative">{label}</span>
-    </button>
-);
 
 // Helper function to get active filter labels
 const getActiveFilterLabels = (
@@ -3238,7 +3398,9 @@ const SalesTableView: React.FC<{
         seller: string;
     },
     customers?: Customer[],
-}> = ({ sales, isLoading = false, error = null, setActivePath, onViewSale, onDeleteSale, onOpenFilters, currentPage, totalPages, totalSales, onPageChange, pageSize, onPageSizeChange, filters, customers = [] }) => {
+    searchTerm?: string,
+    onSearchChange?: (value: string) => void,
+}> = ({ sales, isLoading = false, error = null, setActivePath, onViewSale, onDeleteSale, onOpenFilters, currentPage, totalPages, totalSales, onPageChange, pageSize, onPageSizeChange, filters, customers = [], searchTerm = '', onSearchChange }) => {
     const { viewMode, setViewMode } = useResponsiveViewMode('sales', 'table', 'grid');
     const { formatCurrency } = useCurrency();
     
@@ -3252,6 +3414,8 @@ const SalesTableView: React.FC<{
                 <input 
                     type="text" 
                     placeholder={AR_LABELS.searchByCustomerOrInvoice} 
+                    value={searchTerm}
+                    onChange={(e) => onSearchChange?.(e.target.value)}
                     className="w-full pl-10 pr-4 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:border-transparent text-right"
                 />
             </div>
@@ -3623,13 +3787,22 @@ const SalesGridCard: React.FC<{sale: SaleTransaction, onView: (s: SaleTransactio
                 })()}
             </div>
             
-            <button 
-                onClick={() => onView(sale)} 
-                className="w-full px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-md text-sm font-medium transition-colors flex items-center justify-center gap-2"
-            >
-                <ViewIcon />
-                {AR_LABELS.viewDetails}
-            </button>
+            <div className="flex gap-2">
+                <button 
+                    onClick={() => onView(sale)} 
+                    className="flex-1 px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-md text-sm font-medium transition-colors flex items-center justify-center gap-2"
+                >
+                    <ViewIcon />
+                    {AR_LABELS.viewDetails}
+                </button>
+                <Link 
+                    to={`/pos/1?edit=${encodeURIComponent(sale.id)}`}
+                    className="flex-1 px-4 py-2 bg-indigo-500 hover:bg-indigo-600 text-white rounded-md text-sm font-medium transition-colors flex items-center justify-center gap-2"
+                >
+                    <EditIcon className="w-4 h-4" />
+                    {AR_LABELS.edit}
+                </Link>
+            </div>
         </div>
     );
 };
@@ -3752,6 +3925,13 @@ const SalesTableRow: React.FC<{sale: SaleTransaction, onView: (s: SaleTransactio
                     >
                         <ViewIcon/>
                     </button>
+                    <Link 
+                        to={`/pos/1?edit=${encodeURIComponent(sale.id)}`}
+                        title={AR_LABELS.edit}
+                        className="p-2 text-indigo-600 hover:text-indigo-900 dark:text-indigo-400 dark:hover:text-indigo-300 rounded-lg hover:bg-indigo-50 dark:hover:bg-gray-700 transition-colors"
+                    >
+                        <EditIcon/>
+                    </Link>
                     <button 
                         onClick={() => onDelete(sale)} 
                         title="حذف الفاتورة" 
@@ -4030,10 +4210,12 @@ const AddCustomerModal: React.FC<{
         }
     };
 
+    const modalOverlayClass = 'fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[10000] p-4';
+
     // Show initial balance/debt step
     if (showInitialBalanceStep) {
-        return (
-            <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4" onClick={onClose}>
+        return createPortal(
+            <div className={modalOverlayClass} onClick={onClose} aria-modal="true">
                 <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-md text-right" onClick={e => e.stopPropagation()}>
                     <div className="p-6 space-y-4">
                         <h2 className="text-xl font-bold text-gray-900 dark:text-gray-100">إضافة رصيد أولي</h2>
@@ -4103,13 +4285,14 @@ const AddCustomerModal: React.FC<{
                         </button>
                     </div>
                 </div>
-            </div>
+            </div>,
+            document.body
         );
     }
 
     // Show basic info form
-    return (
-        <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4" onClick={onClose}>
+    return createPortal(
+        <div className={modalOverlayClass} onClick={onClose} aria-modal="true">
             <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-md text-right" onClick={e => e.stopPropagation()}>
                 <div className="p-6 space-y-4">
                     <h2 className="text-xl font-bold text-gray-900 dark:text-gray-100">{AR_LABELS.addNewCustomer}</h2>
@@ -4170,7 +4353,8 @@ const AddCustomerModal: React.FC<{
                     </button>
                 </div>
             </div>
-        </div>
+        </div>,
+        document.body
     );
 };
 
@@ -4230,8 +4414,10 @@ const EditCustomerModal: React.FC<{
 
     if (!customer) return null;
 
-    return (
-        <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4" onClick={onClose}>
+    const editModalOverlayClass = 'fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[10000] p-4';
+
+    return createPortal(
+        <div className={editModalOverlayClass} onClick={onClose} aria-modal="true">
             <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-md text-right" onClick={e => e.stopPropagation()}>
                 <div className="p-6 space-y-4">
                     <h2 className="text-xl font-bold text-gray-900 dark:text-gray-100">{AR_LABELS.edit} {AR_LABELS.customerName}</h2>
@@ -4292,7 +4478,8 @@ const EditCustomerModal: React.FC<{
                     </button>
                 </div>
             </div>
-        </div>
+        </div>,
+        document.body
     );
 };
 

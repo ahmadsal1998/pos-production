@@ -8,9 +8,6 @@ import AddMultiUnitProductPage from '@/pages/products/AddMultiUnitProductPage';
 import AddNewProductPage from '@/pages/products/AddNewProductPage';
 import AddAdditionalUnitsPage from '@/pages/products/AddAdditionalUnitsPage';
 import ProductPage from '@/pages/products/ProductPage';
-import CategoryManagementPage from '@/pages/products/CategoryManagementPage';
-import BrandManagementPage from '@/pages/products/BrandManagementPage';
-import WarehouseManagementPage from '@/pages/products/WarehouseManagementPage';
 
 export const productRoutes: RouteObject[] = [
   {
@@ -73,10 +70,18 @@ export const productRoutes: RouteObject[] = [
         ),
       },
       {
+        path: 'import',
+        element: (
+          <PermissionProtectedRoute>
+            <ProductDashboard />
+          </PermissionProtectedRoute>
+        ),
+      },
+      {
         path: 'categories',
         element: (
           <PermissionProtectedRoute>
-            <CategoryManagementPage />
+            <ProductDashboard />
           </PermissionProtectedRoute>
         ),
       },
@@ -84,7 +89,7 @@ export const productRoutes: RouteObject[] = [
         path: 'brands',
         element: (
           <PermissionProtectedRoute>
-            <BrandManagementPage />
+            <ProductDashboard />
           </PermissionProtectedRoute>
         ),
       },
@@ -92,7 +97,15 @@ export const productRoutes: RouteObject[] = [
         path: 'warehouses',
         element: (
           <PermissionProtectedRoute>
-            <WarehouseManagementPage />
+            <ProductDashboard />
+          </PermissionProtectedRoute>
+        ),
+      },
+      {
+        path: 'units',
+        element: (
+          <PermissionProtectedRoute>
+            <ProductDashboard />
           </PermissionProtectedRoute>
         ),
       },

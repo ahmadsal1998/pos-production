@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { AR_LABELS } from '@/shared/constants';
 import ProductListPage from './ProductListPage';
 import CategoryManagementPage from './CategoryManagementPage';
@@ -24,10 +24,20 @@ interface ProductDashboardProps {
   setActivePath?: (path: string) => void; // Make optional for backward compatibility
 }
 
+type ProductViewType = 'products' | 'categories' | 'brands' | 'warehouses' | 'units' | 'add-product' | 'import';
+
 const ProductDashboard: React.FC<ProductDashboardProps> = ({ setActivePath }) => {
   const navigate = useNavigate();
+  const location = useLocation();
+  const pathname = location.pathname;
+  const activeView: ProductViewType =
+    pathname.includes('/products/import') ? 'import'
+    : pathname.includes('/products/categories') ? 'categories'
+    : pathname.includes('/products/brands') ? 'brands'
+    : pathname.includes('/products/warehouses') ? 'warehouses'
+    : pathname.includes('/products/units') ? 'units'
+    : 'products';
   const { formatCurrency } = useCurrency();
-  const [activeView, setActiveView] = useState<'products' | 'categories' | 'brands' | 'warehouses' | 'units' | 'add-product' | 'import'>('products');
   const [productMetrics, setProductMetrics] = useState<ProductMetrics | null>(null);
   const [loadingMetrics, setLoadingMetrics] = useState(true);
   const isMountedRef = useRef(true);
@@ -160,10 +170,10 @@ const ProductDashboard: React.FC<ProductDashboardProps> = ({ setActivePath }) =>
   const handleQuickAction = (action: string) => {
     switch (action) {
       case 'add-product':
-        setActiveView('add-product');
+        navigate('/products/add-new');
         break;
       case 'import':
-        setActiveView('import');
+        navigate('/products/import');
         break;
       case 'export':
         alert('وظيفة التصدير قيد التطوير');
@@ -172,7 +182,7 @@ const ProductDashboard: React.FC<ProductDashboardProps> = ({ setActivePath }) =>
         alert('وظيفة طباعة الباركود قيد التطوير');
         break;
       case 'search':
-        setActiveView('products');
+        navigate('/products');
         break;
       default:
         break;
@@ -220,87 +230,35 @@ const ProductDashboard: React.FC<ProductDashboardProps> = ({ setActivePath }) =>
               </div>
             </div>
             
-            {/* Navigation Tabs */}
+            {/* Navigation Tabs - each button has its own route */}
             <div className="w-full overflow-x-auto scroll-smooth horizontal-nav-scroll">
               <div className="flex gap-3 min-w-max pb-2">
-                <button
-                  onClick={() => setActiveView('products')}
-                  className={`group relative px-6 py-3 rounded-xl text-sm font-medium transition-all duration-300 whitespace-nowrap ${
-                    activeView === 'products'
-                      ? 'bg-gradient-to-r from-orange-500 to-amber-500 text-white shadow-lg shadow-orange-500/50'
-                      : 'bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl text-slate-700 dark:text-slate-200 border border-slate-200/50 dark:border-slate-700/50 hover:shadow-md'
-                  }`}
-                >
-                  {activeView === 'products' && (
-                    <div className="absolute -inset-0.5 rounded-xl bg-gradient-to-r from-orange-500 to-amber-500 opacity-20 blur" />
-                  )}
-                  <span className="relative">قائمة المنتجات</span>
-                </button>
-                <button
-                  onClick={() => setActiveView('import')}
-                  className={`group relative px-6 py-3 rounded-xl text-sm font-medium transition-all duration-300 whitespace-nowrap ${
-                    activeView === 'import'
-                      ? 'bg-gradient-to-r from-orange-500 to-amber-500 text-white shadow-lg shadow-orange-500/50'
-                      : 'bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl text-slate-700 dark:text-slate-200 border border-slate-200/50 dark:border-slate-700/50 hover:shadow-md'
-                  }`}
-                >
-                  {activeView === 'import' && (
-                    <div className="absolute -inset-0.5 rounded-xl bg-gradient-to-r from-orange-500 to-amber-500 opacity-20 blur" />
-                  )}
-                  <span className="relative">استيراد المنتجات</span>
-                </button>
-                <button
-                  onClick={() => setActiveView('categories')}
-                  className={`group relative px-6 py-3 rounded-xl text-sm font-medium transition-all duration-300 whitespace-nowrap ${
-                    activeView === 'categories'
-                      ? 'bg-gradient-to-r from-orange-500 to-amber-500 text-white shadow-lg shadow-orange-500/50'
-                      : 'bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl text-slate-700 dark:text-slate-200 border border-slate-200/50 dark:border-slate-700/50 hover:shadow-md'
-                  }`}
-                >
-                  {activeView === 'categories' && (
-                    <div className="absolute -inset-0.5 rounded-xl bg-gradient-to-r from-orange-500 to-amber-500 opacity-20 blur" />
-                  )}
-                  <span className="relative">إدارة الفئات</span>
-                </button>
-                <button
-                  onClick={() => setActiveView('brands')}
-                  className={`group relative px-6 py-3 rounded-xl text-sm font-medium transition-all duration-300 whitespace-nowrap ${
-                    activeView === 'brands'
-                      ? 'bg-gradient-to-r from-orange-500 to-amber-500 text-white shadow-lg shadow-orange-500/50'
-                      : 'bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl text-slate-700 dark:text-slate-200 border border-slate-200/50 dark:border-slate-700/50 hover:shadow-md'
-                  }`}
-                >
-                  {activeView === 'brands' && (
-                    <div className="absolute -inset-0.5 rounded-xl bg-gradient-to-r from-orange-500 to-amber-500 opacity-20 blur" />
-                  )}
-                  <span className="relative">إدارة العلامات التجارية</span>
-                </button>
-                <button
-                  onClick={() => setActiveView('warehouses')}
-                  className={`group relative px-6 py-3 rounded-xl text-sm font-medium transition-all duration-300 whitespace-nowrap ${
-                    activeView === 'warehouses'
-                      ? 'bg-gradient-to-r from-orange-500 to-amber-500 text-white shadow-lg shadow-orange-500/50'
-                      : 'bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl text-slate-700 dark:text-slate-200 border border-slate-200/50 dark:border-slate-700/50 hover:shadow-md'
-                  }`}
-                >
-                  {activeView === 'warehouses' && (
-                    <div className="absolute -inset-0.5 rounded-xl bg-gradient-to-r from-orange-500 to-amber-500 opacity-20 blur" />
-                  )}
-                  <span className="relative">إدارة المستودعات</span>
-                </button>
-                <button
-                  onClick={() => setActiveView('units')}
-                  className={`group relative px-6 py-3 rounded-xl text-sm font-medium transition-all duration-300 whitespace-nowrap ${
-                    activeView === 'units'
-                      ? 'bg-gradient-to-r from-orange-500 to-amber-500 text-white shadow-lg shadow-orange-500/50'
-                      : 'bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl text-slate-700 dark:text-slate-200 border border-slate-200/50 dark:border-slate-700/50 hover:shadow-md'
-                  }`}
-                >
-                  {activeView === 'units' && (
-                    <div className="absolute -inset-0.5 rounded-xl bg-gradient-to-r from-orange-500 to-amber-500 opacity-20 blur" />
-                  )}
-                  <span className="relative">إدارة الوحدات</span>
-                </button>
+                {[
+                  { id: 'products' as const, label: 'قائمة المنتجات', to: '/products' },
+                  { id: 'import' as const, label: 'استيراد المنتجات', to: '/products/import' },
+                  { id: 'categories' as const, label: 'إدارة الفئات', to: '/products/categories' },
+                  { id: 'brands' as const, label: 'إدارة العلامات التجارية', to: '/products/brands' },
+                  { id: 'warehouses' as const, label: 'إدارة المستودعات', to: '/products/warehouses' },
+                  { id: 'units' as const, label: 'إدارة الوحدات', to: '/products/units' },
+                ].map((tab) => {
+                  const isActive = activeView === tab.id;
+                  return (
+                    <Link
+                      key={tab.id}
+                      to={tab.to}
+                      className={`group relative px-6 py-3 rounded-xl text-sm font-medium transition-all duration-300 whitespace-nowrap ${
+                        isActive
+                          ? 'bg-gradient-to-r from-orange-500 to-amber-500 text-white shadow-lg shadow-orange-500/50'
+                          : 'bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl text-slate-700 dark:text-slate-200 border border-slate-200/50 dark:border-slate-700/50 hover:shadow-md'
+                      }`}
+                    >
+                      {isActive && (
+                        <div className="absolute -inset-0.5 rounded-xl bg-gradient-to-r from-orange-500 to-amber-500 opacity-20 blur" />
+                      )}
+                      <span className="relative">{tab.label}</span>
+                    </Link>
+                  );
+                })}
               </div>
             </div>
           </div>

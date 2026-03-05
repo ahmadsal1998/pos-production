@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Product, Customer, POSInvoice, POSCartItem, SaleTransaction, SaleStatus, SalePaymentMethod } from '@/shared/types';
 import QRCode from 'react-qr-code';
 
@@ -104,6 +104,7 @@ const generateNewInvoice = (cashierName: string, invoiceNumber: string = 'INV-1'
   grandTotal: 0,
   paymentMethod: null,
   originalInvoiceId: originalInvoiceId,
+  invoiceType: 'retail',
 });
 
 // Helper function to filter out dummy/test customers
@@ -270,6 +271,8 @@ const transformAndFilterCustomers = (customers: any[]): Customer[] => {
 // --- MAIN POS COMPONENT ---
 const POSPage: React.FC = () => {
     const navigate = useNavigate();
+    const [searchParams] = useSearchParams();
+    const editSaleId = searchParams.get('edit') || undefined;
     const { formatCurrency } = useCurrency();
     const { user } = useAuthStore();
     const confirmDialog = useConfirmDialog();
@@ -387,31 +390,38 @@ const POSPage: React.FC = () => {
 
     // Helper functions for held invoices persistence
     const HELD_INVOICES_STORAGE_KEY = 'pos_held_invoices';
-    
+    const MAX_HELD_INVOICES = 15; // Cap to avoid hitting ~10 MB storage limit
+
     // Regular function for loading (can be used in useState initializer)
     const loadHeldInvoicesFromStorage = (): HeldInvoice[] => {
         try {
             const stored = localStorage.getItem(HELD_INVOICES_STORAGE_KEY);
             if (stored) {
                 const parsed = JSON.parse(stored);
-                // Ensure dates are properly parsed
-                return parsed.map((inv: any) => ({
+                const mapped = parsed.map((inv: any) => ({
                     ...inv,
                     date: inv.date ? new Date(inv.date) : new Date(),
-                    // Ensure a stable unique key for React rendering and restore/remove ops
                     heldKey: inv.heldKey || `held_${inv.id || 'INV'}_${inv.date || Date.now()}_${UUID()}`,
                 }));
+                return mapped.slice(0, MAX_HELD_INVOICES);
             }
         } catch (error) {
             console.error('Error loading held invoices from localStorage:', error);
         }
         return [];
     };
-    
+
     const saveHeldInvoicesToStorage = useCallback((invoices: HeldInvoice[]) => {
         try {
-            localStorage.setItem(HELD_INVOICES_STORAGE_KEY, JSON.stringify(invoices));
-        } catch (error) {
+            const toSave = invoices.slice(0, MAX_HELD_INVOICES);
+            localStorage.setItem(HELD_INVOICES_STORAGE_KEY, JSON.stringify(toSave));
+        } catch (error: any) {
+            if (error?.name === 'QuotaExceededError') {
+                try {
+                    const trimmed = invoices.slice(0, Math.min(5, invoices.length));
+                    localStorage.setItem(HELD_INVOICES_STORAGE_KEY, JSON.stringify(trimmed));
+                } catch {}
+            }
             console.error('Error saving held invoices to localStorage:', error);
         }
     }, []);
@@ -535,6 +545,60 @@ const POSPage: React.FC = () => {
         const newTotals = calculateTotals(currentInvoice.items, currentInvoice.invoiceDiscount);
         setCurrentInvoice(inv => ({ ...inv, ...newTotals }));
     }, [currentInvoice.items, currentInvoice.invoiceDiscount, calculateTotals]);
+
+    // Load sale for edit mode when editSaleId is in URL
+    useEffect(() => {
+        if (!editSaleId) return;
+        let cancelled = false;
+        (async () => {
+            try {
+                const res = await salesApi.getSale(editSaleId);
+                const raw = (res as any)?.data?.sale ?? (res as any)?.data?.data?.sale;
+                if (!raw || cancelled) return;
+                const sale = raw;
+                const invNum = sale.invoiceNumber ?? sale.id ?? `INV-${editSaleId}`;
+                const items: POSCartItem[] = (sale.items ?? []).map((item: any, i: number) => ({
+                    cartItemId: `edit-${item.productId}-${i}-${UUID()}`,
+                    productId: i,
+                    originalId: item.productId,
+                    name: item.productName || '',
+                    unit: item.unit || 'قطعة',
+                    quantity: Number(item.quantity) || 0,
+                    unitPrice: Number(item.unitPrice) || 0,
+                    total: Number(item.totalPrice) || 0,
+                    discount: Number(item.discount) || 0,
+                    conversionFactor: item.conversionFactor,
+                    costPrice: item.costPrice,
+                    cost: item.costPrice,
+                }));
+                const customer: Customer | null = sale.customerId && sale.customerName
+                    ? { id: sale.customerId, name: sale.customerName, phone: '', previousBalance: 0 }
+                    : null;
+                const paymentMethod = (sale.paymentMethod || 'cash').toString();
+                const methodCapitalized = paymentMethod.charAt(0).toUpperCase() + paymentMethod.slice(1);
+                setCurrentInvoice({
+                    id: invNum,
+                    date: sale.date ? new Date(sale.date) : new Date(),
+                    cashier: sale.seller || currentUserName,
+                    customer,
+                    items,
+                    subtotal: Number(sale.subtotal) || 0,
+                    totalItemDiscount: Number(sale.totalItemDiscount) || 0,
+                    invoiceDiscount: Number(sale.invoiceDiscount) || 0,
+                    tax: Number(sale.tax) || 0,
+                    grandTotal: Number(sale.total) || 0,
+                    paymentMethod: methodCapitalized,
+                    invoiceType: (sale.invoiceType === 'wholesale' || sale.invoiceType === 'retail') ? sale.invoiceType : 'retail',
+                });
+                setSelectedPaymentMethod(methodCapitalized === 'Cash' || methodCapitalized === 'Card' || methodCapitalized === 'Credit' ? methodCapitalized : 'Cash');
+                setCreditPaidAmount(Number(sale.paidAmount) || 0);
+                setCreditPaidAmountError(null);
+            } catch (e) {
+                console.error('Failed to load sale for edit', e);
+            }
+        })();
+        return () => { cancelled = true; };
+    }, [editSaleId, currentUserName]);
 
     const HALF_UNIT_INCREMENT_ERROR =
         'Please enter a valid amount in half-unit increments (e.g., 0, 0.5, 1, 1.5…)';
@@ -1393,24 +1457,24 @@ const POSPage: React.FC = () => {
     }, []);
 
     // Fetch quick products from API with caching and backend filtering
+    const QUICK_PRODUCTS_CACHE_MAX_ITEMS = 80; // Cap cache size to reduce storage (~10 MB limit)
     const fetchQuickProducts = useCallback(async () => {
         const CACHE_KEY = 'pos_quick_products_cache';
         const CACHE_TIMESTAMP_KEY = 'pos_quick_products_cache_timestamp';
         const CACHE_TTL = 5 * 60 * 1000; // 5 minutes cache TTL
-        
+
         // Check cache first
         try {
             const cachedData = localStorage.getItem(CACHE_KEY);
             const cachedTimestamp = localStorage.getItem(CACHE_TIMESTAMP_KEY);
-            
+
             if (cachedData && cachedTimestamp) {
                 const timestamp = parseInt(cachedTimestamp, 10);
                 const now = Date.now();
-                
-                // If cache is still valid, use it
+
                 if (now - timestamp < CACHE_TTL) {
                     const quickProductsList = JSON.parse(cachedData);
-                    setQuickProducts(quickProductsList);
+                    setQuickProducts(Array.isArray(quickProductsList) ? quickProductsList : []);
                     setIsLoadingQuickProducts(false);
                     console.log(`Loaded ${quickProductsList.length} quick products from cache`);
                     return;
@@ -1422,48 +1486,44 @@ const POSPage: React.FC = () => {
 
         setIsLoadingQuickProducts(true);
         try {
-            // Use backend filtering to only fetch quick products - much more efficient!
-            // Fetch with higher limit since quick products are typically few
-            const response = await productsApi.getProducts({ 
-                page: 1, 
-                limit: 100, // Should be enough for quick products
+            const response = await productsApi.getProducts({
+                page: 1,
+                limit: 100,
                 showInQuickProducts: true,
                 status: 'active'
             });
-            
+
             if (response.success) {
                 const productsData = (response.data as any)?.products || (response.data as any)?.data?.products || [];
-                
-                if (productsData.length > 0) {
-                    // Normalize and set quick products
-                    const quickProductsList = productsData.map((p: any) => normalizeProduct(p));
-                    setQuickProducts(quickProductsList);
-                    
-                    // Cache the results
-                    try {
-                        localStorage.setItem(CACHE_KEY, JSON.stringify(quickProductsList));
-                        localStorage.setItem(CACHE_TIMESTAMP_KEY, Date.now().toString());
-                    } catch (cacheError) {
+                const quickProductsList = (productsData.length > 0 ? productsData.map((p: any) => normalizeProduct(p)) : []).slice(0, QUICK_PRODUCTS_CACHE_MAX_ITEMS);
+                setQuickProducts(quickProductsList);
+
+                try {
+                    localStorage.setItem(CACHE_KEY, JSON.stringify(quickProductsList));
+                    localStorage.setItem(CACHE_TIMESTAMP_KEY, Date.now().toString());
+                } catch (cacheError: any) {
+                    if (cacheError?.name === 'QuotaExceededError') {
+                        try {
+                            localStorage.removeItem(CACHE_KEY);
+                            localStorage.removeItem(CACHE_TIMESTAMP_KEY);
+                        } catch {}
+                        console.warn('Storage full: quick products cache cleared. Using API-only.');
+                    } else {
                         console.warn('Error caching quick products:', cacheError);
                     }
-                    
-                    console.log(`Loaded ${quickProductsList.length} quick products from API`);
-                } else {
-                    setQuickProducts([]);
-                    console.log('No quick products found');
                 }
+
+                console.log(`Loaded ${quickProductsList.length} quick products from API`);
             } else {
-                console.warn('API response was not successful');
                 setQuickProducts([]);
             }
         } catch (err: any) {
             console.error('Error fetching quick products:', err);
-            // Try to use cached data as fallback even if expired
             try {
                 const cachedData = localStorage.getItem(CACHE_KEY);
                 if (cachedData) {
                     const quickProductsList = JSON.parse(cachedData);
-                    setQuickProducts(quickProductsList);
+                    setQuickProducts(Array.isArray(quickProductsList) ? quickProductsList : []);
                     console.log('Using expired cache as fallback');
                 } else {
                     setQuickProducts([]);
@@ -1771,6 +1831,31 @@ const POSPage: React.FC = () => {
             // Product without units or using base unit - use base price directly
             return basePrice;
         }
+    }, []);
+
+    /** Get unit price for a product based on invoice type (retail vs wholesale). Used when adding to cart and when toggling type. */
+    const getPriceForProductAndUnit = useCallback((
+        product: POSProduct,
+        unit: string,
+        piecesPerMainUnit: number,
+        invoiceType: 'retail' | 'wholesale',
+        isScaleBarcodeProduct?: boolean
+    ): number => {
+        const useWholesale = invoiceType === 'wholesale';
+        const wholesalePrice = product.wholesalePrice != null && product.wholesalePrice > 0 ? product.wholesalePrice : null;
+        const basePrice = useWholesale && wholesalePrice !== null ? wholesalePrice : product.price;
+        if (isScaleBarcodeProduct) {
+            return basePrice; // price per kg
+        }
+        if (product.units && product.units.length > 0 && unit && unit !== 'قطعة') {
+            const matchedUnit = product.units.find(u => (u.unitName || '').trim() === unit.trim());
+            if (matchedUnit && !useWholesale) {
+                const unitPrice = matchedUnit.sellingPrice;
+                if (unitPrice != null && unitPrice > 0) return unitPrice;
+            }
+            return piecesPerMainUnit > 0 ? (basePrice / piecesPerMainUnit) : basePrice;
+        }
+        return basePrice;
     }, []);
 
 
@@ -2424,25 +2509,22 @@ const POSPage: React.FC = () => {
             console.log(`[POS] Using default piecesPerUnit: ${piecesPerUnit} (unit: ${unit})`);
         }
 
-        // Calculate the unit price
-        // Priority: unitPriceOverride > product price (for base unit or no units) > calculated per-piece price
+        // Calculate the unit price based on invoice type (retail vs wholesale)
+        // Priority: unitPriceOverride > getPriceForProductAndUnit(invoiceType)
+        const invoiceType = currentInvoice.invoiceType ?? 'retail';
         let incomingUnitPrice: number;
         if (unitPriceOverride !== undefined && unitPriceOverride > 0) {
             incomingUnitPrice = unitPriceOverride;
         } else {
-            // Always use retail price with unit conversion
-            const basePrice = finalProduct.price;
+            incomingUnitPrice = getPriceForProductAndUnit(
+                finalProduct,
+                unit,
+                piecesPerMainUnit,
+                invoiceType,
+                isScaleBarcodeProduct
+            );
             if (isScaleBarcodeProduct) {
-                // For scale barcode products, basePrice is already price per kg
-                // Use it directly - total will be calculated as pricePerKg * weightInKg
-                incomingUnitPrice = basePrice;
-                console.log(`[POS] Scale barcode product - using price per kg: ${basePrice}, weight: ${extractedWeight}kg`);
-            } else if (finalProduct.units && finalProduct.units.length > 0 && unit !== 'قطعة') {
-                // Product has units and we're using a specific unit - calculate per-piece price
-                incomingUnitPrice = piecesPerMainUnit > 0 ? (basePrice / piecesPerMainUnit) : basePrice;
-            } else {
-                // Product without units or using base unit - use base price directly
-                incomingUnitPrice = basePrice;
+                console.log(`[POS] Scale barcode product - using ${invoiceType} price per kg: ${incomingUnitPrice}, weight: ${extractedWeight}kg`);
             }
         }
         
@@ -2991,10 +3073,53 @@ const POSPage: React.FC = () => {
                     piecesPerUnit: finalPiecesPerUnit,
                 };
             } else {
-                // Product not found in IndexedDB
-                // This should not happen if products were properly synced on login
-                console.warn(`[POS] ⚠️ Product not found in IndexedDB for barcode: "${trimmed}"`);
-                console.warn(`[POS] ⚠️ This may indicate the product does not exist or was not synced on login.`);
+                // Product not found in IndexedDB - FALLBACK to backend API
+                // This fixes issues when storage is full (~10 MB) or product was added after last sync
+                console.warn(`[POS] ⚠️ Product not found in IndexedDB for barcode: "${trimmed}", trying API...`);
+                try {
+                    const apiResponse = await productsApi.getProductByBarcode(trimmed);
+                    const apiData = (apiResponse as any)?.data;
+                    const productObj = apiData?.data?.product;
+                    const matchedUnit = apiData?.data?.matchedUnit ?? null;
+                    if (apiData?.success && productObj) {
+                        console.log(`[POS] ✅ Product found via API fallback: ${productObj.name || 'Unknown'}`);
+                        const normalizedProduct = normalizeProduct(productObj);
+                        if (matchedUnit) {
+                            const unitCostPrice = calculateUnitCostPrice(productObj, matchedUnit);
+                            normalizedProduct.costPrice = unitCostPrice;
+                            normalizedProduct.cost = unitCostPrice;
+                        }
+                        let { unitName, unitPrice, conversionFactor, piecesPerUnit } = extractUnitInfo(normalizedProduct, matchedUnit);
+                        const isScaleBarcode = normalizedProduct.isScaleBarcodeProduct || normalizedProduct.isScaleBarcode;
+                        const extractedWeight = normalizedProduct.extractedWeight;
+                        let finalPiecesPerUnit = piecesPerUnit;
+                        if (isScaleBarcode && extractedWeight) {
+                            finalPiecesPerUnit = extractedWeight;
+                            const weightUnit = normalizedProduct.scaleBarcodeFormat?.weightUnit || 'g';
+                            unitName = weightUnit === 'kg' ? 'كيلوجرام' : 'جرام';
+                        }
+                        // Store in IndexedDB for future scans (best-effort; ignore quota errors)
+                        try {
+                            await productsDB.storeProduct(productObj);
+                            productsDB.notifyOtherTabs();
+                        } catch (storeErr) {
+                            console.warn('[POS] Could not cache API product in IndexedDB (storage may be full):', storeErr);
+                        }
+                        return {
+                            success: true,
+                            product: normalizedProduct,
+                            unitName,
+                            unitPrice,
+                            conversionFactor,
+                            piecesPerUnit: finalPiecesPerUnit,
+                        };
+                    }
+                } catch (apiError: any) {
+                    const is404 = apiError?.response?.status === 404;
+                    if (!is404) {
+                        console.error('[POS] ❌ API fallback for barcode failed:', apiError);
+                    }
+                }
                 return { success: false };
             }
         } catch (error) {
@@ -3328,6 +3453,71 @@ const POSPage: React.FC = () => {
             items: inv.items.filter(item => item.cartItemId !== cartItemId),
         }));
     };
+
+    /** Switch cart line to a different unit (variant). Uses price per invoice type (retail/wholesale). */
+    const handleUnitChange = useCallback((cartItemId: string, newUnitName: string) => {
+        const normalizedNew = newUnitName.trim();
+        if (!normalizedNew) return;
+        setCurrentInvoice(inv => {
+            const item = inv.items.find(i => i.cartItemId === cartItemId);
+            if (!item) return inv;
+            const product = products.find(p => String(p.id) === String(item.productId));
+            const unit = product?.units?.find(
+                u => (u.unitName || '').toLowerCase() === normalizedNew.toLowerCase()
+            );
+            if (!unit) return inv;
+            const invoiceType = inv.invoiceType ?? 'retail';
+            const piecesPerMainUnit = getPiecesPerMainUnit(product);
+            const unitPrice = getPriceForProductAndUnit(
+                product,
+                unit.unitName || normalizedNew,
+                unit.conversionFactor || piecesPerMainUnit,
+                invoiceType,
+                product?.isScaleBarcodeProduct || product?.isScaleBarcode
+            );
+            const finalUnitPrice = Number.isFinite(unitPrice) && unitPrice >= 0 ? unitPrice : item.unitPrice;
+            return {
+                ...inv,
+                items: inv.items.map(i =>
+                    i.cartItemId !== cartItemId
+                        ? i
+                        : { ...i, unit: unit.unitName, unitPrice: finalUnitPrice, total: i.quantity * finalUnitPrice },
+                ),
+            };
+        });
+    }, [products, getPiecesPerMainUnit, getPriceForProductAndUnit]);
+
+    /** Toggle invoice type (retail/wholesale). Recalculates all line prices; quantities and stock unchanged. */
+    const handleInvoiceTypeToggle = useCallback(() => {
+        setCurrentInvoice(inv => {
+            const newType = (inv.invoiceType ?? 'retail') === 'wholesale' ? 'retail' : 'wholesale';
+            const updatedItems = inv.items.map(item => {
+                const product = products.find(
+                    p => String(p.id) === String(item.productId) || (item.originalId && String(p.originalId) === String(item.originalId))
+                );
+                if (!product) return item;
+                const piecesPerMainUnit = item.conversionFactor ?? getPiecesPerMainUnit(product);
+                const unitPrice = getPriceForProductAndUnit(
+                    product,
+                    item.unit,
+                    piecesPerMainUnit,
+                    newType,
+                    product.isScaleBarcodeProduct || product.isScaleBarcode
+                );
+                const safePrice = Number.isFinite(unitPrice) && unitPrice > 0 ? unitPrice : item.unitPrice;
+                return { ...item, unitPrice: safePrice, total: item.quantity * safePrice };
+            });
+            return { ...inv, invoiceType: newType, items: updatedItems };
+        });
+    }, [products, getPiecesPerMainUnit, getPriceForProductAndUnit]);
+
+    /** Show Unit column only when at least one item has a product with multiple units. */
+    const showUnitColumn = useMemo(() => {
+        return currentInvoice.items.some(item => {
+            const product = products.find(p => String(p.id) === String(item.productId));
+            return !!(product?.units && product.units.length > 1);
+        });
+    }, [currentInvoice.items, products]);
 
     const handleHoldSale = async () => {
         if (currentInvoice.items.length === 0) return;
@@ -4314,6 +4504,7 @@ const POSPage: React.FC = () => {
             paymentMethod: selectedPaymentMethod.toLowerCase(),
             status: status === 'Paid' ? 'completed' : status === 'Partial' ? 'partial_payment' : 'pending',
             seller: invoice.cashier,
+            invoiceType: invoice.invoiceType ?? 'retail',
         };
         
         return {
@@ -4329,6 +4520,33 @@ const POSPage: React.FC = () => {
     }, [selectedPaymentMethod, pointsToRedeem, creditPaidAmount, products, formatCurrency, showToast, setCustomerPointsBalance]);
 
     const finalizeSaleWithoutTerminal = async () => {
+        // Edit mode: full update (items, totals, payment) so added products are saved
+        if (editSaleId) {
+            if (currentInvoice.items.length === 0) return;
+            const storeId = user?.storeId;
+            if (!storeId) {
+                showToast('معرف المتجر مطلوب لحفظ الفاتورة', 'error');
+                return;
+            }
+            try {
+                const prepared = await prepareSaleData(currentInvoice, currentInvoice.id, storeId);
+                const backendStatus = prepared.status === 'Paid' ? 'completed' : prepared.status === 'Partial' ? 'partial_payment' : 'pending';
+                await salesApi.updateSale(editSaleId, {
+                    ...prepared.saleData,
+                    paidAmount: prepared.paidAmount,
+                    remainingAmount: prepared.remainingAmount,
+                    status: backendStatus,
+                    paymentMethod: selectedPaymentMethod.toLowerCase(),
+                });
+                showToast('تم تحديث الفاتورة بنجاح', 'success');
+                setCurrentInvoice(generateNewInvoice(currentUserName, invoiceCounterService.getCurrentInvoiceNumber()));
+                navigate('/pos/1', { replace: true });
+            } catch (e: any) {
+                showToast(getApiErrorMessage(e, 'فشل تحديث الفاتورة'), 'error');
+            }
+            return;
+        }
+
         // QUEUE-BASED MODEL: No strict locking - allow multiple sales to be queued
         // The queue service handles sequential processing
         
@@ -6155,6 +6373,23 @@ const POSPage: React.FC = () => {
                                 <span className="font-semibold truncate">{AR_LABELS.invoiceNumber}: <span className="font-mono text-orange-600">{currentInvoice.id}</span></span>
                                 <span className="font-semibold truncate">{AR_LABELS.posCashier}: <span className="text-gray-900 dark:text-gray-100">{currentInvoice.cashier}</span></span>
                             </div>
+                            {/* Invoice type: Retail (default) / Wholesale — only affects pricing, not quantities or stock */}
+                            <div className="flex items-center gap-1 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700/50 p-0.5">
+                                <button
+                                    type="button"
+                                    onClick={() => (currentInvoice.invoiceType ?? 'retail') !== 'retail' && handleInvoiceTypeToggle()}
+                                    className={`px-2.5 py-1.5 rounded-md text-xs font-medium transition-colors ${(currentInvoice.invoiceType ?? 'retail') === 'retail' ? 'bg-orange-500 text-white shadow-sm' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-600'}`}
+                                >
+                                    {AR_LABELS.invoiceTypeRetail}
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => (currentInvoice.invoiceType ?? 'retail') !== 'wholesale' && handleInvoiceTypeToggle()}
+                                    className={`px-2.5 py-1.5 rounded-md text-xs font-medium transition-colors ${(currentInvoice.invoiceType ?? 'retail') === 'wholesale' ? 'bg-orange-500 text-white shadow-sm' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-600'}`}
+                                >
+                                    {AR_LABELS.invoiceTypeWholesale}
+                                </button>
+                            </div>
                         </div>
                         {/* Search */}
                         <form onSubmit={handleSearch} className="p-2.5 sm:p-3 md:p-3.5 lg:p-4 border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
@@ -6237,6 +6472,9 @@ const POSPage: React.FC = () => {
                                         <tr>
                                             <th className="px-2 sm:px-3 py-2 sm:py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[5%] align-middle">#</th>
                                             <th className="px-2 sm:px-3 py-2 sm:py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[30%] align-middle">{AR_LABELS.productName}</th>
+                                            {showUnitColumn && (
+                                                <th className="px-2 sm:px-3 py-2 sm:py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[10%] text-center align-middle">{AR_LABELS.unit}</th>
+                                            )}
                                             <th className="px-2 sm:px-3 py-2 sm:py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[12%] text-center align-middle">{AR_LABELS.quantity}</th>
                                             <th className="px-2 sm:px-3 py-2 sm:py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[12%] text-center align-middle">{AR_LABELS.price}</th>
                                             {showCostPrice && (
@@ -6248,11 +6486,31 @@ const POSPage: React.FC = () => {
                                     </thead>
                                 <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
                                    {currentInvoice.items.length === 0 ? (
-                                            <tr><td colSpan={showCostPrice ? 7 : 6} className="text-center align-middle py-8 sm:py-10 text-xs sm:text-sm text-gray-500 dark:text-gray-400">{AR_LABELS.noItemsInCart}</td></tr>
-                                   ) : currentInvoice.items.slice().reverse().map((item, index) => (
+                                            <tr><td colSpan={6 + (showUnitColumn ? 1 : 0) + (showCostPrice ? 1 : 0)} className="text-center align-middle py-8 sm:py-10 text-xs sm:text-sm text-gray-500 dark:text-gray-400">{AR_LABELS.noItemsInCart}</td></tr>
+                                   ) : currentInvoice.items.slice().reverse().map((item, index) => {
+                                        const productForItem = products.find(p => String(p.id) === String(item.productId));
+                                        const hasMultipleUnits = !!(productForItem?.units && productForItem.units.length > 1);
+                                        const unitOptions = (productForItem?.units ?? []).map(u => ({ value: u.unitName, label: u.unitName }));
+                                        return (
                                         <tr key={item.cartItemId || `item-${index}`} className="hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors duration-150">
                                                 <td className="px-2 sm:px-3 py-3 sm:py-4 text-xs sm:text-sm text-gray-500 dark:text-gray-400 align-middle">{index + 1}</td>
                                                 <td className="px-2 sm:px-3 py-3 sm:py-4 text-xs sm:text-sm font-medium text-gray-900 dark:text-gray-100 break-words align-middle">{item.name}</td>
+                                                {showUnitColumn && (
+                                                    <td className="px-2 sm:px-3 py-3 sm:py-4 text-center align-middle">
+                                                        {hasMultipleUnits && unitOptions.length > 0 ? (
+                                                            <CustomDropdown
+                                                                value={item.unit}
+                                                                onChange={(val) => item.cartItemId && handleUnitChange(item.cartItemId, val)}
+                                                                options={unitOptions}
+                                                                placeholder={AR_LABELS.unit}
+                                                                size="sm"
+                                                                className="min-w-0 max-w-[100px] text-gray-900 dark:text-gray-100"
+                                                            />
+                                                        ) : (
+                                                            <span className="text-xs sm:text-sm text-gray-600 dark:text-gray-400">{item.unit || '—'}</span>
+                                                        )}
+                                                    </td>
+                                                )}
                                                 <td className="px-2 sm:px-3 py-3 sm:py-4 text-center align-middle">
                                                 <div className="inline-flex items-center justify-center gap-1" dir="ltr">
                                                     <button
@@ -6368,7 +6626,8 @@ const POSPage: React.FC = () => {
                                                 </button>
                                             </td>
                                         </tr>
-                                    ))}
+                                        );
+                                    })}
                                     </tbody>
                                 </table>
                             </div>
@@ -6874,7 +7133,7 @@ const POSPage: React.FC = () => {
                                                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                                             </svg>
                                         )}
-                                        {hasUnsyncedSales ? 'فاتورة مكررة - يرجى المراجعة' : (isProcessingPayment ? 'جاري المعالجة...' : AR_LABELS.confirmPayment)}
+                                        {hasUnsyncedSales ? 'فاتورة مكررة - يرجى المراجعة' : (isProcessingPayment ? 'جاري المعالجة...' : editSaleId ? 'تعديل الفاتورة' : AR_LABELS.confirmPayment)}
                                     </button>
                                 </div>
                             </div>

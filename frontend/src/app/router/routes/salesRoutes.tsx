@@ -43,6 +43,22 @@ export const salesRoutes: RouteObject[] = [
           </PermissionProtectedRoute>
         ),
       },
+      {
+        path: 'reports',
+        element: (
+          <PermissionProtectedRoute>
+            <SalesPage />
+          </PermissionProtectedRoute>
+        ),
+      },
+      {
+        path: 'customer-accounts',
+        element: (
+          <PermissionProtectedRoute>
+            <SalesPage />
+          </PermissionProtectedRoute>
+        ),
+      },
     ],
   },
   {

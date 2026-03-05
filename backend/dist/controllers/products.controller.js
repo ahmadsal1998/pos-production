@@ -359,7 +359,7 @@ const getProducts = (0, import_error.asyncHandler)(async (req, res) => {
     const showInQuickProductsValue = typeof showInQuickProducts === "string" ? showInQuickProducts === "true" || showInQuickProducts === "1" : Boolean(showInQuickProducts);
     let fieldsToSelect;
     if (viewList) {
-      fieldsToSelect = "name price stock barcode status categoryId parentProductId updatedAt";
+      fieldsToSelect = "name price stock barcode status categoryId parentProductId costPrice updatedAt";
     } else if (showInQuickProductsValue) {
       fieldsToSelect = "name price stock barcode showInQuickProducts status units costPrice categoryId brandId description updatedAt";
     }

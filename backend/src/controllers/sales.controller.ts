@@ -10,6 +10,7 @@ import { getBusinessDateFilterRange } from '../utils/businessDate';
 import { log } from '../utils/logger';
 import Store from '../models/Store';
 import { getCustomerModelForStore } from '../utils/customerModel';
+import { getCustomerPaymentModelForStore } from '../utils/customerPaymentModel';
 import GlobalCustomer from '../models/GlobalCustomer';
 import PointsSettings from '../models/PointsSettings';
 import PointsBalance from '../models/PointsBalance';
@@ -97,6 +98,7 @@ export const createSale = asyncHandler(async (req: AuthenticatedRequest, res: Re
     status,
     seller,
     isReturn = false,
+    invoiceType,
   } = req.body;
 
   if (!invoiceNumber || !customerName || !items || !Array.isArray(items) || items.length === 0) {
@@ -140,6 +142,7 @@ export const createSale = asyncHandler(async (req: AuthenticatedRequest, res: Re
       status,
       seller,
       isReturn,
+      invoiceType,
     });
 
     return res.status(201).json({
@@ -177,7 +180,7 @@ export const createSale = asyncHandler(async (req: AuthenticatedRequest, res: Re
 export const getSales = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
   const userStoreId = req.user?.storeId || null;
   const userRole = req.user?.role || null;
-  const { startDate, endDate, customerId, status, paymentMethod, seller, storeId: queryStoreId, page = 1, limit = 100 } = req.query;
+  const { startDate, endDate, customerId, status, paymentMethod, seller, storeId: queryStoreId, page = 1, limit = 100, search: searchParam } = req.query;
 
   // Determine which storeId to use
   let targetStoreId: string | null = null;
@@ -248,6 +251,17 @@ export const getSales = asyncHandler(async (req: AuthenticatedRequest, res: Resp
     query.seller = seller;
   }
 
+  // Search by invoice number or customer name (optional)
+  const search = typeof searchParam === 'string' ? searchParam.trim() : '';
+  if (search) {
+    const escaped = search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const searchRegex = new RegExp(escaped, 'i');
+    query.$or = [
+      { invoiceNumber: searchRegex },
+      { customerName: searchRegex },
+    ];
+  }
+
   // Get business day start time and timezone settings for date filtering
   // Use modelStoreId (which is always available) to retrieve settings
   // This ensures settings are retrieved even for admin queries without a specific storeId
@@ -277,10 +291,11 @@ export const getSales = asyncHandler(async (req: AuthenticatedRequest, res: Resp
   }
 
   // Track if we're using date filtering and if we should try fallback
+  // When search is active, do not apply date filter so results are across all dates
   let usingDateFilter = false;
   let businessDateQuery: any = null;
   
-  if (startDate || endDate) {
+  if ((startDate || endDate) && !search) {
     usingDateFilter = true;
     // Use business date filtering instead of calendar date filtering
     // This now uses timezone-aware calculations to properly handle business days
@@ -909,13 +924,13 @@ export const getSale = asyncHandler(async (req: AuthenticatedRequest, res: Respo
 });
 
 /**
- * Update a sale
+ * Update a sale. If body includes items array, performs full update (items, totals, stock).
+ * Otherwise updates only payment-related fields.
  */
 export const updateSale = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
   const { id } = req.params;
   const storeId = req.user?.storeId || null;
 
-  // Validate ID format - prevent route conflicts (e.g., "summary" being treated as ID)
   const mongoose = (await import('mongoose')).default;
   if (!mongoose.Types.ObjectId.isValid(id)) {
     return res.status(400).json({
@@ -924,7 +939,6 @@ export const updateSale = asyncHandler(async (req: AuthenticatedRequest, res: Re
     });
   }
 
-  // Store users must have a storeId
   if (!storeId) {
     return res.status(400).json({
       success: false,
@@ -932,10 +946,56 @@ export const updateSale = asyncHandler(async (req: AuthenticatedRequest, res: Re
     });
   }
 
-  // Get unified Sale model (all stores use same collection)
-  const Sale = await getSaleModelForStore(storeId);
+  const body = req.body as any;
+  const hasFullUpdate = body.items && Array.isArray(body.items) && body.items.length > 0;
 
-  // Find sale by ID and ensure it belongs to the user's store
+  if (hasFullUpdate) {
+    try {
+      const result = await salesService.updateSale(storeId, id, {
+        items: body.items,
+        subtotal: body.subtotal,
+        totalItemDiscount: body.totalItemDiscount,
+        invoiceDiscount: body.invoiceDiscount,
+        tax: body.tax,
+        total: body.total,
+        customerId: body.customerId,
+        customerName: body.customerName,
+        seller: body.seller,
+        paidAmount: body.paidAmount,
+        remainingAmount: body.remainingAmount,
+        paymentMethod: body.paymentMethod,
+        status: body.status,
+        date: body.date,
+      });
+      const updatedSale = result.sale as any;
+      if ((updatedSale?.paidAmount ?? 0) <= 0) {
+        const CustomerPayment = getCustomerPaymentModelForStore(storeId);
+        const normalizedStoreId = (storeId || '').toLowerCase().trim();
+        const invoiceIds = [id];
+        if (updatedSale?.invoiceNumber) invoiceIds.push(String(updatedSale.invoiceNumber));
+        await CustomerPayment.deleteMany({
+          storeId: normalizedStoreId,
+          invoiceId: { $in: invoiceIds },
+        });
+      }
+      return res.status(200).json({
+        success: true,
+        message: 'Sale updated successfully',
+        data: { sale: result.sale },
+      });
+    } catch (error: any) {
+      if (error.statusCode === 404) {
+        return res.status(404).json({ success: false, message: error.message || 'Sale not found' });
+      }
+      if (error.statusCode === 400) {
+        return res.status(400).json({ success: false, message: error.message || 'Invalid request' });
+      }
+      throw error;
+    }
+  }
+
+  // Payment-only update
+  const Sale = await getSaleModelForStore(storeId);
   const sale = await Sale.findOne({
     _id: id,
     storeId: storeId.toLowerCase().trim(),
@@ -948,21 +1008,29 @@ export const updateSale = asyncHandler(async (req: AuthenticatedRequest, res: Re
     });
   }
 
-  // Update allowed fields
-  const allowedUpdates = [
-    'paidAmount',
-    'remainingAmount',
-    'status',
-    'paymentMethod',
-  ];
-
+  const allowedUpdates = ['paidAmount', 'remainingAmount', 'status', 'paymentMethod'];
   allowedUpdates.forEach((field) => {
-    if (req.body[field] !== undefined) {
-      (sale as any)[field] = req.body[field];
+    if (body[field] !== undefined) {
+      (sale as any)[field] = body[field];
     }
   });
 
   await sale.save();
+
+  // When sale is changed to credit (paidAmount 0), remove any customer payment records linked to this
+  // invoice so the account statement shows only the debit (customer owes), not debit + credit.
+  const saleAny = sale as any;
+  const paidAmount = saleAny.paidAmount ?? 0;
+  if (paidAmount <= 0) {
+    const CustomerPayment = getCustomerPaymentModelForStore(storeId);
+    const normalizedStoreId = (storeId || '').toLowerCase().trim();
+    const invoiceIds = [id];
+    if (saleAny.invoiceNumber) invoiceIds.push(String(saleAny.invoiceNumber));
+    await CustomerPayment.deleteMany({
+      storeId: normalizedStoreId,
+      invoiceId: { $in: invoiceIds },
+    });
+  }
 
   res.status(200).json({
     success: true,

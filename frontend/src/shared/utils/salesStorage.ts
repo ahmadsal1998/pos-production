@@ -1,6 +1,8 @@
 import { SaleTransaction } from '@/shared/types';
 
 const SALES_STORAGE_KEY = 'pos-sales-transactions';
+/** Cap stored sales to avoid hitting ~10 MB localStorage limit */
+const MAX_STORED_SALES = 100;
 
 /**
  * Get all sales transactions from localStorage
@@ -9,7 +11,8 @@ export const getStoredSales = (): SaleTransaction[] => {
   try {
     const stored = localStorage.getItem(SALES_STORAGE_KEY);
     if (stored) {
-      return JSON.parse(stored);
+      const parsed = JSON.parse(stored);
+      return Array.isArray(parsed) ? parsed.slice(0, MAX_STORED_SALES) : [];
     }
   } catch (error) {
     console.error('Error reading sales from localStorage:', error);
@@ -23,20 +26,24 @@ export const getStoredSales = (): SaleTransaction[] => {
 export const saveSale = (sale: SaleTransaction): void => {
   try {
     const existingSales = getStoredSales();
-    // Check if sale with same ID already exists (avoid duplicates)
     const existingIndex = existingSales.findIndex(s => s.id === sale.id);
+    let toSave: SaleTransaction[];
     if (existingIndex >= 0) {
-      // Update existing sale
-      existingSales[existingIndex] = sale;
+      toSave = [...existingSales];
+      toSave[existingIndex] = sale;
     } else {
-      // Add new sale at the beginning (most recent first)
-      existingSales.unshift(sale);
+      toSave = [sale, ...existingSales];
     }
-    localStorage.setItem(SALES_STORAGE_KEY, JSON.stringify(existingSales));
-    
-    // Dispatch custom event to notify other components in the same tab
+    const capped = toSave.slice(0, MAX_STORED_SALES);
+    localStorage.setItem(SALES_STORAGE_KEY, JSON.stringify(capped));
     window.dispatchEvent(new Event('salesUpdated'));
-  } catch (error) {
+  } catch (error: any) {
+    if (error?.name === 'QuotaExceededError') {
+      try {
+        const existingSales = getStoredSales().slice(0, 30);
+        localStorage.setItem(SALES_STORAGE_KEY, JSON.stringify(existingSales));
+      } catch {}
+    }
     console.error('Error saving sale to localStorage:', error);
   }
 };
