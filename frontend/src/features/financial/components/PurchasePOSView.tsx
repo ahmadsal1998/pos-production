@@ -167,7 +167,7 @@ export const PurchasePOSView: React.FC<PurchasePOSViewProps> = ({ editPurchaseId
   const [selectedSupplier, setSelectedSupplier] = useState<{ id: string; name: string } | null>(null);
   const [cart, setCart] = useState<CartLine[]>([]);
   const [discount, setDiscount] = useState(0);
-  const [taxPercent, setTaxPercent] = useState(15);
+  const [taxPercent, setTaxPercent] = useState(0);
   const [paidAmount, setPaidAmount] = useState(0);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('Cash');
   const [poNumber, setPoNumber] = useState('');
@@ -579,6 +579,14 @@ export const PurchasePOSView: React.FC<PurchasePOSViewProps> = ({ editPurchaseId
   const taxAmount = totalAfterDiscount * (taxPercent / 100);
   const grandTotal = totalAfterDiscount + taxAmount;
   const remaining = Math.max(0, grandTotal - paidAmount);
+
+  const totalSellingPrice = useMemo(
+    () => cart.reduce((sum, l) => sum + l.quantityInBase * (l.baseSellingPrice ?? 0), 0),
+    [cart]
+  );
+  const totalCostPrice = subtotal;
+  const netProfit = totalSellingPrice - totalCostPrice;
+  const profitPercent = totalCostPrice > 0 ? (netProfit / totalCostPrice) * 100 : 0;
 
   const supplierBalance = useMemo(() => {
     if (!selectedSupplier) return null;
@@ -1092,7 +1100,7 @@ export const PurchasePOSView: React.FC<PurchasePOSViewProps> = ({ editPurchaseId
               </span>
             </div>
           </div>
-          <div className="flex-1 overflow-auto min-h-0">
+          <div className="flex-1 overflow-auto min-h-0 border-b border-gray-200 dark:border-gray-700">
             <table className="w-full text-right text-sm">
               <thead className="bg-gray-50 dark:bg-gray-700/50 sticky top-0">
                 <tr>
@@ -1102,6 +1110,7 @@ export const PurchasePOSView: React.FC<PurchasePOSViewProps> = ({ editPurchaseId
                   <th className="px-2 py-2 w-[8%]">{AR_LABELS.quantity}</th>
                   <th className="px-2 py-2 w-[10%]">{AR_LABELS.unitCost}</th>
                   <th className="px-2 py-2 w-[10%]">{AR_LABELS.sellingPrice}</th>
+                  <th className="px-2 py-2 w-[8%]">نسبة الربح %</th>
                   <th className="px-2 py-2 w-[10%]">{AR_LABELS.totalAmount}</th>
                   <th className="px-2 py-2 w-[8%]"></th>
                 </tr>
@@ -1109,7 +1118,7 @@ export const PurchasePOSView: React.FC<PurchasePOSViewProps> = ({ editPurchaseId
               <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
                 {cart.length === 0 ? (
                   <tr>
-                    <td colSpan={8} className="px-4 py-8 text-center text-gray-500 dark:text-gray-400">
+                    <td colSpan={9} className="px-4 py-8 text-center text-gray-500 dark:text-gray-400">
                       لا توجد أصناف
                     </td>
                   </tr>
@@ -1167,6 +1176,11 @@ export const PurchasePOSView: React.FC<PurchasePOSViewProps> = ({ editPurchaseId
                             title={AR_LABELS.sellingPrice}
                           />
                         </td>
+                        <td className="px-2 py-2 tabular-nums text-gray-700 dark:text-gray-300">
+                          {line.unitCost > 0
+                            ? `${(((unitSellingPrice - line.unitCost) / line.unitCost) * 100).toFixed(1)}%`
+                            : '—'}
+                        </td>
                         <td className="px-2 py-2 font-semibold text-orange-600">{line.totalCost.toFixed(2)}</td>
                         <td className="px-2 py-2">
                           <button
@@ -1184,6 +1198,34 @@ export const PurchasePOSView: React.FC<PurchasePOSViewProps> = ({ editPurchaseId
               </tbody>
             </table>
           </div>
+
+          {/* Profit summary — 2 rows × 4 columns, pinned to bottom of Invoice div */}
+          {cart.length > 0 && (
+            <div className="flex-shrink-0 p-2 sm:p-3 bg-gray-50 dark:bg-gray-800/50 border-t border-gray-200 dark:border-gray-700">
+              <table className="w-full text-right text-xs sm:text-sm table-fixed">
+                <thead>
+                  <tr className="text-gray-600 dark:text-gray-400">
+                    <th className="py-1 px-1 font-medium w-1/4">إجمالي التكلفة</th>
+                    <th className="py-1 px-1 font-medium w-1/4">إجمالي سعر البيع</th>
+                    <th className="py-1 px-1 font-medium w-1/4">صافي الربح</th>
+                    <th className="py-1 px-1 font-medium w-1/4">نسبة الربح %</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td className="py-1 px-1 font-semibold tabular-nums text-gray-800 dark:text-gray-200">{formatCurrency(totalCostPrice)}</td>
+                    <td className="py-1 px-1 font-semibold tabular-nums text-gray-800 dark:text-gray-200">{formatCurrency(totalSellingPrice)}</td>
+                    <td className={`py-1 px-1 font-semibold tabular-nums ${netProfit >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
+                      {formatCurrency(netProfit)}
+                    </td>
+                    <td className={`py-1 px-1 font-semibold tabular-nums ${profitPercent >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
+                      {profitPercent.toFixed(1)}%
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       </div>
 

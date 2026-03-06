@@ -6615,6 +6615,7 @@ const POSPage: React.FC = () => {
                                             )}
                                             <th className="px-2 sm:px-3 py-2 sm:py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[12%] text-center align-middle">{AR_LABELS.quantity}</th>
                                             <th className="px-2 sm:px-3 py-2 sm:py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[12%] text-center align-middle">{AR_LABELS.price}</th>
+                                            <th className="px-2 sm:px-3 py-2 sm:py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[9%] text-center align-middle">نسبة الربح %</th>
                                             {showCostPrice && (
                                                 <th className="px-2 sm:px-3 py-2 sm:py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[12%] text-center align-middle">{AR_LABELS.costPrice}</th>
                                             )}
@@ -6624,7 +6625,7 @@ const POSPage: React.FC = () => {
                                     </thead>
                                 <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
                                    {currentInvoice.items.length === 0 ? (
-                                            <tr><td colSpan={6 + (showUnitColumn ? 1 : 0) + (showCostPrice ? 1 : 0)} className="text-center align-middle py-8 sm:py-10 text-xs sm:text-sm text-gray-500 dark:text-gray-400">{AR_LABELS.noItemsInCart}</td></tr>
+                                            <tr><td colSpan={7 + (showUnitColumn ? 1 : 0) + (showCostPrice ? 1 : 0)} className="text-center align-middle py-8 sm:py-10 text-xs sm:text-sm text-gray-500 dark:text-gray-400">{AR_LABELS.noItemsInCart}</td></tr>
                                    ) : currentInvoice.items.slice().reverse().map((item, index) => {
                                         const productForItem = products.find(p => String(p.id) === String(item.productId))
                                             || products.find(p => item.originalId && String(p.originalId) === String(item.originalId));
@@ -6750,6 +6751,11 @@ const POSPage: React.FC = () => {
                                                 </div>
                                             </td>
                                             <td className="px-2 sm:px-3 py-3 sm:py-4 text-xs sm:text-sm text-gray-700 dark:text-gray-300 whitespace-nowrap text-center align-middle">{formatCurrency(item.unitPrice)}</td>
+                                            <td className="px-2 sm:px-3 py-3 sm:py-4 text-xs sm:text-sm text-gray-600 dark:text-gray-400 whitespace-nowrap text-center align-middle tabular-nums">
+                                                {(item.costPrice ?? item.cost ?? 0) > 0
+                                                    ? `${(((item.unitPrice - (item.costPrice ?? item.cost ?? 0)) / (item.costPrice ?? item.cost ?? 0)) * 100).toFixed(1)}%`
+                                                    : '—'}
+                                            </td>
                                             {showCostPrice && (
                                                 <td className="px-2 sm:px-3 py-3 sm:py-4 text-xs sm:text-sm text-gray-600 dark:text-gray-400 whitespace-nowrap text-center align-middle">{formatCurrency(item.costPrice || item.cost || 0)}</td>
                                             )}
