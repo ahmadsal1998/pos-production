@@ -21,6 +21,14 @@ code {
   text-align: right;
 }
 
+/* Force English numerals (0-9) in all number inputs, regardless of browser/lang */
+input[type="number"],
+input[inputmode="numeric"],
+input[inputmode="decimal"] {
+  direction: ltr;
+  unicode-bidi: plaintext;
+}
+
 /* Custom scrollbar */
 ::-webkit-scrollbar {
   width: 6px;
