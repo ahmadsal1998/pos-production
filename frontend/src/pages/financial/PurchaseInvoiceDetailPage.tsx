@@ -5,6 +5,7 @@ import { AR_LABELS, PrintIcon } from '@/shared/constants';
 import { formatDate } from '@/shared/utils';
 import { printReceipt } from '@/shared/utils/printUtils';
 import { purchasesApi } from '@/lib/api';
+import { useCurrency } from '@/shared/contexts/CurrencyContext';
 
 const STATUS_STYLES: Record<PurchaseStatus, string> = {
   Pending: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/50 dark:text-yellow-300',
@@ -30,6 +31,7 @@ interface PurchaseInvoice extends PurchaseOrder {
 
 const PurchaseInvoiceDetailPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
+  const { formatCurrency } = useCurrency();
   const [purchase, setPurchase] = useState<PurchaseInvoice | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -368,16 +370,19 @@ const PurchaseInvoiceDetailPage: React.FC = () => {
                     </tr>
                   </thead>
                   <tbody>
-                    {purchase.items?.map((item, index) => (
-                      <tr key={item.productId + index}>
-                        <td>{index + 1}</td>
-                        <td>{item.productName}</td>
-                        <td>{item.unit ?? 'قطعة'}</td>
-                        <td>{item.quantity}</td>
-                        <td>{item.unitCost.toFixed(2)} ر.س</td>
-                        <td style={{ fontWeight: 600 }}>{item.totalCost.toFixed(2)} ر.س</td>
-                      </tr>
-                    ))}
+                    {purchase.items?.map((item, index) => {
+                      const unitLabel = item.unit ?? 'قطعة';
+                      return (
+                        <tr key={item.productId + index}>
+                          <td>{index + 1}</td>
+                          <td>{item.productName}</td>
+                          <td>{unitLabel}</td>
+                          <td>{item.quantity}</td>
+                          <td>{formatCurrency(item.unitCost)}</td>
+                          <td style={{ fontWeight: 600 }}>{formatCurrency(item.totalCost)}</td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -387,12 +392,12 @@ const PurchaseInvoiceDetailPage: React.FC = () => {
               <div className="inv-totals">
                 <div className="inv-totals-row">
                   <span>{AR_LABELS.subtotal}</span>
-                  <span>{purchase.subtotal.toFixed(2)} ر.س</span>
+                  <span>{formatCurrency(purchase.subtotal)}</span>
                 </div>
                 {purchase.discount > 0 && (
                   <div className="inv-totals-row">
                     <span>{AR_LABELS.discount}</span>
-                    <span>-{purchase.discount.toFixed(2)} ر.س</span>
+                    <span>-{formatCurrency(purchase.discount)}</span>
                   </div>
                 )}
                 {purchase.tax != null && purchase.tax > 0 && (
@@ -403,7 +408,7 @@ const PurchaseInvoiceDetailPage: React.FC = () => {
                 )}
                 <div className="inv-totals-row grand">
                   <span>{AR_LABELS.grandTotal}</span>
-                  <span>{purchase.totalAmount.toFixed(2)} ر.س</span>
+                  <span>{formatCurrency(purchase.totalAmount)}</span>
                 </div>
               </div>
             </section>
@@ -417,11 +422,11 @@ const PurchaseInvoiceDetailPage: React.FC = () => {
                 </div>
                 <div className="inv-payment-cell">
                   <strong>{AR_LABELS.amountPaid ?? 'المبلغ المدفوع'}</strong>
-                  {paidAmount.toFixed(2)} ر.س
+                  {formatCurrency(paidAmount)}
                 </div>
                 <div className="inv-payment-cell">
                   <strong>{AR_LABELS.remaining ?? 'المتبقي'}</strong>
-                  {remainingAmount.toFixed(2)} ر.س
+                  {formatCurrency(remainingAmount)}
                 </div>
               </div>
               {purchase.paymentMethod === 'Cheque' && purchase.chequeDetails && (
