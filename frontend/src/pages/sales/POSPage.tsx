@@ -34,6 +34,7 @@ import { Link } from 'react-router-dom';
 // Local POS product type with optional units
 type POSProduct = Product & {
     originalId?: string; // Store original backend ID (MongoDB ObjectId) for API calls
+    parentProductId?: string; // When product is child/variant, use parent's units for dropdown
     units?: Array<{
         unitName: string;
         barcode?: string;
@@ -1439,6 +1440,7 @@ const POSPage: React.FC = () => {
                     conversionFactor: parseFloat(u.conversionFactor) || 1,
                   }))
                 : undefined,
+            parentProductId: p.parentProductId ? String(p.parentProductId) : undefined,
             expiryDate: p.expiryDate ? new Date(p.expiryDate).toISOString().split('T')[0] : '',
             createdAt: p.createdAt || new Date().toISOString(),
             updatedAt: p.updatedAt || new Date().toISOString(),
@@ -2645,6 +2647,23 @@ const POSPage: React.FC = () => {
             return { ...inv, items: [...inv.items, newItem] };
         });
 
+        // Merge product into state so the unit dropdown has all units (e.g. when added by barcode)
+        setProducts(prev => {
+            const key = (p: POSProduct) => String(p.id) === String(product.id) || (product.originalId && String(p.originalId) === String(product.originalId));
+            const idx = prev.findIndex(key);
+            const hasFullUnits = product.units && product.units.length > 0;
+            if (idx >= 0) {
+                const existing = prev[idx];
+                const merged: POSProduct = {
+                    ...existing,
+                    ...product,
+                    units: hasFullUnits ? product.units : (existing.units && existing.units.length > 0 ? existing.units : product.units),
+                };
+                return prev.slice(0, idx).concat(merged, prev.slice(idx + 1));
+            }
+            return [...prev, product];
+        });
+
         setSearchTerm('');
         setProductSuggestionsOpen(false);
         
@@ -3511,11 +3530,13 @@ const POSPage: React.FC = () => {
         });
     }, [products, getPiecesPerMainUnit, getPriceForProductAndUnit]);
 
-    /** Show Unit column only when at least one item has a product with multiple units. */
+    /** Show Unit column when at least one item has a product with multiple units, or any item has unit info (so column is visible even if product lookup fails for some users). */
     const showUnitColumn = useMemo(() => {
         return currentInvoice.items.some(item => {
             const product = products.find(p => String(p.id) === String(item.productId));
-            return !!(product?.units && product.units.length > 1);
+            const hasMultipleUnits = !!(product?.units && product.units.length > 1);
+            const hasUnitOnItem = !!(item.unit && String(item.unit).trim() !== '');
+            return hasMultipleUnits || hasUnitOnItem;
         });
     }, [currentInvoice.items, products]);
 
@@ -6488,16 +6509,26 @@ const POSPage: React.FC = () => {
                                    {currentInvoice.items.length === 0 ? (
                                             <tr><td colSpan={6 + (showUnitColumn ? 1 : 0) + (showCostPrice ? 1 : 0)} className="text-center align-middle py-8 sm:py-10 text-xs sm:text-sm text-gray-500 dark:text-gray-400">{AR_LABELS.noItemsInCart}</td></tr>
                                    ) : currentInvoice.items.slice().reverse().map((item, index) => {
-                                        const productForItem = products.find(p => String(p.id) === String(item.productId));
-                                        const hasMultipleUnits = !!(productForItem?.units && productForItem.units.length > 1);
-                                        const unitOptions = (productForItem?.units ?? []).map(u => ({ value: u.unitName, label: u.unitName }));
+                                        const productForItem = products.find(p => String(p.id) === String(item.productId))
+                                            || products.find(p => item.originalId && String(p.originalId) === String(item.originalId));
+                                        const parentProduct = productForItem?.parentProductId
+                                            ? products.find(p => String(p.id) === String(productForItem.parentProductId)) || products.find(p => String(p.originalId) === String(productForItem.parentProductId))
+                                            : null;
+                                        const productUnits = (parentProduct?.units && parentProduct.units.length > 0 ? parentProduct.units : productForItem?.units) ?? [];
+                                        const unitOptionsFromProduct = productUnits.map(u => ({ value: u.unitName, label: u.unitName }));
+                                        const unitOptions = unitOptionsFromProduct.length > 0
+                                            ? unitOptionsFromProduct
+                                            : (item.unit && String(item.unit).trim() !== '')
+                                                ? [{ value: item.unit, label: item.unit }]
+                                                : [];
+                                        const showUnitDropdown = unitOptions.length > 0;
                                         return (
                                         <tr key={item.cartItemId || `item-${index}`} className="hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors duration-150">
                                                 <td className="px-2 sm:px-3 py-3 sm:py-4 text-xs sm:text-sm text-gray-500 dark:text-gray-400 align-middle">{index + 1}</td>
                                                 <td className="px-2 sm:px-3 py-3 sm:py-4 text-xs sm:text-sm font-medium text-gray-900 dark:text-gray-100 break-words align-middle">{item.name}</td>
                                                 {showUnitColumn && (
                                                     <td className="px-2 sm:px-3 py-3 sm:py-4 text-center align-middle">
-                                                        {hasMultipleUnits && unitOptions.length > 0 ? (
+                                                        {showUnitDropdown ? (
                                                             <CustomDropdown
                                                                 value={item.unit}
                                                                 onChange={(val) => item.cartItemId && handleUnitChange(item.cartItemId, val)}
