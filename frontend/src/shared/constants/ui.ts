@@ -271,6 +271,8 @@ export const AR_LABELS = {
   selectCustomer: 'اختر عميل...',
   addNewCustomer: 'إضافة عميل جديد',
   quickProducts: 'المنتجات السريعة',
+  hideQuickProducts: 'إخفاء المنتجات السريعة',
+  showQuickProducts: 'إظهار المنتجات السريعة',
   holdSale: 'تعليق البيع',
   payNow: 'الدفع الآن',
   cash: 'نقدي',

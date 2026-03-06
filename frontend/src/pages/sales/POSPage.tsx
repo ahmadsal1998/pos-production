@@ -1,9 +1,9 @@
 import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams, useLocation } from 'react-router-dom';
 import { Product, Customer, POSInvoice, POSCartItem, SaleTransaction, SaleStatus, SalePaymentMethod } from '@/shared/types';
 import QRCode from 'react-qr-code';
 
-import { AR_LABELS, UUID, SearchIcon, DeleteIcon, PlusIcon, HandIcon, CancelIcon, PrintIcon, CheckCircleIcon } from '@/shared/constants';
+import { AR_LABELS, UUID, SearchIcon, DeleteIcon, PlusIcon, HandIcon, CancelIcon, PrintIcon, CheckCircleIcon, XIcon, PanelLeftOpenIcon } from '@/shared/constants';
 import { ToggleSwitch } from '@/shared/components/ui/ToggleSwitch';
 import CustomDropdown from '@/shared/components/ui/CustomDropdown/CustomDropdown';
 import { customersApi, productsApi, salesApi, ApiError, getApiErrorMessage, storeSettingsApi, pointsApi } from '@/lib/api/client';
@@ -270,8 +270,11 @@ const transformAndFilterCustomers = (customers: any[]): Customer[] => {
 };
 
 // --- MAIN POS COMPONENT ---
+const getPOSDraftStorageKey = (pathname: string) => `pos_draft_${pathname.replace(/\//g, '_')}`;
+
 const POSPage: React.FC = () => {
     const navigate = useNavigate();
+    const location = useLocation();
     const [searchParams] = useSearchParams();
     const editSaleId = searchParams.get('edit') || undefined;
     const { formatCurrency } = useCurrency();
@@ -282,6 +285,7 @@ const POSPage: React.FC = () => {
     const isStoreOwner = user && user.storeId && !isSystemAdmin;
     const [products, setProducts] = useState<POSProduct[]>([]); // Keep for backward compatibility, but IndexedDB is primary
     const [quickProducts, setQuickProducts] = useState<POSProduct[]>([]);
+    const [quickProductsPanelVisible, setQuickProductsPanelVisible] = useState(true);
     const [isLoadingQuickProducts, setIsLoadingQuickProducts] = useState(false);
     const [productSuggestionsOpen, setProductSuggestionsOpen] = useState(false);
     const [productsLoaded, setProductsLoaded] = useState(false); // Track if products loaded from IndexedDB
@@ -327,6 +331,7 @@ const POSPage: React.FC = () => {
     const isFetchingNextInvoiceNumberRef = useRef(false); // Track if we're currently fetching next invoice number
     const pendingNewSaleRef = useRef(false); // Track if user requested new sale during processing
     const [currentInvoice, setCurrentInvoice] = useState<POSInvoice>(() => generateNewInvoice(currentUserName, 'INV-1'));
+    const currentInvoiceRef = useRef<POSInvoice>(currentInvoice);
     const [completedInvoice, setCompletedInvoice] = useState<POSInvoice | null>(null); // Store completed invoice for receipt display
     const [quantityDrafts, setQuantityDrafts] = useState<Record<string, string>>({});
     const [storeAddress, setStoreAddress] = useState<string>(''); // Store address for receipts
@@ -1121,7 +1126,61 @@ const POSPage: React.FC = () => {
             isMountedRef.current = false;
         };
     }, []);
-    
+
+    // Keep ref in sync for unmount save
+    useEffect(() => {
+        currentInvoiceRef.current = currentInvoice;
+    }, [currentInvoice]);
+
+    // Clear saved draft when cart becomes empty (e.g. after new sale or payment) so we don't restore an old draft
+    const prevItemsLengthRef = useRef(0);
+    useEffect(() => {
+        const len = currentInvoice.items.length;
+        if (prevItemsLengthRef.current > 0 && len === 0) {
+            try {
+                sessionStorage.removeItem(getPOSDraftStorageKey(location.pathname));
+            } catch (_) {}
+        }
+        prevItemsLengthRef.current = len;
+    }, [currentInvoice.items.length, location.pathname]);
+
+    // Restore draft invoice from sessionStorage when returning to POS (e.g. after navigation)
+    useEffect(() => {
+        if (editSaleId) return; // Don't restore when loading a sale for edit
+        const key = getPOSDraftStorageKey(location.pathname);
+        try {
+            const raw = sessionStorage.getItem(key);
+            if (!raw) return;
+            const parsed = JSON.parse(raw) as { date: string; items: POSCartItem[]; [k: string]: any };
+            if (!parsed.items || !Array.isArray(parsed.items) || parsed.items.length === 0) return;
+            const restored: POSInvoice = {
+                ...parsed,
+                date: parsed.date ? new Date(parsed.date) : new Date(),
+                items: parsed.items,
+            } as POSInvoice;
+            setCurrentInvoice(restored);
+        } catch (_) {
+            // ignore invalid or old draft
+        }
+    }, [location.pathname, editSaleId]);
+
+    // Save draft to sessionStorage on unmount so it can be restored when user comes back
+    useEffect(() => {
+        if (editSaleId) return;
+        const key = getPOSDraftStorageKey(location.pathname);
+        return () => {
+            const inv = currentInvoiceRef.current;
+            if (inv && inv.items && inv.items.length > 0) {
+                try {
+                    const toSave = { ...inv, date: inv.date instanceof Date ? inv.date.toISOString() : (inv as any).date };
+                    sessionStorage.setItem(key, JSON.stringify(toSave));
+                } catch (_) {
+                    // ignore quota etc.
+                }
+            }
+        };
+    }, [location.pathname, editSaleId]);
+
     // Sync held invoices to localStorage whenever they change
     useEffect(() => {
         saveHeldInvoicesToStorage(heldInvoices);
@@ -2664,6 +2723,29 @@ const POSPage: React.FC = () => {
             return [...prev, product];
         });
 
+        // When added product is a child (has parentProductId), load parent from IndexedDB so dropdown shows all unit levels
+        if (product.parentProductId) {
+            try {
+                const parentRaw = await productsDB.getProduct(product.parentProductId);
+                if (parentRaw) {
+                    const parentNorm = normalizeProduct(parentRaw);
+                    setProducts(prev => {
+                        const key = (p: POSProduct) => String(p.id) === String(parentNorm.id) || (parentNorm.originalId && String(p.originalId) === String(parentNorm.originalId));
+                        const idx = prev.findIndex(key);
+                        const hasFullUnits = parentNorm.units && parentNorm.units.length > 0;
+                        if (idx >= 0) {
+                            const existing = prev[idx];
+                            const merged: POSProduct = { ...existing, ...parentNorm, units: hasFullUnits ? parentNorm.units : (existing.units && existing.units.length > 0 ? existing.units : parentNorm.units) };
+                            return prev.slice(0, idx).concat(merged, prev.slice(idx + 1));
+                        }
+                        return [...prev, parentNorm];
+                    });
+                }
+            } catch (e) {
+                console.warn('[POS] Could not load parent product for unit dropdown', e);
+            }
+        }
+
         setSearchTerm('');
         setProductSuggestionsOpen(false);
         
@@ -2980,11 +3062,15 @@ const POSPage: React.FC = () => {
         let conversionFactor = 1;
         let piecesPerUnit = 1;
         
-        // If a unit was matched, use its information
+        // If a unit was matched (e.g. unit barcode scan), use that unit's info
+        // Resolve name from normalized product.units by barcode so we use the same label as the dropdown
         if (matchedUnit) {
-            unitName = matchedUnit.unitName || 'قطعة';
-            unitPrice = matchedUnit.sellingPrice || product.price;
-            conversionFactor = matchedUnit.conversionFactor || piecesPerMainUnit;
+            const matchedBarcode = (matchedUnit.barcode || '').trim();
+            const fromProduct = product.units?.find((u: any) => (u.barcode || '').trim() === matchedBarcode);
+            const resolvedName = fromProduct?.unitName || matchedUnit.unitName || matchedUnit.name;
+            unitName = (resolvedName && String(resolvedName).trim()) ? String(resolvedName).trim() : 'قطعة';
+            unitPrice = matchedUnit.sellingPrice ?? product.price;
+            conversionFactor = matchedUnit.conversionFactor ?? piecesPerMainUnit;
             piecesPerUnit = 1; // Secondary units are counted as 1 piece per scan
         } else {
             // Product barcode matched - use default unit
@@ -3481,7 +3567,8 @@ const POSPage: React.FC = () => {
             const item = inv.items.find(i => i.cartItemId === cartItemId);
             if (!item) return inv;
             const product = products.find(p => String(p.id) === String(item.productId));
-            const unit = product?.units?.find(
+            if (!product) return inv;
+            const unit = product.units?.find(
                 u => (u.unitName || '').toLowerCase() === normalizedNew.toLowerCase()
             );
             if (!unit) return inv;
@@ -3644,6 +3731,10 @@ const POSPage: React.FC = () => {
     const startNewSale = async () => {
         // QUEUE-BASED MODEL: No strict lock needed - queue handles sequential processing
         // Users can start new sales immediately while previous sales are being processed
+
+        try {
+            sessionStorage.removeItem(getPOSDraftStorageKey(location.pathname));
+        } catch (_) {}
         
         // Clear pending flag since we're starting the sale now
         pendingNewSaleRef.current = false;
@@ -6346,13 +6437,25 @@ const POSPage: React.FC = () => {
                     </div>
                 )} */}
                 
-                {/* Three Column Layout - Proportional widths: ~19% - 50% - 31% */}
-                <div className="grid grid-cols-1 md:grid-cols-[0.75fr_2.3fr_1fr] gap-2 sm:gap-3 md:gap-3 lg:gap-4 h-full min-h-0 w-full overflow-hidden items-stretch">
-                {/* Column 1: Customer & Quick Products (25%) */}
+                {/* Three Column Layout - Proportional widths: ~19% - 50% - 31%; when quick products hidden: 2 columns so invoice expands */}
+                <div className={`grid grid-cols-1 gap-2 sm:gap-3 md:gap-3 lg:gap-4 h-full min-h-0 w-full overflow-hidden items-stretch ${quickProductsPanelVisible ? 'md:grid-cols-[0.75fr_2.3fr_1fr]' : 'md:grid-cols-[2.3fr_1fr]'}`}>
+                {/* Column 1: Quick Products (hidden when quickProductsPanelVisible is false) */}
+                    {quickProductsPanelVisible && (
                     <div className="flex flex-col gap-2 sm:gap-2.5 md:gap-3 lg:gap-4 min-h-0 min-w-0 h-full">
                         {/* Quick Products */}
                         <div className="bg-white/95 dark:bg-gray-800/95 rounded-xl sm:rounded-2xl shadow-sm p-2.5 sm:p-3 md:p-4 lg:p-5 backdrop-blur-xl border border-slate-200/50 dark:border-slate-700/50 flex-grow min-h-0 overflow-y-auto relative z-0">
-                            <h3 className="font-bold text-sm sm:text-base text-gray-900 dark:text-gray-100 text-right mb-2 sm:mb-3 lg:mb-4">{AR_LABELS.quickProducts}</h3>
+                            <div className="flex items-center justify-between gap-2 mb-2 sm:mb-3 lg:mb-4">
+                                <button
+                                    type="button"
+                                    onClick={() => setQuickProductsPanelVisible(false)}
+                                    className="flex-shrink-0 p-1.5 rounded-lg border border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-700/50 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-600 hover:text-gray-900 dark:hover:text-gray-100 transition-colors"
+                                    title={AR_LABELS.hideQuickProducts}
+                                    aria-label={AR_LABELS.hideQuickProducts}
+                                >
+                                    <XIcon className="h-4 w-4 sm:h-5 sm:w-5" />
+                                </button>
+                                <h3 className="font-bold text-sm sm:text-base text-gray-900 dark:text-gray-100 text-right flex-1">{AR_LABELS.quickProducts}</h3>
+                            </div>
                             {isLoadingQuickProducts ? (
                                 <div className="text-center py-4 text-sm text-gray-500 dark:text-gray-400">
                                     جاري التحميل...
@@ -6385,14 +6488,28 @@ const POSPage: React.FC = () => {
                             )}
                         </div>
                     </div>
+                    )}
 
                     {/* Column 2: Transaction/Cart (50% - Center, wider) */}
                     <div className="flex flex-col bg-white/95 dark:bg-gray-800/95 rounded-xl sm:rounded-2xl shadow-sm backdrop-blur-xl border border-slate-200/50 dark:border-slate-700/50 min-h-0 min-w-0 overflow-hidden h-full">
                         {/* Header */}
                         <div className="p-2.5 sm:p-3 md:p-4 lg:p-5 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 text-xs sm:text-sm text-gray-700 dark:text-gray-300 flex flex-col sm:flex-row justify-between items-center gap-2 sm:gap-0 rounded-t-xl sm:rounded-t-2xl flex-shrink-0">
-                            <div className="flex flex-col sm:flex-row gap-2 sm:gap-4">
-                                <span className="font-semibold truncate">{AR_LABELS.invoiceNumber}: <span className="font-mono text-orange-600">{currentInvoice.id}</span></span>
-                                <span className="font-semibold truncate">{AR_LABELS.posCashier}: <span className="text-gray-900 dark:text-gray-100">{currentInvoice.cashier}</span></span>
+                            <div className="flex flex-col sm:flex-row gap-2 sm:gap-4 items-start sm:items-center">
+                                {!quickProductsPanelVisible && (
+                                    <button
+                                        type="button"
+                                        onClick={() => setQuickProductsPanelVisible(true)}
+                                        className="flex-shrink-0 p-1.5 rounded-lg border border-orange-300 dark:border-orange-600 bg-orange-50 dark:bg-orange-900/20 text-orange-700 dark:text-orange-300 hover:bg-orange-100 dark:hover:bg-orange-900/30 transition-colors"
+                                        title={AR_LABELS.showQuickProducts}
+                                        aria-label={AR_LABELS.showQuickProducts}
+                                    >
+                                        <PanelLeftOpenIcon className="h-4 w-4 sm:h-5 sm:w-5" />
+                                    </button>
+                                )}
+                                <div className="flex flex-col sm:flex-row gap-2 sm:gap-4">
+                                    <span className="font-semibold truncate">{AR_LABELS.invoiceNumber}: <span className="font-mono text-orange-600">{currentInvoice.id}</span></span>
+                                    <span className="font-semibold truncate">{AR_LABELS.posCashier}: <span className="text-gray-900 dark:text-gray-100">{currentInvoice.cashier}</span></span>
+                                </div>
                             </div>
                             {/* Invoice type: Retail (default) / Wholesale — only affects pricing, not quantities or stock */}
                             <div className="flex items-center gap-1 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700/50 p-0.5">
@@ -6515,7 +6632,8 @@ const POSPage: React.FC = () => {
                                             ? products.find(p => String(p.id) === String(productForItem.parentProductId)) || products.find(p => String(p.originalId) === String(productForItem.parentProductId))
                                             : null;
                                         const productUnits = (parentProduct?.units && parentProduct.units.length > 0 ? parentProduct.units : productForItem?.units) ?? [];
-                                        const unitOptionsFromProduct = productUnits.map(u => ({ value: u.unitName, label: u.unitName }));
+                                        const unitLabel = (u: { unitName?: string; name?: string }) => (u.unitName || (u as any).name || '').trim() || '—';
+                                        const unitOptionsFromProduct = productUnits.map(u => ({ value: unitLabel(u), label: unitLabel(u) }));
                                         const unitOptions = unitOptionsFromProduct.length > 0
                                             ? unitOptionsFromProduct
                                             : (item.unit && String(item.unit).trim() !== '')

@@ -48,6 +48,8 @@ const PAYMENT_LABELS: Record<PaymentMethod, string> = {
   Cheque: AR_LABELS.cheque,
 };
 
+const PURCHASE_DRAFT_KEY = 'purchase_pos_draft';
+
 /** Build list of unit levels for a product (base + sub-units) with conversion to base. */
 function buildUnitOptions(product: any): UnitOption[] {
   const base: UnitOption = { key: 'base', label: 'قطعة', unitsPerBase: 1 };
@@ -183,6 +185,8 @@ export const PurchasePOSView: React.FC<PurchasePOSViewProps> = ({ editPurchaseId
   const [isProductNotFoundModalOpen, setIsProductNotFoundModalOpen] = useState(false);
   const barcodeQueueRef = useRef<string[]>([]);
   const isProcessingBarcodeRef = useRef(false);
+  const draftRef = useRef({ cart, selectedSupplier, discount, taxPercent, paidAmount, paymentMethod, poNumber });
+  draftRef.current = { cart, selectedSupplier, discount, taxPercent, paidAmount, paymentMethod, poNumber };
 
   // Same as POS: numeric-only input is treated as barcode
   const isBarcodeInput = useCallback((input: string): boolean => {
@@ -346,6 +350,49 @@ export const PurchasePOSView: React.FC<PurchasePOSViewProps> = ({ editPurchaseId
       }
     })();
     return () => { cancelled = true; };
+  }, [editPurchaseId]);
+
+  // Restore draft from sessionStorage when returning to purchases (e.g. after navigation)
+  useEffect(() => {
+    if (editPurchaseId) return;
+    try {
+      const raw = sessionStorage.getItem(PURCHASE_DRAFT_KEY);
+      if (!raw) return;
+      const d = JSON.parse(raw) as {
+        cart?: CartLine[];
+        selectedSupplier?: { id: string; name: string } | null;
+        discount?: number;
+        taxPercent?: number;
+        paidAmount?: number;
+        paymentMethod?: PaymentMethod;
+        poNumber?: string;
+      };
+      if (d.cart && Array.isArray(d.cart) && d.cart.length > 0) {
+        setCart(d.cart);
+        if (d.selectedSupplier) setSelectedSupplier(d.selectedSupplier);
+        if (typeof d.discount === 'number') setDiscount(d.discount);
+        if (typeof d.taxPercent === 'number') setTaxPercent(d.taxPercent);
+        if (typeof d.paidAmount === 'number') setPaidAmount(d.paidAmount);
+        if (d.paymentMethod && ['Cash', 'Bank Transfer', 'Credit', 'Cheque'].includes(d.paymentMethod)) setPaymentMethod(d.paymentMethod);
+        if (typeof d.poNumber === 'string') setPoNumber(d.poNumber);
+      }
+    } catch (_) {}
+  }, [editPurchaseId]);
+
+  // Save draft to sessionStorage on unmount so it can be restored when user comes back
+  useEffect(() => {
+    if (editPurchaseId) return;
+    return () => {
+      const { cart: c, selectedSupplier: s, discount: d, taxPercent: t, paidAmount: p, paymentMethod: m, poNumber: po } = draftRef.current;
+      if (c && c.length > 0) {
+        try {
+          sessionStorage.setItem(
+            PURCHASE_DRAFT_KEY,
+            JSON.stringify({ cart: c, selectedSupplier: s, discount: d, taxPercent: t, paidAmount: p, paymentMethod: m, poNumber: po ?? '' })
+          );
+        } catch (_) {}
+      }
+    };
   }, [editPurchaseId]);
 
   // Filter quick products by name for non-barcode search (same as POS name search on client)
@@ -758,6 +805,9 @@ export const PurchasePOSView: React.FC<PurchasePOSViewProps> = ({ editPurchaseId
         setCart([]);
         setDiscount(0);
         setPaidAmount(0);
+        try {
+          sessionStorage.removeItem(PURCHASE_DRAFT_KEY);
+        } catch (_) {}
         loadSummaries();
         onPurchaseCreated?.();
         navigate('/purchases', { replace: true });
@@ -770,6 +820,9 @@ export const PurchasePOSView: React.FC<PurchasePOSViewProps> = ({ editPurchaseId
         setCart([]);
         setDiscount(0);
         setPaidAmount(0);
+        try {
+          sessionStorage.removeItem(PURCHASE_DRAFT_KEY);
+        } catch (_) {}
         loadNextPo();
         loadSummaries();
         onPurchaseCreated?.();

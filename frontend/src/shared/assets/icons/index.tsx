@@ -507,6 +507,13 @@ export const XIcon = ({ className, ...props }: IconProps) => (
   </svg>
 );
 
+/** Panel-left-open style icon: restore / show panel (e.g. Quick Products) */
+export const PanelLeftOpenIcon = ({ className, ...props }: IconProps) => (
+  <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} {...props}>
+    <path strokeLinecap="round" strokeLinejoin="round" d="M9 4H5a2 2 0 00-2 2v12a2 2 0 002 2h4m6 0h4a2 2 0 002-2V6a2 2 0 00-2-2h-4m-6 0V6a2 2 0 012-2h4m6 0v12" />
+  </svg>
+);
+
 export const CheckCircleIcon = ({ className, ...props }: IconProps) => (
   <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" {...props}>
     <path
