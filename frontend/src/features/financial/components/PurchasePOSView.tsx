@@ -1123,7 +1123,7 @@ export const PurchasePOSView: React.FC<PurchasePOSViewProps> = ({ editPurchaseId
                     </td>
                   </tr>
                 ) : (
-                  cart.map((line) => {
+                  [...cart].reverse().map((line) => {
                     const unitSellingPrice = line.baseSellingPrice;
                     return (
                       <tr key={line.cartId} className="hover:bg-gray-50 dark:hover:bg-gray-700/50">

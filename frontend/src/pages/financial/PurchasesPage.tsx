@@ -495,7 +495,7 @@ const PurchasesPage: React.FC = () => {
             <div className="absolute -bottom-40 -left-40 h-80 w-80 rounded-full bg-gradient-to-br from-rose-400/15 to-orange-400/15 blur-3xl animate-pulse" style={{ animationDelay: '2s' }} />
             <div className="absolute top-1/2 left-1/2 h-60 w-60 -translate-x-1/2 -translate-y-1/2 rounded-full bg-gradient-to-br from-slate-400/10 to-orange-400/10 blur-2xl animate-pulse" style={{ animationDelay: '4s' }} />
 
-            <div className="relative mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8 space-y-8">
+            <div className="relative w-full px-2 sm:px-3 py-8 space-y-8">
                 {/* Modern Professional Header */}
                 <div className="flex flex-col items-start justify-between gap-8 lg:flex-row lg:items-center">
                     <div />

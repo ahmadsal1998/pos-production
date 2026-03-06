@@ -117,7 +117,7 @@ const PurchaseInvoicesListPage: React.FC = () => {
       <div className="absolute -top-40 -right-40 h-80 w-80 rounded-full bg-gradient-to-br from-orange-400/15 to-amber-400/15 blur-3xl animate-pulse" />
       <div className="absolute -bottom-40 -left-40 h-80 w-80 rounded-full bg-gradient-to-br from-rose-400/15 to-orange-400/15 blur-3xl animate-pulse" style={{ animationDelay: '2s' }} />
 
-      <div className="relative mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8 space-y-8">
+      <div className="relative w-full px-2 sm:px-3 py-8 space-y-8">
         {/* Navigation Tabs - same as PurchasesPage for consistent navigation */}
         <div className="flex flex-col items-start justify-between gap-8 lg:flex-row lg:items-center">
           <div />
