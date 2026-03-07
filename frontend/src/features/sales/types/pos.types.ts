@@ -21,6 +21,8 @@ export interface POSCartItem {
   conversionFactor?: number; // Number of this unit in 1 main unit (for conversions)
   costPrice?: number; // Cost price of the product at time of sale
   cost?: number; // Legacy alias for costPrice (optional, for backward compatibility)
+  /** Base (main unit) cost; set when item is added. Used so unit cost is always calculated from this, not from current unit cost. */
+  baseCostPrice?: number;
 }
 
 /** Invoice type: retail uses retail price, wholesale uses wholesale price per product */

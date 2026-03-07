@@ -40,9 +40,15 @@ type POSProduct = Product & {
         barcode?: string;
         sellingPrice: number;
         conversionFactor: number;
+        /** Hierarchy order (0 = base); used for unit cost calculation when changing unit. */
+        order?: number;
+        /** How many of this unit fit in the previous (larger) unit; used for unit cost calculation. */
+        unitsInPrevious?: number;
     }>;
     cost?: number;
     costPrice?: number;
+    /** Base (main unit) cost from backend; never overwritten by unit-specific cost. Used so unit cost is always computed from this. */
+    baseCostPrice?: number;
     wholesalePrice?: number; // Wholesale price for the product
     updatedAt?: string;
     description?: string;
@@ -1488,15 +1494,19 @@ const POSPage: React.FC = () => {
             price: retailPrice, // Use retailSellingPrice if available, otherwise price
             costPrice: parseFloat(p.costPrice) || 0,
             cost: parseFloat(p.costPrice) || 0,
+            baseCostPrice: parseFloat(p.costPrice) || 0, // Always main unit cost from backend; used for unit cost calculation
             stock: parseInt(p.stock) || 0,
             barcode: p.barcode || p.primaryBarcode || '',
             wholesalePrice: wholesalePrice, // Include wholesale price
             units: Array.isArray(p.units)
-                ? p.units.map((u: any) => ({
+                ? p.units.map((u: any, idx: number) => ({
                     unitName: u.unitName || u.name || '',
                     barcode: u.barcode || '',
                     sellingPrice: parseFloat(u.sellingPrice) || retailPrice,
                     conversionFactor: parseFloat(u.conversionFactor) || 1,
+                    // Preserve hierarchy so unit cost updates when changing unit (same as Purchases screen)
+                    order: u.order !== undefined && u.order !== null ? Number(u.order) : idx,
+                    unitsInPrevious: u.unitsInPrevious !== undefined && u.unitsInPrevious !== null ? Number(u.unitsInPrevious) : undefined,
                   }))
                 : undefined,
             parentProductId: p.parentProductId ? String(p.parentProductId) : undefined,
@@ -2670,16 +2680,18 @@ const POSPage: React.FC = () => {
                             ? item.cartItemId === existingItem.cartItemId
                             : (item.productId === product.id && item.name === product.name && item.unit === unit);
                         
+                        const itemBaseCost = (product as POSProduct).baseCostPrice ?? product.costPrice ?? product.cost ?? 0;
                         return isMatch
                             ? {
                                   ...item,
-                                  cartItemId: itemCartItemId, // Ensure cartItemId exists
-                                  originalId: item.originalId || product.originalId, // Preserve or set originalId
+                                  cartItemId: itemCartItemId,
+                                  originalId: item.originalId || product.originalId,
                                   quantity: updatedQuantity,
                                   total: updatedTotal,
                                   unitPrice: averagedUnitPrice,
                                   conversionFactor: item.conversionFactor || conversionFactor || piecesPerMainUnit,
-                                  costPrice: item.costPrice ?? (product.costPrice || product.cost || 0), // Preserve existing or set from product
+                                  costPrice: item.costPrice ?? (product.costPrice || product.cost || 0),
+                                  baseCostPrice: item.baseCostPrice ?? itemBaseCost,
                               }
                             : item;
                     }),
@@ -2690,10 +2702,11 @@ const POSPage: React.FC = () => {
             const initialQuantity = piecesPerUnit;
             const initialTotal = incomingUnitPrice * piecesPerUnit;
 
+            const baseCost = (product as POSProduct).baseCostPrice ?? product.costPrice ?? product.cost ?? 0;
             const newItem: POSCartItem = {
-                cartItemId: `${product.id}-${product.name}-${unit}-${Date.now()}-${Math.random()}`, // Unique ID for this cart item
+                cartItemId: `${product.id}-${product.name}-${unit}-${Date.now()}-${Math.random()}`,
                 productId: product.id,
-                originalId: product.originalId, // Store backend ID for stock updates
+                originalId: product.originalId,
                 name: product.name,
                 unit: unit,
                 quantity: initialQuantity,
@@ -2701,7 +2714,8 @@ const POSPage: React.FC = () => {
                 total: initialTotal,
                 discount: 0,
                 conversionFactor: conversionFactor || piecesPerMainUnit,
-                costPrice: product.costPrice || product.cost || 0, // Include cost price from product
+                costPrice: product.costPrice || product.cost || 0,
+                baseCostPrice: baseCost, // So unit cost is always calculated from this, not from current unit cost
             };
             return { ...inv, items: [...inv.items, newItem] };
         });
@@ -2717,6 +2731,8 @@ const POSPage: React.FC = () => {
                     ...existing,
                     ...product,
                     units: hasFullUnits ? product.units : (existing.units && existing.units.length > 0 ? existing.units : product.units),
+                    // Keep base cost from existing so unit changes always divide from Carton cost, not current unit cost
+                    baseCostPrice: existing.baseCostPrice ?? product.baseCostPrice ?? product.costPrice ?? existing.costPrice,
                 };
                 return prev.slice(0, idx).concat(merged, prev.slice(idx + 1));
             }
@@ -2735,7 +2751,12 @@ const POSPage: React.FC = () => {
                         const hasFullUnits = parentNorm.units && parentNorm.units.length > 0;
                         if (idx >= 0) {
                             const existing = prev[idx];
-                            const merged: POSProduct = { ...existing, ...parentNorm, units: hasFullUnits ? parentNorm.units : (existing.units && existing.units.length > 0 ? existing.units : parentNorm.units) };
+                            const merged: POSProduct = {
+                                ...existing,
+                                ...parentNorm,
+                                units: hasFullUnits ? parentNorm.units : (existing.units && existing.units.length > 0 ? existing.units : parentNorm.units),
+                                baseCostPrice: existing.baseCostPrice ?? parentNorm.baseCostPrice ?? parentNorm.costPrice ?? existing.costPrice,
+                            };
                             return prev.slice(0, idx).concat(merged, prev.slice(idx + 1));
                         }
                         return [...prev, parentNorm];
@@ -2759,29 +2780,29 @@ const POSPage: React.FC = () => {
     
     type SearchMatch = { product: POSProduct; unitName: string; unitPrice: number; barcode?: string; conversionFactor?: number; piecesPerUnit?: number };
 
-    // Helper function to calculate unit cost price based on parent cost price and unit hierarchy
-    // This matches the backend logic in createPseudoProductFromUnit
-    const calculateUnitCostPrice = useCallback((parentProduct: any, matchedUnit: any | null): number => {
+    // Helper function to calculate unit cost price based on **base (main) unit cost** and unit hierarchy.
+    // When baseCostOverride is provided (e.g. from cart item), use it so cost is never "divided again" when changing units.
+    const calculateUnitCostPrice = useCallback((parentProduct: any, matchedUnit: any | null, baseCostOverride?: number): number => {
+        const baseCost = baseCostOverride != null && Number.isFinite(baseCostOverride)
+            ? baseCostOverride
+            : (Number(parentProduct.baseCostPrice) || Number(parentProduct.costPrice) || 0);
+
         if (!matchedUnit) {
-            // No unit matched - use parent cost price directly
-            return parseFloat(parentProduct.costPrice) || 0;
+            return baseCost;
         }
 
         const allUnits = parentProduct.units || [];
         const matchedUnitOrder = matchedUnit.order ?? 0;
         const isMainUnit = matchedUnitOrder === 0;
 
-        // If this is the main unit (order 0), use parent cost directly
         if (isMainUnit) {
-            return parseFloat(parentProduct.costPrice) || 0;
+            return baseCost;
         }
 
         // Calculate cumulative conversion factor from main unit to matched unit
-        // This matches the calculation in HierarchicalUnitsManager.calculateTotalQuantityAtLevel
         let cumulativeConversionFactor = 1;
 
         if (allUnits.length > 0) {
-            // Find all units with order >= 1 and <= matchedUnitOrder, sorted by order
             const unitsInPath = allUnits
                 .filter((u: any) => {
                     const uOrder = u.order ?? 0;
@@ -2793,7 +2814,6 @@ const POSPage: React.FC = () => {
                     return aOrder - bOrder;
                 });
 
-            // Multiply by all unitsInPrevious values in the path from main unit to matched unit
             for (const currentUnit of unitsInPath) {
                 const unitsInPrev = currentUnit.unitsInPrevious || 1;
                 if (unitsInPrev > 0) {
@@ -2802,21 +2822,14 @@ const POSPage: React.FC = () => {
             }
         }
 
-        // Calculate cost price for the unit
-        // Divide by cumulative conversion factor to get cost per unit
-        // For example, if parent cost is 100 for 1 main unit, and cumulative factor is 15,
-        // then unit cost is 100 / 15 = 6.67
-        const parentCostPrice = parseFloat(parentProduct.costPrice) || 0;
-        
-        if (cumulativeConversionFactor > 0) {
-            return parentCostPrice / cumulativeConversionFactor;
-        } else if (matchedUnit.conversionFactor && matchedUnit.conversionFactor > 0) {
-            // Fallback to legacy conversionFactor if unitsInPrevious is not available
-            return parentCostPrice / matchedUnit.conversionFactor;
+        if (cumulativeConversionFactor > 1) {
+            return baseCost / cumulativeConversionFactor;
+        }
+        if (matchedUnit.conversionFactor && matchedUnit.conversionFactor > 0) {
+            return baseCost / matchedUnit.conversionFactor;
         }
 
-        // Final fallback: return parent cost price
-        return parentCostPrice;
+        return baseCost;
     }, []);
 
     // Server-side search function (fallback when client-side products aren't loaded)
@@ -3559,15 +3572,20 @@ const POSPage: React.FC = () => {
         }));
     };
 
-    /** Switch cart line to a different unit (variant). Uses price per invoice type (retail/wholesale). */
+    /** Switch cart line to a different unit (variant). Uses price per invoice type (retail/wholesale). Updates both sale price and cost to match the selected unit (same logic as Purchases screen). */
     const handleUnitChange = useCallback((cartItemId: string, newUnitName: string) => {
         const normalizedNew = newUnitName.trim();
         if (!normalizedNew) return;
         setCurrentInvoice(inv => {
             const item = inv.items.find(i => i.cartItemId === cartItemId);
             if (!item) return inv;
-            const product = products.find(p => String(p.id) === String(item.productId));
-            if (!product) return inv;
+            const productForItem = products.find(p => String(p.id) === String(item.productId))
+                || products.find(p => item.originalId && String(p.originalId) === String(item.originalId));
+            if (!productForItem) return inv;
+            // Use parent product when item is a variant so we have the correct units array and cost
+            const product = (productForItem as POSProduct).parentProductId
+                ? (products.find(p => String(p.id) === String((productForItem as POSProduct).parentProductId)) || products.find(p => String(p.originalId) === String((productForItem as POSProduct).parentProductId)) || productForItem)
+                : productForItem;
             const unit = product.units?.find(
                 u => (u.unitName || '').toLowerCase() === normalizedNew.toLowerCase()
             );
@@ -3582,16 +3600,27 @@ const POSPage: React.FC = () => {
                 product?.isScaleBarcodeProduct || product?.isScaleBarcode
             );
             const finalUnitPrice = Number.isFinite(unitPrice) && unitPrice >= 0 ? unitPrice : item.unitPrice;
+            // Always use item's base cost (or product's) so cost is never divided again when changing units multiple times
+            const baseCost = item.baseCostPrice ?? (product as POSProduct).baseCostPrice ?? product.costPrice ?? 0;
+            const unitCostPrice = calculateUnitCostPrice(product, unit, baseCost);
             return {
                 ...inv,
                 items: inv.items.map(i =>
                     i.cartItemId !== cartItemId
                         ? i
-                        : { ...i, unit: unit.unitName, unitPrice: finalUnitPrice, total: i.quantity * finalUnitPrice },
+                        : {
+                            ...i,
+                            unit: unit.unitName,
+                            unitPrice: finalUnitPrice,
+                            total: i.quantity * finalUnitPrice,
+                            costPrice: unitCostPrice,
+                            cost: unitCostPrice,
+                            baseCostPrice: i.baseCostPrice ?? baseCost,
+                        },
                 ),
             };
         });
-    }, [products, getPiecesPerMainUnit, getPriceForProductAndUnit]);
+    }, [products, getPiecesPerMainUnit, getPriceForProductAndUnit, calculateUnitCostPrice]);
 
     /** Toggle invoice type (retail/wholesale). Recalculates all line prices; quantities and stock unchanged. */
     const handleInvoiceTypeToggle = useCallback(() => {
@@ -6641,6 +6670,13 @@ const POSPage: React.FC = () => {
                                                 ? [{ value: item.unit, label: item.unit }]
                                                 : [];
                                         const showUnitDropdown = unitOptions.length > 0;
+                                        // Use item's base cost so display never "divides again" when changing units multiple times
+                                        const productForCost = parentProduct || productForItem;
+                                        const unitForCost = productUnits.find((u: any) => (unitLabel(u) || '').toLowerCase() === (item.unit || '').trim().toLowerCase());
+                                        const baseCostForDisplay = item.baseCostPrice ?? (productForCost as POSProduct)?.baseCostPrice ?? productForCost?.costPrice ?? 0;
+                                        const displayUnitCost = productForCost && unitForCost != null
+                                            ? calculateUnitCostPrice(productForCost, unitForCost, baseCostForDisplay)
+                                            : (item.costPrice ?? item.cost ?? 0);
                                         return (
                                         <tr key={item.cartItemId || `item-${index}`} className="hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors duration-150">
                                                 <td className="px-2 sm:px-3 py-3 sm:py-4 text-xs sm:text-sm text-gray-500 dark:text-gray-400 align-middle">{index + 1}</td>
@@ -6752,12 +6788,12 @@ const POSPage: React.FC = () => {
                                             </td>
                                             <td className="px-2 sm:px-3 py-3 sm:py-4 text-xs sm:text-sm text-gray-700 dark:text-gray-300 whitespace-nowrap text-center align-middle">{formatCurrency(item.unitPrice)}</td>
                                             <td className="px-2 sm:px-3 py-3 sm:py-4 text-xs sm:text-sm text-gray-600 dark:text-gray-400 whitespace-nowrap text-center align-middle tabular-nums">
-                                                {(item.costPrice ?? item.cost ?? 0) > 0
-                                                    ? `${(((item.unitPrice - (item.costPrice ?? item.cost ?? 0)) / (item.costPrice ?? item.cost ?? 0)) * 100).toFixed(1)}%`
+                                                {displayUnitCost > 0
+                                                    ? `${(((item.unitPrice - displayUnitCost) / displayUnitCost) * 100).toFixed(1)}%`
                                                     : '—'}
                                             </td>
                                             {showCostPrice && (
-                                                <td className="px-2 sm:px-3 py-3 sm:py-4 text-xs sm:text-sm text-gray-600 dark:text-gray-400 whitespace-nowrap text-center align-middle">{formatCurrency(item.costPrice || item.cost || 0)}</td>
+                                                <td className="px-2 sm:px-3 py-3 sm:py-4 text-xs sm:text-sm text-gray-600 dark:text-gray-400 whitespace-nowrap text-center align-middle">{formatCurrency(displayUnitCost)}</td>
                                             )}
                                             <td className="px-2 sm:px-3 py-3 sm:py-4 text-xs sm:text-sm font-semibold text-orange-600 whitespace-nowrap text-center align-middle">{formatCurrency(item.total - (item.discount * item.quantity))}</td>
                                             <td className="px-2 sm:px-3 py-3 sm:py-4 text-center align-middle">
