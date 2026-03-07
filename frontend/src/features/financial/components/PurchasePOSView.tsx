@@ -183,6 +183,8 @@ export const PurchasePOSView: React.FC<PurchasePOSViewProps> = ({ editPurchaseId
   const [isLoadingQuickProducts, setIsLoadingQuickProducts] = useState(true);
   const [notFoundBarcode, setNotFoundBarcode] = useState('');
   const [isProductNotFoundModalOpen, setIsProductNotFoundModalOpen] = useState(false);
+  /** String values for numeric inputs so single-digit and partial input (e.g. "0.") update correctly. */
+  const [numericInputs, setNumericInputs] = useState<Record<string, string>>({});
   const barcodeQueueRef = useRef<string[]>([]);
   const isProcessingBarcodeRef = useRef(false);
   const draftRef = useRef({ cart, selectedSupplier, discount, taxPercent, paidAmount, paymentMethod, poNumber });
@@ -314,30 +316,36 @@ export const PurchasePOSView: React.FC<PurchasePOSViewProps> = ({ editPurchaseId
         setSelectedSupplier({ id: raw.supplierId, name: raw.supplierName });
         setSupplierSearch(raw.supplierName || '');
         const items = raw.items ?? [];
+        const rawSub = Number(raw.subtotal) || 0;
+        const totalAmt = Number(raw.totalAmount) || 0;
         const cartLines: CartLine[] = items.map((item: any, index: number) => {
           const qty = Number(item.quantity) || 1;
           const qtyInBase = item.quantityInMainUnit != null && Number(item.quantityInMainUnit) >= 0 ? Number(item.quantityInMainUnit) : qty;
           const unit = item.unit || 'قطعة';
           const unitOptions: UnitOption[] = [{ key: 'base', label: unit, unitsPerBase: 1 }];
+          const itemFinalTotal = Number(item.totalCost) || 0;
+          const itemFinalUnit = Number(item.unitCost) || 0;
+          const rawTotal = rawSub > 0 && totalAmt > 0 ? itemFinalTotal * (rawSub / totalAmt) : itemFinalTotal;
+          const rawUnit = qty > 0 ? rawTotal / qty : itemFinalUnit;
           return {
             cartId: `edit-${item.productId}-${index}`,
             productId: String(item.productId),
             productName: item.productName || '',
             categoryName: '',
             quantity: qty,
-            unitCost: Number(item.unitCost) || 0,
-            totalCost: Number(item.totalCost) || 0,
+            unitCost: rawUnit,
+            totalCost: rawTotal,
             unit,
             quantityInBase: qtyInBase,
             unitLevelKey: 'base',
             unitOptions,
-            baseCostPrice: Number(item.unitCost) || 0,
+            baseCostPrice: rawUnit,
             baseSellingPrice: item.sellingPrice != null ? Number(item.sellingPrice) : 0,
           };
         });
         setCart(cartLines);
         setDiscount(Number(raw.discount) || 0);
-        const sub = Number(raw.subtotal) || 0;
+        const sub = rawSub;
         const disc = Number(raw.discount) || 0;
         const taxVal = Number(raw.tax) || 0;
         const taxPct = sub - disc > 0 ? (taxVal / (sub - disc)) * 100 : 15;
@@ -580,11 +588,27 @@ export const PurchasePOSView: React.FC<PurchasePOSViewProps> = ({ editPurchaseId
   const grandTotal = totalAfterDiscount + taxAmount;
   const remaining = Math.max(0, grandTotal - paidAmount);
 
+  /** Final cost per line after applying invoice-level discount and tax (proportional share of grandTotal). Recalculates when discount or tax change. */
+  const cartLinesWithFinalCost = useMemo(() => {
+    if (cart.length === 0) return [];
+    return cart.map((line) => {
+      const finalLineTotal =
+        subtotal > 0 ? (line.totalCost / subtotal) * grandTotal : line.totalCost;
+      const finalUnitCost =
+        line.quantity > 0 ? finalLineTotal / line.quantity : line.unitCost;
+      return { ...line, finalUnitCost, finalLineTotal };
+    });
+  }, [cart, subtotal, grandTotal]);
+
   const totalSellingPrice = useMemo(
     () => cart.reduce((sum, l) => sum + l.quantityInBase * (l.baseSellingPrice ?? 0), 0),
     [cart]
   );
-  const totalCostPrice = subtotal;
+  /** Total cost = sum of final line totals (= grandTotal) so it matches the invoice. */
+  const totalCostPrice = useMemo(
+    () => cartLinesWithFinalCost.reduce((sum, l) => sum + l.finalLineTotal, 0),
+    [cartLinesWithFinalCost]
+  );
   const netProfit = totalSellingPrice - totalCostPrice;
   const profitPercent = totalCostPrice > 0 ? (netProfit / totalCostPrice) * 100 : 0;
 
@@ -634,6 +658,22 @@ export const PurchasePOSView: React.FC<PurchasePOSViewProps> = ({ editPurchaseId
       ];
     });
   }, [calculateUnitCostPrice]);
+
+  /** Add product to cart using current cost in inventory (fetches product by ID so "before discount and tax" shows real cost). */
+  const addToCartWithInventoryCost = useCallback(
+    async (productFromList: any) => {
+      const id = String(productFromList.id ?? productFromList._id);
+      try {
+        const res = await productsApi.getProduct(id);
+        const fetched = (res as any)?.data?.data?.product ?? (res as any)?.data?.product ?? productFromList;
+        const product = fetched && (fetched.costPrice != null || fetched.cost != null) ? fetched : productFromList;
+        addToCart(product);
+      } catch (_) {
+        addToCart(productFromList);
+      }
+    },
+    [addToCart]
+  );
 
   const handleQuickAddProduct = useCallback(async (barcode: string, costPrice: number, sellingPrice: number, productName?: string) => {
     try {
@@ -720,6 +760,11 @@ export const PurchasePOSView: React.FC<PurchasePOSViewProps> = ({ editPurchaseId
 
   const removeFromCart = (cartId: string) => {
     setCart((prev) => prev.filter((l) => l.cartId !== cartId));
+    setNumericInputs((prev) => {
+      const next = { ...prev };
+      (['quantity', 'unitCost', 'sellingPrice'] as const).forEach((suffix) => delete next[`${cartId}_${suffix}`]);
+      return next;
+    });
   };
 
   const saveNewSupplier = async (previousBalance: number) => {
@@ -783,12 +828,12 @@ export const PurchasePOSView: React.FC<PurchasePOSViewProps> = ({ editPurchaseId
     }
     setIsSubmitting(true);
     try {
-      const items: PurchaseItem[] = cart.map((l) => ({
+      const items: PurchaseItem[] = cartLinesWithFinalCost.map((l) => ({
         productId: l.productId,
         productName: l.productName,
         quantity: l.quantity,
-        unitCost: l.unitCost,
-        totalCost: l.totalCost,
+        unitCost: l.finalUnitCost,
+        totalCost: l.finalLineTotal,
         unit: l.unit,
         ...(l.baseSellingPrice != null && l.baseSellingPrice >= 0 ? { sellingPrice: l.baseSellingPrice } : {}),
         quantityInMainUnit: l.quantityInBase,
@@ -813,6 +858,7 @@ export const PurchasePOSView: React.FC<PurchasePOSViewProps> = ({ editPurchaseId
         setCart([]);
         setDiscount(0);
         setPaidAmount(0);
+        setNumericInputs({});
         try {
           sessionStorage.removeItem(PURCHASE_DRAFT_KEY);
         } catch (_) {}
@@ -828,6 +874,7 @@ export const PurchasePOSView: React.FC<PurchasePOSViewProps> = ({ editPurchaseId
         setCart([]);
         setDiscount(0);
         setPaidAmount(0);
+        setNumericInputs({});
         try {
           sessionStorage.removeItem(PURCHASE_DRAFT_KEY);
         } catch (_) {}
@@ -962,21 +1009,33 @@ export const PurchasePOSView: React.FC<PurchasePOSViewProps> = ({ editPurchaseId
                     <div className="flex flex-col gap-0.5">
                       <span className="text-gray-500 dark:text-gray-400">{AR_LABELS.discount}</span>
                       <input
-                        type="number"
+                        type="text"
+                        inputMode="decimal"
                         min={0}
-                        value={discount}
-                        onChange={(e) => setDiscount(parseFloat(e.target.value) || 0)}
-                        className="w-full max-w-20 h-6 rounded border border-gray-200 dark:border-gray-600 px-1.5 text-[11px] bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-1 focus:ring-orange-500/30"
+                        value={numericInputs['invoice_discount'] !== undefined ? numericInputs['invoice_discount'] : String(discount)}
+                        onChange={(e) => {
+                          const raw = e.target.value;
+                          setNumericInputs((prev) => ({ ...prev, invoice_discount: raw }));
+                          setDiscount(parseFloat(raw) || 0);
+                        }}
+                        onBlur={() => setNumericInputs((prev) => { const n = { ...prev }; delete n.invoice_discount; return n; })}
+                        className="w-full max-w-20 h-6 rounded border border-gray-200 dark:border-gray-600 px-1.5 text-[11px] text-center bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-1 focus:ring-orange-500/30"
                       />
                     </div>
                     <div className="flex flex-col gap-0.5">
                       <span className="text-gray-500 dark:text-gray-400">{AR_LABELS.tax}%</span>
                       <input
-                        type="number"
+                        type="text"
+                        inputMode="decimal"
                         min={0}
-                        value={taxPercent}
-                        onChange={(e) => setTaxPercent(parseFloat(e.target.value) || 0)}
-                        className="w-full max-w-16 h-6 rounded border border-gray-200 dark:border-gray-600 px-1.5 text-[11px] bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-1 focus:ring-orange-500/30"
+                        value={numericInputs['invoice_taxPercent'] !== undefined ? numericInputs['invoice_taxPercent'] : String(taxPercent)}
+                        onChange={(e) => {
+                          const raw = e.target.value;
+                          setNumericInputs((prev) => ({ ...prev, invoice_taxPercent: raw }));
+                          setTaxPercent(parseFloat(raw) || 0);
+                        }}
+                        onBlur={() => setNumericInputs((prev) => { const n = { ...prev }; delete n.invoice_taxPercent; return n; })}
+                        className="w-full max-w-16 h-6 rounded border border-gray-200 dark:border-gray-600 px-1.5 text-[11px] text-center bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-1 focus:ring-orange-500/30"
                       />
                     </div>
                     <div className="flex flex-col gap-0.5">
@@ -1004,11 +1063,17 @@ export const PurchasePOSView: React.FC<PurchasePOSViewProps> = ({ editPurchaseId
                     <div className="flex flex-col gap-0.5">
                       <span className="text-gray-500 dark:text-gray-400">المدفوع</span>
                       <input
-                        type="number"
+                        type="text"
+                        inputMode="decimal"
                         min={0}
-                        value={paidAmount}
-                        onChange={(e) => setPaidAmount(parseFloat(e.target.value) || 0)}
-                        className="w-full max-w-20 h-6 rounded border border-gray-200 dark:border-gray-600 px-1.5 text-[11px] font-medium bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-1 focus:ring-orange-500/30"
+                        value={numericInputs['invoice_paidAmount'] !== undefined ? numericInputs['invoice_paidAmount'] : String(paidAmount)}
+                        onChange={(e) => {
+                          const raw = e.target.value;
+                          setNumericInputs((prev) => ({ ...prev, invoice_paidAmount: raw }));
+                          setPaidAmount(parseFloat(raw) || 0);
+                        }}
+                        onBlur={() => setNumericInputs((prev) => { const n = { ...prev }; delete n.invoice_paidAmount; return n; })}
+                        className="w-full max-w-20 h-6 rounded border border-gray-200 dark:border-gray-600 px-1.5 text-[11px] text-center font-medium bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-1 focus:ring-orange-500/30"
                       />
                     </div>
                     <div className="flex flex-col gap-0.5">
@@ -1074,7 +1139,7 @@ export const PurchasePOSView: React.FC<PurchasePOSViewProps> = ({ editPurchaseId
                   <button
                     key={p.id ?? p._id}
                     type="button"
-                    onClick={() => addToCart(p)}
+                    onClick={() => addToCartWithInventoryCost(p)}
                     className="p-3 border border-gray-200 dark:border-gray-700 rounded-lg text-right hover:bg-orange-50 dark:hover:bg-gray-700 transition-colors"
                   >
                     <span className="block text-sm font-medium text-gray-900 dark:text-gray-100 truncate">
@@ -1108,6 +1173,7 @@ export const PurchasePOSView: React.FC<PurchasePOSViewProps> = ({ editPurchaseId
                   <th className="px-2 py-2 w-[10%]">{AR_LABELS.category}</th>
                   <th className="px-2 py-2 w-[12%]">{AR_LABELS.unitLevel}</th>
                   <th className="px-2 py-2 w-[8%]">{AR_LABELS.quantity}</th>
+                  <th className="px-2 py-2 w-[10%]">قبل الخصم والضريبة</th>
                   <th className="px-2 py-2 w-[10%]">{AR_LABELS.unitCost}</th>
                   <th className="px-2 py-2 w-[10%]">{AR_LABELS.sellingPrice}</th>
                   <th className="px-2 py-2 w-[8%]">نسبة الربح %</th>
@@ -1118,13 +1184,15 @@ export const PurchasePOSView: React.FC<PurchasePOSViewProps> = ({ editPurchaseId
               <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
                 {cart.length === 0 ? (
                   <tr>
-                    <td colSpan={9} className="px-4 py-8 text-center text-gray-500 dark:text-gray-400">
+                    <td colSpan={10} className="px-4 py-8 text-center text-gray-500 dark:text-gray-400">
                       لا توجد أصناف
                     </td>
                   </tr>
                 ) : (
-                  [...cart].reverse().map((line) => {
+                  [...cartLinesWithFinalCost].reverse().map((line) => {
                     const unitSellingPrice = line.baseSellingPrice;
+                    const finalUnitCost = line.finalUnitCost;
+                    const finalLineTotal = line.finalLineTotal;
                     return (
                       <tr key={line.cartId} className="hover:bg-gray-50 dark:hover:bg-gray-700/50">
                         <td className="px-2 py-2 font-medium">{line.productName}</td>
@@ -1144,44 +1212,67 @@ export const PurchasePOSView: React.FC<PurchasePOSViewProps> = ({ editPurchaseId
                         </td>
                         <td className="px-2 py-2">
                           <input
-                            type="number"
+                            type="text"
+                            inputMode="decimal"
                             min={0.01}
-                            step="any"
-                            value={formatForDisplay(line.quantity, 3)}
-                            onChange={(e) => updateCartLine(line.cartId, 'quantity', parseFloat(e.target.value) || 0)}
+                            value={numericInputs[`${line.cartId}_quantity`] !== undefined ? numericInputs[`${line.cartId}_quantity`] : String(formatForDisplay(line.quantity, 3))}
+                            onChange={(e) => {
+                              const raw = e.target.value;
+                              setNumericInputs((prev) => ({ ...prev, [`${line.cartId}_quantity`]: raw }));
+                              updateCartLine(line.cartId, 'quantity', parseFloat(raw) || 0);
+                            }}
+                            onBlur={() => setNumericInputs((prev) => { const n = { ...prev }; delete n[`${line.cartId}_quantity`]; return n; })}
                             className="w-16 text-center border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
                           />
                         </td>
-                        <td className="px-2 py-2">
+                        <td className="px-2 py-2" title="السعر قبل خصم الفاتورة والضريبة">
                           <input
-                            type="number"
+                            type="text"
+                            inputMode="decimal"
                             min={0}
-                            step={0.01}
-                            value={formatForDisplay(line.unitCost, 3)}
-                            onChange={(e) => updateCartLine(line.cartId, 'unitCost', parseFloat(e.target.value) || 0)}
-                            className="w-20 text-left border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
+                            value={numericInputs[`${line.cartId}_unitCost`] !== undefined ? numericInputs[`${line.cartId}_unitCost`] : String(formatForDisplay(line.unitCost, 3))}
+                            onChange={(e) => {
+                              const raw = e.target.value;
+                              setNumericInputs((prev) => ({ ...prev, [`${line.cartId}_unitCost`]: raw }));
+                              updateCartLine(line.cartId, 'unitCost', parseFloat(raw) || 0);
+                            }}
+                            onBlur={() => setNumericInputs((prev) => { const n = { ...prev }; delete n[`${line.cartId}_unitCost`]; return n; })}
+                            className="w-20 text-center border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
                           />
                         </td>
                         <td className="px-2 py-2">
                           <input
-                            type="number"
+                            type="text"
+                            readOnly
+                            value={formatCurrency(finalUnitCost)}
+                            title={AR_LABELS.unitCost + ' — بعد الخصم والضريبة'}
+                            className="w-20 min-h-[22px] px-1.5 py-1 text-center border border-orange-300 dark:border-orange-600 rounded bg-orange-50 dark:bg-orange-900/25 text-orange-700 dark:text-orange-300 font-medium tabular-nums text-sm cursor-default"
+                          />
+                        </td>
+                        <td className="px-2 py-2">
+                          <input
+                            type="text"
+                            inputMode="decimal"
                             min={0}
-                            step={0.01}
-                            value={formatForDisplay(unitSellingPrice, 3)}
+                            value={numericInputs[`${line.cartId}_sellingPrice`] !== undefined ? numericInputs[`${line.cartId}_sellingPrice`] : String(formatForDisplay(unitSellingPrice, 3))}
                             onChange={(e) => {
-                              const unitPrice = parseFloat(e.target.value) || 0;
-                              updateCartLine(line.cartId, 'baseSellingPrice', unitPrice);
+                              const raw = e.target.value;
+                              setNumericInputs((prev) => ({ ...prev, [`${line.cartId}_sellingPrice`]: raw }));
+                              updateCartLine(line.cartId, 'baseSellingPrice', parseFloat(raw) || 0);
                             }}
-                            className="w-20 text-left border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
+                            onBlur={() => setNumericInputs((prev) => { const n = { ...prev }; delete n[`${line.cartId}_sellingPrice`]; return n; })}
+                            className="w-20 text-center border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
                             title={AR_LABELS.sellingPrice}
                           />
                         </td>
                         <td className="px-2 py-2 tabular-nums text-gray-700 dark:text-gray-300">
-                          {line.unitCost > 0
-                            ? `${(((unitSellingPrice - line.unitCost) / line.unitCost) * 100).toFixed(1)}%`
+                          {finalUnitCost > 0
+                            ? `${(((unitSellingPrice - finalUnitCost) / finalUnitCost) * 100).toFixed(1)}%`
                             : '—'}
                         </td>
-                        <td className="px-2 py-2 font-semibold text-orange-600">{line.totalCost.toFixed(2)}</td>
+                        <td className="px-2 py-2 font-semibold text-orange-600" title="المجموع بعد الخصم والضريبة">
+                          {finalLineTotal.toFixed(2)}
+                        </td>
                         <td className="px-2 py-2">
                           <button
                             type="button"

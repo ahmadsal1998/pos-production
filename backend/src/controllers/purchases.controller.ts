@@ -279,6 +279,9 @@ export const createPurchase = asyncHandler(async (req: AuthenticatedRequest, res
     const [purchase] = await Purchase.create([purchaseDoc], { session });
     const purchaseId = (purchase._id as mongoose.Types.ObjectId).toString();
 
+    const sumOfItemTotals = items.reduce((sum, i) => sum + Number(i.totalCost), 0);
+    const invoiceTotal = Number(totalAmount);
+
     for (const item of items) {
       const productId = String(item.productId);
       const displayQty = Number(item.quantity);
@@ -286,6 +289,10 @@ export const createPurchase = asyncHandler(async (req: AuthenticatedRequest, res
         ? Number(item.quantityInMainUnit)
         : displayQty;
       const itemTotalCost = Number(item.totalCost);
+      const costForInventory =
+        sumOfItemTotals > 0 && invoiceTotal >= 0
+          ? (itemTotalCost / sumOfItemTotals) * invoiceTotal
+          : itemTotalCost;
       const sellingPriceFromItem = item.sellingPrice != null && Number(item.sellingPrice) >= 0 ? Number(item.sellingPrice) : null;
       if (!productId || quantityInMain <= 0) continue;
       const query: any = { storeId: normalizedStoreId };
@@ -303,8 +310,8 @@ export const createPurchase = asyncHandler(async (req: AuthenticatedRequest, res
       const oldCost = Number((product as any).costPrice) || 0;
       const totalQtyMain = oldStock + quantityInMain;
       const newAverageCost = totalQtyMain > 0
-        ? (oldStock * oldCost + itemTotalCost) / totalQtyMain
-        : (itemTotalCost / quantityInMain) || 0;
+        ? (oldStock * oldCost + costForInventory) / totalQtyMain
+        : (costForInventory / quantityInMain) || 0;
       const setFields: Record<string, number> = { costPrice: newAverageCost };
       if (sellingPriceFromItem !== null) setFields.price = sellingPriceFromItem;
       const updateResult = await Product.findOneAndUpdate(
@@ -493,6 +500,9 @@ export const updatePurchase = asyncHandler(async (req: AuthenticatedRequest, res
       { session }
     );
 
+    const sumOfItemTotals = items.reduce((sum, i) => sum + Number(i.totalCost), 0);
+    const invoiceTotal = Number(totalAmount);
+
     for (const item of items) {
       const productId = String(item.productId);
       const displayQty = Number(item.quantity);
@@ -501,6 +511,10 @@ export const updatePurchase = asyncHandler(async (req: AuthenticatedRequest, res
           ? Number(item.quantityInMainUnit)
           : displayQty;
       const itemTotalCost = Number(item.totalCost);
+      const costForInventory =
+        sumOfItemTotals > 0 && invoiceTotal >= 0
+          ? (itemTotalCost / sumOfItemTotals) * invoiceTotal
+          : itemTotalCost;
       const sellingPriceFromItem =
         item.sellingPrice != null && Number(item.sellingPrice) >= 0 ? Number(item.sellingPrice) : null;
       if (!productId || quantityInMain <= 0) continue;
@@ -519,7 +533,7 @@ export const updatePurchase = asyncHandler(async (req: AuthenticatedRequest, res
       const oldCost = Number((product as any).costPrice) || 0;
       const totalQtyMain = oldStock + quantityInMain;
       const newAverageCost =
-        totalQtyMain > 0 ? (oldStock * oldCost + itemTotalCost) / totalQtyMain : itemTotalCost / quantityInMain || 0;
+        totalQtyMain > 0 ? (oldStock * oldCost + costForInventory) / totalQtyMain : costForInventory / quantityInMain || 0;
       const setFields: Record<string, number> = { costPrice: newAverageCost };
       if (sellingPriceFromItem !== null) setFields.price = sellingPriceFromItem;
       const updateResult = await Product.findOneAndUpdate(
