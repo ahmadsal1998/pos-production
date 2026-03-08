@@ -10,6 +10,8 @@ interface ProductQuickActionsProps {
   onExportProducts: () => void;
   onPrintBarcodes: () => void;
   onSearchProducts: () => void;
+  /** When true, export button shows loading and is disabled */
+  exportLoading?: boolean;
 }
 
 const ProductQuickActions: React.FC<ProductQuickActionsProps> = ({
@@ -17,11 +19,20 @@ const ProductQuickActions: React.FC<ProductQuickActionsProps> = ({
   onImportProducts,
   onExportProducts,
   onPrintBarcodes,
-  onSearchProducts
+  onSearchProducts,
+  exportLoading = false,
 }) => {
   const navigate = useNavigate();
 
-  const quickActions = [
+  const quickActions: Array<{
+    id: number;
+    title: string;
+    icon: React.ReactNode;
+    colorClass: string;
+    onClick: () => void;
+    disabled?: boolean;
+    loading?: boolean;
+  }> = [
     {
       id: 1,
       title: 'إضافة منتج جديد',
@@ -41,7 +52,9 @@ const ProductQuickActions: React.FC<ProductQuickActionsProps> = ({
       title: 'تصدير المنتجات',
       icon: <ExportIcon />,
       colorClass: 'bg-green-500 hover:bg-green-600 text-white',
-      onClick: onExportProducts
+      onClick: onExportProducts,
+      disabled: exportLoading,
+      loading: exportLoading,
     },
     {
       id: 4,
@@ -66,13 +79,21 @@ const ProductQuickActions: React.FC<ProductQuickActionsProps> = ({
         {quickActions.map((action) => (
           <button
             key={action.id}
-            onClick={action.onClick}
-            className={`flex flex-col items-center justify-center p-4 rounded-lg transition-all duration-200 ${action.colorClass} hover:shadow-lg hover:scale-105`}
+            onClick={action.disabled ? undefined : action.onClick}
+            disabled={action.disabled}
+            className={`flex flex-col items-center justify-center p-4 rounded-lg transition-all duration-200 ${action.colorClass} hover:shadow-lg hover:scale-105 disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:scale-100`}
           >
             <div className="mb-2">
-              {action.icon}
+              {action.loading ? (
+                <svg className="animate-spin h-6 w-6 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" aria-hidden="true">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                </svg>
+              ) : (
+                action.icon
+              )}
             </div>
-            <span className="text-sm font-medium text-center">{action.title}</span>
+            <span className="text-sm font-medium text-center">{action.loading ? 'جاري التصدير...' : action.title}</span>
           </button>
         ))}
       </div>

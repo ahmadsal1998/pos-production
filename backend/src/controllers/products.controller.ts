@@ -6,6 +6,7 @@ import { getProductByBarcode as getCachedProductByBarcode, invalidateProductCach
 import { getProductModelForStore } from '../utils/productModel';
 import { productService } from '../services/product.service';
 import Category from '../models/Category';
+import Unit from '../models/Unit';
 import multer from 'multer';
 import { parse } from 'csv-parse/sync';
 import { log } from '../utils/logger';
@@ -1315,6 +1316,14 @@ interface ImportProductRow {
   'price'?: string | number;
   'Barcode'?: string;
   'barcode'?: string;
+  'Category'?: string;
+  'category'?: string;
+  'Unit'?: string;
+  'unit'?: string;
+  'Quantity'?: string | number;
+  'quantity'?: string | number;
+  'Stock'?: string | number;
+  'stock'?: string | number;
   [key: string]: any;
 }
 
@@ -1371,6 +1380,7 @@ function parseJSON(fileBuffer: Buffer): ImportProductRow[] {
 
 /**
  * Validate and normalize product data from import
+ * Supports: Product Name, Barcode, Category, Cost Price, Sale Price, Unit, Quantity
  */
 function validateAndNormalizeProduct(row: ImportProductRow, rowIndex: number): {
   isValid: boolean;
@@ -1379,6 +1389,9 @@ function validateAndNormalizeProduct(row: ImportProductRow, rowIndex: number): {
     barcode: string;
     costPrice: number;
     price: number;
+    categoryName?: string;
+    unitName?: string;
+    quantity: number;
   };
   error?: string;
 } {
@@ -1386,7 +1399,10 @@ function validateAndNormalizeProduct(row: ImportProductRow, rowIndex: number): {
   const name = extractField(row, ['Product Name', 'product name', 'ProductName', 'productName', 'Name', 'name']) as string | undefined;
   const barcode = extractField(row, ['Barcode', 'barcode']) as string | undefined;
   const costPrice = extractField(row, ['Cost Price', 'cost price', 'CostPrice', 'costPrice']) as string | number | undefined;
-  const sellingPrice = extractField(row, ['Selling Price', 'selling price', 'SellingPrice', 'sellingPrice', 'Price', 'price']) as string | number | undefined;
+  const sellingPrice = extractField(row, ['Selling Price', 'selling price', 'Sale Price', 'sale price', 'SellingPrice', 'sellingPrice', 'SalePrice', 'salePrice', 'Price', 'price']) as string | number | undefined;
+  const categoryName = extractField(row, ['Category', 'category']) as string | undefined;
+  const unitName = extractField(row, ['Unit', 'unit']) as string | undefined;
+  const quantityRaw = extractField(row, ['Quantity', 'quantity', 'Stock', 'stock']) as string | number | undefined;
 
   // Validate required fields
   if (!name || !name.trim()) {
@@ -1413,7 +1429,7 @@ function validateAndNormalizeProduct(row: ImportProductRow, rowIndex: number): {
   if (sellingPrice === undefined || sellingPrice === null || sellingPrice === '') {
     return {
       isValid: false,
-      error: `Row ${rowIndex + 1}: Selling Price is missing or empty`,
+      error: `Row ${rowIndex + 1}: Selling Price / Sale Price is missing or empty`,
     };
   }
 
@@ -1431,8 +1447,17 @@ function validateAndNormalizeProduct(row: ImportProductRow, rowIndex: number): {
   if (isNaN(parsedSellingPrice) || parsedSellingPrice < 0) {
     return {
       isValid: false,
-      error: `Row ${rowIndex + 1}: Invalid Selling Price value`,
+      error: `Row ${rowIndex + 1}: Invalid Sale Price value`,
     };
+  }
+
+  // Quantity: optional, default 0
+  let quantity = 0;
+  if (quantityRaw !== undefined && quantityRaw !== null && quantityRaw !== '') {
+    const parsed = typeof quantityRaw === 'number' ? quantityRaw : parseFloat(quantityRaw.toString().replace(/,/g, ''));
+    if (!isNaN(parsed) && parsed >= 0) {
+      quantity = Math.floor(parsed);
+    }
   }
 
   return {
@@ -1442,6 +1467,9 @@ function validateAndNormalizeProduct(row: ImportProductRow, rowIndex: number): {
       barcode: barcode.toString().trim(),
       costPrice: parsedCostPrice,
       price: parsedSellingPrice,
+      categoryName: categoryName && String(categoryName).trim() ? String(categoryName).trim() : undefined,
+      unitName: unitName && String(unitName).trim() ? String(unitName).trim() : undefined,
+      quantity,
     },
   };
 }
@@ -1504,7 +1532,20 @@ export const importProducts = asyncHandler(async (req: AuthenticatedRequest, res
       });
     }
 
-    // Use unified Product model - storeId will be added to each product
+    // Build category and unit name -> id maps for the store
+    const storeIdLower = storeId.toLowerCase();
+    const categories = await Category.find({ storeId: storeIdLower }).select('_id name').lean();
+    const categoryNameToId = new Map<string, string>();
+    for (const c of categories) {
+      const key = (c.name || '').trim().toLowerCase();
+      if (key) categoryNameToId.set(key, (c._id as any).toString());
+    }
+    const units = await Unit.find({ storeId: storeIdLower }).select('_id name').lean();
+    const unitNameToId = new Map<string, string>();
+    for (const u of units) {
+      const key = (u.name || '').trim().toLowerCase();
+      if (key) unitNameToId.set(key, (u._id as any).toString());
+    }
 
     // Validate and normalize products
     const validProducts: Array<{
@@ -1513,6 +1554,9 @@ export const importProducts = asyncHandler(async (req: AuthenticatedRequest, res
       costPrice: number;
       price: number;
       storeId: string;
+      categoryName?: string;
+      unitName?: string;
+      quantity: number;
     }> = [];
     const errors: string[] = [];
     const skippedProducts: string[] = [];
@@ -1540,13 +1584,15 @@ export const importProducts = asyncHandler(async (req: AuthenticatedRequest, res
       }
 
       barcodeSet.add(product.barcode);
-      // Add storeId to each product for multi-tenant isolation
       validProducts.push({
         name: product.name,
         barcode: product.barcode,
         costPrice: product.costPrice,
         price: product.price,
-        storeId: storeId.toLowerCase(),
+        storeId: storeIdLower,
+        categoryName: product.categoryName,
+        unitName: product.unitName,
+        quantity: product.quantity,
       });
     }
 
@@ -1577,25 +1623,35 @@ export const importProducts = asyncHandler(async (req: AuthenticatedRequest, res
       stock: number;
       status: string;
       storeId: string;
+      categoryId?: string;
+      mainUnitId?: string;
     }> = [];
     const duplicateBarcodes: string[] = [];
 
     for (const product of validProducts) {
       if (existingBarcodeSet.has(product.barcode)) {
-        const existingProduct = existingBarcodes.find((p) => p.barcode === product.barcode);
         duplicateBarcodes.push(`${product.name} (Barcode: ${product.barcode})`);
         errors.push(`Product "${product.name}" with barcode "${product.barcode}" already exists in database`);
         continue;
       }
-      productsToImport.push({
-        storeId: storeId.toLowerCase(), // REQUIRED for multi-tenant isolation
+      const categoryId = product.categoryName
+        ? categoryNameToId.get(product.categoryName.trim().toLowerCase())
+        : undefined;
+      const mainUnitId = product.unitName
+        ? unitNameToId.get(product.unitName.trim().toLowerCase())
+        : undefined;
+      const doc: any = {
+        storeId: storeId.toLowerCase(),
         name: product.name,
         barcode: product.barcode,
         costPrice: product.costPrice,
         price: product.price,
-        stock: 0,
+        stock: product.quantity,
         status: 'active',
-      });
+      };
+      if (categoryId) doc.categoryId = categoryId;
+      if (mainUnitId) doc.mainUnitId = mainUnitId;
+      productsToImport.push(doc);
     }
 
     if (productsToImport.length === 0) {

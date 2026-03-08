@@ -127,7 +127,7 @@ const ProductImportPage: React.FC = () => {
               استيراد المنتجات من ملف
             </h1>
             <p className="max-w-2xl text-lg text-slate-600 dark:text-slate-300 leading-relaxed">
-              قم بتحميل ملف CSV أو JSON يحتوي على بيانات المنتجات (اسم المنتج، سعر التكلفة، سعر البيع، الباركود)
+              قم بتحميل ملف CSV أو JSON يحتوي على بيانات المنتجات (الاسم، الباركود، الفئة، سعر التكلفة، سعر البيع، الوحدة، الكمية)
             </p>
           </div>
         </div>
@@ -410,19 +410,22 @@ const ProductImportPage: React.FC = () => {
             <div className="bg-slate-50 dark:bg-slate-800/50 rounded-xl p-4 border border-slate-200 dark:border-slate-700">
               <div className="space-y-2 text-sm text-slate-600 dark:text-slate-400">
                 <p>
-                  <span className="font-medium text-slate-900 dark:text-slate-100">CSV:</span> يجب أن يحتوي الملف على الأعمدة التالية:
+                  <span className="font-medium text-slate-900 dark:text-slate-100">CSV:</span> الأعمدة المطلوبة والاختيارية:
                 </p>
                 <ul className="list-disc list-inside mr-4 space-y-1">
-                  <li>Product Name (اسم المنتج)</li>
-                  <li>Cost Price (سعر التكلفة)</li>
-                  <li>Selling Price (سعر البيع)</li>
-                  <li>Barcode (الباركود)</li>
+                  <li><strong>Product Name</strong> (اسم المنتج) — مطلوب</li>
+                  <li><strong>Barcode</strong> (الباركود) — مطلوب</li>
+                  <li><strong>Cost Price</strong> (سعر التكلفة) — مطلوب</li>
+                  <li><strong>Selling Price</strong> أو <strong>Sale Price</strong> (سعر البيع) — مطلوب</li>
+                  <li><strong>Category</strong> (الفئة) — اختياري، يجب أن تطابق اسماً موجوداً في المتجر</li>
+                  <li><strong>Unit</strong> (الوحدة) — اختياري، يجب أن تطابق اسماً موجوداً في الوحدات</li>
+                  <li><strong>Quantity</strong> أو <strong>Stock</strong> (الكمية) — اختياري، القيمة الافتراضية 0</li>
                 </ul>
                 <p className="mt-3">
-                  <span className="font-medium text-slate-900 dark:text-slate-100">JSON:</span> يجب أن يكون الملف مصفوفة من الكائنات بنفس الحقول المذكورة أعلاه.
+                  <span className="font-medium text-slate-900 dark:text-slate-100">JSON:</span> مصفوفة من الكائنات بنفس الحقول أعلاه.
                 </p>
                 <p className="mt-3 text-xs text-slate-500 dark:text-slate-500">
-                  ملاحظة: سيتم تخطي المنتجات التي تفتقد الباركود أو البيانات المطلوبة. المنتجات المكررة (بنفس الباركود) لن يتم استيرادها.
+                  ملاحظة: المنتجات المكررة (بنفس الباركود) أو الموجودة مسبقاً في النظام لن يتم استيرادها.
                 </p>
               </div>
             </div>

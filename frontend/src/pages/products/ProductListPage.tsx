@@ -4,7 +4,7 @@ import { AR_LABELS, EditIcon, DeleteIcon, SearchIcon, GridViewIcon, TableViewIco
 import { Product } from '@/shared/types';
 import ProductQuickActions from '@/features/products/components/ProductQuickActions';
 import { formatDate, formatQuantityForDisplay } from '@/shared/utils';
-import { productsApi, categoriesApi } from '@/lib/api/client';
+import { productsApi, categoriesApi, unitsApi } from '@/lib/api/client';
 import { getStoreIdFromToken } from '@/lib/utils/storeId';
 import { productSync } from '@/lib/sync/productSync';
 import { productsDB } from '@/lib/db/productsDB';
@@ -83,6 +83,7 @@ const ProductListPage: React.FC<ProductListPageProps> = () => {
   const [totalProducts, setTotalProducts] = useState(0);
 
   const LOW_STOCK_THRESHOLD = 10;
+  const [isExporting, setIsExporting] = useState(false);
 
   // Store backend products with categoryId for mapping
   const [backendProducts, setBackendProducts] = useState<BackendProduct[]>([]);
@@ -976,13 +977,71 @@ const ProductListPage: React.FC<ProductListPageProps> = () => {
     });
   };
 
+  /** Escape a CSV field (wrap in quotes if needed, escape internal quotes) */
+  const escapeCsvField = (value: string | number | undefined | null): string => {
+    const s = value === undefined || value === null ? '' : String(value);
+    if (/[",\r\n]/.test(s)) {
+      return `"${s.replace(/"/g, '""')}"`;
+    }
+    return s;
+  };
+
+  const handleExportProducts = useCallback(async () => {
+    setIsExporting(true);
+    try {
+      const [productsRes, unitsRes] = await Promise.all([
+        productsApi.getProducts({ all: true, includeCategories: true }),
+        unitsApi.getUnits(),
+      ]);
+      if (!productsRes.success || !productsRes.data) {
+        alert('فشل جلب المنتجات للتصدير');
+        return;
+      }
+      const responseData = productsRes.data as any;
+      const products = responseData?.products || [];
+      const units = (unitsRes.data as any)?.units || [];
+      const unitIdToName = new Map<string, string>();
+      units.forEach((u: any) => {
+        const id = u.id || u._id;
+        if (id && u.name) unitIdToName.set(String(id), u.name);
+      });
+
+      const headers = ['Product Name', 'Barcode', 'Category', 'Cost Price', 'Sale Price', 'Unit', 'Quantity'];
+      const rows = products.map((p: any) => {
+        const categoryName = p.category?.name ?? p.category?.nameAr ?? '';
+        const unitName = p.mainUnitId ? (unitIdToName.get(String(p.mainUnitId)) ?? '') : '';
+        return [
+          escapeCsvField(p.name),
+          escapeCsvField(p.barcode),
+          escapeCsvField(categoryName),
+          escapeCsvField(p.costPrice),
+          escapeCsvField(p.price),
+          escapeCsvField(unitName),
+          escapeCsvField(p.stock),
+        ].join(',');
+      });
+      const csvContent = '\uFEFF' + [headers.join(','), ...rows].join('\r\n');
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `products-export-${new Date().toISOString().slice(0, 10)}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err: any) {
+      alert(err?.message || (err?.details?.message) || 'فشل تصدير المنتجات');
+    } finally {
+      setIsExporting(false);
+    }
+  }, []);
+
   const handleQuickAction = (action: string) => {
     switch (action) {
       case 'import':
-        alert('وظيفة الاستيراد قيد التطوير');
+        navigate('/products/import');
         break;
       case 'export':
-        alert('وظيفة التصدير قيد التطوير');
+        handleExportProducts();
         break;
       case 'print':
         alert('وظيفة طباعة الباركود قيد التطوير');
@@ -1025,6 +1084,7 @@ const ProductListPage: React.FC<ProductListPageProps> = () => {
           onExportProducts={() => handleQuickAction('export')}
           onPrintBarcodes={() => handleQuickAction('print')}
           onSearchProducts={() => handleQuickAction('search')}
+          exportLoading={isExporting}
         />
       </div>
 

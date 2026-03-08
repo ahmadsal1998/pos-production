@@ -8,6 +8,7 @@ import AddMultiUnitProductPage from '@/pages/products/AddMultiUnitProductPage';
 import AddNewProductPage from '@/pages/products/AddNewProductPage';
 import AddAdditionalUnitsPage from '@/pages/products/AddAdditionalUnitsPage';
 import ProductPage from '@/pages/products/ProductPage';
+import ProductImportPage from '@/pages/products/ProductImportPage';
 
 export const productRoutes: RouteObject[] = [
   {
@@ -73,7 +74,7 @@ export const productRoutes: RouteObject[] = [
         path: 'import',
         element: (
           <PermissionProtectedRoute>
-            <ProductDashboard />
+            <ProductImportPage />
           </PermissionProtectedRoute>
         ),
       },
