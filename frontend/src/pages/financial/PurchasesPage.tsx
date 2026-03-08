@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useCallback } from 'react';
+import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { Link, useLocation, useSearchParams } from 'react-router-dom';
 import { PurchaseOrder, Supplier, PurchaseStatus, PurchasePaymentMethod, SupplierPayment } from '@/features/financial/types';
 import { Product } from '@/shared/types';
@@ -271,13 +271,20 @@ const PurchaseFormModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave
 };
 
 const AddPaymentModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (payment: SupplierPayment) => void; target: PaymentTarget; }> = ({ isOpen, onClose, onSave, target }) => {
-    const [amount, setAmount] = useState(0);
+    const [amountStr, setAmountStr] = useState('0');
+    const amountInputRef = useRef<HTMLInputElement>(null);
     const [method, setMethod] = useState<'Cash' | 'Bank Transfer' | 'Cheque'>('Cash');
     const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
-    useEffect(() => { if (target) { setAmount(target.defaultAmount); setMethod('Cash'); setDate(new Date().toISOString().split('T')[0]); } }, [target, isOpen]);
+    useEffect(() => { if (target) { setAmountStr(String(target.defaultAmount ?? 0)); setMethod('Cash'); setDate(new Date().toISOString().split('T')[0]); } }, [target, isOpen]);
     if (!isOpen || !target) return null;
-    const handleSave = () => { if (amount <= 0) return; onSave({ id: UUID(), supplierId: target.supplier.id, purchaseId: target.purchaseId, amount, method, date, createdAt: new Date().toISOString() }); onClose(); };
-    return (<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[60] p-4" onClick={onClose}><div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl p-6 w-full max-w-md text-right" onClick={e => e.stopPropagation()}><h2 className="text-xl font-bold text-gray-900 dark:text-gray-100 mb-4">{AR_LABELS.addPayment} لـ {target.supplier.name}</h2><div className="space-y-4"><input type="number" placeholder={AR_LABELS.paymentAmount} value={amount} onChange={e => setAmount(parseFloat(e.target.value) || 0)} className="w-full border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200 rounded-md"/><select value={method} onChange={e => setMethod(e.target.value as any)} className="w-full border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200 rounded-md"><option value="Cash">{AR_LABELS.cash}</option><option value="Bank Transfer">{AR_LABELS.bankTransfer}</option><option value="Cheque">{AR_LABELS.cheque}</option></select><input type="date" value={date} onChange={e => setDate(e.target.value)} className="w-full border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200 rounded-md"/></div><div className="flex justify-start space-x-4 space-x-reverse pt-4"><button onClick={handleSave} className="px-4 py-2 bg-orange-500 text-white rounded-md">{AR_LABELS.save}</button><button onClick={onClose} className="px-4 py-2 bg-gray-200 dark:bg-gray-600 text-gray-800 dark:text-gray-200 rounded-md">{AR_LABELS.cancel}</button></div></div></div>);
+    const handleSave = () => {
+        const rawValue = amountInputRef.current?.value ?? amountStr;
+        const numericValue = Number(rawValue);
+        if (isNaN(numericValue) || numericValue <= 0) return;
+        onSave({ id: UUID(), supplierId: target.supplier.id, purchaseId: target.purchaseId, amount: numericValue, method, date, createdAt: new Date().toISOString() });
+        onClose();
+    };
+    return (<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[60] p-4" onClick={onClose}><div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl p-6 w-full max-w-md text-right" onClick={e => e.stopPropagation()}><h2 className="text-xl font-bold text-gray-900 dark:text-gray-100 mb-4">{AR_LABELS.addPayment} لـ {target.supplier.name}</h2><div className="space-y-4"><input ref={amountInputRef} type="number" placeholder={AR_LABELS.paymentAmount} min={0} step="any" value={amountStr} onChange={e => setAmountStr(e.target.value)} className="w-full border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200 rounded-md"/><select value={method} onChange={e => setMethod(e.target.value as any)} className="w-full border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200 rounded-md"><option value="Cash">{AR_LABELS.cash}</option><option value="Bank Transfer">{AR_LABELS.bankTransfer}</option><option value="Cheque">{AR_LABELS.cheque}</option></select><input type="date" value={date} onChange={e => setDate(e.target.value)} className="w-full border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200 rounded-md"/></div><div className="flex justify-start space-x-4 space-x-reverse pt-4"><button type="button" onClick={handleSave} className="px-4 py-2 bg-orange-500 text-white rounded-md">{AR_LABELS.save}</button><button type="button" onClick={onClose} className="px-4 py-2 bg-gray-200 dark:bg-gray-600 text-gray-800 dark:text-gray-200 rounded-md">{AR_LABELS.cancel}</button></div></div></div>);
 }
 
 const SupplierStatementModal: React.FC<{ summary: SupplierAccountSummary | null; purchases: PurchaseOrder[]; payments: SupplierPayment[]; onClose: () => void; }> = ({ summary, purchases, payments, onClose }) => {

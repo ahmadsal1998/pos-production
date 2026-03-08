@@ -528,20 +528,22 @@ const AddPaymentModal: React.FC<{
     onSave: (payment: CustomerPayment) => void;
 }> = ({ customerSummary, onClose, onSave }) => {
     const [voucherType, setVoucherType] = useState<VoucherType | null>(null);
-    const [amount, setAmount] = useState(0);
+    const [amountStr, setAmountStr] = useState('0');
+    const amountInputRef = useRef<HTMLInputElement>(null);
     const [method, setMethod] = useState<'Cash' | 'Bank Transfer' | 'Cheque'>('Cash');
     const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
     const [notes, setNotes] = useState('');
 
+    // Only reset form when opening for a different customer (use customerId so parent re-renders don't wipe user input)
     useEffect(() => {
         if (customerSummary) {
-            setAmount(0);
+            setAmountStr('0');
             setDate(new Date().toISOString().split('T')[0]);
             setMethod('Cash');
             setNotes('');
             setVoucherType(null); // Reset voucher type when customer changes
         }
-    }, [customerSummary]);
+    }, [customerSummary?.customerId]);
     
     if (!customerSummary) return null;
 
@@ -562,7 +564,10 @@ const AddPaymentModal: React.FC<{
             return;
         }
 
-        if (amount <= 0) {
+        // Read from DOM so we get the latest value even if user just typed and pressed Enter before React state updated
+        const rawValue = amountInputRef.current?.value ?? amountStr;
+        const numericValue = Number(rawValue);
+        if (isNaN(numericValue) || numericValue <= 0) {
             alert('المبلغ يجب أن يكون أكبر من صفر.');
             return;
         }
@@ -572,9 +577,9 @@ const AddPaymentModal: React.FC<{
         // Receipt Voucher (سند قبض): positive amount (decreases customer debt / payment from customer)
         let paymentAmount: number;
         if (voucherType === 'receiptVoucher') {
-            paymentAmount = amount; // Positive (payment from customer)
+            paymentAmount = numericValue; // Positive (payment from customer)
         } else {
-            paymentAmount = -amount; // Negative (debt from customer)
+            paymentAmount = -numericValue; // Negative (debt from customer)
         }
 
         onSave({
@@ -612,7 +617,7 @@ const AddPaymentModal: React.FC<{
                         </div>
                     </div>
                     <div className="flex justify-start space-x-4 space-x-reverse p-4 bg-gray-50 dark:bg-gray-800/50 border-t dark:border-gray-700 rounded-b-lg">
-                        <button onClick={onClose} className="px-4 py-2 bg-gray-200 dark:bg-gray-600 text-gray-800 dark:text-gray-200 rounded-md">{AR_LABELS.cancel}</button>
+                        <button type="button" onClick={onClose} className="px-4 py-2 bg-gray-200 dark:bg-gray-600 text-gray-800 dark:text-gray-200 rounded-md">{AR_LABELS.cancel}</button>
                     </div>
                 </div>
             </div>
@@ -635,13 +640,14 @@ const AddPaymentModal: React.FC<{
                     </div>
                     <div>
                         <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{AR_LABELS.paymentAmount}</label>
-                        <input 
-                            type="number" 
-                            value={amount} 
-                            onChange={e => setAmount(parseFloat(e.target.value) || 0)} 
+                        <input
+                            ref={amountInputRef}
+                            type="number"
+                            value={amountStr}
+                            onChange={e => setAmountStr(e.target.value)}
                             className="w-full p-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200 rounded-md text-left"
                             min="0"
-                            step="0.01"
+                            step="any"
                         />
                     </div>
                     <div>
@@ -669,8 +675,8 @@ const AddPaymentModal: React.FC<{
                     </div>
                 </div>
                 <div className="flex justify-start space-x-4 space-x-reverse p-4 bg-gray-50 dark:bg-gray-800/50 border-t dark:border-gray-700 rounded-b-lg">
-                    <button onClick={handleSave} className="px-4 py-2 bg-orange-500 text-white rounded-md">{AR_LABELS.save}</button>
-                    <button onClick={onClose} className="px-4 py-2 bg-gray-200 dark:bg-gray-600 text-gray-800 dark:text-gray-200 rounded-md">{AR_LABELS.cancel}</button>
+                    <button type="button" onClick={handleSave} className="px-4 py-2 bg-orange-500 text-white rounded-md">{AR_LABELS.save}</button>
+                    <button type="button" onClick={onClose} className="px-4 py-2 bg-gray-200 dark:bg-gray-600 text-gray-800 dark:text-gray-200 rounded-md">{AR_LABELS.cancel}</button>
                 </div>
             </div>
         </div>
@@ -714,7 +720,7 @@ const CustomerDetailsModal: React.FC<{
     const [selectedTransaction, setSelectedTransaction] = useState<{ index: number; transaction: any } | null>(null);
     const [showEditPaymentModal, setShowEditPaymentModal] = useState(false);
     const [isSavingPayment, setIsSavingPayment] = useState(false);
-    const [paymentEditForm, setPaymentEditForm] = useState<{ amount: number; method: 'Cash' | 'Bank Transfer' | 'Cheque'; date: string; notes: string; invoiceId: string }>({ amount: 0, method: 'Cash', date: '', notes: '', invoiceId: '' });
+    const [paymentEditForm, setPaymentEditForm] = useState<{ amountStr: string; method: 'Cash' | 'Bank Transfer' | 'Cheque'; date: string; notes: string; invoiceId: string }>({ amountStr: '0', method: 'Cash', date: '', notes: '', invoiceId: '' });
 
     useEffect(() => {
         if (!summary) {
@@ -1141,7 +1147,7 @@ const CustomerDetailsModal: React.FC<{
         if (!payment) return;
         const dateStr = typeof payment.date === 'string' ? payment.date.slice(0, 16) : new Date(payment.date).toISOString().slice(0, 16);
         setPaymentEditForm({
-            amount: payment.amount,
+            amountStr: String(payment.amount ?? 0),
             method: payment.method || 'Cash',
             date: dateStr,
             notes: payment.notes || '',
@@ -1155,7 +1161,7 @@ const CustomerDetailsModal: React.FC<{
         setIsSavingPayment(true);
         try {
             await customersApi.updateCustomerPayment(selectedTransaction.transaction.sourceId, {
-                amount: paymentEditForm.amount,
+                amount: parseFloat(paymentEditForm.amountStr) || 0,
                 method: paymentEditForm.method,
                 date: paymentEditForm.date ? new Date(paymentEditForm.date).toISOString() : undefined,
                 notes: paymentEditForm.notes || null,
@@ -1430,8 +1436,9 @@ const CustomerDetailsModal: React.FC<{
                                     <input
                                         type="number"
                                         step="0.01"
-                                        value={paymentEditForm.amount}
-                                        onChange={e => setPaymentEditForm(prev => ({ ...prev, amount: parseFloat(e.target.value) || 0 }))}
+                                        min={0}
+                                        value={paymentEditForm.amountStr}
+                                        onChange={e => setPaymentEditForm(prev => ({ ...prev, amountStr: e.target.value }))}
                                         className="w-full border border-gray-300 dark:border-gray-600 rounded-md px-3 py-2 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
                                     />
                                 </div>
@@ -4137,7 +4144,7 @@ const AddCustomerModal: React.FC<{
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [showInitialBalanceStep, setShowInitialBalanceStep] = useState(false);
     const [initialBalanceType, setInitialBalanceType] = useState<'receipt' | 'journal' | null>(null);
-    const [initialAmount, setInitialAmount] = useState(0);
+    const [initialAmountStr, setInitialAmountStr] = useState('0');
 
     const handleBasicInfoSave = () => {
         // Validate phone number (required)
@@ -4162,6 +4169,7 @@ const AddCustomerModal: React.FC<{
             return;
         }
 
+        const initialAmount = parseFloat(initialAmountStr) || 0;
         if (initialAmount <= 0) {
             alert('المبلغ يجب أن يكون أكبر من صفر.');
             return;
@@ -4201,7 +4209,7 @@ const AddCustomerModal: React.FC<{
             setAddress('');
             setShowInitialBalanceStep(false);
             setInitialBalanceType(null);
-            setInitialAmount(0);
+            setInitialAmountStr('0');
         } catch (error) {
             // Error is handled by parent component
             console.error('Error saving customer:', error);
@@ -4251,8 +4259,8 @@ const AddCustomerModal: React.FC<{
                                 </label>
                                 <input 
                                     type="number" 
-                                    value={initialAmount} 
-                                    onChange={e => setInitialAmount(parseFloat(e.target.value) || 0)} 
+                                    value={initialAmountStr} 
+                                    onChange={e => setInitialAmountStr(e.target.value)} 
                                     placeholder="0.00"
                                     className="w-full p-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200 rounded-md text-left"
                                     min="0"
@@ -4264,7 +4272,7 @@ const AddCustomerModal: React.FC<{
                     <div className="flex justify-start space-x-4 space-x-reverse p-4 bg-gray-50 dark:bg-gray-800/50 border-t dark:border-gray-700 rounded-b-lg">
                         <button 
                             onClick={handleBalanceStepSave} 
-                            disabled={isSubmitting || !initialBalanceType || initialAmount <= 0}
+                            disabled={isSubmitting || !initialBalanceType || (parseFloat(initialAmountStr) || 0) <= 0}
                             className="px-4 py-2 bg-orange-500 text-white rounded-md disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                             {isSubmitting ? 'جاري الحفظ...' : AR_LABELS.save}

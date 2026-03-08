@@ -340,6 +340,7 @@ const POSPage: React.FC = () => {
     const currentInvoiceRef = useRef<POSInvoice>(currentInvoice);
     const [completedInvoice, setCompletedInvoice] = useState<POSInvoice | null>(null); // Store completed invoice for receipt display
     const [quantityDrafts, setQuantityDrafts] = useState<Record<string, string>>({});
+    const [invoiceDiscountInput, setInvoiceDiscountInput] = useState<string | null>(null); // String while editing so "2." is not collapsed to "2"
     const [storeAddress, setStoreAddress] = useState<string>(''); // Store address for receipts
     const [businessName, setBusinessName] = useState<string>(''); // Store business name for receipts
     const [storeLogoUrl, setStoreLogoUrl] = useState<string>(''); // Store logo URL for receipts
@@ -452,6 +453,7 @@ const POSPage: React.FC = () => {
     const [showQRReceipt, setShowQRReceipt] = useState(false);
     const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<string>('Cash');
     const [creditPaidAmount, setCreditPaidAmount] = useState(0);
+    const [creditPaidAmountInput, setCreditPaidAmountInput] = useState<string | null>(null); // string while editing so "2." is not collapsed
     const [creditPaidAmountError, setCreditPaidAmountError] = useState<string | null>(null);
     const [isProcessingPayment, setIsProcessingPayment] = useState(false); // Track payment processing state
     const [isProcessingReturn, setIsProcessingReturn] = useState(false); // Track return processing state
@@ -604,6 +606,7 @@ const POSPage: React.FC = () => {
                 });
                 setSelectedPaymentMethod(methodCapitalized === 'Cash' || methodCapitalized === 'Card' || methodCapitalized === 'Credit' ? methodCapitalized : 'Cash');
                 setCreditPaidAmount(Number(sale.paidAmount) || 0);
+                setCreditPaidAmountInput(null);
                 setCreditPaidAmountError(null);
             } catch (e) {
                 console.error('Failed to load sale for edit', e);
@@ -622,27 +625,33 @@ const POSPage: React.FC = () => {
         return Math.abs(doubled - Math.round(doubled)) < 1e-9;
     };
 
+    // Effective value for validation/calculations: use current input string if editing, else numeric state
+    const effectiveCreditPaidAmount = creditPaidAmountInput !== null ? (parseFloat(creditPaidAmountInput) || 0) : creditPaidAmount;
+
     const handleCreditPaidAmountChange = (value: string) => {
-        // Keep behavior consistent with current code: empty input becomes 0
-        if (value.trim() === '') {
+        setCreditPaidAmountInput(value);
+        setCreditPaidAmountError(null);
+    };
+
+    const handleCreditPaidAmountBlur = (e: React.FocusEvent<HTMLInputElement>) => {
+        const raw = (e.target as HTMLInputElement).value;
+        if (raw.trim() === '') {
             setCreditPaidAmount(0);
+            setCreditPaidAmountInput(null);
             setCreditPaidAmountError(null);
             return;
         }
-
-        const nextAmount = Number(value);
+        const nextAmount = Number(raw);
         if (!Number.isFinite(nextAmount)) {
             setCreditPaidAmountError(HALF_UNIT_INCREMENT_ERROR);
             return;
         }
-
         if (!isValidHalfUnitIncrement(nextAmount)) {
-            // Reject invalid patterns (do not update state), but show the message
             setCreditPaidAmountError(HALF_UNIT_INCREMENT_ERROR);
             return;
         }
-
         setCreditPaidAmount(nextAmount);
+        setCreditPaidAmountInput(null);
         setCreditPaidAmountError(null);
     };
 
@@ -3781,6 +3790,7 @@ const POSPage: React.FC = () => {
         
         setSelectedPaymentMethod('Cash');
         setCreditPaidAmount(0);
+        setCreditPaidAmountInput(null);
         setCreditPaidAmountError(null);
         
         // Auto-focus search field after starting new sale for faster workflow
@@ -4226,12 +4236,12 @@ const POSPage: React.FC = () => {
                 return;
             }
 
-            if (selectedPaymentMethod === 'Credit' && creditPaidAmount < 0) {
+            if (selectedPaymentMethod === 'Credit' && effectiveCreditPaidAmount < 0) {
                 showToast('المبلغ المدفوع لا يمكن أن يكون سالباً.', 'error');
                 return;
             }
 
-            if (selectedPaymentMethod === 'Credit' && !isValidHalfUnitIncrement(creditPaidAmount)) {
+            if (selectedPaymentMethod === 'Credit' && !isValidHalfUnitIncrement(effectiveCreditPaidAmount)) {
                 setCreditPaidAmountError(HALF_UNIT_INCREMENT_ERROR);
                 return;
             }
@@ -4577,8 +4587,8 @@ const POSPage: React.FC = () => {
             status = 'Paid';
         } else if (selectedPaymentMethod === 'Credit') {
             // Credit payment - use the paid amount if specified
-            paidAmount = creditPaidAmount;
-            remainingAmount = invoice.grandTotal - creditPaidAmount;
+            paidAmount = effectiveCreditPaidAmount;
+            remainingAmount = invoice.grandTotal - effectiveCreditPaidAmount;
             
             if (remainingAmount <= 0) {
                 status = 'Paid';
@@ -4658,7 +4668,7 @@ const POSPage: React.FC = () => {
             pointsRedeemed,
             pointsRedemptionValue,
         };
-    }, [selectedPaymentMethod, pointsToRedeem, creditPaidAmount, products, formatCurrency, showToast, setCustomerPointsBalance]);
+    }, [selectedPaymentMethod, pointsToRedeem, creditPaidAmount, creditPaidAmountInput, products, formatCurrency, showToast, setCustomerPointsBalance]);
 
     const finalizeSaleWithoutTerminal = async () => {
         // Edit mode: full update (items, totals, payment) so added products are saved
@@ -5267,8 +5277,8 @@ const POSPage: React.FC = () => {
                     status = 'Paid';
                 } else if (selectedPaymentMethod === 'Credit') {
                     // Credit payment - use the paid amount if specified
-                    paidAmount = creditPaidAmount;
-                    remainingAmount = finalInvoice.grandTotal - creditPaidAmount;
+                    paidAmount = effectiveCreditPaidAmount;
+                    remainingAmount = finalInvoice.grandTotal - effectiveCreditPaidAmount;
                     
                     if (remainingAmount <= 0) {
                         status = 'Paid';
@@ -7112,12 +7122,20 @@ const POSPage: React.FC = () => {
                                                 <input
                                                     type="number"
                                                     id="invoiceDiscount"
-                                                    value={currentInvoice.invoiceDiscount}
+                                                    min={0}
+                                                    step={0.01}
+                                                    value={invoiceDiscountInput !== null ? invoiceDiscountInput : String(currentInvoice.invoiceDiscount)}
                                                     onFocus={(e) => {
-                                                        // Select all text when focused for easy replacement
                                                         e.target.select();
+                                                        setInvoiceDiscountInput(prev => prev !== null ? prev : String(currentInvoice.invoiceDiscount));
                                                     }}
-                                                    onChange={e => setCurrentInvoice(inv => ({...inv, invoiceDiscount: parseFloat(e.target.value) || 0}))}
+                                                    onChange={e => setInvoiceDiscountInput(e.target.value)}
+                                                    onBlur={(e) => {
+                                                        const raw = (e.target as HTMLInputElement).value;
+                                                        const num = parseFloat(raw) || 0;
+                                                        setCurrentInvoice(inv => ({ ...inv, invoiceDiscount: num }));
+                                                        setInvoiceDiscountInput(null);
+                                                    }}
                                                     className="w-16 sm:w-18 md:w-20 lg:w-24 text-[10px] sm:text-xs md:text-sm text-left border border-orange-300 dark:border-orange-600 bg-white dark:bg-gray-700 rounded-md sm:rounded-lg font-semibold tabular-nums focus:ring-2 focus:ring-orange-500 focus:border-orange-500 py-1 sm:py-1.5 px-1.5 sm:px-2"
                                                 />
                                             </div>
@@ -7164,7 +7182,7 @@ const POSPage: React.FC = () => {
                                 <div className="bg-white/80 dark:bg-gray-800/80 rounded-xl p-2.5 sm:p-3 md:p-3.5 lg:p-4 border border-gray-200/50 dark:border-gray-700/50 backdrop-blur-sm space-y-2 sm:space-y-2.5 md:space-y-3">
                                     <div className="grid grid-cols-2 gap-1.5 sm:gap-2 md:gap-2.5 lg:gap-3">
                                         <button 
-                                            onClick={() => { setSelectedPaymentMethod('Cash'); setCreditPaidAmount(0); setCreditPaidAmountError(null); setPointsToRedeem(0); }} 
+                                            onClick={() => { setSelectedPaymentMethod('Cash'); setCreditPaidAmount(0); setCreditPaidAmountInput(null); setCreditPaidAmountError(null); setPointsToRedeem(0); }} 
                                             className={`p-1.5 sm:p-2 md:p-2.5 lg:p-3 rounded-xl border-2 text-center font-semibold text-xs sm:text-sm transition-all duration-200 ${
                                                 selectedPaymentMethod === 'Cash' 
                                                     ? 'border-orange-500 bg-gradient-to-br from-orange-50 to-orange-100 dark:from-orange-900/40 dark:to-orange-800/40 text-orange-700 dark:text-orange-300 shadow-lg scale-105' 
@@ -7174,7 +7192,7 @@ const POSPage: React.FC = () => {
                                             {AR_LABELS.cash}
                                         </button>
                                         <button 
-                                            onClick={() => { setSelectedPaymentMethod('Card'); setCreditPaidAmount(0); setCreditPaidAmountError(null); setPointsToRedeem(0); }} 
+                                            onClick={() => { setSelectedPaymentMethod('Card'); setCreditPaidAmount(0); setCreditPaidAmountInput(null); setCreditPaidAmountError(null); setPointsToRedeem(0); }} 
                                             className={`p-1.5 sm:p-2 md:p-2.5 lg:p-3 rounded-xl border-2 text-center font-semibold text-xs sm:text-sm transition-all duration-200 ${
                                                 selectedPaymentMethod === 'Card' 
                                                     ? 'border-orange-500 bg-gradient-to-br from-orange-50 to-orange-100 dark:from-orange-900/40 dark:to-orange-800/40 text-orange-700 dark:text-orange-300 shadow-lg scale-105' 
@@ -7210,6 +7228,7 @@ const POSPage: React.FC = () => {
                                                 }
                                                 setSelectedPaymentMethod('Points'); 
                                                 setCreditPaidAmount(0); 
+                                                setCreditPaidAmountInput(null);
                                                 setCreditPaidAmountError(null); 
                                             }} 
                                             disabled={!currentInvoice.customer || currentInvoice.customer.id === 'walk-in-customer' || (customerPointsBalance !== null && customerPointsBalance <= 0)}
@@ -7227,8 +7246,13 @@ const POSPage: React.FC = () => {
                                             <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 text-right mb-1.5">{AR_LABELS.amountPaid}</label>
                                             <input 
                                                 type="number" 
-                                                value={creditPaidAmount} 
+                                                value={creditPaidAmountInput !== null ? creditPaidAmountInput : String(creditPaidAmount)} 
+                                                onFocus={(e) => {
+                                                    e.target.select();
+                                                    setCreditPaidAmountInput(prev => prev !== null ? prev : String(creditPaidAmount));
+                                                }}
                                                 onChange={(e) => handleCreditPaidAmountChange(e.target.value)} 
+                                                onBlur={handleCreditPaidAmountBlur}
                                                 className="w-full p-2 text-sm sm:text-base border-2 border-orange-300 dark:border-orange-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-lg text-center font-bold focus:ring-2 focus:ring-orange-500 focus:border-orange-500" 
                                                 min="0" 
                                                 step="0.5"
