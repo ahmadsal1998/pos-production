@@ -105,6 +105,27 @@ const ProductNotFoundModal: React.FC<ProductNotFoundModalProps> = ({
     }
   };
 
+  // Allow only valid decimal input (digits and at most one decimal point).
+  // Using type="text" + inputMode="decimal" avoids browser quirks where the first
+  // digit is dropped in controlled type="number" inputs (especially with RTL).
+  const sanitizeDecimalInput = (raw: string): string => {
+    const trimmed = raw.trim();
+    if (trimmed === '' || trimmed === '.') return trimmed;
+    const filtered = trimmed.replace(/[^0-9.]/g, '');
+    const parts = filtered.split('.');
+    if (parts.length > 2) return parts[0] + '.' + parts.slice(1).join('');
+    if (parts.length === 2 && parts[1].length > 2) return parts[0] + '.' + parts[1].slice(0, 2);
+    return filtered;
+  };
+
+  const handleCostPriceChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setCostPrice(sanitizeDecimalInput(e.target.value));
+  };
+
+  const handleSellingPriceChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setSellingPrice(sanitizeDecimalInput(e.target.value));
+  };
+
   if (!isOpen) return null;
 
   return (
@@ -191,15 +212,15 @@ const ProductNotFoundModal: React.FC<ProductNotFoundModalProps> = ({
                 سعر التكلفة <span className="text-red-500">*</span>
               </label>
               <input
-                type="number"
-                step="0.01"
-                min="0"
+                type="text"
+                inputMode="decimal"
                 value={costPrice}
-                onChange={(e) => setCostPrice(e.target.value)}
+                onChange={handleCostPriceChange}
                 onKeyDown={handleKeyDown}
                 required
                 className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 text-right focus:ring-2 focus:ring-orange-500 focus:border-transparent"
                 placeholder="0.00"
+                autoComplete="off"
                 autoFocus
               />
             </div>
@@ -209,15 +230,15 @@ const ProductNotFoundModal: React.FC<ProductNotFoundModalProps> = ({
                 سعر البيع <span className="text-red-500">*</span>
               </label>
               <input
-                type="number"
-                step="0.01"
-                min="0"
+                type="text"
+                inputMode="decimal"
                 value={sellingPrice}
-                onChange={(e) => setSellingPrice(e.target.value)}
+                onChange={handleSellingPriceChange}
                 onKeyDown={handleKeyDown}
                 required
                 className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 text-right focus:ring-2 focus:ring-orange-500 focus:border-transparent"
                 placeholder="0.00"
+                autoComplete="off"
               />
             </div>
 
