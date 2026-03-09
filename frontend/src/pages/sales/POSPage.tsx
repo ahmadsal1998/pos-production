@@ -481,6 +481,13 @@ const POSPage: React.FC = () => {
     const [isProductNotFoundModalOpen, setIsProductNotFoundModalOpen] = useState(false);
     const [isReSaleModalOpen, setIsReSaleModalOpen] = useState(false);
     const [conflictingInvoiceData, setConflictingInvoiceData] = useState<any>(null);
+    // Payment Confirmation Modal (when customer is selected - force explicit payment method choice)
+    const [paymentConfirmationModalOpen, setPaymentConfirmationModalOpen] = useState(false);
+    const [modalPaymentMethod, setModalPaymentMethod] = useState<string>('Cash');
+    const [modalCreditPaidAmount, setModalCreditPaidAmount] = useState(0);
+    const [modalCreditPaidAmountInput, setModalCreditPaidAmountInput] = useState<string | null>(null);
+    const [modalCreditPaidAmountError, setModalCreditPaidAmountError] = useState<string | null>(null);
+    const [modalPointsToRedeem, setModalPointsToRedeem] = useState(0);
     const [notFoundBarcode, setNotFoundBarcode] = useState<string>('');
     // Optimistic UI: Track pending server searches and their results
     const [pendingServerSearch, setPendingServerSearch] = useState<{
@@ -4227,6 +4234,22 @@ const POSPage: React.FC = () => {
         
         if (currentInvoice.items.length === 0) return;
 
+        // When a customer is selected, open Payment Confirmation Modal instead of finalizing immediately.
+        // This prevents cashier from forgetting to change payment method from Cash to Credit (Deferred).
+        const hasRegisteredCustomer = currentInvoice.customer && currentInvoice.customer.id !== 'walk-in-customer';
+        if (hasRegisteredCustomer) {
+            setModalPaymentMethod(selectedPaymentMethod);
+            setModalCreditPaidAmount(effectiveCreditPaidAmount);
+            setModalCreditPaidAmountInput(creditPaidAmountInput !== null ? creditPaidAmountInput : (effectiveCreditPaidAmount ? String(effectiveCreditPaidAmount) : null));
+            setModalCreditPaidAmountError(null);
+            setModalPointsToRedeem(pointsToRedeem);
+            setPaymentConfirmationModalOpen(true);
+            if (selectedPaymentMethod === 'Points' && currentInvoice.customer) {
+                fetchCustomerPointsBalance(currentInvoice.customer.id, currentInvoice.customer.phone);
+            }
+            return;
+        }
+
         // Set processing state immediately to prevent duplicate clicks
         setIsProcessingPayment(true);
 
@@ -4305,6 +4328,56 @@ const POSPage: React.FC = () => {
             // CRITICAL FIX: Only reset processing state after sale is fully processed
             // This ensures the "Start New Sale" button remains disabled until processing completes
             // and prevents race conditions or duplicate invoices
+            setIsProcessingPayment(false);
+        }
+    };
+
+    // Payment Confirmation Modal: confirm with chosen method (when customer is selected)
+    const handlePaymentConfirmationConfirm = async () => {
+        const modalEffectiveCredit = modalCreditPaidAmountInput !== null ? (parseFloat(modalCreditPaidAmountInput) || 0) : modalCreditPaidAmount;
+
+        if (modalPaymentMethod === 'Credit') {
+            if (modalEffectiveCredit < 0) {
+                setModalCreditPaidAmountError('المبلغ المدفوع لا يمكن أن يكون سالباً.');
+                return;
+            }
+            if (!isValidHalfUnitIncrement(modalEffectiveCredit)) {
+                setModalCreditPaidAmountError(HALF_UNIT_INCREMENT_ERROR);
+                return;
+            }
+        }
+
+        if (modalPaymentMethod === 'Points') {
+            if (customerPointsBalance === null) {
+                showToast('جاري تحميل رصيد النقاط، يرجى الانتظار', 'info');
+                return;
+            }
+            if (customerPointsBalance <= 0) {
+                showToast('العميل لا يمتلك نقاط كافية', 'error');
+                return;
+            }
+            if (modalPointsToRedeem <= 0) {
+                showToast('يرجى إدخال عدد النقاط المراد استخدامها', 'error');
+                return;
+            }
+            if (customerPointsBalance !== null && modalPointsToRedeem > customerPointsBalance) {
+                showToast(`عدد النقاط المراد استخدامها (${modalPointsToRedeem}) يتجاوز النقاط المتاحة (${customerPointsBalance})`, 'error');
+                return;
+            }
+        }
+
+        setPaymentConfirmationModalOpen(false);
+        setIsProcessingPayment(true);
+        try {
+            await finalizeSaleWithoutTerminal({
+                paymentMethod: modalPaymentMethod,
+                creditPaidAmount: modalPaymentMethod === 'Credit' ? modalEffectiveCredit : undefined,
+                pointsToRedeem: modalPaymentMethod === 'Points' ? modalPointsToRedeem : undefined,
+            });
+        } catch (error: any) {
+            console.error('Error in handlePaymentConfirmationConfirm:', error);
+            showToast(`حدث خطأ أثناء معالجة الدفع: ${getApiErrorMessage(error, 'خطأ غير معروف')}`, 'error');
+        } finally {
             setIsProcessingPayment(false);
         }
     };
@@ -4526,10 +4599,13 @@ const POSPage: React.FC = () => {
      * Helper function to prepare sale data for queue processing
      * Extracted from finalizeSaleWithoutTerminal for queue integration
      */
+    type PaymentFinalizeOverrides = { paymentMethod: string; creditPaidAmount?: number; pointsToRedeem?: number };
+
     const prepareSaleData = useCallback(async (
         invoice: POSInvoice,
         invoiceNumber: string,
-        storeId: string
+        storeId: string,
+        overrides?: PaymentFinalizeOverrides
     ): Promise<{
         saleData: any;
         paidAmount: number;
@@ -4540,6 +4616,10 @@ const POSPage: React.FC = () => {
         pointsRedeemed?: number;
         pointsRedemptionValue?: number;
     }> => {
+        const method = overrides?.paymentMethod ?? selectedPaymentMethod;
+        const creditPaid = overrides?.creditPaidAmount ?? effectiveCreditPaidAmount;
+        const pointsRedeem = overrides?.pointsToRedeem ?? pointsToRedeem;
+
         const customerName = invoice.customer?.name || 'عميل نقدي';
         const customerId = invoice.customer?.id || 'walk-in-customer';
         
@@ -4547,19 +4627,19 @@ const POSPage: React.FC = () => {
         let pointsRedeemed = 0;
         let pointsRedemptionValue = 0;
         
-        if (selectedPaymentMethod === 'Points' && pointsToRedeem > 0 && invoice.customer && invoice.customer.id !== 'walk-in-customer') {
+        if (method === 'Points' && pointsRedeem > 0 && invoice.customer && invoice.customer.id !== 'walk-in-customer') {
             try {
                 // Redeem points before saving sale
                 const pointsResponse = await pointsApi.payWithPoints({
                     customerId: invoice.customer.id,
                     phone: invoice.customer.phone,
-                    points: pointsToRedeem,
+                    points: pointsRedeem,
                     invoiceNumber: invoiceNumber,
                     description: `Points redeemed for invoice ${invoiceNumber}`,
                 });
                 
                 if (pointsResponse.data.success) {
-                    pointsRedeemed = pointsToRedeem;
+                    pointsRedeemed = pointsRedeem;
                     pointsRedemptionValue = pointsResponse.data.data.transaction.pointsValue;
                     // Update customer points balance
                     const newBalance = pointsResponse.data.data.balance.availablePoints;
@@ -4580,15 +4660,15 @@ const POSPage: React.FC = () => {
         let remainingAmount = 0;
         let status: SaleStatus = 'Paid';
         
-        if (selectedPaymentMethod === 'Cash' || selectedPaymentMethod === 'Card') {
+        if (method === 'Cash' || method === 'Card') {
             // Full payment for cash and card
             paidAmount = invoice.grandTotal;
             remainingAmount = 0;
             status = 'Paid';
-        } else if (selectedPaymentMethod === 'Credit') {
+        } else if (method === 'Credit') {
             // Credit payment - use the paid amount if specified
-            paidAmount = effectiveCreditPaidAmount;
-            remainingAmount = invoice.grandTotal - effectiveCreditPaidAmount;
+            paidAmount = creditPaid;
+            remainingAmount = invoice.grandTotal - creditPaid;
             
             if (remainingAmount <= 0) {
                 status = 'Paid';
@@ -4598,7 +4678,7 @@ const POSPage: React.FC = () => {
             } else {
                 status = 'Due';
             }
-        } else if (selectedPaymentMethod === 'Points') {
+        } else if (method === 'Points') {
             // Points payment - calculate based on redeemed points value
             paidAmount = pointsRedemptionValue;
             remainingAmount = Math.max(0, invoice.grandTotal - pointsRedemptionValue);
@@ -4652,7 +4732,7 @@ const POSPage: React.FC = () => {
             total: invoice.grandTotal,
             paidAmount: paidAmount,
             remainingAmount: remainingAmount,
-            paymentMethod: selectedPaymentMethod.toLowerCase(),
+            paymentMethod: method.toLowerCase(),
             status: status === 'Paid' ? 'completed' : status === 'Partial' ? 'partial_payment' : 'pending',
             seller: invoice.cashier,
             invoiceType: invoice.invoiceType ?? 'retail',
@@ -4668,9 +4748,11 @@ const POSPage: React.FC = () => {
             pointsRedeemed,
             pointsRedemptionValue,
         };
-    }, [selectedPaymentMethod, pointsToRedeem, creditPaidAmount, creditPaidAmountInput, products, formatCurrency, showToast, setCustomerPointsBalance]);
+    }, [selectedPaymentMethod, pointsToRedeem, creditPaidAmount, creditPaidAmountInput, effectiveCreditPaidAmount, products, formatCurrency, showToast, setCustomerPointsBalance]);
 
-    const finalizeSaleWithoutTerminal = async () => {
+    const finalizeSaleWithoutTerminal = async (overrides?: PaymentFinalizeOverrides) => {
+        const currentOverrides = overrides;
+
         // Edit mode: full update (items, totals, payment) so added products are saved
         if (editSaleId) {
             if (currentInvoice.items.length === 0) return;
@@ -4680,7 +4762,7 @@ const POSPage: React.FC = () => {
                 return;
             }
             try {
-                const prepared = await prepareSaleData(currentInvoice, currentInvoice.id, storeId);
+                const prepared = await prepareSaleData(currentInvoice, currentInvoice.id, storeId, currentOverrides);
                 const backendStatus = prepared.status === 'Paid' ? 'completed' : prepared.status === 'Partial' ? 'partial_payment' : 'pending';
                 await salesApi.updateSale(editSaleId, {
                     ...prepared.saleData,
@@ -4706,7 +4788,7 @@ const POSPage: React.FC = () => {
         const cartSnapshot: POSInvoice = {
             ...currentInvoice,
             items: currentInvoice.items.map(item => ({ ...item })), // Deep copy items
-            paymentMethod: selectedPaymentMethod
+            paymentMethod: currentOverrides?.paymentMethod ?? selectedPaymentMethod
         };
         
         // Validate invoice has items
@@ -4757,7 +4839,7 @@ const POSPage: React.FC = () => {
         let customerId: string;
         
         try {
-            const prepared = await prepareSaleData(cartSnapshot, invoiceNumber, storeId);
+            const prepared = await prepareSaleData(cartSnapshot, invoiceNumber, storeId, currentOverrides);
             saleData = prepared.saleData;
             paidAmount = prepared.paidAmount;
             remainingAmount = prepared.remainingAmount;
@@ -5219,6 +5301,10 @@ const POSPage: React.FC = () => {
 
         // Background task: Save sale to IndexedDB and sync with backend (non-blocking)
         Promise.resolve().then(async () => {
+            const paymentMethod = currentOverrides?.paymentMethod ?? selectedPaymentMethod;
+            const creditPaid = currentOverrides?.creditPaidAmount ?? effectiveCreditPaidAmount;
+            const pointsRedeem = currentOverrides?.pointsToRedeem ?? pointsToRedeem;
+
             try {
                 // Get storeId from user
                 const storeId = user?.storeId;
@@ -5234,19 +5320,19 @@ const POSPage: React.FC = () => {
                 let pointsRedeemed = 0;
                 let pointsRedemptionValue = 0;
                 
-                if (selectedPaymentMethod === 'Points' && pointsToRedeem > 0 && finalInvoice.customer && finalInvoice.customer.id !== 'walk-in-customer') {
+                if (paymentMethod === 'Points' && pointsRedeem > 0 && finalInvoice.customer && finalInvoice.customer.id !== 'walk-in-customer') {
                     try {
                         // Redeem points before saving sale
                         const pointsResponse = await pointsApi.payWithPoints({
                             customerId: finalInvoice.customer.id,
                             phone: finalInvoice.customer.phone,
-                            points: pointsToRedeem,
+                            points: pointsRedeem,
                             invoiceNumber: finalInvoice.id,
                             description: `Points redeemed for invoice ${finalInvoice.id}`,
                         });
                         
                         if (pointsResponse.data.success) {
-                            pointsRedeemed = pointsToRedeem;
+                            pointsRedeemed = pointsRedeem;
                             pointsRedemptionValue = pointsResponse.data.data.transaction.pointsValue;
                             // Update customer points balance
                             const newBalance = pointsResponse.data.data.balance.availablePoints;
@@ -5270,15 +5356,15 @@ const POSPage: React.FC = () => {
                 let remainingAmount = 0;
                 let status: SaleStatus = 'Paid';
                 
-                if (selectedPaymentMethod === 'Cash' || selectedPaymentMethod === 'Card') {
+                if (paymentMethod === 'Cash' || paymentMethod === 'Card') {
                     // Full payment for cash and card
                     paidAmount = finalInvoice.grandTotal;
                     remainingAmount = 0;
                     status = 'Paid';
-                } else if (selectedPaymentMethod === 'Credit') {
+                } else if (paymentMethod === 'Credit') {
                     // Credit payment - use the paid amount if specified
-                    paidAmount = effectiveCreditPaidAmount;
-                    remainingAmount = finalInvoice.grandTotal - effectiveCreditPaidAmount;
+                    paidAmount = creditPaid;
+                    remainingAmount = finalInvoice.grandTotal - creditPaid;
                     
                     if (remainingAmount <= 0) {
                         status = 'Paid';
@@ -5288,7 +5374,7 @@ const POSPage: React.FC = () => {
                     } else {
                         status = 'Due';
                     }
-                } else if (selectedPaymentMethod === 'Points') {
+                } else if (paymentMethod === 'Points') {
                     // Points payment - calculate based on redeemed points value
                     paidAmount = pointsRedemptionValue;
                     remainingAmount = Math.max(0, finalInvoice.grandTotal - pointsRedemptionValue);
@@ -5353,7 +5439,7 @@ const POSPage: React.FC = () => {
                     total: finalInvoice.grandTotal,
                     paidAmount: paidAmount,
                     remainingAmount: remainingAmount,
-                    paymentMethod: selectedPaymentMethod.toLowerCase(), // Convert to lowercase for backend
+                    paymentMethod: paymentMethod.toLowerCase(), // Convert to lowercase for backend
                     status: status === 'Paid' ? 'completed' : status === 'Partial' ? 'partial_payment' : 'pending',
                     seller: finalInvoice.cashier,
                 };
@@ -7176,145 +7262,9 @@ const POSPage: React.FC = () => {
                                 </div>
                             </div>
 
-                            {/* Payment Method & Confirm */}
+                            {/* Confirm Payment - payment method is chosen in the confirmation modal when a customer is selected */}
                             <div>
-                                <h3 className="text-xs sm:text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1.5 sm:mb-2 md:mb-2.5 lg:mb-3 text-right">طريقة الدفع</h3>
                                 <div className="bg-white/80 dark:bg-gray-800/80 rounded-xl p-2.5 sm:p-3 md:p-3.5 lg:p-4 border border-gray-200/50 dark:border-gray-700/50 backdrop-blur-sm space-y-2 sm:space-y-2.5 md:space-y-3">
-                                    <div className="grid grid-cols-2 gap-1.5 sm:gap-2 md:gap-2.5 lg:gap-3">
-                                        <button 
-                                            onClick={() => { setSelectedPaymentMethod('Cash'); setCreditPaidAmount(0); setCreditPaidAmountInput(null); setCreditPaidAmountError(null); setPointsToRedeem(0); }} 
-                                            className={`p-1.5 sm:p-2 md:p-2.5 lg:p-3 rounded-xl border-2 text-center font-semibold text-xs sm:text-sm transition-all duration-200 ${
-                                                selectedPaymentMethod === 'Cash' 
-                                                    ? 'border-orange-500 bg-gradient-to-br from-orange-50 to-orange-100 dark:from-orange-900/40 dark:to-orange-800/40 text-orange-700 dark:text-orange-300 shadow-lg scale-105' 
-                                                    : 'border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 hover:border-orange-300 dark:hover:border-orange-700 hover:bg-orange-50/50 dark:hover:bg-orange-900/20'
-                                            }`}
-                                        >
-                                            {AR_LABELS.cash}
-                                        </button>
-                                        <button 
-                                            onClick={() => { setSelectedPaymentMethod('Card'); setCreditPaidAmount(0); setCreditPaidAmountInput(null); setCreditPaidAmountError(null); setPointsToRedeem(0); }} 
-                                            className={`p-1.5 sm:p-2 md:p-2.5 lg:p-3 rounded-xl border-2 text-center font-semibold text-xs sm:text-sm transition-all duration-200 ${
-                                                selectedPaymentMethod === 'Card' 
-                                                    ? 'border-orange-500 bg-gradient-to-br from-orange-50 to-orange-100 dark:from-orange-900/40 dark:to-orange-800/40 text-orange-700 dark:text-orange-300 shadow-lg scale-105' 
-                                                    : 'border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 hover:border-orange-300 dark:hover:border-orange-700 hover:bg-orange-50/50 dark:hover:bg-orange-900/20'
-                                            }`}
-                                        >
-                                            {AR_LABELS.visa}
-                                        </button>
-                                        <button 
-                                            onClick={() => { setSelectedPaymentMethod('Credit'); setCreditPaidAmountError(null); setPointsToRedeem(0); }} 
-                                            className={`p-1.5 sm:p-2 md:p-2.5 lg:p-3 rounded-xl border-2 text-center font-semibold text-xs sm:text-sm transition-all duration-200 ${
-                                                selectedPaymentMethod === 'Credit' 
-                                                    ? 'border-orange-500 bg-gradient-to-br from-orange-50 to-orange-100 dark:from-orange-900/40 dark:to-orange-800/40 text-orange-700 dark:text-orange-300 shadow-lg scale-105' 
-                                                    : 'border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 hover:border-orange-300 dark:hover:border-orange-700 hover:bg-orange-50/50 dark:hover:bg-orange-900/20'
-                                            }`}
-                                        >
-                                            {AR_LABELS.credit}
-                                        </button>
-                                        <button 
-                                            onClick={() => { 
-                                                if (!currentInvoice.customer || currentInvoice.customer.id === 'walk-in-customer') {
-                                                    showToast('يرجى اختيار عميل مسجل لاستخدام النقاط', 'error');
-                                                    return;
-                                                }
-                                                // If balance is null (loading), try to fetch it
-                                                if (customerPointsBalance === null && currentInvoice.customer) {
-                                                    fetchCustomerPointsBalance(currentInvoice.customer.id, currentInvoice.customer.phone);
-                                                }
-                                                // Only disable if we know for sure balance is 0 or less
-                                                if (customerPointsBalance !== null && customerPointsBalance <= 0) {
-                                                    showToast('العميل لا يمتلك نقاط كافية', 'error');
-                                                    return;
-                                                }
-                                                setSelectedPaymentMethod('Points'); 
-                                                setCreditPaidAmount(0); 
-                                                setCreditPaidAmountInput(null);
-                                                setCreditPaidAmountError(null); 
-                                            }} 
-                                            disabled={!currentInvoice.customer || currentInvoice.customer.id === 'walk-in-customer' || (customerPointsBalance !== null && customerPointsBalance <= 0)}
-                                            className={`p-1.5 sm:p-2 md:p-2.5 lg:p-3 rounded-xl border-2 text-center font-semibold text-xs sm:text-sm transition-all duration-200 ${
-                                                selectedPaymentMethod === 'Points' 
-                                                    ? 'border-blue-500 bg-gradient-to-br from-blue-50 to-blue-100 dark:from-blue-900/40 dark:to-blue-800/40 text-blue-700 dark:text-blue-300 shadow-lg scale-105' 
-                                                    : 'border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 hover:border-blue-300 dark:hover:border-blue-700 hover:bg-blue-50/50 dark:hover:bg-blue-900/20 disabled:opacity-50 disabled:cursor-not-allowed'
-                                            }`}
-                                        >
-                                            نقاط
-                                        </button>
-                                    </div>
-                                    {selectedPaymentMethod === 'Credit' && (
-                                        <div>
-                                            <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 text-right mb-1.5">{AR_LABELS.amountPaid}</label>
-                                            <input 
-                                                type="number" 
-                                                value={creditPaidAmountInput !== null ? creditPaidAmountInput : String(creditPaidAmount)} 
-                                                onFocus={(e) => {
-                                                    e.target.select();
-                                                    setCreditPaidAmountInput(prev => prev !== null ? prev : String(creditPaidAmount));
-                                                }}
-                                                onChange={(e) => handleCreditPaidAmountChange(e.target.value)} 
-                                                onBlur={handleCreditPaidAmountBlur}
-                                                className="w-full p-2 text-sm sm:text-base border-2 border-orange-300 dark:border-orange-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-lg text-center font-bold focus:ring-2 focus:ring-orange-500 focus:border-orange-500" 
-                                                min="0" 
-                                                step="0.5"
-                                            />
-                                            {creditPaidAmountError && (
-                                                <p className="mt-1.5 text-xs sm:text-sm text-red-600 dark:text-red-400 text-right">
-                                                    {creditPaidAmountError}
-                                                </p>
-                                            )}
-                                        </div>
-                                    )}
-                                    {selectedPaymentMethod === 'Points' && currentInvoice.customer && currentInvoice.customer.id !== 'walk-in-customer' && (
-                                        <div className="space-y-2">
-                                            {customerPointsBalance !== null ? (
-                                                <>
-                                                    <div className="flex justify-between items-center text-xs">
-                                                        <span className="text-gray-600 dark:text-gray-400">النقاط المتاحة:</span>
-                                                        <div className="flex items-center gap-2">
-                                                            <span className="font-bold text-blue-600 dark:text-blue-400">{customerPointsBalance}</span>
-                                                            <span className="text-gray-500 dark:text-gray-400">
-                                                                ({formatCurrency(customerPointsBalance * pointsValuePerPoint)})
-                                                            </span>
-                                                        </div>
-                                                    </div>
-                                                    <div>
-                                                        <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 text-right mb-1.5">النقاط المراد استخدامها</label>
-                                                        <input 
-                                                            type="number" 
-                                                            value={pointsToRedeem} 
-                                                            onChange={(e) => {
-                                                                const value = parseInt(e.target.value) || 0;
-                                                                const maxPoints = customerPointsBalance || 0;
-                                                                const maxPointsForPurchase = Math.floor(currentInvoice.grandTotal / pointsValuePerPoint);
-                                                                const maxAllowed = Math.min(maxPoints, maxPointsForPurchase);
-                                                                setPointsToRedeem(Math.min(Math.max(0, value), maxAllowed));
-                                                            }} 
-                                                            className="w-full p-2 text-sm sm:text-base border-2 border-blue-300 dark:border-blue-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-lg text-center font-bold focus:ring-2 focus:ring-blue-500 focus:border-blue-500" 
-                                                            min="0" 
-                                                            max={customerPointsBalance || 0}
-                                                            step="1"
-                                                        />
-                                                    </div>
-                                                    {pointsToRedeem > 0 && (
-                                                        <div className="bg-blue-50 dark:bg-blue-900/20 p-2 rounded-lg text-xs">
-                                                            <div className="flex justify-between mb-1">
-                                                                <span className="text-gray-600 dark:text-gray-400">قيمة النقاط:</span>
-                                                                <span className="font-bold text-blue-600 dark:text-blue-400">{formatCurrency(pointsToRedeem * pointsValuePerPoint)}</span>
-                                                            </div>
-                                                            <div className="flex justify-between">
-                                                                <span className="text-gray-600 dark:text-gray-400">المبلغ المتبقي:</span>
-                                                                <span className="font-bold text-gray-900 dark:text-gray-100">{formatCurrency(Math.max(0, currentInvoice.grandTotal - (pointsToRedeem * pointsValuePerPoint)))}</span>
-                                                            </div>
-                                                        </div>
-                                                    )}
-                                                </>
-                                            ) : (
-                                                <div className="text-center py-2 text-sm text-gray-500 dark:text-gray-400">
-                                                    جاري تحميل رصيد النقاط...
-                                                </div>
-                                            )}
-                                        </div>
-                                    )}
                                     <div className="flex flex-col sm:flex-row gap-1.5 sm:gap-2 md:gap-2.5 lg:gap-3">
                                         <div className="flex justify-between items-center bg-gray-50 dark:bg-gray-700/50 p-1.5 sm:p-1.5 md:p-2 rounded-lg border border-gray-200 dark:border-gray-600 flex-1">
                                             <ToggleSwitch
@@ -7360,6 +7310,85 @@ const POSPage: React.FC = () => {
                     </div>
                 </div>
             </div>
+            {/* Payment Confirmation Modal: when customer is selected, force explicit payment method before finalizing */}
+            {paymentConfirmationModalOpen && (
+                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[70] p-4" onClick={() => setPaymentConfirmationModalOpen(false)}>
+                    <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl max-w-md w-full max-h-[90vh] overflow-y-auto text-right" onClick={e => e.stopPropagation()}>
+                        <div className="p-4 sm:p-6 border-b border-gray-200 dark:border-gray-700">
+                            <h2 className="text-lg font-bold text-gray-900 dark:text-gray-100">تأكيد الدفع</h2>
+                            <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">اختر طريقة الدفع ثم أكد لإتمام الفاتورة</p>
+                        </div>
+                        <div className="p-4 sm:p-6 space-y-4">
+                            <div>
+                                <span className="text-xs text-gray-500 dark:text-gray-400">العميل</span>
+                                <p className="font-semibold text-gray-900 dark:text-gray-100">{currentInvoice.customer?.name || '—'}</p>
+                            </div>
+                            <div>
+                                <span className="text-xs text-gray-500 dark:text-gray-400">إجمالي الفاتورة</span>
+                                <p className="text-xl font-bold text-orange-600 dark:text-orange-400">{formatCurrency(currentInvoice.grandTotal)}</p>
+                            </div>
+                            {currentInvoice.items.length > 0 && (
+                                <div>
+                                    <span className="text-xs text-gray-500 dark:text-gray-400">عدد الأصناف: {currentInvoice.items.length}</span>
+                                </div>
+                            )}
+                            <div>
+                                <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-2">طريقة الدفع</label>
+                                <div className="grid grid-cols-2 gap-2">
+                                    <button type="button" onClick={() => { setModalPaymentMethod('Cash'); setModalCreditPaidAmountError(null); }} className={`p-2.5 rounded-xl border-2 text-center font-semibold text-sm ${modalPaymentMethod === 'Cash' ? 'border-orange-500 bg-orange-50 dark:bg-orange-900/30 text-orange-700 dark:text-orange-300' : 'border-gray-200 dark:border-gray-600 hover:border-orange-300'}`}>{AR_LABELS.cash}</button>
+                                    <button type="button" onClick={() => { setModalPaymentMethod('Card'); setModalCreditPaidAmountError(null); }} className={`p-2.5 rounded-xl border-2 text-center font-semibold text-sm ${modalPaymentMethod === 'Card' ? 'border-orange-500 bg-orange-50 dark:bg-orange-900/30 text-orange-700 dark:text-orange-300' : 'border-gray-200 dark:border-gray-600 hover:border-orange-300'}`}>{AR_LABELS.visa}</button>
+                                    <button type="button" onClick={() => { setModalPaymentMethod('Credit'); setModalCreditPaidAmountError(null); }} className={`p-2.5 rounded-xl border-2 text-center font-semibold text-sm ${modalPaymentMethod === 'Credit' ? 'border-orange-500 bg-orange-50 dark:bg-orange-900/30 text-orange-700 dark:text-orange-300' : 'border-gray-200 dark:border-gray-600 hover:border-orange-300'}`}>{AR_LABELS.credit}</button>
+                                    <button type="button" onClick={() => { setModalPaymentMethod('Points'); setModalCreditPaidAmountError(null); if (currentInvoice.customer && customerPointsBalance === null) fetchCustomerPointsBalance(currentInvoice.customer.id, currentInvoice.customer.phone); }} className={`p-2.5 rounded-xl border-2 text-center font-semibold text-sm ${modalPaymentMethod === 'Points' ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300' : 'border-gray-200 dark:border-gray-600 hover:border-blue-300'}`}>نقاط</button>
+                                </div>
+                            </div>
+                            {modalPaymentMethod === 'Credit' && (
+                                <div>
+                                    <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1.5">{AR_LABELS.amountPaid}</label>
+                                    <input
+                                        type="number"
+                                        value={modalCreditPaidAmountInput !== null ? modalCreditPaidAmountInput : String(modalCreditPaidAmount)}
+                                        onChange={(e) => { setModalCreditPaidAmountInput(e.target.value); setModalCreditPaidAmountError(null); }}
+                                        onBlur={(e) => {
+                                            const raw = e.target.value.trim();
+                                            if (raw === '') { setModalCreditPaidAmount(0); setModalCreditPaidAmountInput(null); setModalCreditPaidAmountError(null); return; }
+                                            const n = Number(raw);
+                                            if (!Number.isFinite(n)) { setModalCreditPaidAmountError(HALF_UNIT_INCREMENT_ERROR); return; }
+                                            if (!isValidHalfUnitIncrement(n)) { setModalCreditPaidAmountError(HALF_UNIT_INCREMENT_ERROR); return; }
+                                            setModalCreditPaidAmount(n); setModalCreditPaidAmountInput(null); setModalCreditPaidAmountError(null);
+                                        }}
+                                        className="w-full p-2 border-2 border-orange-300 dark:border-orange-600 rounded-lg text-center font-bold"
+                                        min={0}
+                                        step="0.5"
+                                    />
+                                    {modalCreditPaidAmountError && <p className="mt-1 text-xs text-red-600 dark:text-red-400">{modalCreditPaidAmountError}</p>}
+                                    <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">المبلغ المتبقي = دين على العميل: {formatCurrency(Math.max(0, currentInvoice.grandTotal - (modalCreditPaidAmountInput !== null ? parseFloat(modalCreditPaidAmountInput) || 0 : modalCreditPaidAmount)))}</p>
+                                </div>
+                            )}
+                            {modalPaymentMethod === 'Points' && currentInvoice.customer && (
+                                <div className="space-y-2">
+                                    {customerPointsBalance !== null ? (
+                                        <>
+                                            <div className="flex justify-between text-xs">
+                                                <span className="text-gray-600 dark:text-gray-400">النقاط المتاحة:</span>
+                                                <span className="font-bold text-blue-600 dark:text-blue-400">{customerPointsBalance}</span>
+                                            </div>
+                                            <label className="block text-xs font-medium text-gray-700 dark:text-gray-300">النقاط المراد استخدامها</label>
+                                            <input type="number" value={modalPointsToRedeem} onChange={(e) => { const v = parseInt(e.target.value) || 0; const max = Math.min(customerPointsBalance || 0, Math.floor(currentInvoice.grandTotal / pointsValuePerPoint)); setModalPointsToRedeem(Math.min(Math.max(0, v), max)); }} className="w-full p-2 border-2 border-blue-300 dark:border-blue-600 rounded-lg text-center" min={0} max={customerPointsBalance || 0} step={1} />
+                                            {modalPointsToRedeem > 0 && <p className="text-xs text-gray-500">قيمة النقاط: {formatCurrency(modalPointsToRedeem * pointsValuePerPoint)} — المتبقي: {formatCurrency(Math.max(0, currentInvoice.grandTotal - modalPointsToRedeem * pointsValuePerPoint))}</p>}
+                                        </>
+                                    ) : (
+                                        <p className="text-sm text-gray-500">جاري تحميل رصيد النقاط...</p>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+                        <div className="p-4 sm:p-6 flex gap-3 border-t border-gray-200 dark:border-gray-700">
+                            <button type="button" onClick={() => setPaymentConfirmationModalOpen(false)} className="flex-1 py-2.5 px-4 rounded-xl border-2 border-gray-300 dark:border-gray-600 font-semibold text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">إلغاء</button>
+                            <button type="button" onClick={handlePaymentConfirmationConfirm} className="flex-1 py-2.5 px-4 rounded-xl bg-gradient-to-r from-green-500 to-green-600 text-white font-bold hover:from-green-600 hover:to-green-700">{AR_LABELS.confirmPayment}</button>
+                        </div>
+                    </div>
+                </div>
+            )}
             <AddCustomerModal 
                 isOpen={isAddCustomerModalOpen} 
                 onClose={() => setIsAddCustomerModalOpen(false)}
