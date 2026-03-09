@@ -4382,25 +4382,23 @@ const POSPage: React.FC = () => {
         }
     };
 
-    // Keyboard shortcuts: F1 to trigger confirm payment, F2 to start new sale
+    // Keyboard shortcuts: F1 = Confirm Payment, F2 = Start New Sale (work anywhere on POS screen; always prevent browser default)
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
-            // Ignore keyboard shortcuts if user is typing in an input field, textarea, or contenteditable element
-            const target = e.target as HTMLElement;
-            const isInputField = 
-                target.tagName === 'INPUT' || 
-                target.tagName === 'TEXTAREA' || 
-                target.isContentEditable ||
-                target.closest('input') !== null ||
-                target.closest('textarea') !== null;
-
-            if (isInputField) {
-                return; // Don't handle shortcuts when typing in input fields
-            }
-
-            // F1 key: Trigger the confirm payment button (only when on main POS screen and cart has items)
+            // F1 key: Trigger the confirm payment button
             if (e.key === 'F1') {
                 e.preventDefault();
+                e.stopPropagation();
+                // Skip action when typing in input/textarea so we don't confirm by accident
+                const target = e.target as HTMLElement;
+                const isInputField =
+                    target.tagName === 'INPUT' ||
+                    target.tagName === 'TEXTAREA' ||
+                    target.isContentEditable ||
+                    target.closest('input') !== null ||
+                    target.closest('textarea') !== null;
+                if (isInputField) return;
+
                 const confirmButton = confirmPaymentButtonRef.current;
                 if (confirmButton && !confirmButton.disabled) {
                     confirmButton.click();
@@ -4412,12 +4410,20 @@ const POSPage: React.FC = () => {
                 return;
             }
 
-            // F2 key: Trigger the "start new sale" button (only when on sale completed/receipt screen)
+            // F2 key: Trigger the "start new sale" button
             if (e.key === 'F2') {
                 e.preventDefault();
-                // CRITICAL: Block F2 shortcut if sale is processing or queue is processing
+                e.stopPropagation();
+                const target = e.target as HTMLElement;
+                const isInputField =
+                    target.tagName === 'INPUT' ||
+                    target.tagName === 'TEXTAREA' ||
+                    target.isContentEditable ||
+                    target.closest('input') !== null ||
+                    target.closest('textarea') !== null;
+                if (isInputField) return;
+
                 if (isProcessingPayment || isSubmittingInvoiceRef.current || queueProcessing) {
-                    console.warn('[POS] ⚠️ BLOCKED: Cannot start new sale while processing');
                     return;
                 }
                 const newSaleButton = startNewSaleButtonRef.current;
@@ -4428,7 +4434,6 @@ const POSPage: React.FC = () => {
                 if (saleCompleted) {
                     startNewSale();
                 }
-                return;
             }
         };
 
@@ -4437,7 +4442,7 @@ const POSPage: React.FC = () => {
         return () => {
             window.removeEventListener('keydown', handleKeyDown);
         };
-    }, [saleCompleted, currentInvoice.items.length, isProcessingPayment, handleFinalizePayment, startNewSale]);
+    }, [saleCompleted, currentInvoice.items.length, isProcessingPayment, queueProcessing, handleFinalizePayment, startNewSale]);
 
     // Prevent page refresh/navigation during processing
     useEffect(() => {
@@ -6389,6 +6394,7 @@ const POSPage: React.FC = () => {
                     {/* Buttons above invoice */}
                     <div className="flex flex-row gap-2 sm:gap-3 mb-4 sm:mb-6 print-hidden w-full justify-center">
                         <button 
+                            id="newSaleBtn"
                             ref={startNewSaleButtonRef}
                             onClick={startNewSale}
                             disabled={isProcessingPayment || queueProcessing || isSubmittingInvoiceRef.current}
@@ -7290,6 +7296,7 @@ const POSPage: React.FC = () => {
                                         </button>
                                     </div>
                                     <button 
+                                        id="confirmPaymentBtn"
                                         ref={confirmPaymentButtonRef}
                                         onClick={handleFinalizePayment} 
                                         disabled={currentInvoice.items.length === 0 || isProcessingPayment || hasUnsyncedSales} 
