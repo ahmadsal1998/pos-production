@@ -3,6 +3,7 @@ import { PermissionProtectedRoute } from '@/shared/components';
 import SalesPage from '@/pages/sales/SalesPage';
 import SalesHistoryPage from '@/pages/sales/SalesHistoryPage';
 import SalesTodayPage from '@/pages/sales/SalesTodayPage';
+import SalesReportsPage from '@/pages/sales/SalesReportsPage';
 import RefundsPage from '@/pages/sales/RefundsPage';
 import POSPage from '@/pages/sales/POSPage';
 import WholesalePOSPage from '@/pages/sales/WholesalePOSPage';
@@ -47,7 +48,7 @@ export const salesRoutes: RouteObject[] = [
         path: 'reports',
         element: (
           <PermissionProtectedRoute>
-            <SalesPage />
+            <SalesReportsPage />
           </PermissionProtectedRoute>
         ),
       },

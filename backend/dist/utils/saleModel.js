@@ -167,6 +167,12 @@ const saleSchema = new import_mongoose.Schema(
       type: Boolean,
       default: false,
       index: true
+    },
+    invoiceType: {
+      type: String,
+      enum: ["retail", "wholesale"],
+      default: "retail",
+      index: true
     }
   },
   {

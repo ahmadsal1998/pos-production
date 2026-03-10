@@ -46,6 +46,7 @@ var import_productCache = require("../utils/productCache");
 var import_productModel = require("../utils/productModel");
 var import_product = require("../services/product.service");
 var import_Category = __toESM(require("../models/Category"));
+var import_Unit = __toESM(require("../models/Unit"));
 var import_multer = __toESM(require("multer"));
 var import_sync = require("csv-parse/sync");
 var import_logger = require("../utils/logger");
@@ -972,7 +973,10 @@ function validateAndNormalizeProduct(row, rowIndex) {
   const name = extractField(row, ["Product Name", "product name", "ProductName", "productName", "Name", "name"]);
   const barcode = extractField(row, ["Barcode", "barcode"]);
   const costPrice = extractField(row, ["Cost Price", "cost price", "CostPrice", "costPrice"]);
-  const sellingPrice = extractField(row, ["Selling Price", "selling price", "SellingPrice", "sellingPrice", "Price", "price"]);
+  const sellingPrice = extractField(row, ["Selling Price", "selling price", "Sale Price", "sale price", "SellingPrice", "sellingPrice", "SalePrice", "salePrice", "Price", "price"]);
+  const categoryName = extractField(row, ["Category", "category"]);
+  const unitName = extractField(row, ["Unit", "unit"]);
+  const quantityRaw = extractField(row, ["Quantity", "quantity", "Stock", "stock"]);
   if (!name || !name.trim()) {
     return {
       isValid: false,
@@ -994,7 +998,7 @@ function validateAndNormalizeProduct(row, rowIndex) {
   if (sellingPrice === void 0 || sellingPrice === null || sellingPrice === "") {
     return {
       isValid: false,
-      error: `Row ${rowIndex + 1}: Selling Price is missing or empty`
+      error: `Row ${rowIndex + 1}: Selling Price / Sale Price is missing or empty`
     };
   }
   const parsedCostPrice = typeof costPrice === "number" ? costPrice : parseFloat(costPrice.toString().replace(/,/g, ""));
@@ -1008,8 +1012,15 @@ function validateAndNormalizeProduct(row, rowIndex) {
   if (isNaN(parsedSellingPrice) || parsedSellingPrice < 0) {
     return {
       isValid: false,
-      error: `Row ${rowIndex + 1}: Invalid Selling Price value`
+      error: `Row ${rowIndex + 1}: Invalid Sale Price value`
     };
+  }
+  let quantity = 0;
+  if (quantityRaw !== void 0 && quantityRaw !== null && quantityRaw !== "") {
+    const parsed = typeof quantityRaw === "number" ? quantityRaw : parseFloat(quantityRaw.toString().replace(/,/g, ""));
+    if (!isNaN(parsed) && parsed >= 0) {
+      quantity = Math.floor(parsed);
+    }
   }
   return {
     isValid: true,
@@ -1017,7 +1028,10 @@ function validateAndNormalizeProduct(row, rowIndex) {
       name: name.trim(),
       barcode: barcode.toString().trim(),
       costPrice: parsedCostPrice,
-      price: parsedSellingPrice
+      price: parsedSellingPrice,
+      categoryName: categoryName && String(categoryName).trim() ? String(categoryName).trim() : void 0,
+      unitName: unitName && String(unitName).trim() ? String(unitName).trim() : void 0,
+      quantity
     }
   };
 }
@@ -1065,6 +1079,19 @@ const importProducts = (0, import_error.asyncHandler)(async (req, res) => {
         message: "File is empty or contains no valid data."
       });
     }
+    const storeIdLower = storeId.toLowerCase();
+    const categories = await import_Category.default.find({ storeId: storeIdLower }).select("_id name").lean();
+    const categoryNameToId = /* @__PURE__ */ new Map();
+    for (const c of categories) {
+      const key = (c.name || "").trim().toLowerCase();
+      if (key) categoryNameToId.set(key, c._id.toString());
+    }
+    const units = await import_Unit.default.find({ storeId: storeIdLower }).select("_id name").lean();
+    const unitNameToId = /* @__PURE__ */ new Map();
+    for (const u of units) {
+      const key = (u.name || "").trim().toLowerCase();
+      if (key) unitNameToId.set(key, u._id.toString());
+    }
     const validProducts = [];
     const errors = [];
     const skippedProducts = [];
@@ -1089,7 +1116,10 @@ const importProducts = (0, import_error.asyncHandler)(async (req, res) => {
         barcode: product.barcode,
         costPrice: product.costPrice,
         price: product.price,
-        storeId: storeId.toLowerCase()
+        storeId: storeIdLower,
+        categoryName: product.categoryName,
+        unitName: product.unitName,
+        quantity: product.quantity
       });
     }
     if (validProducts.length === 0) {
@@ -1110,21 +1140,24 @@ const importProducts = (0, import_error.asyncHandler)(async (req, res) => {
     const duplicateBarcodes = [];
     for (const product of validProducts) {
       if (existingBarcodeSet.has(product.barcode)) {
-        const existingProduct = existingBarcodes.find((p) => p.barcode === product.barcode);
         duplicateBarcodes.push(`${product.name} (Barcode: ${product.barcode})`);
         errors.push(`Product "${product.name}" with barcode "${product.barcode}" already exists in database`);
         continue;
       }
-      productsToImport.push({
+      const categoryId = product.categoryName ? categoryNameToId.get(product.categoryName.trim().toLowerCase()) : void 0;
+      const mainUnitId = product.unitName ? unitNameToId.get(product.unitName.trim().toLowerCase()) : void 0;
+      const doc = {
         storeId: storeId.toLowerCase(),
-        // REQUIRED for multi-tenant isolation
         name: product.name,
         barcode: product.barcode,
         costPrice: product.costPrice,
         price: product.price,
-        stock: 0,
+        stock: product.quantity,
         status: "active"
-      });
+      };
+      if (categoryId) doc.categoryId = categoryId;
+      if (mainUnitId) doc.mainUnitId = mainUnitId;
+      productsToImport.push(doc);
     }
     if (productsToImport.length === 0) {
       return res.status(400).json({

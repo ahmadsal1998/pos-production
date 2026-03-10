@@ -1,6 +1,7 @@
 export { authApi } from './authApi';
 export { productsApi, type ProductMetrics, type ProductsPaginationResponse } from './productsApi';
 export { salesApi } from './salesApi';
+export { salesReportsApi, type ReportParams, type ReportPeriod } from './salesReportsApi';
 export { pointsApi } from './pointsApi';
 export { dashboardApi } from './dashboardApi';
 export { usersApi } from './usersApi';

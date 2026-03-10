@@ -50,6 +50,7 @@ var import_businessDate = require("../utils/businessDate");
 var import_logger = require("../utils/logger");
 var import_Store = __toESM(require("../models/Store"));
 var import_customerModel = require("../utils/customerModel");
+var import_customerPaymentModel = require("../utils/customerPaymentModel");
 var import_GlobalCustomer = __toESM(require("../models/GlobalCustomer"));
 var import_PointsSettings = __toESM(require("../models/PointsSettings"));
 var import_PointsBalance = __toESM(require("../models/PointsBalance"));
@@ -116,7 +117,8 @@ const createSale = (0, import_error.asyncHandler)(async (req, res, next) => {
     paymentMethod,
     status,
     seller,
-    isReturn = false
+    isReturn = false,
+    invoiceType
   } = req.body;
   if (!invoiceNumber || !customerName || !items || !Array.isArray(items) || items.length === 0) {
     return res.status(400).json({
@@ -156,7 +158,8 @@ const createSale = (0, import_error.asyncHandler)(async (req, res, next) => {
       paymentMethod,
       status,
       seller,
-      isReturn
+      isReturn,
+      invoiceType
     });
     return res.status(201).json({
       success: true,
@@ -189,7 +192,7 @@ const createSale = (0, import_error.asyncHandler)(async (req, res, next) => {
 const getSales = (0, import_error.asyncHandler)(async (req, res) => {
   const userStoreId = req.user?.storeId || null;
   const userRole = req.user?.role || null;
-  const { startDate, endDate, customerId, status, paymentMethod, seller, storeId: queryStoreId, page = 1, limit = 100 } = req.query;
+  const { startDate, endDate, customerId, status, paymentMethod, seller, storeId: queryStoreId, page = 1, limit = 100, search: searchParam } = req.query;
   let targetStoreId = null;
   if (userRole === "Admin") {
     if (queryStoreId) {
@@ -240,6 +243,15 @@ const getSales = (0, import_error.asyncHandler)(async (req, res) => {
   if (seller && seller !== "all") {
     query.seller = seller;
   }
+  const search = typeof searchParam === "string" ? searchParam.trim() : "";
+  if (search) {
+    const escaped = search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const searchRegex = new RegExp(escaped, "i");
+    query.$or = [
+      { invoiceNumber: searchRegex },
+      { customerName: searchRegex }
+    ];
+  }
   let businessDayStartTime;
   let businessDayTimezone;
   const settingsStoreId = targetStoreId || modelStoreId;
@@ -263,7 +275,7 @@ const getSales = (0, import_error.asyncHandler)(async (req, res) => {
   }
   let usingDateFilter = false;
   let businessDateQuery = null;
-  if (startDate || endDate) {
+  if ((startDate || endDate) && !search) {
     usingDateFilter = true;
     const { start, end } = (0, import_businessDate.getBusinessDateFilterRange)(
       startDate,
@@ -769,6 +781,17 @@ const updateSale = (0, import_error.asyncHandler)(async (req, res) => {
         status: body.status,
         date: body.date
       });
+      const updatedSale = result.sale;
+      if ((updatedSale?.paidAmount ?? 0) <= 0) {
+        const CustomerPayment = (0, import_customerPaymentModel.getCustomerPaymentModelForStore)(storeId);
+        const normalizedStoreId = (storeId || "").toLowerCase().trim();
+        const invoiceIds = [id];
+        if (updatedSale?.invoiceNumber) invoiceIds.push(String(updatedSale.invoiceNumber));
+        await CustomerPayment.deleteMany({
+          storeId: normalizedStoreId,
+          invoiceId: { $in: invoiceIds }
+        });
+      }
       return res.status(200).json({
         success: true,
         message: "Sale updated successfully",
@@ -802,6 +825,18 @@ const updateSale = (0, import_error.asyncHandler)(async (req, res) => {
     }
   });
   await sale.save();
+  const saleAny = sale;
+  const paidAmount = saleAny.paidAmount ?? 0;
+  if (paidAmount <= 0) {
+    const CustomerPayment = (0, import_customerPaymentModel.getCustomerPaymentModelForStore)(storeId);
+    const normalizedStoreId = (storeId || "").toLowerCase().trim();
+    const invoiceIds = [id];
+    if (saleAny.invoiceNumber) invoiceIds.push(String(saleAny.invoiceNumber));
+    await CustomerPayment.deleteMany({
+      storeId: normalizedStoreId,
+      invoiceId: { $in: invoiceIds }
+    });
+  }
   res.status(200).json({
     success: true,
     message: "Sale updated successfully",
