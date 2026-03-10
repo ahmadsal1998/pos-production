@@ -1,9 +1,8 @@
-import { RouteObject } from 'react-router-dom';
+import { Navigate, RouteObject } from 'react-router-dom';
 import { PermissionProtectedRoute } from '@/shared/components';
 import SalesPage from '@/pages/sales/SalesPage';
 import SalesHistoryPage from '@/pages/sales/SalesHistoryPage';
 import SalesTodayPage from '@/pages/sales/SalesTodayPage';
-import SalesReportsPage from '@/pages/sales/SalesReportsPage';
 import RefundsPage from '@/pages/sales/RefundsPage';
 import POSPage from '@/pages/sales/POSPage';
 import WholesalePOSPage from '@/pages/sales/WholesalePOSPage';
@@ -44,14 +43,7 @@ export const salesRoutes: RouteObject[] = [
           </PermissionProtectedRoute>
         ),
       },
-      {
-        path: 'reports',
-        element: (
-          <PermissionProtectedRoute>
-            <SalesReportsPage />
-          </PermissionProtectedRoute>
-        ),
-      },
+      { path: 'reports', element: <Navigate to="/reports" replace /> },
       {
         path: 'customer-accounts',
         element: (

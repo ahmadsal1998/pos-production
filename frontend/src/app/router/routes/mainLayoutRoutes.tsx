@@ -3,6 +3,7 @@ import { PermissionProtectedRoute } from '@/shared/components';
 import DashboardPage from '@/pages/dashboard/Dashboard';
 import { productRoutes } from './productRoutes';
 import { salesRoutes } from './salesRoutes';
+import { reportsRoutes } from './reportsRoutes';
 import { financialRoutes } from './financialRoutes';
 import { userManagementRoutes } from './userManagementRoutes';
 import { pointsRoutes } from './pointsRoutes';
@@ -19,6 +20,7 @@ export const mainLayoutRoutes: RouteObject[] = [
   },
   ...productRoutes,
   ...salesRoutes,
+  ...reportsRoutes,
   ...financialRoutes,
   ...userManagementRoutes,
   ...pointsRoutes,

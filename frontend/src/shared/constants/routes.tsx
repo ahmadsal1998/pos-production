@@ -91,6 +91,7 @@ export const NAV_ITEMS: NavItem[] = [
   { id: 4, label: AR_LABELS.cheques, icon: <ChequesIcon />, path: '/cheques' },
   { id: 5, label: AR_LABELS.expenses, icon: <ExpensesIcon />, path: '/expenses' },
   { id: 6, label: AR_LABELS.sales, icon: <SalesIcon />, path: '/sales' },
+  { id: 61, label: AR_LABELS.reports, icon: <ViewReportsIcon />, path: '/reports' },
   {
     id: 7,
     label: AR_LABELS.pointOfSales,

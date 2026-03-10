@@ -23,7 +23,7 @@ export const routePermissions: Record<string, ScreenPermission | ScreenPermissio
   '/sales/today': 'salesToday',
   '/sales/history': 'salesHistory',
   '/sales/refunds': 'refunds',
-  
+ 
   // POS
   '/pos/1': 'posRetail',
   '/pos/2': 'posWholesale',

@@ -1,5 +1,4 @@
 import React, { useState, useCallback, useEffect } from 'react';
-import { Link } from 'react-router-dom';
 import { salesReportsApi, type ReportParams, type ReportPeriod } from '@/lib/api/client';
 import { productsApi, customersApi, categoriesApi, usersApi } from '@/lib/api/client';
 import { ReportDataGrid, type ColumnDef } from '@/features/sales/components/ReportDataGrid';
@@ -254,7 +253,8 @@ const PERIOD_OPTIONS = [
   { value: 'monthly', label: 'شهري' },
 ];
 
-export default function SalesReportsPage() {
+/** Inner reports content (filters + grid). Used by ReportsPage and can be reused. */
+export function SalesReportsContent() {
   const [category, setCategory] = useState<(typeof REPORT_CATEGORIES)[number]['id']>('sales');
   const [reportId, setReportId] = useState<ReportId | ''>('');
   const [fromDate, setFromDate] = useState('');
@@ -440,19 +440,7 @@ export default function SalesReportsPage() {
   }, [reportId, buildParams]);
 
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-900">
-      <div className="max-w-7xl mx-auto px-4 py-6">
-        <div className="mb-6 flex items-center gap-4">
-          <Link
-            to="/sales"
-            className="text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100"
-          >
-            ← {AR_LABELS.sales}
-          </Link>
-          <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-100">تقارير المبيعات</h1>
-        </div>
-
-        <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+    <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
           <aside className="lg:col-span-1 space-y-4">
             <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-4 shadow-sm">
               <h2 className="text-sm font-semibold text-slate-700 dark:text-slate-300 mb-3">نوع التقرير</h2>
@@ -624,7 +612,7 @@ export default function SalesReportsPage() {
             )}
           </main>
         </div>
-      </div>
-    </div>
   );
 }
+
+export default SalesReportsContent;

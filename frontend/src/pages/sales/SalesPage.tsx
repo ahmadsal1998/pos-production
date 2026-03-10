@@ -1753,9 +1753,8 @@ const SalesPage: React.FC<SalesPageProps> = ({ setActivePath }) => {
     const currentUserName = user?.fullName || user?.username || 'Unknown';
     const location = useLocation();
     const pathname = location.pathname;
-    const activeTab: 'sales' | 'reports' | 'customers' =
-        pathname.includes('/sales/reports') ? 'reports'
-        : pathname.includes('/sales/customer-accounts') ? 'customers'
+    const activeTab: 'sales' | 'customers' =
+        pathname.includes('/sales/customer-accounts') ? 'customers'
         : 'sales';
     const [sales, setSales] = useState<SaleTransaction[]>([]);
     const [customers, setCustomers] = useState<Customer[]>([]);
@@ -2412,13 +2411,6 @@ const SalesPage: React.FC<SalesPageProps> = ({ setActivePath }) => {
         return () => clearTimeout(timer);
     }, [loadCustomersFromDB]);
 
-    // Defer heavy payments fetch until user opens Reports tab (avoids 30s timeout on page load)
-    useEffect(() => {
-        if (activeTab === 'reports') {
-            fetchPayments();
-        }
-    }, [activeTab, fetchPayments]);
-
     // Listen for customer changes from other tabs
     useEffect(() => {
         const handleStorageChange = (e: StorageEvent) => {
@@ -2934,19 +2926,6 @@ const SalesPage: React.FC<SalesPageProps> = ({ setActivePath }) => {
                                 <span className="relative">{AR_LABELS.viewAllSales}</span>
                             </Link>
                             <Link
-                                to="/sales/reports"
-                                className={`group relative px-6 py-3 rounded-xl text-sm font-medium transition-all duration-300 whitespace-nowrap ${
-                                    activeTab === 'reports'
-                                        ? 'bg-gradient-to-r from-orange-500 to-amber-500 text-white shadow-lg shadow-orange-500/50'
-                                        : 'bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl text-slate-700 dark:text-slate-200 border border-slate-200/50 dark:border-slate-700/50 hover:shadow-md'
-                                }`}
-                            >
-                                {activeTab === 'reports' && (
-                                    <div className="absolute -inset-0.5 rounded-xl bg-gradient-to-r from-orange-500 to-amber-500 opacity-20 blur" />
-                                )}
-                                <span className="relative">{AR_LABELS.salesReports}</span>
-                            </Link>
-                            <Link
                                 to="/sales/customer-accounts"
                                 className={`group relative px-6 py-3 rounded-xl text-sm font-medium transition-all duration-300 whitespace-nowrap ${
                                     activeTab === 'customers'
@@ -3171,7 +3150,6 @@ const SalesPage: React.FC<SalesPageProps> = ({ setActivePath }) => {
                             onSearchChange={setSalesSearchTerm}
                         />
                     )}
-                    {activeTab === 'reports' && <ReportsView sales={sales} customers={customers} payments={payments} />}
                     {activeTab === 'customers' && (
                         <>
                             <AccountsModule
@@ -3951,187 +3929,6 @@ const SalesTableRow: React.FC<{sale: SaleTransaction, onView: (s: SaleTransactio
         </tr>
     )
 }
-
-const ReportsView: React.FC<{ sales: SaleTransaction[], customers: Customer[], payments: CustomerPayment[] }> = ({ sales, customers, payments }) => {
-    const { formatCurrency } = useCurrency();
-    type ReportType = 'total' | 'customer' | 'user' | 'payment';
-    const [reportType, setReportType] = useState<ReportType>('total');
-    const [dateRange, setDateRange] = useState({ start: '', end: '' });
-    const [reportData, setReportData] = useState<any[] | null>(null);
-    const [reportHeaders, setReportHeaders] = useState<string[]>([]);
-
-    const handleDateChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        setDateRange(prev => ({ ...prev, [e.target.name]: e.target.value }));
-    };
-
-    const handleGenerateReport = () => {
-        // Use business date filtering with timezone
-        const businessDayStartTime = getBusinessDayStartTime();
-        const timezone = getBusinessDayTimezone();
-        const timeStr = businessDayStartTime.hours.toString().padStart(2, '0') + ':' + businessDayStartTime.minutes.toString().padStart(2, '0');
-        const { start, end } = getBusinessDateFilterRange(
-            dateRange.start || null,
-            dateRange.end || null,
-            timeStr,
-            timezone
-        );
-        
-        const filteredSales = sales.filter(sale => {
-            if (!start && !end) return true;
-            const saleDate = new Date(sale.date);
-            if (start && saleDate < start) return false;
-            if (end && saleDate > end) return false;
-            return true;
-        });
-
-        let data: any[] = [];
-        let headers: string[] = [];
-
-        switch (reportType) {
-            case 'total': {
-                headers = ['المؤشر', 'القيمة'];
-                const totalSales = filteredSales.reduce((sum, s) => sum + s.totalAmount, 0);
-                const totalPaid = filteredSales.reduce((sum, s) => sum + s.paidAmount, 0);
-                const totalRemaining = filteredSales.reduce((sum, s) => sum + s.remainingAmount, 0);
-                data = [
-                    { 'المؤشر': AR_LABELS.totalDebt, 'القيمة': formatCurrency(totalSales) },
-                    { 'المؤشر': AR_LABELS.paid, 'القيمة': formatCurrency(totalPaid) },
-                    { 'المؤشر': AR_LABELS.remaining, 'القيمة': formatCurrency(totalRemaining) },
-                    { 'المؤشر': AR_LABELS.invoiceCount, 'القيمة': filteredSales.length },
-                ];
-                break;
-            }
-            case 'customer': {
-                headers = [AR_LABELS.customerName, AR_LABELS.invoiceCount, AR_LABELS.totalDebt, AR_LABELS.paid, AR_LABELS.remaining];
-                // FIX: Explicitly type the accumulator's initial value in the reduce function to ensure correct type inference.
-                const byCustomer = filteredSales.reduce((acc, sale) => {
-                    if (!acc[sale.customerId]) {
-                        acc[sale.customerId] = { name: sale.customerName, count: 0, total: 0, paid: 0, remaining: 0 };
-                    }
-                    acc[sale.customerId].count++;
-                    acc[sale.customerId].total += sale.totalAmount;
-                    acc[sale.customerId].paid += sale.paidAmount;
-                    acc[sale.customerId].remaining += sale.remainingAmount;
-                    return acc;
-                // FIX: Add type assertion to the accumulator.
-                }, {} as Record<string, { name: string; count: number; total: number; paid: number; remaining: number }>);
-                // FIX: Explicitly type the mapped parameter 'c' to resolve 'unknown' type error.
-                data = Object.values(byCustomer).map((c: { name: string; count: number; total: number; paid: number; remaining: number }) => ({
-                    [AR_LABELS.customerName]: c.name,
-                    [AR_LABELS.invoiceCount]: c.count,
-                    [AR_LABELS.totalDebt]: formatCurrency(c.total),
-                    [AR_LABELS.paid]: formatCurrency(c.paid),
-                    [AR_LABELS.remaining]: formatCurrency(c.remaining),
-                }));
-                break;
-            }
-            case 'user': {
-                headers = [AR_LABELS.seller, AR_LABELS.invoiceCount, AR_LABELS.totalSales, AR_LABELS.paid, AR_LABELS.remaining];
-                // FIX: Explicitly type the accumulator's initial value in the reduce function to ensure correct type inference.
-                const byUser = filteredSales.reduce((acc, sale) => {
-                    if (!acc[sale.seller]) {
-                       acc[sale.seller] = { count: 0, total: 0, paid: 0, remaining: 0 };
-                    }
-                    acc[sale.seller].count++;
-                    acc[sale.seller].total += sale.totalAmount;
-                    acc[sale.seller].paid += sale.paidAmount;
-                    acc[sale.seller].remaining += sale.remainingAmount;
-                    return acc;
-                // FIX: Add type assertion to the accumulator.
-                }, {} as Record<string, { count: number; total: number; paid: number; remaining: number }>);
-                // FIX: Explicitly type the mapped parameter 'u' to resolve 'unknown' type error.
-                data = Object.entries(byUser).map(([seller, u]: [string, { count: number; total: number; paid: number; remaining: number }]) => ({
-                    [AR_LABELS.seller]: seller,
-                    [AR_LABELS.invoiceCount]: u.count,
-                    [AR_LABELS.totalSales]: formatCurrency(u.total),
-                    [AR_LABELS.paid]: formatCurrency(u.paid),
-                    [AR_LABELS.remaining]: formatCurrency(u.remaining),
-                }));
-                break;
-            }
-            case 'payment': {
-                headers = [AR_LABELS.paymentType, AR_LABELS.invoiceCount, AR_LABELS.totalSales, AR_LABELS.paid, AR_LABELS.remaining];
-                // FIX: Explicitly type the accumulator's initial value in the reduce function to ensure correct type inference.
-                const byPayment = filteredSales.reduce((acc, sale) => {
-                    const method = sale.paymentMethod;
-                    if (!acc[method]) {
-                        acc[method] = { count: 0, total: 0, paid: 0, remainingAmount: 0 };
-                    }
-                    acc[method].count++;
-                    acc[method].total += sale.totalAmount;
-                    acc[method].paid += sale.paidAmount;
-                    acc[method].remainingAmount += sale.remainingAmount;
-                    return acc;
-                // FIX: Add type assertion to the accumulator.
-                }, {} as Record<SalePaymentMethod, { count: number; total: number; paid: number; remainingAmount: number }>);
-                // FIX: Explicitly type the mapped parameter 'p' to resolve 'unknown' type error.
-                data = Object.entries(byPayment).map(([method, p]: [string, { count: number; total: number; paid: number; remainingAmount: number }]) => ({
-                    [AR_LABELS.paymentType]: method,
-                    [AR_LABELS.invoiceCount]: p.count,
-                    [AR_LABELS.totalSales]: formatCurrency(p.total),
-                    [AR_LABELS.paid]: formatCurrency(p.paid),
-                    [AR_LABELS.remaining]: formatCurrency(p.remainingAmount),
-                }));
-                break;
-            }
-        }
-        setReportHeaders(headers);
-        setReportData(data);
-    };
-
-    return (
-        <div className="space-y-6">
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 items-end p-4 bg-gray-50 dark:bg-gray-800/50 rounded-lg border border-gray-200 dark:border-gray-700">
-                <div>
-                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">{AR_LABELS.reportType}</label>
-                    <CustomDropdown
-                        id="report-type-dropdown"
-                        value={reportType}
-                        onChange={(value) => setReportType(value as ReportType)}
-                        options={[
-                            { value: 'total', label: AR_LABELS.totalSalesReport },
-                            { value: 'customer', label: AR_LABELS.salesByCustomerReport },
-                            { value: 'user', label: AR_LABELS.salesByUserReport },
-                            { value: 'payment', label: AR_LABELS.salesByPaymentTypeReport }
-                        ]}
-                        placeholder={AR_LABELS.reportType}
-                        className="w-full"
-                    />
-                </div>
-                <div>
-                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{AR_LABELS.from}</label>
-                    <input type="date" name="start" value={dateRange.start} onChange={handleDateChange} className="w-full p-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200 rounded-md text-right"/>
-                </div>
-                <div>
-                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{AR_LABELS.to}</label>
-                    <input type="date" name="end" value={dateRange.end} onChange={handleDateChange} className="w-full p-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200 rounded-md text-right"/>
-                </div>
-                <button onClick={handleGenerateReport} className="w-full px-4 py-2 bg-orange-500 text-white rounded-md">{AR_LABELS.generateReport}</button>
-            </div>
-
-            {reportData && (
-                <div className="p-4 border dark:border-gray-700 rounded-lg">
-                    <div className="flex justify-end gap-2 mb-4">
-                        <button onClick={() => alert('Exporting to Excel...')} className="inline-flex items-center px-3 py-1.5 text-sm bg-gray-200 dark:bg-gray-600 rounded-md"><ExportIcon /><span className="mr-1">{AR_LABELS.exportExcel}</span></button>
-                        <button onClick={() => alert('Exporting to PDF...')} className="inline-flex items-center px-3 py-1.5 text-sm bg-gray-200 dark:bg-gray-600 rounded-md"><PrintIcon /><span className="mr-1">{AR_LABELS.exportPDF}</span></button>
-                    </div>
-                    <div className="overflow-x-auto">
-                        <table className="min-w-full text-right">
-                            <thead className="bg-gray-50 dark:bg-gray-700/50">
-                                <tr>{reportHeaders.map(h => <th key={h} className="px-4 py-2 text-xs font-medium uppercase">{h}</th>)}</tr>
-                            </thead>
-                            <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
-                                {reportData.map((row, i) => (
-                                    <tr key={i}>{reportHeaders.map(h => <td key={h} className="px-4 py-2 text-sm">{row[h]}</td>)}</tr>
-                                ))}
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-            )}
-        </div>
-    );
-};
 
 const AddCustomerModal: React.FC<{
     onClose: () => void;
