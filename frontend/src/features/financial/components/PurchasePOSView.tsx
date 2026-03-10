@@ -160,6 +160,7 @@ export const PurchasePOSView: React.FC<PurchasePOSViewProps> = ({ editPurchaseId
   const navigate = useNavigate();
   const { formatCurrency } = useCurrency();
   const [products, setProducts] = useState<any[]>([]);
+  const [searchResults, setSearchResults] = useState<any[] | null>(null);
   const [suppliers, setSuppliers] = useState<any[]>([]);
   const [summaries, setSummaries] = useState<SupplierSummary[]>([]);
   const [productSearch, setProductSearch] = useState('');
@@ -181,6 +182,7 @@ export const PurchasePOSView: React.FC<PurchasePOSViewProps> = ({ editPurchaseId
   const [initialBalanceType, setInitialBalanceType] = useState<'balance' | 'debt' | null>(null);
   const [initialAmount, setInitialAmount] = useState(0);
   const [isLoadingQuickProducts, setIsLoadingQuickProducts] = useState(true);
+  const [isSearchingProducts, setIsSearchingProducts] = useState(false);
   const [notFoundBarcode, setNotFoundBarcode] = useState('');
   const [isProductNotFoundModalOpen, setIsProductNotFoundModalOpen] = useState(false);
   /** String values for numeric inputs so single-digit and partial input (e.g. "0.") update correctly. */
@@ -403,16 +405,91 @@ export const PurchasePOSView: React.FC<PurchasePOSViewProps> = ({ editPurchaseId
     };
   }, [editPurchaseId]);
 
-  // Filter quick products by name for non-barcode search (same as POS name search on client)
+  // Search full products database (IndexedDB + API fallback) for non-barcode name/keyword search
+  useEffect(() => {
+    const trimmed = productSearch.trim();
+    if (!trimmed || isBarcodeInput(trimmed)) {
+      setSearchResults(null);
+      setIsSearchingProducts(false);
+      return;
+    }
+
+    let cancelled = false;
+    setIsSearchingProducts(true);
+
+    (async () => {
+      try {
+        // Try IndexedDB search first for fast local lookup
+        await productsDB.init();
+        let results = await productsDB.searchProducts({
+          searchTerm: trimmed,
+          status: 'active',
+          limit: 100,
+        });
+
+        // Fallback to server-side search if no local results
+        if (!results || results.length === 0) {
+          try {
+            const response = await productsApi.getProducts({
+              page: 1,
+              limit: 100,
+              search: trimmed,
+              status: 'active',
+              includeCategories: true,
+            });
+            const productsData = (response.data as any)?.products ?? (response.data as any)?.data?.products ?? [];
+            results = Array.isArray(productsData) ? productsData : [];
+            if (results.length > 0) {
+              try {
+                await productsDB.storeProducts(results);
+                productsDB.notifyOtherTabs();
+              } catch (_) {}
+            }
+          } catch (_) {
+            // Ignore API errors here; we'll just show no results
+          }
+        }
+
+        if (!cancelled) {
+          setSearchResults(results ?? []);
+        }
+      } catch (_) {
+        if (!cancelled) {
+          setSearchResults([]);
+        }
+      } finally {
+        if (!cancelled) {
+          setIsSearchingProducts(false);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [productSearch, isBarcodeInput]);
+
+  // Products to display in quick grid:
+  // - When no search term: show configured Quick Products list
+  // - When barcode-like input: keep using quick products (barcode handled separately)
+  // - When name/keyword search: show full-database search results
   const filteredProducts = useMemo(() => {
-    if (!productSearch.trim()) return products;
-    const q = productSearch.toLowerCase().trim();
+    const trimmed = productSearch.trim();
+    if (!trimmed) {
+      return products;
+    }
+
+    if (!isBarcodeInput(trimmed)) {
+      return searchResults ?? [];
+    }
+
+    const q = trimmed.toLowerCase();
     return products.filter(
       (p) =>
         (p.name || '').toLowerCase().includes(q) ||
         (p.barcode || '').toLowerCase().includes(q)
     );
-  }, [products, productSearch]);
+  }, [products, productSearch, searchResults, isBarcodeInput]);
 
   // Barcode search: IndexedDB first, then API fallback (avoids "not found" when storage is full)
   const searchProductByBarcodeForPurchase = useCallback(async (barcode: string) => {
@@ -569,7 +646,7 @@ export const PurchasePOSView: React.FC<PurchasePOSViewProps> = ({ editPurchaseId
       queueBarcodeSearch(trimmed);
       return;
     }
-    // Non-barcode: keep filtering quick products (productSearch already set)
+    // Non-barcode: search handled reactively via full products search effect
   }, [productSearch, isBarcodeInput, queueBarcodeSearch]);
 
   const filteredSuppliers = useMemo(() => {
