@@ -206,7 +206,10 @@ const saleSchema = new Schema<ISale>(
 );
 
 // CRITICAL INDEXES for performance
-// Unique invoice number per store
+// Unique constraint MUST be (storeId, invoiceNumber) so each store has its own invoice sequence.
+// Store A and Store B can both have INV-19959; they must not conflict.
+// If you see 409 conflicts across different stores, ensure the DB has this compound unique index
+// and drop any legacy unique index on invoiceNumber only (e.g. db.sales.dropIndex({ invoiceNumber: 1 })).
 saleSchema.index({ storeId: 1, invoiceNumber: 1 }, { unique: true });
 // Common query patterns
 saleSchema.index({ storeId: 1, date: -1 });

@@ -47,7 +47,7 @@ export const getCurrentInvoiceNumber = asyncHandler(async (req: AuthenticatedReq
 
 /**
  * Get the next sequential invoice number (HTTP layer).
- * Business logic lives in salesService.
+ * Number is generated per store (storeId from auth); each store has its own sequence.
  */
 export const getNextInvoiceNumber = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
   const storeId = req.user?.storeId || null;
@@ -70,7 +70,7 @@ export const getNextInvoiceNumber = asyncHandler(async (req: AuthenticatedReques
 
 /**
  * Create a new sale/invoice (HTTP layer: validation, call service, format response).
- * Business logic lives in salesService.
+ * storeId from auth scopes the sale and invoice number to that store (per-store sequence).
  */
 export const createSale = asyncHandler(async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   const storeId = req.user?.storeId || null;

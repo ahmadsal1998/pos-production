@@ -175,8 +175,8 @@ const saleSchema = new Schema<SaleDocument>(
   }
 );
 
-// Indexes for better query performance
-saleSchema.index({ invoiceNumber: 1, storeId: 1 }, { unique: true }); // Unique invoice number per store
+// Indexes for better query performance (storeId + invoiceNumber = unique per store)
+saleSchema.index({ storeId: 1, invoiceNumber: 1 }, { unique: true });
 saleSchema.index({ date: -1, storeId: 1 });
 saleSchema.index({ customerId: 1, storeId: 1 });
 saleSchema.index({ status: 1, storeId: 1 });

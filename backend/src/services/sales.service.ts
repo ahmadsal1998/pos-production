@@ -58,37 +58,43 @@ export function convertQuantityToMainUnits(
 }
 
 /** Exported for use by sales controller in processReturn / createSimpleSale */
+/** Max invoice number is computed per store (sales filtered by storeId). Uses aggregation for speed (index-friendly). */
 export async function getMaxInvoiceNumberFromSales(Sale: any, storeId: string): Promise<number> {
   const normalizedStoreId = storeId.toLowerCase().trim();
   try {
-    const sales = await Sale.find({ storeId: normalizedStoreId })
-      .select('invoiceNumber')
-      .lean()
-      .limit(10000);
-
-    let maxNumber = 0;
-    const sequentialPattern = /^INV-(\d+)$/;
-    const timestampPattern = /^INV-(\d+)-/;
-
-    for (const sale of sales) {
-      const invoiceNumber = sale.invoiceNumber || '';
-      const sequentialMatch = invoiceNumber.match(sequentialPattern);
-      if (sequentialMatch) {
-        const num = parseInt(sequentialMatch[1], 10);
-        if (!isNaN(num) && num > maxNumber) maxNumber = num;
-      } else {
-        const timestampMatch = invoiceNumber.match(timestampPattern);
-        if (timestampMatch && maxNumber < 1000000) maxNumber = 1000000;
-      }
-    }
-    return maxNumber;
+    const invNull = { $ifNull: ['$invoiceNumber', ''] };
+    const pipeline: any[] = [
+      { $match: { storeId: normalizedStoreId } },
+      {
+        $addFields: {
+          invNum: {
+            $let: {
+              vars: {
+                seq: { $regexFind: { input: invNull, regex: /^INV-(\d+)$/ } },
+                legacy: { $regexMatch: { input: invNull, regex: /^INV-\d+-/ } },
+              },
+              in: {
+                $cond: [
+                  { $ne: ['$$seq', null] },
+                  { $toInt: { $arrayElemAt: ['$$seq.captures', 0] } },
+                  { $cond: ['$$legacy', 1000000, 0] },
+                ],
+              },
+            },
+          },
+        },
+      },
+      { $group: { _id: null, maxNumber: { $max: '$invNum' } } },
+    ];
+    const result = await Sale.aggregate(pipeline);
+    return result[0]?.maxNumber ?? 0;
   } catch (error) {
     log.error('[Sales Service] Error getting max invoice number from sales', error);
     return 0;
   }
 }
 
-/** Exported for use by sales controller in processReturn / createSimpleSale */
+/** Next invoice number is generated per store (sequence is keyed by storeId + sequenceType). */
 export async function generateNextInvoiceNumber(Sale: any, storeId: string): Promise<string> {
   const normalizedStoreId = storeId.toLowerCase().trim();
   const sequenceType = 'invoiceNumber';
@@ -318,9 +324,10 @@ export const salesService = {
     let sale: any = null;
 
     while (retryCount < maxRetries) {
+      // Duplicate check is per store: (storeId, invoiceNumber)
       const existingSale = await Sale.findOne({
-        invoiceNumber: currentInvoiceNumber,
         storeId: normalizedStoreId,
+        invoiceNumber: currentInvoiceNumber,
       });
 
       if (existingSale) {

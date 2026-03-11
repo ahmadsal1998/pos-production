@@ -34,10 +34,10 @@ class SalesSyncService {
       // Continue anyway - we can still sync to backend
     }
 
-    // Create debounced sync function (batches rapid changes within 1.5 seconds)
+    // Create debounced sync function (batches rapid changes; shorter delay for faster POS feedback)
     this.debouncedSync = debounce(() => {
       this._doSyncInternal();
-    }, 1500);
+    }, 800);
 
     // Sync on page visibility change (when user comes back to tab)
     document.addEventListener('visibilitychange', () => {
@@ -160,35 +160,136 @@ class SalesSyncService {
       const errorMessage = error?.message || 'Unknown sync error';
       const statusCode = error?.response?.status || error?.status;
       
-      // Detect 409 Conflict (invoice number already exists)
+      // Detect 409 Conflict (invoice number already exists) – get NEW numbers and retry until success or max attempts
       if (statusCode === 409) {
-        const errorData = error?.response?.data?.data;
-        const backendErrorMessage = error?.response?.data?.message || error?.message || 'Unknown error';
-        const errorType = errorData?.errorType;
-        
-        // Invoice number conflict - generate new number and retry
-        const duplicateInvoiceNumber = errorData?.duplicateInvoiceNumber || sale.invoiceNumber;
-        
-        const detailedErrorMessage = `تعارض رقم الفاتورة: رقم الفاتورة ${sale.invoiceNumber} مستخدم بالفعل. سيتم إنشاء رقم فاتورة جديد تلقائياً.`;
-        
-        logger.warn(`⚠️ INVOICE NUMBER CONFLICT BY BACKEND: ${detailedErrorMessage}`);
-        
-        // Mark as error but allow retry with new number
+        const max409Retries = 3; // Reduced from 5 for faster failure; backend usually resolves in 1–2 attempts
+        const validMethods = ['cash', 'card', 'credit'];
+        let lastDuplicateFromBackend: string | undefined = error?.response?.data?.data?.duplicateInvoiceNumber || sale.invoiceNumber;
+        let attempt = 0;
+
+        while (attempt < max409Retries) {
+          attempt++;
+          const detailedErrorMessage = `تعارض رقم الفاتورة: رقم الفاتورة ${sale.invoiceNumber} مستخدم بالفعل. محاولة ${attempt}/${max409Retries} برقم جديد.`;
+          logger.warn(`⚠️ INVOICE NUMBER CONFLICT BY BACKEND: ${detailedErrorMessage}`);
+
+          // LOCAL-FIRST: Try fast local/IndexedDB sources before calling API to reduce latency
+          let newInvoiceNumber: string | null = null;
+          if (lastDuplicateFromBackend) {
+            const match = String(lastDuplicateFromBackend).match(/^INV-(\d+)$/i);
+            if (match) {
+              newInvoiceNumber = `INV-${parseInt(match[1], 10) + 1}`;
+              logger.debug(`[409 retry] Using local increment from duplicate: ${newInvoiceNumber}`);
+            }
+          }
+          if (!newInvoiceNumber && indexedDBAvailable && sale.storeId) {
+            try {
+              newInvoiceNumber = await salesDB.getNextInvoiceNumberOffline(sale.storeId);
+              logger.debug(`[409 retry] Using IndexedDB offline next: ${newInvoiceNumber}`);
+            } catch (dbErr) {
+              logger.warn('Could not get next invoice number from IndexedDB:', dbErr);
+            }
+          }
+          if (!newInvoiceNumber) {
+            try {
+              const nextResponse = await salesApi.getNextInvoiceNumber();
+              const data = (nextResponse.data as any)?.data;
+              newInvoiceNumber = data?.invoiceNumber || null;
+              if (newInvoiceNumber) {
+                logger.debug(`[409 retry] Using backend next-invoice-number: ${newInvoiceNumber}`);
+              }
+            } catch (apiErr) {
+              logger.warn('Could not get next invoice number from API:', apiErr);
+            }
+          }
+          if (!newInvoiceNumber) {
+            newInvoiceNumber = 'INV-1';
+            logger.warn('[409 retry] Using fallback invoice number:', newInvoiceNumber);
+          }
+
+          sale.invoiceNumber = newInvoiceNumber;
+          if (indexedDBAvailable && sale.id) {
+            try {
+              await salesDB.saveSale(sale);
+            } catch (dbError) {
+              logger.warn('Could not persist new invoice number to IndexedDB:', dbError);
+            }
+          }
+
+          const retryPaymentMethod = (() => {
+            const p = (sale.paymentMethod || 'cash').toLowerCase();
+            return validMethods.includes(p) ? p : 'cash';
+          })();
+          const retrySaleData = {
+            invoiceNumber: sale.invoiceNumber,
+            date: sale.date,
+            customerId: sale.customerId,
+            customerName: sale.customerName,
+            items: sale.items,
+            subtotal: sale.subtotal,
+            totalItemDiscount: sale.totalItemDiscount,
+            invoiceDiscount: sale.invoiceDiscount,
+            tax: sale.tax,
+            total: sale.total,
+            paidAmount: sale.paidAmount,
+            remainingAmount: sale.remainingAmount,
+            paymentMethod: retryPaymentMethod,
+            status: sale.status,
+            seller: sale.seller,
+            isReturn: sale.isReturn || false,
+            originalInvoiceId: sale.originalInvoiceId,
+          };
+
+          try {
+            const retryResponse = await salesApi.createSale(retrySaleData);
+            if (retryResponse.data && (retryResponse.data as any).success) {
+              const savedSale = (retryResponse.data as any).data?.sale;
+              savedInvoiceNumber = savedSale?.invoiceNumber;
+              const backendId = savedSale?.id || savedSale?._id;
+              if (indexedDBAvailable && sale.id) {
+                try {
+                  await salesDB.markAsSynced(
+                    sale.id,
+                    backendId,
+                    sale.storeId,
+                    sale.invoiceNumber,
+                    savedInvoiceNumber && savedInvoiceNumber !== sale.invoiceNumber ? savedInvoiceNumber : undefined
+                  );
+                  if (savedInvoiceNumber && savedInvoiceNumber !== sale.invoiceNumber) {
+                    sale.invoiceNumber = savedInvoiceNumber;
+                  }
+                } catch (dbError) {
+                  logger.warn('⚠️ Failed to mark sale as synced in IndexedDB after retry:', dbError);
+                }
+              }
+              logger.debug('✅ Sale synced successfully after 409 retry with new invoice number:', sale.invoiceNumber);
+              return { success: true, backendId };
+            }
+          } catch (retryError: any) {
+            const retryStatus = retryError?.response?.status;
+            const retryData = retryError?.response?.data?.data;
+            if (retryStatus === 409 && retryData?.duplicateInvoiceNumber) {
+              lastDuplicateFromBackend = retryData.duplicateInvoiceNumber;
+              logger.warn(`❌ 409 retry attempt ${attempt} failed (backend duplicate: ${lastDuplicateFromBackend}), trying again with new number...`);
+            } else {
+              logger.error('❌ Retry after 409 failed:', retryError?.message || retryError);
+              break;
+            }
+          }
+        }
+
+        const conflictResult: any = {
+          success: false,
+          error: `تعارض رقم الفاتورة: استمر التعارض بعد ${max409Retries} محاولات. رقم الفاتورة الأخير: ${sale.invoiceNumber}`,
+          errorType: 'invoice_number_conflict',
+          duplicateInvoiceNumber: lastDuplicateFromBackend,
+        };
         if (indexedDBAvailable && sale.id) {
           try {
-            await salesDB.markSyncError(sale.id, detailedErrorMessage, sale.storeId, sale.invoiceNumber);
+            await salesDB.markSyncError(sale.id, conflictResult.error, sale.storeId, sale.invoiceNumber);
           } catch (dbError) {
             logger.warn('Could not mark conflict error in IndexedDB:', dbError);
           }
         }
-        
-        const conflictResult: any = { 
-          success: false, 
-          error: detailedErrorMessage,
-          errorType: 'invoice_number_conflict',
-          duplicateInvoiceNumber: duplicateInvoiceNumber,
-        };
-        
         return conflictResult;
       }
       
@@ -319,8 +420,8 @@ class SalesSyncService {
           logger.error(`❌ [SalesSync] Failed to sync sale ${i + 1}/${unsyncedSales.length}: ${sale.invoiceNumber} - ${errorMessage}`);
         }
 
-        // Small delay between syncs to avoid rate limiting
-        await new Promise((resolve) => setTimeout(resolve, 100));
+        // Minimal delay between syncs to avoid rate limiting (reduced for faster POS flow)
+        await new Promise((resolve) => setTimeout(resolve, 30));
       }
 
       logger.debug(`✅ Sync completed: ${results.synced} synced, ${results.failed} failed`);

@@ -34,7 +34,8 @@ const sequenceSchema = new Schema<ISequence>(
   }
 );
 
-// Compound unique index: one sequence per store per type
+// Compound unique index: one sequence per store per type.
+// Invoice numbers are generated per store (storeId + sequenceType 'invoiceNumber').
 sequenceSchema.index({ storeId: 1, sequenceType: 1 }, { unique: true });
 
 // Export the model (using unified collection, no prefix needed)
