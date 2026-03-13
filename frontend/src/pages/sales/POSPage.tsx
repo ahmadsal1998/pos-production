@@ -2,7 +2,6 @@ import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react'
 import { useNavigate, useSearchParams, useLocation } from 'react-router-dom';
 import { Product, Customer, POSInvoice, POSCartItem, SaleTransaction, SaleStatus, SalePaymentMethod } from '@/shared/types';
 import QRCode from 'react-qr-code';
-
 import { AR_LABELS, UUID, SearchIcon, DeleteIcon, PlusIcon, HandIcon, CancelIcon, PrintIcon, CheckCircleIcon, XIcon, PanelLeftOpenIcon } from '@/shared/constants';
 import { ToggleSwitch } from '@/shared/components/ui/ToggleSwitch';
 import CustomDropdown from '@/shared/components/ui/CustomDropdown/CustomDropdown';
@@ -4423,7 +4422,7 @@ const POSPage: React.FC = () => {
                     target.closest('textarea') !== null;
                 if (isInputField) return;
 
-                if (isProcessingPayment || isSubmittingInvoiceRef.current || queueProcessing) {
+                if (isProcessingPayment || isSubmittingInvoiceRef.current) {
                     return;
                 }
                 const newSaleButton = startNewSaleButtonRef.current;
@@ -4442,7 +4441,7 @@ const POSPage: React.FC = () => {
         return () => {
             window.removeEventListener('keydown', handleKeyDown);
         };
-    }, [saleCompleted, currentInvoice.items.length, isProcessingPayment, queueProcessing, handleFinalizePayment, startNewSale]);
+    }, [saleCompleted, currentInvoice.items.length, isProcessingPayment, handleFinalizePayment, startNewSale]);
 
     // Prevent page refresh/navigation during processing
     useEffect(() => {
@@ -4962,8 +4961,8 @@ const POSPage: React.FC = () => {
         console.log(`[POS] Enqueueing sale ${saleId} with invoice number: ${invoiceNumber}`);
         
         // Enqueue the sale - it will be processed sequentially by the queue service
-        // Return the promise so caller can wait for processing to complete
-        return saleQueueService.enqueueSale(isolatedContext, saleData).then((result) => {
+        // Fire-and-forget: UI does not wait for this to complete
+        saleQueueService.enqueueSale(isolatedContext, saleData).then((result) => {
             if (result.success) {
                 console.log(`✅ Sale ${saleId} processed successfully (backend ID: ${result.backendId})`);
                 
@@ -6397,17 +6396,17 @@ const POSPage: React.FC = () => {
                             id="newSaleBtn"
                             ref={startNewSaleButtonRef}
                             onClick={startNewSale}
-                            disabled={isProcessingPayment || queueProcessing || isSubmittingInvoiceRef.current}
+                            disabled={isProcessingPayment || isSubmittingInvoiceRef.current}
                             className="inline-flex items-center justify-center px-3 sm:px-4 py-2 text-xs sm:text-sm font-medium rounded-md shadow-sm text-white bg-orange-500 hover:bg-orange-600 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
                         >
-                            {(isProcessingPayment || queueProcessing) && (
+                            {isProcessingPayment && (
                                 <svg className="animate-spin h-4 w-4 ml-1.5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                                     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                                     <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                                 </svg>
                             )}
-                            {!(isProcessingPayment || queueProcessing) && <PlusIcon className="h-4 w-4 ml-1.5" />}
-                            <span>{isProcessingPayment || queueProcessing ? 'جاري المعالجة...' : AR_LABELS.startNewSale}</span>
+                            {!isProcessingPayment && <PlusIcon className="h-4 w-4 ml-1.5" />}
+                            <span>{isProcessingPayment ? 'جاري المعالجة...' : AR_LABELS.startNewSale}</span>
                         </button>
                         <button 
                             onClick={() => printReceipt('printable-receipt')} 

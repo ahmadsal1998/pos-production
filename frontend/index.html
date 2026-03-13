@@ -3,9 +3,17 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#f97316">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="POS Hub">
     <title>Dashboard</title>
+    <!-- PWA manifest (plugin injects correct path on build) -->
+    <link rel="manifest" href="/manifest.webmanifest">
     <!-- Inline favicon to avoid /favicon.ico 404s -->
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' ry='12' fill='%23f97316'/%3E%3Ctext x='50%25' y='55%25' font-size='36' text-anchor='middle' fill='white' font-family='Arial, sans-serif'%3EP%3C/text%3E%3C/svg%3E">
+    <link rel="apple-touch-icon" href="/icons/icon-192x192.png">
+    <link rel="apple-touch-icon" sizes="512x512" href="/icons/icon-512x512.png">
     <script>
       // Immediately apply theme before React hydrates to prevent FOUC
       (function() {
