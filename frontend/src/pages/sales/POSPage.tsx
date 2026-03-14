@@ -4349,6 +4349,12 @@ const POSPage: React.FC = () => {
 
     // Payment Confirmation Modal: confirm with chosen method (when customer is selected)
     const handlePaymentConfirmationConfirm = async () => {
+        // Submission lock: prevent double submission (finalizeSaleWithoutTerminal also checks this)
+        if (isSubmittingInvoiceRef.current || isProcessingPayment) {
+            console.warn('⚠️ Sale submission already in progress, ignoring duplicate confirm');
+            return;
+        }
+
         const modalEffectiveCredit = modalCreditPaidAmountInput !== null ? (parseFloat(modalCreditPaidAmountInput) || 0) : modalCreditPaidAmount;
 
         if (modalPaymentMethod === 'Credit') {
@@ -5041,11 +5047,13 @@ const POSPage: React.FC = () => {
             }
             // Release lock only after queue has accepted/processed this sale so no duplicate can run with same cart
             isSubmittingInvoiceRef.current = false;
+            setIsProcessingPayment(false);
             return result;
         }).catch((error) => {
             console.error(`❌ Error processing sale ${saleId}:`, error);
             showToast(`فشل في معالجة الفاتورة: ${getApiErrorMessage(error, 'خطأ غير معروف')}`, 'error');
             isSubmittingInvoiceRef.current = false;
+            setIsProcessingPayment(false);
             throw error;
         });
         
@@ -5338,348 +5346,15 @@ const POSPage: React.FC = () => {
             });
         }
 
-        // Background task: Save sale to IndexedDB and sync with backend (non-blocking)
+        // Background task: post-sale cleanup (lock release, queued products, etc.)
+        // Sale is saved ONLY by the queue above — do not create a duplicate sale here.
         Promise.resolve().then(async () => {
-            const paymentMethod = currentOverrides?.paymentMethod ?? selectedPaymentMethod;
-            const creditPaid = currentOverrides?.creditPaidAmount ?? effectiveCreditPaidAmount;
-            const pointsRedeem = currentOverrides?.pointsToRedeem ?? pointsToRedeem;
-
             try {
-                // Get storeId from user
-                const storeId = user?.storeId;
-                if (!storeId) {
-                    throw new Error('Store ID is required to save sale');
-                }
-
-                // Create SaleTransaction for localStorage backup
-                const customerName = finalInvoice.customer?.name || 'عميل نقدي';
-                const customerId = finalInvoice.customer?.id || 'walk-in-customer';
-                
-                // Handle points redemption if Points payment method is selected
-                let pointsRedeemed = 0;
-                let pointsRedemptionValue = 0;
-                
-                if (paymentMethod === 'Points' && pointsRedeem > 0 && finalInvoice.customer && finalInvoice.customer.id !== 'walk-in-customer') {
-                    try {
-                        // Redeem points before saving sale
-                        const pointsResponse = await pointsApi.payWithPoints({
-                            customerId: finalInvoice.customer.id,
-                            phone: finalInvoice.customer.phone,
-                            points: pointsRedeem,
-                            invoiceNumber: finalInvoice.id,
-                            description: `Points redeemed for invoice ${finalInvoice.id}`,
-                        });
-                        
-                        if (pointsResponse.data.success) {
-                            pointsRedeemed = pointsRedeem;
-                            pointsRedemptionValue = pointsResponse.data.data.transaction.pointsValue;
-                            // Update customer points balance
-                            const newBalance = pointsResponse.data.data.balance.availablePoints;
-                            setCustomerPointsBalance(newBalance);
-                            console.log(`✅ Points redeemed: ${pointsRedeemed}, Value: ${pointsRedemptionValue}, New balance: ${newBalance}`);
-                        } else {
-                            throw new Error(pointsResponse.data.message || 'Failed to redeem points');
-                        }
-                    } catch (pointsError: any) {
-                        console.error('❌ Failed to redeem points:', pointsError);
-                        // Don't block the sale, but log the error
-                        // In production, you might want to show an error and prevent sale completion
-                        showToast(`فشل استبدال النقاط: ${getApiErrorMessage(pointsError, 'خطأ غير معروف')}`, 'error');
-                        // Reset payment method to Cash as fallback
-                        // Or you could throw error to prevent sale
-                    }
-                }
-                
-                // Calculate paid and remaining amounts based on payment method
-                let paidAmount = 0;
-                let remainingAmount = 0;
-                let status: SaleStatus = 'Paid';
-                
-                if (paymentMethod === 'Cash' || paymentMethod === 'Card') {
-                    // Full payment for cash and card
-                    paidAmount = finalInvoice.grandTotal;
-                    remainingAmount = 0;
-                    status = 'Paid';
-                } else if (paymentMethod === 'Credit') {
-                    // Credit payment - use the paid amount if specified
-                    paidAmount = creditPaid;
-                    remainingAmount = finalInvoice.grandTotal - creditPaid;
-                    
-                    if (remainingAmount <= 0) {
-                        status = 'Paid';
-                        remainingAmount = 0;
-                    } else if (paidAmount > 0) {
-                        status = 'Partial';
-                    } else {
-                        status = 'Due';
-                    }
-                } else if (paymentMethod === 'Points') {
-                    // Points payment - calculate based on redeemed points value
-                    paidAmount = pointsRedemptionValue;
-                    remainingAmount = Math.max(0, finalInvoice.grandTotal - pointsRedemptionValue);
-                    
-                    if (remainingAmount <= 0) {
-                        status = 'Paid';
-                        remainingAmount = 0;
-                        // If points covered full amount, payment is complete
-                    } else {
-                        // Points covered partial amount - remaining should be paid by another method
-                        // For now, mark as partial if points don't cover full amount
-                        // In a real scenario, you might want to combine payment methods
-                        status = 'Partial';
-                        showToast(`تم استخدام النقاط. المبلغ المتبقي: ${formatCurrency(remainingAmount)}`, 'info');
-                    }
-                }
-
-                // CRITICAL: Use locked invoice number - DO NOT allow it to change
-                // If invoice number conflicts, we should fail rather than generate a new number
-                // This prevents the same invoice from being saved multiple times with different numbers
-                let invoiceNumberToUse = lockedInvoiceNumberRef.current || finalInvoice.id;
-                
-                if (invoiceNumberToUse !== finalInvoice.id) {
-                    console.warn(`⚠️ Invoice number mismatch: locked=${invoiceNumberToUse}, current=${finalInvoice.id}. Using locked number.`);
-                }
-                
-                // Idempotency: one clientSaleId per sale so retries/sync don't create duplicates
-                const clientSaleId = generateClientSaleId();
-                // Prepare sale data for IndexedDB and backend
-                const saleData = {
-                    id: clientSaleId,
-                    clientSaleId,
-                    invoiceNumber: invoiceNumberToUse, // Use locked invoice number
-                    storeId: storeId,
-                    date: finalInvoice.date instanceof Date 
-                        ? finalInvoice.date.toISOString() 
-                        : new Date().toISOString(),
-                    customerId: customerId !== 'walk-in-customer' ? customerId : undefined,
-                    customerName: customerName,
-                    items: finalInvoice.items.map(item => {
-                        // Use originalId from cart item if available, otherwise try to find product
-                        let backendProductId: string;
-                        if (item.originalId) {
-                            backendProductId = item.originalId;
-                        } else {
-                            // Fallback: find product to get original backend ID
-                            // Use string comparison to handle type mismatches
-                            const product = products.find(p => String(p.id) === String(item.productId));
-                            backendProductId = product?.originalId || String(item.productId);
-                        }
-                        return {
-                            productId: backendProductId, // Use original backend ID
-                            productName: item.name,
-                            quantity: item.quantity,
-                            unitPrice: item.unitPrice,
-                            totalPrice: item.total - (item.discount * item.quantity),
-                            unit: item.unit,
-                            discount: item.discount,
-                            conversionFactor: item.conversionFactor,
-                        };
-                    }),
-                    subtotal: finalInvoice.subtotal,
-                    totalItemDiscount: finalInvoice.totalItemDiscount,
-                    invoiceDiscount: finalInvoice.invoiceDiscount,
-                    tax: finalInvoice.tax,
-                    total: finalInvoice.grandTotal,
-                    paidAmount: paidAmount,
-                    remainingAmount: remainingAmount,
-                    paymentMethod: paymentMethod.toLowerCase(), // Convert to lowercase for backend
-                    status: status === 'Paid' ? 'completed' : status === 'Partial' ? 'partial_payment' : 'pending',
-                    seller: finalInvoice.cashier,
-                };
-
-                // CRITICAL FIX: With our new unique invoice number generation (timestamp-based),
-                // conflicts should be extremely rare. However, we still check for safety.
-                // If a conflict is detected, we keep the unique number but ensure the sale is saved independently.
-                try {
-                    await salesDB.init();
-                    const invoiceExistsInDB = await salesDB.invoiceNumberExists(storeId, invoiceNumberToUse);
-                    
-                    // If online, also check backend
-                    let invoiceExistsOnBackend = false;
-                    if (navigator.onLine) {
-                        try {
-                            const existingSalesResponse = await salesApi.getSales({
-                                invoiceNumber: invoiceNumberToUse,
-                                storeId: storeId,
-                                limit: 1,
-                            });
-                            const existingSales = (existingSalesResponse.data as any)?.data?.sales || [];
-                            invoiceExistsOnBackend = existingSales.length > 0;
-                        } catch (backendCheckError) {
-                            console.warn('⚠️ Could not check invoice number on backend:', backendCheckError);
-                        }
-                    }
-                    
-                    // CRITICAL: Even if invoice number exists, we save the sale with its unique ID
-                    // The backend will handle invoice number conflicts during sync and assign a new number if needed
-                    // We don't change the invoice number here because the sale is already finalized and locked
-                    if (invoiceExistsInDB || invoiceExistsOnBackend) {
-                        const conflictedNumber = invoiceNumberToUse;
-                        conflictInvoiceNumbersRef.current.add(conflictedNumber);
-                        console.warn(`⚠️ Invoice number ${conflictedNumber} already exists, but sale will be saved with unique ID. Backend will handle conflict during sync.`);
-                        // Don't change the invoice number - let the backend handle it during sync
-                        // The sale is already saved with a unique ID, so it won't merge with existing sales
-                    }
-                } catch (checkError: any) {
-                    console.warn('⚠️ Could not check invoice number uniqueness, proceeding anyway:', checkError);
-                }
-
-                // Use non-blocking sale creation (saves locally immediately, syncs in background)
-                // This allows users to start new sales without waiting for sync to complete
-                let syncResult;
-                try {
-                    syncResult = await salesSync.createSale(saleData, storeId);
-                    console.log(`[POS] Sale saved (will sync in background) for ${saleData.invoiceNumber}:`, {
-                        success: syncResult.success,
-                        saleId: syncResult.saleId,
-                        error: syncResult.error
-                    });
-                    
-                    if (!syncResult.success) {
-                        // Sale save failed - this is critical, show error
-                        console.error('❌ Failed to save sale to IndexedDB:', syncResult.error);
-                        isSubmittingInvoiceRef.current = false;
-                        setIsProcessingPayment(false);
-                        lockedInvoiceNumberRef.current = null;
-                        showToast(`فشل في حفظ الفاتورة: ${syncResult.error || 'خطأ غير معروف'}`, 'error');
-                        return;
-                    }
-                } catch (saveError: any) {
-                    // Critical error - sale could not be saved
-                    console.error('❌ Critical error saving sale:', saveError);
-                    isSubmittingInvoiceRef.current = false;
-                    setIsProcessingPayment(false);
-                    lockedInvoiceNumberRef.current = null;
-                    showToast(`فشل في حفظ الفاتورة: ${getApiErrorMessage(saveError, 'خطأ غير معروف')}`, 'error');
-                    return;
-                }
-                
-                // CRITICAL: Use locked invoice number - don't change it
-                // This ensures the invoice number remains consistent throughout the save process
-                finalInvoice.id = invoiceNumberToUse;
-                saleData.invoiceNumber = invoiceNumberToUse; // Ensure saleData uses locked number
-                setCurrentInvoice(finalInvoice);
-                
-                // Always save to localStorage as backup, even if IndexedDB save failed
-                try {
-                    // Convert POSInvoice to SaleTransaction for localStorage backup
-                    let saleTransaction: SaleTransaction = {
-                        id: saleData.invoiceNumber,
-                        date: finalInvoice.date instanceof Date 
-                            ? finalInvoice.date.toISOString() 
-                            : new Date().toISOString(),
-                        customerName: customerName,
-                        customerId: customerId,
-                        totalAmount: finalInvoice.grandTotal,
-                        paidAmount: paidAmount,
-                        remainingAmount: remainingAmount,
-                        paymentMethod: selectedPaymentMethod as SalePaymentMethod,
-                        status: status,
-                        seller: finalInvoice.cashier,
-                        items: finalInvoice.items.map(item => ({
-                            productId: item.productId,
-                            name: item.name,
-                            unit: item.unit,
-                            quantity: item.quantity,
-                            unitPrice: item.unitPrice,
-                            total: item.total,
-                            discount: item.discount,
-                            conversionFactor: item.conversionFactor,
-                        })),
-                        subtotal: finalInvoice.subtotal,
-                        totalItemDiscount: finalInvoice.totalItemDiscount,
-                        invoiceDiscount: finalInvoice.invoiceDiscount,
-                        tax: finalInvoice.tax,
-                    };
-
-                    // Save to localStorage as backup (legacy support)
-                    saveSale(saleTransaction);
-                    console.log('✅ Sale transaction saved to localStorage (backup):', saleTransaction);
-                } catch (localStorageError) {
-                    console.error('❌ Failed to save sale to localStorage:', localStorageError);
-                }
-                
-                if (syncResult?.success) {
-                    console.log('✅ Sale saved to IndexedDB and synced:', saleData.invoiceNumber);
-                    
-                    // Clear conflict tracking for this invoice number since it was successfully saved
-                    if (invoiceNumberToUse) {
-                        conflictInvoiceNumbersRef.current.delete(invoiceNumberToUse);
-                    }
-                    
-                    // CRITICAL: Pre-fetch next invoice number AFTER sale is saved to backend
-                    // This ensures the backend has incremented the sequence before we fetch
-                    // Calculate locally first, then verify with backend
-                    const savedMatch = invoiceNumberToUse.match(/^INV-(\d+)$/);
-                    if (savedMatch) {
-                        const savedNum = parseInt(savedMatch[1], 10);
-                        const nextLocal = `INV-${savedNum + 1}`;
-                        // Set local pre-fetch immediately
-                        nextInvoiceNumberRef.current = nextLocal;
-                        console.log(`[POS] Pre-fetched next invoice number locally after save: ${nextLocal}`);
-                        
-                        // Verify with backend in background (non-blocking)
-                        preFetchNextInvoiceNumber().catch(error => {
-                            console.warn('[POS] Failed to verify pre-fetched number with backend, using local:', error);
-                            // Keep the local pre-fetched number
-                        });
-                    }
-                    
-                    // CRITICAL FIX: Create new cart AFTER sale is successfully saved
-                    // This ensures cart isolation - only create new cart when previous sale is fully persisted
-                    const nextInvoiceNumber = nextInvoiceNumberRef.current || (() => {
-                        const match = invoiceNumberToUse.match(/^INV-(\d+)$/);
-                        return match ? `INV-${parseInt(match[1], 10) + 1}` : 'INV-1';
-                    })();
-                    
-                    // Clear pre-fetched number since we're using it
-                    if (nextInvoiceNumberRef.current === nextInvoiceNumber) {
-                        nextInvoiceNumberRef.current = null;
-                    }
-                    
-                    // Create new empty cart now that sale is saved
-                    const newEmptyInvoice = generateNewInvoice(currentUserName, nextInvoiceNumber);
-                    setCurrentInvoice(newEmptyInvoice);
-                    console.log(`[POS] Created new cart after sale saved: ${nextInvoiceNumber}`);
-                    
-                    // Pre-fetch next invoice number for upcoming sale
-                    preFetchNextInvoiceNumber().catch(error => {
-                        console.warn('[POS] Failed to pre-fetch next invoice number:', error);
-                    });
-                    
-                    // Show warning if sync had errors but sale was saved locally
-                    if (syncResult.error) {
-                        console.warn('⚠️ Sale saved locally, will sync later:', syncResult.error);
-                    }
-                } else {
-                    // Sale was saved to localStorage at least, log warning
-                    console.warn('⚠️ Sale saved to localStorage only, IndexedDB save may have failed:', syncResult?.error);
-                    
-                    // CRITICAL FIX: Create new cart even if sync failed (sale was saved to localStorage)
-                    // This ensures user can continue working even if backend sync fails
-                    const nextInvoiceNumber = nextInvoiceNumberRef.current || (() => {
-                        const match = invoiceNumberToUse.match(/^INV-(\d+)$/);
-                        return match ? `INV-${parseInt(match[1], 10) + 1}` : 'INV-1';
-                    })();
-                    
-                    if (nextInvoiceNumberRef.current === nextInvoiceNumber) {
-                        nextInvoiceNumberRef.current = null;
-                    }
-                    
-                    const newEmptyInvoice = generateNewInvoice(currentUserName, nextInvoiceNumber);
-                    setCurrentInvoice(newEmptyInvoice);
-                    console.log(`[POS] Created new cart after sale save (sync failed): ${nextInvoiceNumber}`);
-                }
+                // Sale already saved by queue with stable clientSaleId; no duplicate createSale here.
             } catch (error: any) {
-                // On error, log it - sale will be retried by the periodic sync service
-                console.error('❌ Failed to save sale in background:', error);
-                // Don't show alert - sale is already completed and user is on print page
-                // The sale will be retried by the periodic sync service
+                console.error('❌ Error in post-sale cleanup:', error);
             } finally {
-                // Clear processing state after sale sync completes (success or failure)
-                isSubmittingInvoiceRef.current = false;
-                setIsProcessingPayment(false);
-                
+                // Do not release lock here — it is released only when the queue's .then/.catch runs.
                 // CRITICAL FIX: Process queued products into a new invoice
                 // This ensures queued products are added to the next sale, not lost
                 const queuedProducts = queuedProductsRef.current.splice(0); // Get and clear queue

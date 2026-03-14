@@ -116,6 +116,8 @@ class SalesSyncService {
         ? normalizedPaymentMethod 
         : 'cash'; // Default to cash if invalid
       
+      // Always send clientSaleId when present so backend can deduplicate; retries must reuse same id
+      const idempotencyKey = sale.clientSaleId || sale.id;
       const saleData = {
         invoiceNumber: sale.invoiceNumber,
         date: sale.date,
@@ -134,7 +136,7 @@ class SalesSyncService {
         seller: sale.seller,
         isReturn: sale.isReturn || false,
         originalInvoiceId: sale.originalInvoiceId,
-        ...(sale.clientSaleId || sale.id ? { clientSaleId: sale.clientSaleId || sale.id } : {}),
+        ...(idempotencyKey ? { clientSaleId: idempotencyKey } : {}),
       };
 
       // Call backend API
@@ -575,13 +577,19 @@ class SalesSyncService {
         if (dbError?.name === 'ConstraintError' || dbError?.message?.includes('uniqueness requirements')) {
           logger.warn(`[SalesSync] Constraint error for invoice ${sale.invoiceNumber}, attempting to update existing sale`);
           try {
-            // Prefer lookup by id (clientSaleId) when set so we don't merge different logical sales
-            const existingSale = sale.id
-              ? await salesDB.getSale(sale.id).catch(() => null)
+            // Never generate a new clientSaleId. Look up by clientSaleId first, then by invoice number.
+            const idempotencyKey = sale.clientSaleId || sale.id;
+            const existingSale = idempotencyKey
+              ? await salesDB.getSale(idempotencyKey).catch(() => null)
+              : null;
+            const existingByInvoice = existingSale
+              ? null
               : await salesDB.getSaleByInvoiceNumber(storeId, sale.invoiceNumber);
-            if (existingSale) {
-              sale.id = existingSale.id;
-              sale._id = existingSale._id || sale._id;
+            const toUpdate = existingSale || existingByInvoice;
+            if (toUpdate) {
+              sale.id = toUpdate.id;
+              sale._id = toUpdate._id || sale._id;
+              if (toUpdate.clientSaleId) sale.clientSaleId = toUpdate.clientSaleId;
               sale.synced = false;
               await salesDB.saveSale(sale);
               logger.debug('💾 Updated existing sale in IndexedDB:', sale.invoiceNumber, 'ID:', sale.id);

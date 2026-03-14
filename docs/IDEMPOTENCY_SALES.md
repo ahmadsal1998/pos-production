@@ -23,8 +23,10 @@ Sales are created in an idempotent way using a **client-generated sale ID** (`cl
 | **Frontend – submission lock** | `isSubmittingInvoiceRef` prevents double execution of `finalizeSaleWithoutTerminal` / payment confirmation. |
 | **Backend** | Unique sparse index `(storeId, clientSaleId)`; `createSale` returns existing sale when `clientSaleId` matches. |
 | **Queue** | `saleRecord.id` and `saleRecord.clientSaleId` set from `saleData.clientSaleId \|\| context.saleId` so retries use the same ID. |
-| **Sync** | Payload uses `sale.clientSaleId \|\| sale.id`; 409 retry reuses the same `clientSaleId`. |
+| **Sync** | Payload always sends `clientSaleId: sale.clientSaleId \|\| sale.id`; 409 retry reuses the same key. |
 | **createSale (sync)** | When `clientSaleId` is set, record is keyed by it only (no merge by invoice number). |
+| **ConstraintError** | Look up by `clientSaleId` first, then by invoice number; never generate a new `clientSaleId`. |
+| **Single save path** | Only the queue saves the sale for normal flow; no duplicate background createSale. |
 
 ## Testing Checklist
 
