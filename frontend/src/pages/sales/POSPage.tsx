@@ -4784,9 +4784,14 @@ const POSPage: React.FC = () => {
             return;
         }
 
-        // QUEUE-BASED MODEL: No strict locking - allow multiple sales to be queued
-        // The queue service handles sequential processing
-        
+        // STRICT SUBMISSION LOCK: Ensure sale is finalized only once per cart
+        // Prevents duplicate invoices from double-click, F1, Enter, or multiple events
+        if (isSubmittingInvoiceRef.current) {
+            console.warn('⚠️ Sale finalization already in progress for this cart, ignoring duplicate request');
+            return;
+        }
+        isSubmittingInvoiceRef.current = true;
+
         // CRITICAL: Copy cart IMMEDIATELY before any async operations
         // This ensures we have a snapshot of the cart that won't be affected by new sales
         const cartSnapshot: POSInvoice = {
@@ -4798,12 +4803,14 @@ const POSPage: React.FC = () => {
         // Validate invoice has items
         if (!cartSnapshot.items || cartSnapshot.items.length === 0) {
             console.warn('⚠️ Attempted to finalize invoice with no items');
+            isSubmittingInvoiceRef.current = false;
             return;
         }
         
         // Check if this is a return (should not happen here, but safety check)
         if (cartSnapshot.originalInvoiceId) {
             console.warn('Attempted to finalize a return invoice through sale flow. Use processReturnInvoice instead.');
+            isSubmittingInvoiceRef.current = false;
             return;
         }
         
@@ -4811,6 +4818,7 @@ const POSPage: React.FC = () => {
         const storeId = user?.storeId;
         if (!storeId) {
             showToast('معرف المتجر مطلوب لحفظ الفاتورة', 'error');
+            isSubmittingInvoiceRef.current = false;
             return;
         }
         
@@ -4853,6 +4861,7 @@ const POSPage: React.FC = () => {
         } catch (error: any) {
             console.error('❌ Failed to prepare sale data:', error);
             showToast(`فشل في إعداد بيانات الفاتورة: ${getApiErrorMessage(error, 'خطأ غير معروف')}`, 'error');
+            isSubmittingInvoiceRef.current = false;
             return;
         }
         
@@ -5016,6 +5025,9 @@ const POSPage: React.FC = () => {
             showToast(`فشل في معالجة الفاتورة: ${getApiErrorMessage(error, 'خطأ غير معروف')}`, 'error');
             throw error;
         });
+        
+        // Release lock after enqueue (enqueue is synchronous; one cart → one invoice)
+        isSubmittingInvoiceRef.current = false;
         
         // PERFORMANCE FIX: Move all heavy operations to background (non-blocking)
         // Stock updates, sale sync, and product sync all run in background
