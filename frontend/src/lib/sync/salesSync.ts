@@ -134,7 +134,7 @@ class SalesSyncService {
         seller: sale.seller,
         isReturn: sale.isReturn || false,
         originalInvoiceId: sale.originalInvoiceId,
-        ...(sale.id ? { clientSaleId: sale.id } : {}),
+        ...(sale.clientSaleId || sale.id ? { clientSaleId: sale.clientSaleId || sale.id } : {}),
       };
 
       // Call backend API
@@ -251,7 +251,7 @@ class SalesSyncService {
             seller: sale.seller,
             isReturn: sale.isReturn || false,
             originalInvoiceId: sale.originalInvoiceId,
-            ...(sale.id ? { clientSaleId: sale.id } : {}),
+            ...(sale.clientSaleId || sale.id ? { clientSaleId: sale.clientSaleId || sale.id } : {}),
           };
 
           try {
@@ -526,9 +526,11 @@ class SalesSyncService {
         sale.paymentMethod = 'cash'; // Default if not provided
       }
 
-      // CRITICAL FIX: Generate unique temporary ID immediately if not provided
-      // This ensures each sale is stored independently, even if invoice numbers are similar
-      // Use a combination of storeId, invoiceNumber, timestamp, and random to ensure absolute uniqueness
+      // Idempotency: use clientSaleId as record id when provided so retries/sync reuse the same ID
+      if (sale.clientSaleId && !sale.id) {
+        sale.id = sale.clientSaleId;
+      }
+      // CRITICAL FIX: Generate unique temporary ID only if neither id nor clientSaleId provided
       if (!sale.id && !sale._id) {
         const timestamp = Date.now();
         const random = Math.random().toString(36).substr(2, 9);
@@ -623,9 +625,11 @@ class SalesSyncService {
         sale.paymentMethod = 'cash'; // Default if not provided
       }
 
-      // CRITICAL FIX: Generate unique temporary ID immediately if not provided
-      // This ensures each sale is stored independently, even if invoice numbers are similar
-      // Use a combination of storeId, invoiceNumber, timestamp, and random to ensure absolute uniqueness
+      // Idempotency: use clientSaleId as record id when provided so retries/sync reuse the same ID
+      if (sale.clientSaleId && !sale.id) {
+        sale.id = sale.clientSaleId;
+      }
+      // CRITICAL FIX: Generate unique temporary ID only if neither id nor clientSaleId provided
       if (!sale.id && !sale._id) {
         const timestamp = Date.now();
         const random = Math.random().toString(36).substr(2, 9);

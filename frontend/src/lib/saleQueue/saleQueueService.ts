@@ -97,8 +97,11 @@ class SaleQueueService {
         logger.debug(`[SaleQueue] Processing sale ${item.context.saleId} (${item.context.invoiceNumber})`);
 
         // Save to IndexedDB first (for offline support)
+        // Reuse same clientSaleId on retries so backend returns existing sale (idempotency)
+        const clientSaleId = item.saleData.clientSaleId || item.context.saleId;
         const saleRecord = {
-          id: item.context.saleId,
+          id: clientSaleId,
+          clientSaleId,
           invoiceNumber: item.context.invoiceNumber,
           storeId: item.context.storeId,
           date: item.saleData.date || new Date(),

@@ -22,6 +22,7 @@ import { salesDB } from '@/lib/db/salesDB';
 import { inventorySync } from '@/lib/sync/inventorySync';
 import { saleQueueService, IsolatedSaleContext, SaleLifecycleState } from '@/lib/saleQueue/saleQueueService';
 import { invoiceCounterService } from '@/lib/invoiceCounter/invoiceCounterService';
+import { generateClientSaleId } from '@/lib/utils/clientSaleId';
 import { ProductNotFoundModal } from '@/shared/components/ui/ProductNotFoundModal';
 import { ReSaleModal } from '@/shared/components/ui/ReSaleModal';
 import { useConfirmDialog } from '@/shared/contexts/ConfirmDialogContext';
@@ -4126,8 +4127,12 @@ const POSPage: React.FC = () => {
                 const customerName = returnInvoice.customer?.name || 'عميل نقدي';
                 const customerId = returnInvoice.customer?.id || 'walk-in-customer';
                 
+                // Idempotency: one clientSaleId per return so retries don't create duplicates
+                const clientSaleId = generateClientSaleId();
                 // Prepare sale data for backend API (as a return invoice)
                 const saleData = {
+                    id: clientSaleId,
+                    clientSaleId,
                     invoiceNumber: returnInvoice.id,
                     storeId: storeId, // Required by SaleRecord type
                     date: returnInvoice.date instanceof Date 
@@ -4620,7 +4625,8 @@ const POSPage: React.FC = () => {
         invoice: POSInvoice,
         invoiceNumber: string,
         storeId: string,
-        overrides?: PaymentFinalizeOverrides
+        overrides?: PaymentFinalizeOverrides,
+        clientSaleId?: string
     ): Promise<{
         saleData: any;
         paidAmount: number;
@@ -4707,8 +4713,11 @@ const POSPage: React.FC = () => {
             }
         }
         
+        // Idempotency: use provided clientSaleId or generate one (same ID reused on retries/sync)
+        const idempotencyId = clientSaleId ?? generateClientSaleId();
         // Prepare sale data for IndexedDB and backend
         const saleData = {
+            clientSaleId: idempotencyId,
             invoiceNumber: invoiceNumber,
             storeId: storeId,
             date: invoice.date instanceof Date 
@@ -4862,7 +4871,7 @@ const POSPage: React.FC = () => {
         let customerId: string;
         
         try {
-            const prepared = await prepareSaleData(cartSnapshot, invoiceNumber, storeId, currentOverrides);
+            const prepared = await prepareSaleData(cartSnapshot, invoiceNumber, storeId, currentOverrides, saleId);
             saleData = prepared.saleData;
             paidAmount = prepared.paidAmount;
             remainingAmount = prepared.remainingAmount;
@@ -5431,8 +5440,12 @@ const POSPage: React.FC = () => {
                     console.warn(`⚠️ Invoice number mismatch: locked=${invoiceNumberToUse}, current=${finalInvoice.id}. Using locked number.`);
                 }
                 
+                // Idempotency: one clientSaleId per sale so retries/sync don't create duplicates
+                const clientSaleId = generateClientSaleId();
                 // Prepare sale data for IndexedDB and backend
                 const saleData = {
+                    id: clientSaleId,
+                    clientSaleId,
                     invoiceNumber: invoiceNumberToUse, // Use locked invoice number
                     storeId: storeId,
                     date: finalInvoice.date instanceof Date 

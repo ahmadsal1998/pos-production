@@ -32,6 +32,8 @@ interface SaleRecord {
   seller: string;
   originalInvoiceId?: string;
   isReturn?: boolean;
+  /** Client-generated idempotency key (e.g. UUID) to prevent duplicate invoices; reused on retries/sync */
+  clientSaleId?: string;
   createdAt?: Date | string;
   updatedAt?: Date | string;
   synced?: boolean; // Local flag to track sync status
