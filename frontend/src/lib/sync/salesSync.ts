@@ -233,6 +233,8 @@ class SalesSyncService {
             const p = (sale.paymentMethod || 'cash').toLowerCase();
             return validMethods.includes(p) ? p : 'cash';
           })();
+          // Idempotency: reuse the same clientSaleId on retry so backend returns existing sale if first request succeeded
+          const idempotencyKey = sale.clientSaleId || sale.id;
           const retrySaleData = {
             invoiceNumber: sale.invoiceNumber,
             date: sale.date,
@@ -251,7 +253,7 @@ class SalesSyncService {
             seller: sale.seller,
             isReturn: sale.isReturn || false,
             originalInvoiceId: sale.originalInvoiceId,
-            ...(sale.clientSaleId || sale.id ? { clientSaleId: sale.clientSaleId || sale.id } : {}),
+            ...(idempotencyKey ? { clientSaleId: idempotencyKey } : {}),
           };
 
           try {
@@ -547,17 +549,16 @@ class SalesSyncService {
       try {
         await salesDB.init();
         
-        // CRITICAL FIX: Check if a sale with this invoice number already exists
-        // IndexedDB has a unique index on storeId_invoiceNumber, so we need to handle duplicates
-        const existingSaleByInvoice = await salesDB.getSaleByInvoiceNumber(storeId, sale.invoiceNumber);
-        
-        if (existingSaleByInvoice) {
-          // Sale with this invoice number already exists - update it instead of creating new
-          logger.debug(`[SalesSync] Sale with invoice ${sale.invoiceNumber} already exists, updating instead of creating new`);
-          // Use the existing sale's ID to update it
-          sale.id = existingSaleByInvoice.id;
-          sale._id = existingSaleByInvoice._id || sale._id;
-          localSaleId = sale.id;
+        // When we have clientSaleId, always use it as the record id — do not merge by invoice number,
+        // so retries and sync reuse the same id and the backend can deduplicate by (storeId, clientSaleId).
+        if (!sale.clientSaleId) {
+          const existingSaleByInvoice = await salesDB.getSaleByInvoiceNumber(storeId, sale.invoiceNumber);
+          if (existingSaleByInvoice) {
+            logger.debug(`[SalesSync] Sale with invoice ${sale.invoiceNumber} already exists, updating instead of creating new`);
+            sale.id = existingSaleByInvoice.id;
+            sale._id = existingSaleByInvoice._id || sale._id;
+            localSaleId = sale.id;
+          }
         }
         
         // Mark as unsynced initially - will be synced by background worker
@@ -574,8 +575,10 @@ class SalesSyncService {
         if (dbError?.name === 'ConstraintError' || dbError?.message?.includes('uniqueness requirements')) {
           logger.warn(`[SalesSync] Constraint error for invoice ${sale.invoiceNumber}, attempting to update existing sale`);
           try {
-            // Try to get existing sale and update it
-            const existingSale = await salesDB.getSaleByInvoiceNumber(storeId, sale.invoiceNumber);
+            // Prefer lookup by id (clientSaleId) when set so we don't merge different logical sales
+            const existingSale = sale.id
+              ? await salesDB.getSale(sale.id).catch(() => null)
+              : await salesDB.getSaleByInvoiceNumber(storeId, sale.invoiceNumber);
             if (existingSale) {
               sale.id = existingSale.id;
               sale._id = existingSale._id || sale._id;

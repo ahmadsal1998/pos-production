@@ -251,13 +251,10 @@ export const salesService = {
     const Product = await getProductModelForStore(storeId);
     const normalizedStoreId = storeId.toLowerCase().trim();
 
-    // Idempotency: if client sent a unique sale id and we already have a sale with it, return existing sale
+    // Idempotency: if client sent clientSaleId and we already have a sale for (storeId, clientSaleId), return it
     const clientSaleId = typeof body.clientSaleId === 'string' && body.clientSaleId.trim() ? body.clientSaleId.trim() : undefined;
     if (clientSaleId) {
-      const existingSale = await Sale.findOne({
-        storeId: normalizedStoreId,
-        clientSaleId,
-      }).lean();
+      const existingSale = await Sale.findOne({ storeId: normalizedStoreId, clientSaleId }).lean();
       if (existingSale) {
         const sale = existingSale as any;
         return {
