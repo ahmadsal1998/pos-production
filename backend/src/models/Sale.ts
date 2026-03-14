@@ -34,6 +34,8 @@ export interface ISale extends Document {
   isReturn?: boolean; // Flag to identify return transactions
   /** Invoice type for reporting: 'retail' (default) or 'wholesale' */
   invoiceType?: 'retail' | 'wholesale';
+  /** Client-generated idempotency key (e.g. UUID) to prevent duplicate invoices for the same transaction */
+  clientSaleId?: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -191,6 +193,12 @@ const saleSchema = new Schema<ISale>(
       default: 'retail',
       index: true,
     },
+    clientSaleId: {
+      type: String,
+      default: null,
+      sparse: true,
+      index: true,
+    },
   },
   {
     timestamps: true,
@@ -211,6 +219,7 @@ const saleSchema = new Schema<ISale>(
 // If you see 409 conflicts across different stores, ensure the DB has this compound unique index
 // and drop any legacy unique index on invoiceNumber only (e.g. db.sales.dropIndex({ invoiceNumber: 1 })).
 saleSchema.index({ storeId: 1, invoiceNumber: 1 }, { unique: true });
+saleSchema.index({ storeId: 1, clientSaleId: 1 }, { unique: true, sparse: true });
 // Common query patterns
 saleSchema.index({ storeId: 1, date: -1 });
 saleSchema.index({ storeId: 1, customerId: 1 });

@@ -89,10 +89,23 @@ class SalesSyncService {
     let savedInvoiceNumber: string | undefined;
     try {
       // CRITICAL: Check if this sale was already synced before attempting sync
-      // This prevents duplicate sync attempts
+      // This prevents duplicate sync attempts (e.g. queue + syncUnsyncedSales sending same sale twice)
       if (sale.synced && sale._id) {
         logger.debug(`✅ Sale ${sale.invoiceNumber} already synced (backend ID: ${sale._id}), skipping sync`);
         return { success: true, backendId: sale._id };
+      }
+
+      // Re-fetch from IndexedDB right before POST so we don't re-send if another tab/process just synced it
+      if (indexedDBAvailable && sale.id) {
+        try {
+          const fresh = await salesDB.getSale(sale.id);
+          if (fresh?.synced && fresh._id) {
+            logger.debug(`✅ Sale ${sale.invoiceNumber} (ID: ${sale.id}) already synced in DB (backend: ${fresh._id}), skipping POST`);
+            return { success: true, backendId: fresh._id };
+          }
+        } catch (e) {
+          logger.warn('Could not re-fetch sale from IndexedDB before sync:', e);
+        }
       }
 
       // Prepare sale data for backend (remove local-only fields)
@@ -121,6 +134,7 @@ class SalesSyncService {
         seller: sale.seller,
         isReturn: sale.isReturn || false,
         originalInvoiceId: sale.originalInvoiceId,
+        ...(sale.id ? { clientSaleId: sale.id } : {}),
       };
 
       // Call backend API
@@ -237,6 +251,7 @@ class SalesSyncService {
             seller: sale.seller,
             isReturn: sale.isReturn || false,
             originalInvoiceId: sale.originalInvoiceId,
+            ...(sale.id ? { clientSaleId: sale.id } : {}),
           };
 
           try {

@@ -99,6 +99,7 @@ export const createSale = asyncHandler(async (req: AuthenticatedRequest, res: Re
     seller,
     isReturn = false,
     invoiceType,
+    clientSaleId,
   } = req.body;
 
   if (!invoiceNumber || !customerName || !items || !Array.isArray(items) || items.length === 0) {
@@ -143,6 +144,7 @@ export const createSale = asyncHandler(async (req: AuthenticatedRequest, res: Re
       seller,
       isReturn,
       invoiceType,
+      clientSaleId,
     });
 
     return res.status(201).json({

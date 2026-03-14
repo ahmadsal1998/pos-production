@@ -184,6 +184,8 @@ export interface CreateSaleInput {
   seller?: string;
   isReturn?: boolean;
   invoiceType?: 'retail' | 'wholesale';
+  /** Client-generated idempotency key to prevent duplicate invoices for the same transaction */
+  clientSaleId?: string;
 }
 
 export interface CreateSaleResult {
@@ -248,6 +250,42 @@ export const salesService = {
     const Sale = await getSaleModelForStore(storeId);
     const Product = await getProductModelForStore(storeId);
     const normalizedStoreId = storeId.toLowerCase().trim();
+
+    // Idempotency: if client sent a unique sale id and we already have a sale with it, return existing sale
+    const clientSaleId = typeof body.clientSaleId === 'string' && body.clientSaleId.trim() ? body.clientSaleId.trim() : undefined;
+    if (clientSaleId) {
+      const existingSale = await Sale.findOne({
+        storeId: normalizedStoreId,
+        clientSaleId,
+      }).lean();
+      if (existingSale) {
+        const sale = existingSale as any;
+        return {
+          sale: {
+            id: sale._id?.toString() || sale.id,
+            invoiceNumber: sale.invoiceNumber,
+            date: sale.date,
+            customerName: sale.customerName,
+            customerId: sale.customerId,
+            total: sale.total,
+            paidAmount: sale.paidAmount,
+            remainingAmount: sale.remainingAmount,
+            paymentMethod: sale.paymentMethod,
+            status: sale.status,
+            seller: sale.seller,
+            items: sale.items || [],
+            subtotal: sale.subtotal,
+            totalItemDiscount: sale.totalItemDiscount,
+            invoiceDiscount: sale.invoiceDiscount,
+            tax: sale.tax,
+          },
+          requestedInvoiceNumber: sale.invoiceNumber,
+          finalInvoiceNumber: sale.invoiceNumber,
+          invoiceAutoAdjusted: false,
+        };
+      }
+    }
+
     const normalizedPaymentMethod = (body.paymentMethod || '').toLowerCase();
     if (!validPaymentMethods.includes(normalizedPaymentMethod)) {
       const err = new Error(`Payment method must be one of: ${validPaymentMethods.join(', ')}`) as any;
@@ -363,6 +401,7 @@ export const salesService = {
         status: saleStatus,
         seller: body.seller || 'Unknown',
         invoiceType: body.invoiceType === 'wholesale' ? 'wholesale' : 'retail',
+        clientSaleId: clientSaleId || undefined,
       });
 
       try {
