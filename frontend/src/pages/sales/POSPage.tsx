@@ -325,6 +325,9 @@ const POSPage: React.FC = () => {
         useServerStockCheck?: boolean;
     };
     const queuedProductsRef = useRef<QueuedProduct[]>([]); // Queue of products waiting to be added after processing completes
+    // Prevent duplicate add-product from multi-tab, double-click, or repeated events (one logical add per product+unit per window)
+    const lastAddProductRef = useRef<{ productId: string; unit: string; at: number } | null>(null);
+    const ADD_PRODUCT_DEBOUNCE_MS = 400;
     // Prevent duplicate invoice submissions
     const isSubmittingInvoiceRef = useRef(false); // Ref to track if invoice is being submitted (prevents race conditions)
     const invoiceNumberInitializedRef = useRef(false); // Track if invoice number has been initialized
@@ -2534,9 +2537,17 @@ const POSPage: React.FC = () => {
     }, []);
 
     const handleAddProduct = async (product: POSProduct, unit = 'قطعة', unitPriceOverride?: number, conversionFactorOverride?: number, piecesPerUnitOverride?: number, useServerStockCheck = false) => {
-        // QUEUE-BASED MODEL: No strict lock needed - new cart is created immediately after queueing
-        // Products can be added to the new cart right away
-        
+        // Guard: prevent duplicate adds from double-click, multiple events, or cross-tab/focus quirks
+        const productId = String(product.id ?? product.originalId ?? '');
+        const unitKey = (unit || 'قطعة').trim();
+        const now = Date.now();
+        const last = lastAddProductRef.current;
+        if (last && last.productId === productId && last.unit === unitKey && now - last.at < ADD_PRODUCT_DEBOUNCE_MS) {
+            console.warn('[POS] Ignoring duplicate add-product (same product+unit within debounce window)', { productId, unit: unitKey });
+            return;
+        }
+        lastAddProductRef.current = { productId, unit: unitKey, at: now };
+
         // If sale is completed, start a new sale first to ensure the product is added to a fresh cart
         // This prevents products scanned immediately after sale confirmation from being lost
         if (saleCompleted && startNewSaleRef.current) {
@@ -5019,15 +5030,18 @@ const POSPage: React.FC = () => {
                 console.error(`❌ Sale ${saleId} failed:`, result.error);
                 showToast(`فشل في حفظ الفاتورة: ${result.error || 'خطأ غير معروف'}`, 'error');
             }
+            // Release lock only after queue has accepted/processed this sale so no duplicate can run with same cart
+            isSubmittingInvoiceRef.current = false;
             return result;
         }).catch((error) => {
             console.error(`❌ Error processing sale ${saleId}:`, error);
             showToast(`فشل في معالجة الفاتورة: ${getApiErrorMessage(error, 'خطأ غير معروف')}`, 'error');
+            isSubmittingInvoiceRef.current = false;
             throw error;
         });
         
-        // Release lock after enqueue (enqueue is synchronous; one cart → one invoice)
-        isSubmittingInvoiceRef.current = false;
+        // Do NOT release lock here: keep it true until .then/.catch above so a rapid second
+        // trigger cannot snapshot the same cart again before React has committed the new empty cart
         
         // PERFORMANCE FIX: Move all heavy operations to background (non-blocking)
         // Stock updates, sale sync, and product sync all run in background
