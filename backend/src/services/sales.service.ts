@@ -406,6 +406,45 @@ export const salesService = {
         break;
       } catch (error: any) {
         if (error.code === 11000) {
+          // Idempotency: duplicate key may be (storeId, clientSaleId) from concurrent POSTs
+          const isClientSaleIdDuplicate =
+            clientSaleId &&
+            error.keyPattern &&
+            typeof error.keyPattern === 'object' &&
+            'clientSaleId' in error.keyPattern;
+          if (isClientSaleIdDuplicate) {
+            const existingSale = await Sale.findOne({
+              storeId: normalizedStoreId,
+              clientSaleId,
+            }).lean();
+            if (existingSale) {
+              const existing = existingSale as any;
+              return {
+                sale: {
+                  id: existing._id?.toString() || existing.id,
+                  invoiceNumber: existing.invoiceNumber,
+                  date: existing.date,
+                  customerName: existing.customerName,
+                  customerId: existing.customerId,
+                  total: existing.total,
+                  paidAmount: existing.paidAmount,
+                  remainingAmount: existing.remainingAmount,
+                  paymentMethod: existing.paymentMethod,
+                  status: existing.status,
+                  seller: existing.seller,
+                  items: existing.items || [],
+                  subtotal: existing.subtotal,
+                  totalItemDiscount: existing.totalItemDiscount,
+                  invoiceDiscount: existing.invoiceDiscount,
+                  tax: existing.tax,
+                },
+                requestedInvoiceNumber: body.invoiceNumber,
+                finalInvoiceNumber: existing.invoiceNumber,
+                invoiceAutoAdjusted: false,
+              };
+            }
+          }
+          // Duplicate on invoice number: retry with new number
           currentInvoiceNumber = await generateNextInvoiceNumber(Sale, storeId);
           retryCount++;
           if (retryCount >= maxRetries) {

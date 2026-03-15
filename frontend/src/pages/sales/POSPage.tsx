@@ -4241,18 +4241,23 @@ const POSPage: React.FC = () => {
     }
     
     const handleFinalizePayment = async () => {
-        // Prevent duplicate submissions
+        // Prevent duplicate submissions (lock immediately so double-click/F1 cannot race)
         if (isSubmittingInvoiceRef.current || isProcessingPayment) {
             console.warn('⚠️ Invoice submission already in progress, ignoring duplicate request');
             return;
         }
+        isSubmittingInvoiceRef.current = true;
         
-        if (currentInvoice.items.length === 0) return;
+        if (currentInvoice.items.length === 0) {
+            isSubmittingInvoiceRef.current = false;
+            return;
+        }
 
         // When a customer is selected, open Payment Confirmation Modal instead of finalizing immediately.
         // This prevents cashier from forgetting to change payment method from Cash to Credit (Deferred).
         const hasRegisteredCustomer = currentInvoice.customer && currentInvoice.customer.id !== 'walk-in-customer';
         if (hasRegisteredCustomer) {
+            isSubmittingInvoiceRef.current = false; // Release lock when opening modal (modal confirm will set it again)
             setModalPaymentMethod(selectedPaymentMethod);
             setModalCreditPaidAmount(effectiveCreditPaidAmount);
             setModalCreditPaidAmountInput(creditPaidAmountInput !== null ? creditPaidAmountInput : (effectiveCreditPaidAmount ? String(effectiveCreditPaidAmount) : null));
@@ -4270,21 +4275,25 @@ const POSPage: React.FC = () => {
 
         try {
             if (selectedPaymentMethod === 'Credit' && !currentInvoice.customer) {
+                isSubmittingInvoiceRef.current = false;
                 showToast(AR_LABELS.selectRegisteredCustomerForCredit, 'error');
                 return;
             }
 
             if (selectedPaymentMethod === 'Credit' && effectiveCreditPaidAmount < 0) {
+                isSubmittingInvoiceRef.current = false;
                 showToast('المبلغ المدفوع لا يمكن أن يكون سالباً.', 'error');
                 return;
             }
 
             if (selectedPaymentMethod === 'Credit' && !isValidHalfUnitIncrement(effectiveCreditPaidAmount)) {
+                isSubmittingInvoiceRef.current = false;
                 setCreditPaidAmountError(HALF_UNIT_INCREMENT_ERROR);
                 return;
             }
 
             if (selectedPaymentMethod === 'Points' && !currentInvoice.customer) {
+                isSubmittingInvoiceRef.current = false;
                 showToast('يرجى اختيار عميل مسجل لاستخدام النقاط', 'error');
                 return;
             }
@@ -4315,17 +4324,20 @@ const POSPage: React.FC = () => {
                 
                 // Check balance (only disable if we know for sure it's 0 or less)
                 if (currentBalance !== null && currentBalance <= 0) {
+                    isSubmittingInvoiceRef.current = false;
                     showToast('العميل لا يمتلك نقاط كافية', 'error');
                     return;
                 }
                 
                 if (pointsToRedeem <= 0) {
+                    isSubmittingInvoiceRef.current = false;
                     showToast('يرجى إدخال عدد النقاط المراد استخدامها', 'error');
                     return;
                 }
                 
                 // Validate that points to redeem don't exceed available balance
                 if (currentBalance !== null && pointsToRedeem > currentBalance) {
+                    isSubmittingInvoiceRef.current = false;
                     showToast(`عدد النقاط المراد استخدامها (${pointsToRedeem}) يتجاوز النقاط المتاحة (${currentBalance})`, 'error');
                     return;
                 }
@@ -4349,20 +4361,23 @@ const POSPage: React.FC = () => {
 
     // Payment Confirmation Modal: confirm with chosen method (when customer is selected)
     const handlePaymentConfirmationConfirm = async () => {
-        // Submission lock: prevent double submission (finalizeSaleWithoutTerminal also checks this)
+        // Submission lock: set immediately so double-click cannot race before async finalize runs
         if (isSubmittingInvoiceRef.current || isProcessingPayment) {
             console.warn('⚠️ Sale submission already in progress, ignoring duplicate confirm');
             return;
         }
+        isSubmittingInvoiceRef.current = true;
 
         const modalEffectiveCredit = modalCreditPaidAmountInput !== null ? (parseFloat(modalCreditPaidAmountInput) || 0) : modalCreditPaidAmount;
 
         if (modalPaymentMethod === 'Credit') {
             if (modalEffectiveCredit < 0) {
+                isSubmittingInvoiceRef.current = false;
                 setModalCreditPaidAmountError('المبلغ المدفوع لا يمكن أن يكون سالباً.');
                 return;
             }
             if (!isValidHalfUnitIncrement(modalEffectiveCredit)) {
+                isSubmittingInvoiceRef.current = false;
                 setModalCreditPaidAmountError(HALF_UNIT_INCREMENT_ERROR);
                 return;
             }
@@ -4370,18 +4385,22 @@ const POSPage: React.FC = () => {
 
         if (modalPaymentMethod === 'Points') {
             if (customerPointsBalance === null) {
+                isSubmittingInvoiceRef.current = false;
                 showToast('جاري تحميل رصيد النقاط، يرجى الانتظار', 'info');
                 return;
             }
             if (customerPointsBalance <= 0) {
+                isSubmittingInvoiceRef.current = false;
                 showToast('العميل لا يمتلك نقاط كافية', 'error');
                 return;
             }
             if (modalPointsToRedeem <= 0) {
+                isSubmittingInvoiceRef.current = false;
                 showToast('يرجى إدخال عدد النقاط المراد استخدامها', 'error');
                 return;
             }
             if (customerPointsBalance !== null && modalPointsToRedeem > customerPointsBalance) {
+                isSubmittingInvoiceRef.current = false;
                 showToast(`عدد النقاط المراد استخدامها (${modalPointsToRedeem}) يتجاوز النقاط المتاحة (${customerPointsBalance})`, 'error');
                 return;
             }
@@ -4810,12 +4829,9 @@ const POSPage: React.FC = () => {
             return;
         }
 
-        // STRICT SUBMISSION LOCK: Ensure sale is finalized only once per cart
-        // Prevents duplicate invoices from double-click, F1, Enter, or multiple events
-        if (isSubmittingInvoiceRef.current) {
-            console.warn('⚠️ Sale finalization already in progress for this cart, ignoring duplicate request');
-            return;
-        }
+        // STRICT SUBMISSION LOCK: Callers set isSubmittingInvoiceRef.current = true before calling
+        // so duplicate clicks are rejected in the handler. We set again here for any direct callers.
+        // Do NOT return when ref is already true - the current call is the one that set it in the handler.
         isSubmittingInvoiceRef.current = true;
 
         // CRITICAL: Copy cart IMMEDIATELY before any async operations

@@ -42,8 +42,8 @@ export default defineConfig(({ mode }) => {
           prefer_related_applications: false,
         },
         workbox: {
-          // Cache First for precached static assets (default)
-          globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
+          // In dev, dev-dist only has sw/workbox files (no app build), so precache would match nothing and warn
+          globPatterns: mode === 'development' ? [] : ['**/*.{js,css,html,ico,png,svg,woff2}'],
           // Don't use navigate fallback for API routes - use Network First below
           navigateFallbackDenylist: [/^\/api\//],
           runtimeCaching: [
