@@ -6944,17 +6944,18 @@ const POSPage: React.FC = () => {
                                                     type="number"
                                                     id="invoiceDiscount"
                                                     min={0}
-                                                    step={0.01}
-                                                    value={invoiceDiscountInput !== null ? invoiceDiscountInput : String(currentInvoice.invoiceDiscount)}
+                                                    step={0.5}
+                                                    value={invoiceDiscountInput !== null ? invoiceDiscountInput : (currentInvoice.invoiceDiscount % 1 === 0 ? String(currentInvoice.invoiceDiscount) : currentInvoice.invoiceDiscount.toFixed(2).replace(/\.?0+$/, ''))}
                                                     onFocus={(e) => {
                                                         e.target.select();
-                                                        setInvoiceDiscountInput(prev => prev !== null ? prev : String(currentInvoice.invoiceDiscount));
+                                                        setInvoiceDiscountInput(prev => prev !== null ? prev : (currentInvoice.invoiceDiscount % 1 === 0 ? String(currentInvoice.invoiceDiscount) : currentInvoice.invoiceDiscount.toFixed(2).replace(/\.?0+$/, '')));
                                                     }}
                                                     onChange={e => setInvoiceDiscountInput(e.target.value)}
                                                     onBlur={(e) => {
                                                         const raw = (e.target as HTMLInputElement).value;
-                                                        const num = parseFloat(raw) || 0;
-                                                        setCurrentInvoice(inv => ({ ...inv, invoiceDiscount: num }));
+                                                        const num = Math.max(0, parseFloat(raw) || 0);
+                                                        const rounded = Math.round(num * 100) / 100;
+                                                        setCurrentInvoice(inv => ({ ...inv, invoiceDiscount: rounded }));
                                                         setInvoiceDiscountInput(null);
                                                     }}
                                                     className="w-16 sm:w-18 md:w-20 lg:w-24 text-[10px] sm:text-xs md:text-sm text-left border border-orange-300 dark:border-orange-600 bg-white dark:bg-gray-700 rounded-md sm:rounded-lg font-semibold tabular-nums focus:ring-2 focus:ring-orange-500 focus:border-orange-500 py-1 sm:py-1.5 px-1.5 sm:px-2"
