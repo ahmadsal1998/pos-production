@@ -69,6 +69,7 @@ const initialPreferences: SystemPreferences = {
   businessDayTimezone: 'UTC', // Default timezone
   // Store Address
   storeAddress: '', // Store location/address for invoices
+  storePhone: '', // Store phone shown on receipts
 };
 
 // Helpers to parse settings
@@ -252,6 +253,7 @@ const PreferencesPage: React.FC = () => {
         
         // Try to load settings from backend if not in localStorage
         let backendStoreAddress = '';
+        let backendStorePhone = '';
         let backendBusinessDayStartTime = '';
         let backendBusinessDayTimezone = '';
         let backendLogoUrl = '';
@@ -276,6 +278,9 @@ const PreferencesPage: React.FC = () => {
             if (settingsData.storeaddress) {
               backendStoreAddress = settingsData.storeaddress;
             }
+            if (settingsData.storephone) {
+              backendStorePhone = settingsData.storephone;
+            }
             if (settingsData.businessdaystarttime) {
               backendBusinessDayStartTime = settingsData.businessdaystarttime;
             }
@@ -293,11 +298,13 @@ const PreferencesPage: React.FC = () => {
         
         if (storedSettings) {
           // Merge stored settings with initial preferences to ensure all fields are present
+          const storedPhone = (storedSettings as Record<string, unknown>).storePhone as string | undefined;
           const updated: SystemPreferences = {
             ...initialPreferences,
             ...storedSettings,
             // Use backend value if available and localStorage doesn't have it
             storeAddress: storedSettings.storeAddress || backendStoreAddress || '',
+            storePhone: (storedPhone && storedPhone.trim()) || backendStorePhone || '',
             businessDayStartTime: storedSettings.businessDayStartTime || backendBusinessDayStartTime || '06:00',
             businessDayTimezone: storedSettings.businessDayTimezone || backendBusinessDayTimezone || 'UTC',
             logoUrl: storedSettings.logoUrl || backendLogoUrl || '',
@@ -342,6 +349,7 @@ const PreferencesPage: React.FC = () => {
           const defaultPrefs = {
             ...initialPreferences,
             storeAddress: backendStoreAddress || '',
+            storePhone: backendStorePhone || '',
             businessDayStartTime: backendBusinessDayStartTime || '06:00',
             businessDayTimezone: backendBusinessDayTimezone || 'UTC',
             logoUrl: backendLogoUrl || '',
@@ -380,7 +388,11 @@ const PreferencesPage: React.FC = () => {
 
       // Logo should already be saved as Firebase URL in prefs.logoUrl after upload
       // If logoPreview exists but logoUrl is empty, it means user selected but didn't upload yet
-      const prefsToSave = { ...prefs };
+      const prefsToSave: SystemPreferences = {
+        ...prefs,
+        // Ensure optional fields that are saved in the form are persisted
+        storePhone: (prefs as Record<string, unknown>).storePhone != null ? String((prefs as Record<string, unknown>).storePhone).trim() : '',
+      };
       
       // Only update logoUrl from preview if it's a Firebase URL (not base64)
       // Base64 previews are temporary - Firebase URL should already be in prefs.logoUrl
@@ -442,6 +454,17 @@ const PreferencesPage: React.FC = () => {
       } catch (error) {
         console.warn('[PreferencesPage] Failed to sync storeAddress to backend:', error);
         // Don't fail the entire save if backend sync fails
+      }
+
+      // Sync storePhone to backend
+      try {
+        const phoneValue = (prefs as Record<string, unknown>).storePhone != null ? String((prefs as Record<string, unknown>).storePhone).trim() : '';
+        await storeSettingsApi.updateSetting('storephone', {
+          value: phoneValue,
+          description: 'Store phone number shown on receipts'
+        });
+      } catch (error) {
+        console.warn('[PreferencesPage] Failed to sync storePhone to backend:', error);
       }
       
       // Sync logoUrl to backend
@@ -824,6 +847,10 @@ const PreferencesPage: React.FC = () => {
                 {renderField('عنوان المتجر', 'storeAddress', 'text')}
                 <p className="text-xs text-slate-500 dark:text-slate-400 -mt-3">
                   سيظهر هذا العنوان على الفواتير المطبوعة
+                </p>
+                {renderField('رقم هاتف المتجر', 'storePhone', 'text')}
+                <p className="text-xs text-slate-500 dark:text-slate-400 -mt-3">
+                  يظهر في رأس الإيصال المطبوع (اختياري)
                 </p>
               </>,
               <PreferencesIcon />

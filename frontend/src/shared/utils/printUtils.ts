@@ -283,11 +283,18 @@ const generateThermalStyles = (printSettings: PrinterConfig & { paperSize: strin
         border-radius: 0 !important;
         overflow: visible !important;
       }
-      /* Store Logo - compact size for thermal */
+      /* Receipt header: logo, store name, phone - clean and centered for 80mm thermal */
+      #printable-receipt .receipt-header {
+        margin-bottom: 4px !important;
+        padding-bottom: 4px !important;
+        border-bottom: 1px solid #000 !important;
+        text-align: center !important;
+      }
+      /* Store Logo - clear size for thermal; good quality print */
       #printable-receipt .receipt-logo {
-        width: 50px !important;
-        height: 50px !important;
-        margin: 0 auto 3px auto !important;
+        width: 56px !important;
+        height: 56px !important;
+        margin: 0 auto 4px auto !important;
         border-radius: 0 !important;
         display: flex !important;
         align-items: center !important;
@@ -298,31 +305,44 @@ const generateThermalStyles = (printSettings: PrinterConfig & { paperSize: strin
         box-shadow: none !important;
       }
       #printable-receipt .receipt-logo svg {
-        width: 25px !important;
-        height: 25px !important;
+        width: 28px !important;
+        height: 28px !important;
         color: #ffffff !important;
         fill: none !important;
         stroke: #ffffff !important;
         stroke-width: 2 !important;
       }
-      #printable-receipt .receipt-logo img {
-        width: 50px !important;
-        height: 50px !important;
-        max-width: 50px !important;
-        max-height: 50px !important;
+      #printable-receipt .receipt-logo img,
+      #printable-receipt .receipt-logo .receipt-logo-img {
+        width: 56px !important;
+        height: 56px !important;
+        max-width: 56px !important;
+        max-height: 56px !important;
         object-fit: contain !important;
         border-radius: 0 !important;
         background: white !important;
-        padding: 1px !important;
+        padding: 2px !important;
         border: 1px solid #000 !important;
         box-shadow: none !important;
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
       }
-      /* Store name header - compact for thermal */
-      #printable-receipt h1 {
-        margin: 0 0 2px 0 !important;
+      /* Store name - bold and clear */
+      #printable-receipt h1.receipt-store-name,
+      #printable-receipt .receipt-header h1 {
+        margin: 0 0 3px 0 !important;
         font-weight: 900;
         font-size: ${importantHeadingFontSize} !important;
-        line-height: 1.1 !important;
+        line-height: 1.15 !important;
+        text-align: center !important;
+        color: #000000 !important;
+      }
+      /* Store phone - under store name, readable on thermal */
+      #printable-receipt .receipt-store-phone {
+        margin: 0 0 2px 0 !important;
+        font-size: ${secondaryTextFontSize} !important;
+        font-weight: 700 !important;
+        line-height: 1.2 !important;
         text-align: center !important;
         color: #000000 !important;
       }
@@ -332,6 +352,7 @@ const generateThermalStyles = (printSettings: PrinterConfig & { paperSize: strin
         font-weight: 700;
         font-size: ${bodyFontSize} !important;
         line-height: 1.1 !important;
+        text-align: center !important;
       }
       /* Store header container - minimal spacing */
       #printable-receipt > div.text-center:first-of-type,
@@ -1553,6 +1574,7 @@ interface InvoiceData {
   logoUrl: string | null;
   businessName: string;
   storeAddress: string;
+  storePhone: string;
   invoiceNumber: string;
   date: string;
   cashier: string;
@@ -1579,6 +1601,7 @@ const extractInvoiceData = (element: HTMLElement): InvoiceData | null => {
     const logoUrl = settings?.logoUrl || null;
     const businessName = settings?.businessName || '';
     const storeAddress = settings?.storeAddress || '';
+    const storePhone = (settings as any)?.storePhone || '';
     
     // Extract logo from receipt if available
     const logoImg = element.querySelector('.receipt-logo img') as HTMLImageElement;
@@ -1588,8 +1611,12 @@ const extractInvoiceData = (element: HTMLElement): InvoiceData | null => {
     const businessNameEl = element.querySelector('h1');
     const finalBusinessName = businessNameEl?.textContent?.trim() || businessName;
     
-    // Extract address from header
-    const addressEl = element.querySelector('.text-center p');
+    // Extract store phone from receipt header (under store name)
+    const phoneEl = element.querySelector('.receipt-store-phone');
+    const finalStorePhone = phoneEl?.textContent?.trim() || storePhone;
+    
+    // Extract address from header (first .text-center p that is not .receipt-store-phone)
+    const addressEl = element.querySelector('.text-center p:not(.receipt-store-phone)');
     const finalAddress = addressEl?.textContent?.trim() || storeAddress;
     
     // Extract invoice info from .invoice-info section
@@ -1919,6 +1946,7 @@ const extractInvoiceData = (element: HTMLElement): InvoiceData | null => {
       logoUrl: finalLogoUrl,
       businessName: finalBusinessName,
       storeAddress: finalAddress,
+      storePhone: finalStorePhone,
       invoiceNumber,
       date: dateText,
       cashier,
@@ -1938,6 +1966,10 @@ const extractInvoiceData = (element: HTMLElement): InvoiceData | null => {
     return null;
   }
 };
+
+/** Escape for safe HTML in invoice header text */
+const escapeForInvoiceHtml = (s: string): string =>
+  String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
 /**
  * Generate invoice HTML based on the universal template
@@ -1983,11 +2015,12 @@ const generateInvoiceHTML = (data: InvoiceData, printSettings: ReturnType<typeof
   
   return `
     <div id="invoice" class="invoice-container ${widthClass}">
-      <!-- Header -->
+      <!-- Header: Logo, Store Name, Phone, Address -->
       <div class="header">
         ${data.logoUrl ? `<img src="${data.logoUrl}" alt="Logo" class="logo" onerror="this.style.display='none';">` : ''}
-         ${data.storeAddress ? `<strong>${data.storeAddress}</strong><br>` : ''}
-        ${data.businessName ? `<h1 class="store-name">${data.businessName}</h1>` : ''}
+        ${data.businessName ? `<h1 class="store-name">${escapeForInvoiceHtml(data.businessName)}</h1>` : ''}
+        ${data.storePhone ? `<p class="store-phone">${escapeForInvoiceHtml(data.storePhone)}</p>` : ''}
+        ${data.storeAddress ? `<p class="store-address">${escapeForInvoiceHtml(data.storeAddress)}</p>` : ''}
       </div>
       
       <!-- Meta Data -->
@@ -2183,6 +2216,27 @@ const generateUniversalInvoiceStyles = (printSettings: ReturnType<typeof getPrin
         display: block !important;
         width: 100%;
         line-height: 1.4;
+      }
+      
+      .store-phone {
+        margin: 2px 0 !important;
+        font-size: 0.95em !important;
+        font-weight: bold !important;
+        color: #000 !important;
+        text-align: center !important;
+        display: block !important;
+        width: 100%;
+        line-height: 1.3;
+      }
+      
+      .store-address {
+        margin: 2px 0 0 0 !important;
+        font-size: 0.9em !important;
+        color: #000 !important;
+        text-align: center !important;
+        display: block !important;
+        width: 100%;
+        line-height: 1.3;
       }
       
       .invoice-meta {
@@ -2490,6 +2544,8 @@ const generateUniversalInvoiceStyles = (printSettings: ReturnType<typeof getPrin
         display: block !important;
         width: 100% !important;
       }
+      .width-58mm .store-phone { font-size: 0.85em !important; margin: 2px 0 !important; text-align: center !important; }
+      .width-58mm .store-address { font-size: 0.8em !important; margin: 1px 0 0 0 !important; text-align: center !important; }
       
       /* Table layout for 58mm thermal - fixed layout but allow cell wrapping */
       .width-58mm table {
@@ -2638,6 +2694,8 @@ const generateUniversalInvoiceStyles = (printSettings: ReturnType<typeof getPrin
         display: block !important;
         width: 100% !important;
       }
+      .width-80mm .store-phone { font-size: 0.9em !important; margin: 2px 0 !important; text-align: center !important; }
+      .width-80mm .store-address { font-size: 0.85em !important; margin: 1px 0 0 0 !important; text-align: center !important; }
       
       .width-80mm .grand-total {
         margin-top: 12px !important;

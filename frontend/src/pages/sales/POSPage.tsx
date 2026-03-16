@@ -5642,6 +5642,9 @@ const POSPage: React.FC = () => {
         const legacyDefaultBusinessName = String.fromCharCode(80, 111, 115, 104, 80, 111, 105, 110, 116, 72, 117, 98);
         const businessNameToDisplay = businessName || (settings?.businessName && settings.businessName.trim() && settings.businessName !== legacyDefaultBusinessName ? settings.businessName.trim() : '');
 
+        // Store phone for receipt header (from settings)
+        const storePhoneToDisplay = (settings?.storePhone ?? '').trim() || '';
+
         // Get store logo from state (loaded from backend API) with fallback to localStorage settings
         // This ensures we always use the correct store's logo from the backend
         const logoUrlFromState = storeLogoUrl || '';
@@ -5729,16 +5732,16 @@ const POSPage: React.FC = () => {
                     </h2>
                 </div>
 
-                {/* Store Header - Modern and Prominent with Logo */}
-                <div className="text-center mb-8 pb-6 border-b-3 border-gradient" style={{ borderBottom: '3px solid #e5e7eb' }}>
-                    {/* Store Logo */}
-                    <div className="flex justify-center mb-5">
+                {/* Store Header - Logo, Name, Phone (thermal-friendly) */}
+                <div className="text-center mb-8 pb-6 border-b-3 border-gradient receipt-header" style={{ borderBottom: '3px solid #e5e7eb' }}>
+                    {/* Store Logo - top, centered; sized for thermal quality */}
+                    <div className="flex justify-center mb-4">
                         {hasCustomLogo && finalLogoUrl ? (
                             <div className="receipt-logo">
                                 <img
                                     src={finalLogoUrl}
                                     alt="Store logo"
-                                    className="w-20 h-20 sm:w-24 sm:h-24 object-contain rounded-2xl shadow-xl bg-white dark:bg-gray-800 p-2 border-2 border-gray-100 dark:border-gray-700"
+                                    className="w-20 h-20 sm:w-24 sm:h-24 object-contain rounded-2xl shadow-xl bg-white dark:bg-gray-800 p-2 border-2 border-gray-100 dark:border-gray-700 receipt-logo-img"
                                     style={{
                                         maxWidth: '96px',
                                         maxHeight: '96px',
@@ -5747,7 +5750,6 @@ const POSPage: React.FC = () => {
                                     }}
                                     onError={(e) => {
                                         console.error('[Receipt] Failed to load logo image:', finalLogoUrl.substring(0, 50));
-                                        // Fallback to default logo on error
                                         e.currentTarget.style.display = 'none';
                                     }}
                                 />
@@ -5770,39 +5772,59 @@ const POSPage: React.FC = () => {
                         )}
                     </div>
 
+                    {/* Store Name - bold, clear */}
                     {businessNameToDisplay ? (
                         <>
-                            <h1 className="text-3xl sm:text-4xl md:text-5xl font-extrabold text-gray-900 dark:text-gray-100 mb-4 tracking-tight leading-tight" style={{
+                            <h1 className="text-3xl sm:text-4xl md:text-5xl font-extrabold text-gray-900 dark:text-gray-100 mb-2 tracking-tight leading-tight receipt-store-name" style={{
                                 fontSize: 'clamp(1.875rem, 5vw, 2.5rem)',
                                 letterSpacing: '-0.02em',
                             }}>
                                 {businessNameToDisplay}
                             </h1>
-                            {addressToDisplay && (
-                                <p className="text-sm text-gray-500 dark:text-gray-400 mt-3 leading-relaxed font-medium">
+                            {storePhoneToDisplay ? (
+                                <p className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2 receipt-store-phone">
+                                    {storePhoneToDisplay}
+                                </p>
+                            ) : null}
+                            {addressToDisplay ? (
+                                <p className="text-sm text-gray-500 dark:text-gray-400 mt-1 leading-relaxed font-medium">
                                     {addressToDisplay}
                                 </p>
-                            )}
+                            ) : null}
                         </>
                     ) : title ? (
                         <>
-                            <h1 className="text-3xl sm:text-4xl md:text-5xl font-extrabold text-gray-900 dark:text-gray-100 mb-4 tracking-tight leading-tight" style={{
+                            <h1 className="text-3xl sm:text-4xl md:text-5xl font-extrabold text-gray-900 dark:text-gray-100 mb-2 tracking-tight leading-tight receipt-store-name" style={{
                                 fontSize: 'clamp(1.875rem, 5vw, 2.5rem)',
                                 letterSpacing: '-0.02em',
                             }}>
                                 {title}
                             </h1>
-                            {addressToDisplay && (
-                                <p className="text-sm text-gray-500 dark:text-gray-400 mt-3 leading-relaxed font-medium">
+                            {storePhoneToDisplay ? (
+                                <p className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2 receipt-store-phone">
+                                    {storePhoneToDisplay}
+                                </p>
+                            ) : null}
+                            {addressToDisplay ? (
+                                <p className="text-sm text-gray-500 dark:text-gray-400 mt-1 leading-relaxed font-medium">
                                     {addressToDisplay}
                                 </p>
-                            )}
+                            ) : null}
                         </>
-                    ) : addressToDisplay ? (
-                        <p className="text-sm text-gray-500 dark:text-gray-400 leading-relaxed font-medium">
-                            {addressToDisplay}
-                        </p>
-                    ) : null}
+                    ) : (
+                        <>
+                            {storePhoneToDisplay ? (
+                                <p className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2 receipt-store-phone">
+                                    {storePhoneToDisplay}
+                                </p>
+                            ) : null}
+                            {addressToDisplay ? (
+                                <p className="text-sm text-gray-500 dark:text-gray-400 leading-relaxed font-medium">
+                                    {addressToDisplay}
+                                </p>
+                            ) : null}
+                        </>
+                    )}
                 </div>
 
                 {/* Invoice Information - Modern Card Style */}

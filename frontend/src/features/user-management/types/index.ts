@@ -75,6 +75,8 @@ export interface SystemPreferences {
   businessDayTimezone: string; // IANA timezone (e.g., "Asia/Gaza", "America/New_York")
   // Store Address
   storeAddress: string; // Store location/address for invoices
+  // Store Phone (optional - shown on receipts)
+  storePhone?: string;
 }
 
 export interface ProfileFormFields {
