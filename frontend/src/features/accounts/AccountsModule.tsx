@@ -697,8 +697,22 @@ const AccountStatementModal: React.FC<{
             </div>
           </div>
         )}
+        {/* Hidden printable area for statement summary - data attributes used by printUtils for thermal layout */}
+        <div
+          id="printable-statement-summary"
+          className="sr-only statement-summary-only"
+          aria-hidden="true"
+          data-business-name={businessNameToDisplay}
+          data-address={addressToDisplay}
+          data-customer-name={summary.entityName}
+          data-date-time={`${formatDate(new Date())} ${new Date().toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' })}`}
+          data-total-debt={formatCurrency(summary.totalDebt)}
+          data-total-payments={formatCurrency(summary.totalPaid)}
+          data-balance-text={`${formatCurrency(Math.abs(summary.balance))}${summary.balance > 0 ? ' (مدين)' : summary.balance < 0 ? ' (دائن)' : ''}`}
+        />
         <div className="flex justify-start space-x-4 space-x-reverse p-4 bg-gray-50 dark:bg-gray-800/50 border-t dark:border-gray-700 flex-shrink-0 print-hidden">
           <button onClick={() => printReceipt('printable-statement-acc')} className="inline-flex items-center px-4 py-2 bg-blue-500 text-white rounded-md"><PrintIcon /><span className="mr-2">{labels.printReceipt}</span></button>
+          <button onClick={() => printReceipt('printable-statement-summary')} className="inline-flex items-center px-4 py-2 bg-gray-600 hover:bg-gray-700 text-white rounded-md"><PrintIcon /><span className="mr-2">ملخص الكشف</span></button>
           <button onClick={onClose} className="px-4 py-2 bg-gray-200 dark:bg-gray-600 rounded-md">{AR_LABELS.cancel}</button>
         </div>
       </div>

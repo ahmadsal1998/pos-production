@@ -3202,6 +3202,91 @@ const getPurchaseInvoicePrintContent = (element: HTMLElement): string => {
   `.trim();
 };
 
+/** Escape for HTML text content */
+const escapeHtml = (s: string): string =>
+  String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+
+/**
+ * Generates modern thermal-receipt HTML for Statement Summary (ملخص كشف حساب).
+ * Optimized for 80mm thermal printers: clean header, separators, bold numbers, highlighted balance.
+ */
+const getStatementSummaryPrintContent = (element: HTMLElement): string => {
+  const data = element.dataset;
+  const businessName = escapeHtml((data.businessName || '').trim());
+  const address = escapeHtml((data.address || '').trim());
+  const customerName = escapeHtml((data.customerName || '').trim());
+  const dateTime = escapeHtml((data.dateTime || '').trim());
+  const totalDebt = escapeHtml((data.totalDebt || '0').trim());
+  const totalPayments = escapeHtml((data.totalPayments || '0').trim());
+  const balanceText = escapeHtml((data.balanceText || '0').trim());
+
+  return `<!DOCTYPE html>
+<html dir="rtl" lang="ar">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ملخص كشف حساب</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 12px 8px 16px;
+      font-family: 'Segoe UI', Tahoma, Arial, sans-serif;
+      font-size: 13px;
+      color: #000;
+      max-width: 80mm;
+      margin: 0 auto;
+      line-height: 1.4;
+    }
+    .header { text-align: center; margin-bottom: 14px; padding-bottom: 10px; border-bottom: 2px dashed #000; }
+    .store-name { font-size: 16px; font-weight: 700; margin-bottom: 4px; }
+    .address { font-size: 11px; color: #333; margin-top: 2px; }
+    .title { font-size: 15px; font-weight: 700; margin: 10px 0 8px; letter-spacing: 0.02em; }
+    .date-row { font-size: 12px; color: #444; margin-top: 6px; }
+    .section { margin: 14px 0; }
+    .section-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: #555; margin-bottom: 6px; padding-bottom: 4px; border-bottom: 1px solid #ccc; }
+    .customer-name { font-size: 14px; font-weight: 600; }
+    .summary-table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+    .summary-table tr { border-bottom: 1px solid #ddd; }
+    .summary-table tr:last-child { border-bottom: none; }
+    .summary-table td { padding: 8px 0; font-size: 13px; }
+    .summary-table .label { font-weight: 500; color: #333; }
+    .summary-table .value { font-weight: 700; font-size: 14px; text-align: left; }
+    .balance-row { display: flex; justify-content: space-between; align-items: center; background: #f0f0f0; margin-top: 8px; padding: 10px 8px; border: 2px solid #000; border-radius: 4px; }
+    .balance-row .label { font-size: 12px; font-weight: 600; }
+    .balance-row .value { font-size: 16px; font-weight: 800; }
+    .divider { height: 2px; background: #000; margin: 12px 0; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    ${businessName ? `<div class="store-name">${businessName}</div>` : ''}
+    ${address ? `<div class="address">${address}</div>` : ''}
+    <div class="title">ملخص كشف حساب</div>
+    <div class="date-row">${dateTime}</div>
+  </div>
+  <div class="divider"></div>
+  <div class="section">
+    <div class="section-label">${customerName ? 'العميل / الحساب' : 'الحساب'}</div>
+    ${customerName ? `<div class="customer-name">${customerName}</div>` : ''}
+  </div>
+  <div class="divider"></div>
+  <table class="summary-table">
+    <tr><td class="label">إجمالي الدين</td><td class="value">${totalDebt}</td></tr>
+    <tr><td class="label">إجمالي المدفوعات</td><td class="value">${totalPayments}</td></tr>
+  </table>
+  <div class="balance-row">
+    <span class="label">الرصيد الحالي</span>
+    <span class="value">${balanceText}</span>
+  </div>
+</body>
+</html>`;
+};
+
 /**
  * Extracts the HTML content of a printable element
  * @param elementId - The ID of the element to print
@@ -3217,6 +3302,11 @@ const getPrintableContent = (elementId: string): string => {
   // Purchase Invoice: use dedicated A4 layout so printed output matches the screen design
   if (element.id === 'printable-purchase-invoice') {
     return getPurchaseInvoicePrintContent(element);
+  }
+
+  // Statement Summary: modern thermal-optimized layout (80mm, no transactions)
+  if (element.id === 'printable-statement-summary') {
+    return getStatementSummaryPrintContent(element as HTMLElement);
   }
 
   // Get print settings from preferences (with printer type awareness)

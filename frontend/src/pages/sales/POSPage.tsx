@@ -74,44 +74,44 @@ type POSProduct = Product & {
  * Uses 12-hour format with AM/PM, removes seconds, and uses English numerals (0-9) instead of Arabic numerals
  */
 const formatDateEnglish = (date: Date | string | number): string => {
-  const d = typeof date === 'string' || typeof date === 'number' 
-    ? new Date(date) 
-    : date instanceof Date 
-    ? date 
-    : new Date();
-  
-  if (isNaN(d.getTime())) {
-    return '';
-  }
-  
-  const year = d.getFullYear();
-  const month = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  
-  // Convert to 12-hour format
-  let hours = d.getHours();
-  const ampm = hours >= 12 ? 'PM' : 'AM';
-  hours = hours % 12;
-  hours = hours ? hours : 12; // 0 should be 12
-  const minutes = String(d.getMinutes()).padStart(2, '0');
-  
-  return `${year}/${month}/${day} || ${String(hours).padStart(2, '0')}:${minutes} ${ampm}`;
+    const d = typeof date === 'string' || typeof date === 'number'
+        ? new Date(date)
+        : date instanceof Date
+            ? date
+            : new Date();
+
+    if (isNaN(d.getTime())) {
+        return '';
+    }
+
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+
+    // Convert to 12-hour format
+    let hours = d.getHours();
+    const ampm = hours >= 12 ? 'PM' : 'AM';
+    hours = hours % 12;
+    hours = hours ? hours : 12; // 0 should be 12
+    const minutes = String(d.getMinutes()).padStart(2, '0');
+
+    return `${year}/${month}/${day} || ${String(hours).padStart(2, '0')}:${minutes} ${ampm}`;
 };
 
 const generateNewInvoice = (cashierName: string, invoiceNumber: string = 'INV-1', isReturn: boolean = false, originalInvoiceId?: string): POSInvoice => ({
-  id: invoiceNumber,
-  date: new Date(),
-  cashier: cashierName,
-  customer: null,
-  items: [],
-  subtotal: 0,
-  totalItemDiscount: 0,
-  invoiceDiscount: 0,
-  tax: 0,
-  grandTotal: 0,
-  paymentMethod: null,
-  originalInvoiceId: originalInvoiceId,
-  invoiceType: 'retail',
+    id: invoiceNumber,
+    date: new Date(),
+    cashier: cashierName,
+    customer: null,
+    items: [],
+    subtotal: 0,
+    totalItemDiscount: 0,
+    invoiceDiscount: 0,
+    tax: 0,
+    grandTotal: 0,
+    paymentMethod: 'Cash',
+    originalInvoiceId: originalInvoiceId,
+    invoiceType: 'retail',
 });
 
 // Helper function to filter out dummy/test customers
@@ -119,16 +119,16 @@ const generateNewInvoice = (cashierName: string, invoiceNumber: string = 'INV-1'
 const isDummyCustomer = (customer: Customer): boolean => {
     const name = customer.name?.toLowerCase().trim() || '';
     const phone = customer.phone?.toLowerCase().trim() || '';
-    
+
     // Common patterns for dummy/test customers
     const dummyPatterns = [
         'test', 'dummy', 'fake', 'example', 'sample', 'demo',
         'اختبار', 'تجريبي', 'مثال', 'وهمي'
     ];
-    
+
     // Check if name contains dummy patterns - this is the primary filter
     const isDummyName = dummyPatterns.some(pattern => name.includes(pattern));
-    
+
     // If name contains dummy patterns, it's definitely a dummy customer
     if (isDummyName) {
         console.log('[POS] isDummyCustomer: TRUE (dummy name):', {
@@ -137,18 +137,18 @@ const isDummyCustomer = (customer: Customer): boolean => {
         });
         return true;
     }
-    
+
     // For phone number checks, be very lenient:
     // Only filter if phone is clearly a test pattern (like 000, 111, 123, 999)
     // Don't filter based on phone length alone - short phone numbers might be legitimate
     const phoneDigits = phone.replace(/\D/g, '');
-    
+
     // Only mark as dummy phone if it matches common test patterns
     // Don't filter based on length - a customer with phone "1" might be legitimate
     const isDummyPhone = phoneDigits.length > 0 && /^(000|111|123|999)/.test(phoneDigits);
-    
+
     const result = isDummyPhone;
-    
+
     // Debug log when a customer is identified as dummy
     if (result) {
         console.log('[POS] isDummyCustomer: TRUE (dummy phone):', {
@@ -160,7 +160,7 @@ const isDummyCustomer = (customer: Customer): boolean => {
             phoneLength: phone.length
         });
     }
-    
+
     return result;
 };
 
@@ -169,12 +169,12 @@ const transformCustomer = (customer: any, index?: number): Customer | null => {
     // Handle both id and _id fields - backend transforms _id to id in toJSON, but IndexedDB might have either
     // Convert to string and handle null/undefined cases
     let customerId = customer.id || customer._id;
-    
+
     // Convert to string if it exists (handles numbers, ObjectIds, etc.)
     if (customerId != null) {
         customerId = String(customerId);
     }
-    
+
     // Return null if id is missing or empty (will be filtered out)
     if (!customerId || customerId.trim() === '') {
         console.warn(`[POS] Customer [${index ?? '?'}] missing or empty id field:`, {
@@ -187,7 +187,7 @@ const transformCustomer = (customer: any, index?: number): Customer | null => {
         });
         return null;
     }
-    
+
     const transformed: Customer = {
         id: customerId,
         name: customer.name || customer.phone || '',
@@ -195,7 +195,7 @@ const transformCustomer = (customer: any, index?: number): Customer | null => {
         address: customer.address,
         previousBalance: customer.previousBalance || 0,
     };
-    
+
     // Debug log for successful transformation
     if (index !== undefined && index < 3) {
         console.log(`[POS] Transformed customer [${index}]:`, {
@@ -206,21 +206,21 @@ const transformCustomer = (customer: any, index?: number): Customer | null => {
             phone: transformed.phone
         });
     }
-    
+
     return transformed;
 };
 
 // Helper function to transform and filter customers
 const transformAndFilterCustomers = (customers: any[]): Customer[] => {
     console.log(`[POS] transformAndFilterCustomers: Starting with ${customers.length} customers`);
-    
+
     if (!customers || customers.length === 0) {
         console.log('[POS] transformAndFilterCustomers: Empty input array');
         return [];
     }
-    
+
     // Log first few raw customers for debugging
-    console.log('[POS] transformAndFilterCustomers: Sample raw customers:', 
+    console.log('[POS] transformAndFilterCustomers: Sample raw customers:',
         customers.slice(0, 3).map((c, i) => ({
             index: i,
             id: c.id,
@@ -231,7 +231,7 @@ const transformAndFilterCustomers = (customers: any[]): Customer[] => {
             has_id: !!c._id
         }))
     );
-    
+
     const transformed = customers
         .map((customer, index) => transformCustomer(customer, index))
         .filter((customer): customer is Customer => {
@@ -239,24 +239,24 @@ const transformAndFilterCustomers = (customers: any[]): Customer[] => {
             if (!customer) {
                 return false;
             }
-            
+
             // Filter out customers without valid id (shouldn't happen after transformCustomer, but double-check)
             if (!customer.id || customer.id.trim() === '') {
                 console.warn('[POS] Filtering out customer without valid id:', customer);
                 return false;
             }
-            
+
             // Check if it's a dummy customer
             const isDummy = isDummyCustomer(customer);
             if (isDummy) {
                 console.log('[POS] Filtering out dummy customer:', customer.name, customer.phone);
             }
-            
+
             return !isDummy;
         });
-    
+
     console.log(`[POS] transformAndFilterCustomers: Transformed ${transformed.length} customers (filtered from ${customers.length})`);
-    
+
     // Log transformed customers for debugging
     if (transformed.length > 0) {
         console.log('[POS] Transformed Customers:', transformed.slice(0, 5).map(c => ({
@@ -271,7 +271,7 @@ const transformAndFilterCustomers = (customers: any[]): Customer[] => {
         console.warn('  - Are customers being marked as dummy?');
         console.warn('  - Sample raw customer:', customers[0]);
     }
-    
+
     return transformed;
 };
 
@@ -326,9 +326,9 @@ const POSPage: React.FC = () => {
         useServerStockCheck?: boolean;
     };
     const queuedProductsRef = useRef<QueuedProduct[]>([]); // Queue of products waiting to be added after processing completes
-    // Prevent duplicate add-product from multi-tab, double-click, or repeated events (one logical add per product+unit per window)
+    // Prevent duplicate add-product only from true double-fire (same scan firing twice). Keep short so cashiers can scan same barcode repeatedly to increase qty.
     const lastAddProductRef = useRef<{ productId: string; unit: string; at: number } | null>(null);
-    const ADD_PRODUCT_DEBOUNCE_MS = 400;
+    const ADD_PRODUCT_DEBOUNCE_MS = 80;
     // Prevent duplicate invoice submissions
     const isSubmittingInvoiceRef = useRef(false); // Ref to track if invoice is being submitted (prevents race conditions)
     const invoiceNumberInitializedRef = useRef(false); // Track if invoice number has been initialized
@@ -348,11 +348,11 @@ const POSPage: React.FC = () => {
     const [businessName, setBusinessName] = useState<string>(''); // Store business name for receipts
     const [storeLogoUrl, setStoreLogoUrl] = useState<string>(''); // Store logo URL for receipts
     const [showCostPrice, setShowCostPrice] = useState<boolean>(false); // Toggle for cost price column visibility
-    
+
     const [toastMessage, setToastMessage] = useState<string | null>(null); // Toast notification message
     const [toastType, setToastType] = useState<'info' | 'error' | 'success'>('info'); // Toast type
     const [unsyncedSalesCount, setUnsyncedSalesCount] = useState<number>(0); // Count of sales pending sync
-    
+
     // Queue status for sale processing
     const [queueLength, setQueueLength] = useState<number>(0);
     const [queueProcessing, setQueueProcessing] = useState<boolean>(false);
@@ -401,7 +401,7 @@ const POSPage: React.FC = () => {
         // Keep stock calculations stable when dealing with divisions/conversions.
         return Math.round(value * 1000) / 1000;
     };
-    
+
     type HeldInvoice = POSInvoice & { heldKey: string };
 
     // Helper functions for held invoices persistence
@@ -436,12 +436,12 @@ const POSPage: React.FC = () => {
                 try {
                     const trimmed = invoices.slice(0, Math.min(5, invoices.length));
                     localStorage.setItem(HELD_INVOICES_STORAGE_KEY, JSON.stringify(trimmed));
-                } catch {}
+                } catch { }
             }
             console.error('Error saving held invoices to localStorage:', error);
         }
     }, []);
-    
+
     // Initialize held invoices from localStorage
     const [heldInvoices, setHeldInvoices] = useState<HeldInvoice[]>(() => {
         try {
@@ -478,7 +478,7 @@ const POSPage: React.FC = () => {
         }
         return false; // Default to false if not found
     };
-    
+
     const [autoPrintEnabled, setAutoPrintEnabled] = useState(() => getAutoPrintSetting());
     const [isAddCustomerModalOpen, setIsAddCustomerModalOpen] = useState(false);
     const [isProductNotFoundModalOpen, setIsProductNotFoundModalOpen] = useState(false);
@@ -501,17 +501,17 @@ const POSPage: React.FC = () => {
         conversionFactor?: number;
         piecesPerUnit?: number;
     } | null>(null);
-    
+
     // Helper function to get tax rate from settings (synchronous for initial state)
     // This is a regular function (not useCallback) so it can be used in useState initializer
     const getTaxRateFromSettings = (): number => {
         try {
             const settings = loadSettings(null);
-            
+
             // Check if settings exist and vatPercentage is defined (including 0)
             if (settings && settings.vatPercentage !== undefined && settings.vatPercentage !== null) {
                 let vatPercentage = settings.vatPercentage;
-                
+
                 // Handle string values that might come from form inputs
                 if (typeof vatPercentage === 'string') {
                     vatPercentage = parseFloat(vatPercentage);
@@ -520,41 +520,41 @@ const POSPage: React.FC = () => {
                         return 0;
                     }
                 }
-                
+
                 // Ensure it's a number
                 if (typeof vatPercentage !== 'number' || isNaN(vatPercentage)) {
                     console.warn('Invalid vatPercentage value, using 0');
                     return 0;
                 }
-                
+
                 // Handle the value - it could be stored as a percentage (15) or decimal (0.15)
                 // If value is > 1, treat as percentage and convert to decimal (e.g., 15 => 0.15)
                 // If value is <= 1, treat as decimal (e.g., 0.15 => 0.15, 0 => 0)
-                const normalized = vatPercentage > 1 
-                    ? vatPercentage / 100 
+                const normalized = vatPercentage > 1
+                    ? vatPercentage / 100
                     : vatPercentage;
-                
+
                 return normalized;
             }
         } catch (err) {
             console.error('Failed to load tax rate from localStorage:', err);
         }
-        
+
         // Default to 0 if no settings found (not 15% - removed hardcoded default)
         return 0;
     };
-    
+
     // Initialize tax rate from settings synchronously (no hardcoded 0.15)
     // This ensures the correct tax rate is used from the start, even if it's 0%
     const [taxRate, setTaxRate] = useState<number>(() => getTaxRateFromSettings());
-    
+
     // Fetch tax rate from localStorage settings (for updates when settings change)
     const fetchTaxRate = useCallback(() => {
         const newTaxRate = getTaxRateFromSettings();
         setTaxRate(newTaxRate);
         console.log('Tax rate loaded from localStorage:', newTaxRate, '(', (newTaxRate * 100).toFixed(2), '%)');
     }, []);
-    
+
     const calculateTotals = useCallback((items: POSCartItem[], invoiceDiscount: number): Pick<POSInvoice, 'subtotal' | 'totalItemDiscount' | 'tax' | 'grandTotal'> => {
         const subtotal = items.reduce((acc, item) => acc + item.total, 0);
         const totalItemDiscount = items.reduce((acc, item) => acc + item.discount * item.quantity, 0);
@@ -683,7 +683,7 @@ const POSPage: React.FC = () => {
             if (response.data.success && response.data.data.balance) {
                 const balance = response.data.data.balance.availablePoints || 0;
                 setCustomerPointsBalance(balance);
-                
+
                 // Note: pointsValuePerPoint is not included in the customer points balance response
                 // It should be fetched from points settings if needed
                 // For now, use default value
@@ -717,7 +717,7 @@ const POSPage: React.FC = () => {
 
         const convertNumeralsInNode = (node: Node): void => {
             if (isConverting) return; // Prevent recursive calls
-            
+
             if (node.nodeType === Node.TEXT_NODE) {
                 const textNode = node as Text;
                 const originalText = textNode.textContent || '';
@@ -755,7 +755,7 @@ const POSPage: React.FC = () => {
         // Set up MutationObserver to watch for DOM changes
         const observer = new MutationObserver((mutations) => {
             if (isConverting) return; // Skip if already converting
-            
+
             // Use requestAnimationFrame to batch conversions and avoid performance issues
             requestAnimationFrame(() => {
                 mutations.forEach((mutation) => {
@@ -799,7 +799,7 @@ const POSPage: React.FC = () => {
             observer.disconnect();
         };
     }, []);
-    
+
     // Fetch next invoice number from API
     // Fetch current invoice number without incrementing (for page load)
     const fetchCurrentInvoiceNumber = useCallback(async (): Promise<string> => {
@@ -811,7 +811,7 @@ const POSPage: React.FC = () => {
         } catch (err: any) {
             const apiError = err as ApiError;
             console.warn('⚠️ API failed to get current invoice number, checking IndexedDB:', apiError);
-            
+
             // If offline or API fails, get current invoice number from IndexedDB
             try {
                 const storeId = user?.storeId;
@@ -824,7 +824,7 @@ const POSPage: React.FC = () => {
                         let maxNumber = 0;
                         const sequentialPattern = /^INV-(\d+)$/; // Matches INV-123 format
                         const timestampPattern = /^INV-(\d+)-/; // Matches INV-timestamp-... format (legacy)
-                        
+
                         for (const sale of allSales) {
                             if (sale.invoiceNumber) {
                                 // First try sequential format (INV-123)
@@ -854,7 +854,7 @@ const POSPage: React.FC = () => {
             } catch (dbError: any) {
                 console.error('❌ Failed to get invoice number from IndexedDB:', dbError);
             }
-            
+
             // Last resort: fallback to INV-1
             console.warn('⚠️ Using fallback invoice number INV-1');
             return 'INV-1';
@@ -871,7 +871,7 @@ const POSPage: React.FC = () => {
         } catch (err: any) {
             const apiError = err as ApiError;
             console.warn('⚠️ API failed to get next invoice number, checking IndexedDB for offline invoice numbers:', apiError);
-            
+
             // If offline or API fails, get next invoice number from IndexedDB
             try {
                 const storeId = user?.storeId;
@@ -884,7 +884,7 @@ const POSPage: React.FC = () => {
             } catch (dbError: any) {
                 console.error('❌ Failed to get invoice number from IndexedDB:', dbError);
             }
-            
+
             // Last resort: fallback to INV-1 (but this should be avoided)
             console.warn('⚠️ Using fallback invoice number INV-1 (may cause duplicates if used multiple times offline)');
             return 'INV-1';
@@ -897,12 +897,12 @@ const POSPage: React.FC = () => {
             setQueueLength(length);
             setQueueProcessing(processing);
         });
-        
+
         // Get initial status
         const status = saleQueueService.getQueueStatus();
         setQueueLength(status.queueLength);
         setQueueProcessing(status.processing);
-        
+
         return unsubscribe;
     }, []);
 
@@ -913,9 +913,9 @@ const POSPage: React.FC = () => {
         if (isFetchingNextInvoiceNumberRef.current) {
             return;
         }
-        
+
         isFetchingNextInvoiceNumberRef.current = true;
-        
+
         try {
             // Fetch next invoice number (incrementing) and cache it
             const nextNumber = await fetchNextInvoiceNumber();
@@ -950,23 +950,23 @@ const POSPage: React.FC = () => {
         if (invoiceNumberInitializedRef.current || !isMountedRef.current || !user?.storeId) {
             return;
         }
-        
+
         // Store storeId in a variable to ensure TypeScript knows it's a string
         const storeId = user.storeId;
-        
+
         const initializeInvoiceNumber = async () => {
             // Double-check to prevent race conditions
             if (invoiceNumberInitializedRef.current) {
                 return;
             }
-            
+
             try {
                 // HYBRID INVOICE COUNTER: Initialize local counter from backend
                 await invoiceCounterService.initialize(storeId);
-                
+
                 // Get the current invoice number from local counter (without incrementing)
                 const currentInvoiceNumber = invoiceCounterService.getCurrentInvoiceNumber();
-                
+
                 // Only update if component is still mounted and not already initialized
                 if (isMountedRef.current && !invoiceNumberInitializedRef.current) {
                     invoiceNumberInitializedRef.current = true;
@@ -1012,12 +1012,12 @@ const POSPage: React.FC = () => {
         const handleGlobalKeyDown = (e: KeyboardEvent) => {
             // Ignore if user is already typing in an input, textarea, or contenteditable element
             const target = e.target as HTMLElement;
-            const isInputElement = target.tagName === 'INPUT' || 
-                                  target.tagName === 'TEXTAREA' || 
-                                  target.isContentEditable ||
-                                  (target.closest('input') !== null) ||
-                                  (target.closest('textarea') !== null);
-            
+            const isInputElement = target.tagName === 'INPUT' ||
+                target.tagName === 'TEXTAREA' ||
+                target.isContentEditable ||
+                (target.closest('input') !== null) ||
+                (target.closest('textarea') !== null);
+
             // If already in an input field, don't interfere
             if (isInputElement) {
                 return;
@@ -1026,7 +1026,7 @@ const POSPage: React.FC = () => {
             // Ignore modifier keys, function keys, arrow keys, etc.
             // Only focus on printable characters (letters, numbers, symbols)
             const isPrintableKey = e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey;
-            
+
             if (isPrintableKey && searchInputRef.current) {
                 // Prevent default to stop the character from being processed elsewhere
                 e.preventDefault();
@@ -1045,7 +1045,7 @@ const POSPage: React.FC = () => {
 
     // Track if a check is in progress to prevent concurrent calls
     const isCheckingUnsyncedRef = useRef(false);
-    
+
     // Function to check for unsynced sales (sales under review)
     // IMPORTANT: Only disable Confirm Payment for critical errors (duplicates), not just unsynced sales
     // Unsynced sales will sync automatically in the background without blocking new sales
@@ -1066,7 +1066,7 @@ const POSPage: React.FC = () => {
 
             await salesDB.init();
             const unsyncedSales = await salesDB.getUnsyncedSales(storeId);
-            
+
             // Unsynced sales will sync in background - no need to block new sales
             if (unsyncedSales.length > 0) {
                 console.log(`[POS] Found ${unsyncedSales.length} unsynced sale(s) - Will sync in background (not blocking)`);
@@ -1164,7 +1164,7 @@ const POSPage: React.FC = () => {
         if (prevItemsLengthRef.current > 0 && len === 0) {
             try {
                 sessionStorage.removeItem(getPOSDraftStorageKey(location.pathname));
-            } catch (_) {}
+            } catch (_) { }
         }
         prevItemsLengthRef.current = len;
     }, [currentInvoice.items.length, location.pathname]);
@@ -1176,7 +1176,7 @@ const POSPage: React.FC = () => {
         try {
             const raw = sessionStorage.getItem(key);
             if (!raw) return;
-            const parsed = JSON.parse(raw) as { date: string; items: POSCartItem[]; [k: string]: any };
+            const parsed = JSON.parse(raw) as { date: string; items: POSCartItem[];[k: string]: any };
             if (!parsed.items || !Array.isArray(parsed.items) || parsed.items.length === 0) return;
             const restored: POSInvoice = {
                 ...parsed,
@@ -1216,29 +1216,29 @@ const POSPage: React.FC = () => {
         if (!isMountedRef.current) {
             return;
         }
-        
+
         setIsLoadingCustomers(true);
         try {
             console.log('[POS] Starting to fetch customers from server...');
-            
+
             // Sync customers from server (this handles IndexedDB storage)
             const syncResult = await customerSync.syncCustomers({ forceRefresh: true });
-            
+
             console.log('[POS] Sync result:', {
                 success: syncResult.success,
                 syncedCount: syncResult.syncedCount,
                 customersCount: syncResult.customers?.length || 0,
                 error: syncResult.error
             });
-            
+
             if (!isMountedRef.current) {
                 return;
             }
-            
+
             if (syncResult.success && syncResult.customers) {
                 // Transform backend data to frontend Customer format and filter out dummy customers
                 const transformedCustomers: Customer[] = transformAndFilterCustomers(syncResult.customers);
-                
+
                 setAllCustomers(transformedCustomers);
                 setCustomers(transformedCustomers);
                 setCustomersLoaded(true);
@@ -1266,7 +1266,7 @@ const POSPage: React.FC = () => {
             if (!isMountedRef.current) {
                 return;
             }
-            
+
             const apiError = err as ApiError;
             console.error('[POS] Error fetching customers:', apiError);
             console.error('[POS] Error details:', {
@@ -1294,27 +1294,27 @@ const POSPage: React.FC = () => {
             console.log('[POS] Customer load already in progress, skipping...');
             return;
         }
-        
+
         isLoadingCustomersRef.current = true;
         setIsLoadingCustomers(true);
         try {
             console.log('[POS] Loading customers from IndexedDB...');
-            
+
             // Verify storeId before loading (safe decode; invalid tokens are cleared)
             if (import.meta.env.DEV) {
                 const { getStoreIdFromToken } = await import('@/lib/utils/storeId');
                 const storeId = getStoreIdFromToken();
                 console.log('[POS] Current storeId from token:', storeId, '(type:', typeof storeId, ')');
             }
-            
+
             // Initialize IndexedDB
             await customersDB.init();
-            
+
             // Get all customers from IndexedDB
             const dbCustomers = await customersDB.getAllCustomers();
-            
+
             console.log(`[POS] getAllCustomers returned ${dbCustomers?.length || 0} customers`);
-            
+
             // Log detailed info about retrieved customers
             if (dbCustomers && dbCustomers.length > 0) {
                 console.log('[POS] Retrieved customers structure:', {
@@ -1329,7 +1329,7 @@ const POSPage: React.FC = () => {
                     }
                 });
             }
-            
+
             if (dbCustomers && dbCustomers.length > 0) {
                 // Log first customer structure for debugging
                 if (dbCustomers.length > 0) {
@@ -1343,13 +1343,13 @@ const POSPage: React.FC = () => {
                         phone: dbCustomers[0].phone
                     });
                 }
-                
+
                 // Transform backend data to frontend Customer format and filter out dummy customers
                 const transformedCustomers: Customer[] = transformAndFilterCustomers(dbCustomers);
-                
+
                 console.log(`[POS] Transformed ${transformedCustomers.length} customers (filtered from ${dbCustomers.length})`);
                 console.log('[POS] Transformed Customers Array:', transformedCustomers);
-                
+
                 if (isMountedRef.current) {
                     setAllCustomers(transformedCustomers);
                     setCustomers(transformedCustomers);
@@ -1420,20 +1420,20 @@ const POSPage: React.FC = () => {
         try {
             setIsSearchingCustomersServer(true);
             console.log(`[POS] Performing server-side customer search for: "${trimmed}"`);
-            
+
             // Use API search parameter to search on server
             const response = await customersApi.getCustomers({ search: trimmed });
 
             if (response.success) {
                 const customersData = (response.data as any)?.data?.customers || [];
-                
+
                 // Sync found customers to IndexedDB to keep cache updated (server is source of truth)
                 if (customersData.length > 0) {
                     try {
                         // Sync each found customer to IndexedDB to ensure cache is up-to-date
                         await Promise.all(
-                            customersData.map((customer: any) => 
-                                customerSync.syncAfterCreateOrUpdate(customer).catch(err => 
+                            customersData.map((customer: any) =>
+                                customerSync.syncAfterCreateOrUpdate(customer).catch(err =>
                                     console.warn('[POS] Error syncing customer from search:', err)
                                 )
                             )
@@ -1444,7 +1444,7 @@ const POSPage: React.FC = () => {
                         // Continue anyway - we still have the search results
                     }
                 }
-                
+
                 // Transform and filter out dummy customers
                 const transformedCustomers: Customer[] = Array.isArray(customersData)
                     ? transformAndFilterCustomers(customersData)
@@ -1468,7 +1468,7 @@ const POSPage: React.FC = () => {
     const normalizeProduct = useCallback((p: any): POSProduct => {
         // Store original backend ID for API calls
         const originalId = p.id || p._id || '';
-        
+
         // Handle ID - can be string (MongoDB ObjectId) or number
         let productId: number;
         if (typeof p.id === 'string') {
@@ -1493,7 +1493,7 @@ const POSPage: React.FC = () => {
         } else {
             productId = parseInt(p.id) || parseInt(p._id) || Date.now() + Math.random();
         }
-        
+
         // Get retail selling price (preferred) or fall back to price
         const retailPrice = parseFloat(p.retailSellingPrice) || parseFloat(p.price) || 0;
         // Parse wholesalePrice - only include if it's a valid positive number
@@ -1504,7 +1504,7 @@ const POSPage: React.FC = () => {
                 wholesalePrice = parsed;
             }
         }
-        
+
         return {
             id: productId,
             originalId: originalId, // Store original backend ID
@@ -1526,7 +1526,7 @@ const POSPage: React.FC = () => {
                     // Preserve hierarchy so unit cost updates when changing unit (same as Purchases screen)
                     order: u.order !== undefined && u.order !== null ? Number(u.order) : idx,
                     unitsInPrevious: u.unitsInPrevious !== undefined && u.unitsInPrevious !== null ? Number(u.unitsInPrevious) : undefined,
-                  }))
+                }))
                 : undefined,
             parentProductId: p.parentProductId ? String(p.parentProductId) : undefined,
             expiryDate: p.expiryDate ? new Date(p.expiryDate).toISOString().split('T')[0] : '',
@@ -1596,7 +1596,7 @@ const POSPage: React.FC = () => {
                         try {
                             localStorage.removeItem(CACHE_KEY);
                             localStorage.removeItem(CACHE_TIMESTAMP_KEY);
-                        } catch {}
+                        } catch { }
                         console.warn('Storage full: quick products cache cleared. Using API-only.');
                     } else {
                         console.warn('Error caching quick products:', cacheError);
@@ -1632,13 +1632,13 @@ const POSPage: React.FC = () => {
         try {
             setIsLoadingFromDB(true);
             console.log('[POS] Loading products from IndexedDB...');
-            
+
             // Initialize IndexedDB
             await productsDB.init();
-            
+
             // Get all products from IndexedDB
             const dbProducts = await productsDB.getAllProducts();
-            
+
             if (dbProducts && dbProducts.length > 0) {
                 // Normalize and set products
                 const normalizedProducts = dbProducts.map((p: any) => normalizeProduct(p));
@@ -1653,40 +1653,40 @@ const POSPage: React.FC = () => {
                 const now = Date.now();
                 const timeSinceLastAttempt = now - lastProductSyncAttemptRef.current;
                 const SYNC_COOLDOWN = 30 * 1000; // 30 seconds cooldown
-                
+
                 if (isProductSyncInProgressRef.current) {
                     console.log('[POS] Product sync already in progress, skipping duplicate request');
                     setProductsLoaded(false);
                     return;
                 }
-                
+
                 if (timeSinceLastAttempt < SYNC_COOLDOWN) {
                     console.log(`[POS] Sync cooldown active (${Math.ceil((SYNC_COOLDOWN - timeSinceLastAttempt) / 1000)}s remaining), skipping sync`);
                     setProductsLoaded(false);
                     return;
                 }
-                
+
                 // Check if data is fresh (even if empty, might have been cleared recently)
                 const DATA_FRESHNESS_THRESHOLD = 5 * 60 * 1000; // 5 minutes
                 const isFresh = await productsDB.isDataFresh(DATA_FRESHNESS_THRESHOLD);
-                
+
                 if (isFresh && dbProducts.length === 0) {
                     // Data was recently cleared but is still considered fresh - don't sync
                     console.log('[POS] IndexedDB is empty but data is fresh (recently cleared), skipping sync');
                     setProductsLoaded(false);
                     return;
                 }
-                
+
                 // Mark sync as in progress
                 isProductSyncInProgressRef.current = true;
                 lastProductSyncAttemptRef.current = now;
-                
+
                 console.log('[POS] No products in IndexedDB and data is stale, syncing from server...');
                 const syncResult = await productSync.syncProducts({ forceRefresh: false });
-                
+
                 // Clear sync in progress flag
                 isProductSyncInProgressRef.current = false;
-                
+
                 if (syncResult.success && syncResult.products) {
                     const normalizedProducts = syncResult.products.map((p: any) => normalizeProduct(p));
                     setProducts(normalizedProducts);
@@ -1717,7 +1717,7 @@ const POSPage: React.FC = () => {
             console.log('[POS] Products already loaded, skipping redundant fetchAllProducts call');
             return;
         }
-        
+
         // Delegate to loadProductsFromDB which handles all the logic
         await loadProductsFromDB();
     }, [normalizeProduct, productsLoaded, products.length, loadProductsFromDB]);
@@ -1728,13 +1728,13 @@ const POSPage: React.FC = () => {
         loadCustomersFromDB();
         fetchTaxRate();
         fetchQuickProducts(); // Fast - uses backend filtering and cache
-        
+
         // Load products from IndexedDB (fast, handles large datasets)
         loadProductsFromDB();
-        
+
         // Note: fetchAllProducts is called by loadProductsFromDB if needed
         // No need to call it again here to avoid duplicate sync attempts
-        
+
         // Sync customers in background (only if needed - customerSync handles this internally)
         // Only sync if customersLoaded is false (meaning initial load didn't find customers)
         const timer = setTimeout(() => {
@@ -1744,10 +1744,10 @@ const POSPage: React.FC = () => {
                     if (!isMountedRef.current) {
                         return;
                     }
-                    
+
                     if (result.success && result.customers) {
                         const transformedCustomers: Customer[] = transformAndFilterCustomers(result.customers);
-                        
+
                         if (transformedCustomers.length > 0) {
                             setAllCustomers(transformedCustomers);
                             setCustomers(transformedCustomers);
@@ -1777,7 +1777,7 @@ const POSPage: React.FC = () => {
                 });
             }
         }, 1000); // Small delay to let IndexedDB load first
-        
+
         return () => {
             clearTimeout(timer);
         };
@@ -1802,7 +1802,7 @@ const POSPage: React.FC = () => {
                 }
             }
         };
-        
+
         const handleStorageChange = (e: StorageEvent) => {
             // Reload tax rate if settings were changed
             if (e.key && e.key.startsWith('pos_settings_')) {
@@ -1831,25 +1831,25 @@ const POSPage: React.FC = () => {
                 const now = Date.now();
                 const timeSinceLastAttempt = now - lastProductSyncAttemptRef.current;
                 const SYNC_COOLDOWN = 30 * 1000; // 30 seconds cooldown
-                
+
                 if (isProductSyncInProgressRef.current) {
                     console.log('[POS] Product sync already in progress, skipping cache invalidation sync');
                     return;
                 }
-                
+
                 if (timeSinceLastAttempt < SYNC_COOLDOWN) {
                     console.log(`[POS] Sync cooldown active (${Math.ceil((SYNC_COOLDOWN - timeSinceLastAttempt) / 1000)}s remaining), skipping cache invalidation sync`);
                     return;
                 }
-                
+
                 // Mark sync as in progress
                 isProductSyncInProgressRef.current = true;
                 lastProductSyncAttemptRef.current = now;
-                
+
                 productSync.syncProducts({ forceRefresh: true }).then(async (result) => {
                     // Clear sync in progress flag
                     isProductSyncInProgressRef.current = false;
-                    
+
                     if (result.success && result.products && result.products.length > 0) {
                         // Update IndexedDB incrementally (no need to reload all products)
                         try {
@@ -1985,7 +1985,7 @@ const POSPage: React.FC = () => {
                 try {
                     await customersDB.init();
                     const dbCustomers = await customersDB.getAllCustomers();
-                    
+
                     if (isMountedRef.current) {
                         if (dbCustomers && dbCustomers.length > 0) {
                             const transformedCustomers: Customer[] = transformAndFilterCustomers(dbCustomers);
@@ -2058,7 +2058,7 @@ const POSPage: React.FC = () => {
         // Use IndexedDB search for fast local search
         const searchCustomersLocal = async () => {
             if (!isMountedRef.current) return;
-            
+
             console.log('[POS] Starting customer search:', {
                 searchTerm: customerSearchTerm,
                 customersLoaded,
@@ -2073,19 +2073,19 @@ const POSPage: React.FC = () => {
                     const name = (customer.name || '').toLowerCase();
                     const phone = (customer.phone || '').toLowerCase();
                     const address = (customer.address || '').toLowerCase();
-                    
-                    return name.includes(searchLower) || 
-                           phone.includes(searchLower) || 
-                           address.includes(searchLower);
+
+                    return name.includes(searchLower) ||
+                        phone.includes(searchLower) ||
+                        address.includes(searchLower);
                 });
-                
+
                 console.log('[POS] Client-side filter results:', {
                     searchTerm: customerSearchTerm,
                     totalCustomers: allCustomers.length,
                     filteredCount: filtered.length,
                     sampleResults: filtered.slice(0, 3).map(c => ({ id: c.id, name: c.name, phone: c.phone }))
                 });
-                
+
                 if (isMountedRef.current) {
                     try {
                         setCustomers(filtered);
@@ -2101,10 +2101,10 @@ const POSPage: React.FC = () => {
             try {
                 // Ensure IndexedDB is initialized
                 await customersDB.init();
-                
+
                 // Search in IndexedDB (fast, handles large datasets)
                 const searchResults = await customersDB.searchCustomers(customerSearchTerm);
-                
+
                 console.log('[POS] IndexedDB search results:', {
                     searchTerm: customerSearchTerm,
                     rawResultsCount: searchResults.length,
@@ -2115,7 +2115,7 @@ const POSPage: React.FC = () => {
 
                 // Transform and filter out dummy customers
                 const transformedCustomers: Customer[] = transformAndFilterCustomers(searchResults);
-                
+
                 console.log('[POS] After transformation:', {
                     searchTerm: customerSearchTerm,
                     transformedCount: transformedCustomers.length,
@@ -2136,7 +2136,7 @@ const POSPage: React.FC = () => {
                     message: error instanceof Error ? error.message : String(error),
                     stack: error instanceof Error ? error.stack : undefined
                 });
-                
+
                 // Fallback to server-side search
                 if (!customersLoaded || allCustomers.length === 0) {
                     console.log('[POS] Falling back to server-side search...');
@@ -2147,7 +2147,7 @@ const POSPage: React.FC = () => {
                             resultsCount: results.length,
                             sampleResults: results.slice(0, 3).map(c => ({ id: c.id, name: c.name, phone: c.phone }))
                         });
-                        
+
                         if (isMountedRef.current) {
                             try {
                                 setServerCustomerSearchResults(results);
@@ -2176,17 +2176,17 @@ const POSPage: React.FC = () => {
                         const name = (customer.name || '').toLowerCase();
                         const phone = (customer.phone || '').toLowerCase();
                         const address = (customer.address || '').toLowerCase();
-                        
-                        return name.includes(searchLower) || 
-                               phone.includes(searchLower) || 
-                               address.includes(searchLower);
+
+                        return name.includes(searchLower) ||
+                            phone.includes(searchLower) ||
+                            address.includes(searchLower);
                     });
-                    
+
                     console.log('[POS] Client-side filter fallback results:', {
                         searchTerm: customerSearchTerm,
                         filteredCount: filtered.length
                     });
-                    
+
                     if (isMountedRef.current) {
                         try {
                             setCustomers(filtered);
@@ -2223,7 +2223,7 @@ const POSPage: React.FC = () => {
             try {
                 // First try localStorage
                 const settings = loadSettings(null);
-                
+
                 // Load business name from localStorage (it's stored there, not in backend settings)
                 if (settings?.businessName) {
                     const legacyDefaultBusinessName = String.fromCharCode(80, 111, 115, 104, 80, 111, 105, 110, 116, 72, 117, 98);
@@ -2232,13 +2232,13 @@ const POSPage: React.FC = () => {
                         setBusinessName(name);
                     }
                 }
-                
+
                 // Load logo URL from localStorage
                 if (settings?.logoUrl) {
                     console.log('[POS] Found store logo URL in localStorage');
                     setStoreLogoUrl(settings.logoUrl);
                 }
-                
+
                 if (settings?.storeAddress) {
                     console.log('[POS] Found store address in localStorage:', settings.storeAddress);
                     setStoreAddress(settings.storeAddress);
@@ -2251,10 +2251,10 @@ const POSPage: React.FC = () => {
                 try {
                     const backendSettings = await storeSettingsApi.getSettings();
                     console.log('[POS] Backend settings response:', backendSettings);
-                    
+
                     // Handle nested response structure: backendSettings.data.data.settings
                     let settingsData: Record<string, string> | null = null;
-                    
+
                     if (backendSettings.data) {
                         // Check for nested structure: data.data.settings
                         if ('data' in backendSettings.data && backendSettings.data.data && 'settings' in backendSettings.data.data) {
@@ -2267,7 +2267,7 @@ const POSPage: React.FC = () => {
                             console.log('[POS] Found settings in direct structure (data.settings)');
                         }
                     }
-                    
+
                     if (settingsData) {
                         console.log('[POS] Settings data:', settingsData);
                         // Check both lowercase and camelCase keys
@@ -2289,7 +2289,7 @@ const POSPage: React.FC = () => {
                         } else {
                             console.log('[POS] No store address found in backend settings. Available keys:', Object.keys(settingsData));
                         }
-                        
+
                         // Load logo URL from backend settings
                         const logoUrl = settingsData.logourl || settingsData.logoUrl || '';
                         if (logoUrl) {
@@ -2331,7 +2331,7 @@ const POSPage: React.FC = () => {
                 try {
                     // Check localStorage first
                     const settings = loadSettings(null);
-                    
+
                     // Reload business name
                     if (settings?.businessName) {
                         const legacyDefaultBusinessName = String.fromCharCode(80, 111, 115, 104, 80, 111, 105, 110, 116, 72, 117, 98);
@@ -2342,12 +2342,12 @@ const POSPage: React.FC = () => {
                             setBusinessName('');
                         }
                     }
-                    
+
                     // Reload logo URL from localStorage
                     if (settings?.logoUrl) {
                         setStoreLogoUrl(settings.logoUrl);
                     }
-                    
+
                     if (settings?.storeAddress) {
                         setStoreAddress(settings.storeAddress);
                     }
@@ -2356,10 +2356,10 @@ const POSPage: React.FC = () => {
                     // This ensures we have the most up-to-date logo for the current store
                     try {
                         const backendSettings = await storeSettingsApi.getSettings();
-                        
+
                         // Handle nested response structure
                         let settingsData: Record<string, string> | null = null;
-                        
+
                         if (backendSettings.data) {
                             // Check for nested structure: data.data.settings
                             if ('data' in backendSettings.data && backendSettings.data.data && 'settings' in backendSettings.data.data) {
@@ -2370,13 +2370,13 @@ const POSPage: React.FC = () => {
                                 settingsData = backendSettings.data.settings as Record<string, string>;
                             }
                         }
-                        
+
                         if (settingsData) {
                             const address = settingsData.storeaddress || settingsData.storeAddress || '';
                             if (address) {
                                 setStoreAddress(address);
                             }
-                            
+
                             // Reload logo URL from backend
                             const logoUrl = settingsData.logourl || settingsData.logoUrl || '';
                             if (logoUrl) {
@@ -2466,18 +2466,18 @@ const POSPage: React.FC = () => {
         }
 
         // Check if product uses hierarchical units (has order and unitsInPrevious)
-        const hasHierarchicalUnits = product.units?.some(u => 
+        const hasHierarchicalUnits = product.units?.some(u =>
             (u as any).order !== undefined || (u as any).unitsInPrevious !== undefined
         );
 
         if (hasHierarchicalUnits) {
             // Use hierarchical approach
-            const soldUnitOrder = (soldUnit as any).order ?? 
+            const soldUnitOrder = (soldUnit as any).order ??
                 product.units?.findIndex(u => u.unitName === soldUnit.unitName) ?? 0;
-            
+
             // Find main unit (order 0 or first unit)
             const mainUnit = product.units?.find((u: any) => u.order === 0) || product.units?.[0];
-            
+
             if (!mainUnit || soldUnitOrder === 0) {
                 // Already in main units
                 return quantity;
@@ -2486,14 +2486,14 @@ const POSPage: React.FC = () => {
             // Calculate conversion factor from sold unit to main unit
             // We need to divide by all unitsInPrevious values from sold unit up to main unit
             let conversionFactor = 1;
-            
+
             // Sort units by order to traverse hierarchy correctly
-            const sortedUnits = [...(product.units || [])].sort((a: any, b: any) => 
+            const sortedUnits = [...(product.units || [])].sort((a: any, b: any) =>
                 ((a.order ?? 999) - (b.order ?? 999))
             );
 
             // Find the sold unit's position in sorted array
-            const soldUnitIndex = sortedUnits.findIndex(u => 
+            const soldUnitIndex = sortedUnits.findIndex(u =>
                 u.unitName?.toLowerCase() === normalizedUnit
             );
 
@@ -2538,13 +2538,14 @@ const POSPage: React.FC = () => {
     }, []);
 
     const handleAddProduct = async (product: POSProduct, unit = 'قطعة', unitPriceOverride?: number, conversionFactorOverride?: number, piecesPerUnitOverride?: number, useServerStockCheck = false) => {
-        // Guard: prevent duplicate adds from double-click, multiple events, or cross-tab/focus quirks
+        // Guard: only suppress true duplicate events from the same physical scan (e.g. scanner double-fire within ~80ms).
+        // Consecutive scans of the same barcode (e.g. 100ms+ apart) are allowed and will increase quantity via existing-item logic below.
         const productId = String(product.id ?? product.originalId ?? '');
         const unitKey = (unit || 'قطعة').trim();
         const now = Date.now();
         const last = lastAddProductRef.current;
         if (last && last.productId === productId && last.unit === unitKey && now - last.at < ADD_PRODUCT_DEBOUNCE_MS) {
-            console.warn('[POS] Ignoring duplicate add-product (same product+unit within debounce window)', { productId, unit: unitKey });
+            console.warn('[POS] Ignoring duplicate add-product (same product+unit within debounce – likely double-fire from one scan)', { productId, unit: unitKey });
             return;
         }
         lastAddProductRef.current = { productId, unit: unitKey, at: now };
@@ -2555,11 +2556,11 @@ const POSPage: React.FC = () => {
             console.log('[POS] Sale completed detected, starting new sale before adding product');
             await startNewSaleRef.current();
         }
-        
+
         // Use the passed product directly to ensure we use the correct price (avoids hash collision issues)
         // Only use productFromState for additional properties like units if needed
         const productFromState = products.find(prod => prod.id === product.id);
-        
+
         // CRITICAL: Always use the passed product data as the source of truth
         // The passed product comes from fresh API data (e.g., barcode search), not stale IndexedDB/state
         // Prefer the passed product's data, but merge with state product for units if available
@@ -2568,7 +2569,7 @@ const POSPage: React.FC = () => {
             // Use units from state if available and passed product doesn't have them
             units: product.units || productFromState?.units,
         };
-        
+
         const piecesPerMainUnit = getPiecesPerMainUnit(finalProduct);
         const conversionFactor = conversionFactorOverride && conversionFactorOverride > 0
             ? conversionFactorOverride
@@ -2578,7 +2579,7 @@ const POSPage: React.FC = () => {
         // CRITICAL: For scale barcode products, always use extractedWeight if available
         const isScaleBarcodeProduct = finalProduct.isScaleBarcodeProduct || finalProduct.isScaleBarcode;
         const extractedWeight = finalProduct.extractedWeight; // Weight in kg
-        
+
         // Debug logging for scale barcode products
         if (isScaleBarcodeProduct || finalProduct.baseBarcode) {
             console.log('[POS] Scale barcode product detected in handleAddProduct:', {
@@ -2591,7 +2592,7 @@ const POSPage: React.FC = () => {
                 piecesPerUnitOverride,
             });
         }
-        
+
         let piecesPerUnit: number;
         if (isScaleBarcodeProduct && extractedWeight !== undefined && extractedWeight !== null && extractedWeight > 0) {
             // For scale barcode products, use extracted weight as quantity
@@ -2625,7 +2626,7 @@ const POSPage: React.FC = () => {
                 console.log(`[POS] Scale barcode product - using ${invoiceType} price per kg: ${incomingUnitPrice}, weight: ${extractedWeight}kg`);
             }
         }
-        
+
         // Final safety check: ensure we have a valid price
         if (!incomingUnitPrice || incomingUnitPrice <= 0 || !isFinite(incomingUnitPrice)) {
             console.warn('Invalid price calculated, using product price:', { product, incomingUnitPrice, finalProduct });
@@ -2635,10 +2636,10 @@ const POSPage: React.FC = () => {
         // CRITICAL: Always use the passed product's stock as the source of truth
         // The passed product comes from fresh API data (e.g., barcode search), which has the latest quantity
         // Only fall back to state product if the passed product doesn't have stock data
-        let availableStock = product.stock !== undefined && product.stock !== null 
-            ? product.stock 
+        let availableStock = product.stock !== undefined && product.stock !== null
+            ? product.stock
             : (productFromState?.stock ?? 0);
-            
+
         console.log('[POS] Stock check:', {
             productId: product.id,
             productName: product.name,
@@ -2658,8 +2659,8 @@ const POSPage: React.FC = () => {
                     console.error('[POS] Error updating stock in IndexedDB:', error);
                 }
                 setProducts(prevProducts => {
-                    const updated = prevProducts.map(p => 
-                        String(p.id) === String(product.id) 
+                    const updated = prevProducts.map(p =>
+                        String(p.id) === String(product.id)
                             ? { ...p, stock: serverStock }
                             : p
                     );
@@ -2679,12 +2680,12 @@ const POSPage: React.FC = () => {
                 console.warn('⚠️ Invalid invoice state in handleAddProduct, using fallback');
                 return generateNewInvoice(currentUserName, inv?.id || 'INV-1');
             }
-            
+
             // Check for existing item using productId AND name AND unit to avoid hash collision issues
             // Only update quantity if it's truly the same product (same ID, name, and unit)
-            const existingItem = inv.items.find(item => 
-                item.productId === product.id && 
-                item.name === product.name && 
+            const existingItem = inv.items.find(item =>
+                item.productId === product.id &&
+                item.name === product.name &&
                 item.unit === unit
             );
             const currentQuantity = existingItem?.quantity || 0;
@@ -2703,23 +2704,23 @@ const POSPage: React.FC = () => {
                     ...inv,
                     items: inv.items.map(item => {
                         // Match by cartItemId if available, otherwise fall back to productId + name + unit
-                        const isMatch = existingItem.cartItemId 
+                        const isMatch = existingItem.cartItemId
                             ? item.cartItemId === existingItem.cartItemId
                             : (item.productId === product.id && item.name === product.name && item.unit === unit);
-                        
+
                         const itemBaseCost = (product as POSProduct).baseCostPrice ?? product.costPrice ?? product.cost ?? 0;
                         return isMatch
                             ? {
-                                  ...item,
-                                  cartItemId: itemCartItemId,
-                                  originalId: item.originalId || product.originalId,
-                                  quantity: updatedQuantity,
-                                  total: updatedTotal,
-                                  unitPrice: averagedUnitPrice,
-                                  conversionFactor: item.conversionFactor || conversionFactor || piecesPerMainUnit,
-                                  costPrice: item.costPrice ?? (product.costPrice || product.cost || 0),
-                                  baseCostPrice: item.baseCostPrice ?? itemBaseCost,
-                              }
+                                ...item,
+                                cartItemId: itemCartItemId,
+                                originalId: item.originalId || product.originalId,
+                                quantity: updatedQuantity,
+                                total: updatedTotal,
+                                unitPrice: averagedUnitPrice,
+                                conversionFactor: item.conversionFactor || conversionFactor || piecesPerMainUnit,
+                                costPrice: item.costPrice ?? (product.costPrice || product.cost || 0),
+                                baseCostPrice: item.baseCostPrice ?? itemBaseCost,
+                            }
                             : item;
                     }),
                 };
@@ -2796,7 +2797,7 @@ const POSPage: React.FC = () => {
 
         setSearchTerm('');
         setProductSuggestionsOpen(false);
-        
+
         // Auto-focus search field after adding product for faster workflow
         setTimeout(() => {
             if (searchInputRef.current) {
@@ -2804,7 +2805,7 @@ const POSPage: React.FC = () => {
             }
         }, 50);
     };
-    
+
     type SearchMatch = { product: POSProduct; unitName: string; unitPrice: number; barcode?: string; conversionFactor?: number; piecesPerUnit?: number };
 
     // Helper function to calculate unit cost price based on **base (main) unit cost** and unit hierarchy.
@@ -2867,12 +2868,12 @@ const POSPage: React.FC = () => {
         try {
             setIsSearchingServer(true);
             console.log(`[POS] Performing server-side search for: "${trimmed}"`);
-            
+
             // Use API search parameter to search on server
-            const response = await productsApi.getProducts({ 
-                page: 1, 
+            const response = await productsApi.getProducts({
+                page: 1,
                 limit: 100, // Get up to 100 results
-                search: trimmed 
+                search: trimmed
             });
 
             if (response.success) {
@@ -2882,7 +2883,7 @@ const POSPage: React.FC = () => {
                 productsData.forEach((p: any) => {
                     const normalizedProduct = normalizeProduct(p);
                     const piecesPerMainUnit = getPiecesPerMainUnit(normalizedProduct);
-                    
+
                     // Determine price based on toggle
                     // Always use retail price with unit conversion
                     let getPriceForProduct = (): number => {
@@ -2892,17 +2893,17 @@ const POSPage: React.FC = () => {
 
                     // Check barcode match on product
                     if (normalizedProduct.barcode && (
-                        normalizedProduct.barcode === trimmed || 
+                        normalizedProduct.barcode === trimmed ||
                         normalizedProduct.barcode.toLowerCase() === trimmed.toLowerCase()
                     )) {
                         const perPiecePrice = getPriceForProduct();
-                        results.push({ 
-                            product: normalizedProduct, 
-                            unitName: 'كرتون', 
-                            unitPrice: perPiecePrice, 
-                            barcode: normalizedProduct.barcode, 
-                            conversionFactor: piecesPerMainUnit, 
-                            piecesPerUnit: piecesPerMainUnit 
+                        results.push({
+                            product: normalizedProduct,
+                            unitName: 'كرتون',
+                            unitPrice: perPiecePrice,
+                            barcode: normalizedProduct.barcode,
+                            conversionFactor: piecesPerMainUnit,
+                            piecesPerUnit: piecesPerMainUnit
                         });
                     }
 
@@ -2910,12 +2911,12 @@ const POSPage: React.FC = () => {
                     if (normalizedProduct.units) {
                         for (const u of normalizedProduct.units) {
                             if (u.barcode && (
-                                u.barcode === trimmed || 
+                                u.barcode === trimmed ||
                                 u.barcode.toLowerCase() === trimmed.toLowerCase()
                             )) {
                                 // For units, use unit's sellingPrice if available, otherwise calculate from retail price
                                 const perPiecePrice = u.sellingPrice || (piecesPerMainUnit > 0 ? (normalizedProduct.price / piecesPerMainUnit) : normalizedProduct.price);
-                                
+
                                 // CRITICAL FIX: Calculate unit-specific cost price
                                 const unitCostPrice = calculateUnitCostPrice(p, u);
                                 const productWithUnitCost = {
@@ -2923,14 +2924,14 @@ const POSPage: React.FC = () => {
                                     costPrice: unitCostPrice,
                                     cost: unitCostPrice,
                                 };
-                                
-                                results.push({ 
-                                    product: productWithUnitCost, 
-                                    unitName: u.unitName || 'قطعة', 
-                                    unitPrice: perPiecePrice, 
-                                    barcode: u.barcode, 
-                                    conversionFactor: u.conversionFactor || piecesPerMainUnit, 
-                                    piecesPerUnit: 1 
+
+                                results.push({
+                                    product: productWithUnitCost,
+                                    unitName: u.unitName || 'قطعة',
+                                    unitPrice: perPiecePrice,
+                                    barcode: u.barcode,
+                                    conversionFactor: u.conversionFactor || piecesPerMainUnit,
+                                    piecesPerUnit: 1
                                 });
                             }
                         }
@@ -2940,13 +2941,13 @@ const POSPage: React.FC = () => {
                     const lower = trimmed.toLowerCase();
                     if (normalizedProduct.name && normalizedProduct.name.toLowerCase().includes(lower)) {
                         const perPiecePrice = getPriceForProduct();
-                        results.push({ 
-                            product: normalizedProduct, 
-                            unitName: 'كرتون', 
-                            unitPrice: perPiecePrice, 
-                            barcode: normalizedProduct.barcode, 
-                            conversionFactor: piecesPerMainUnit, 
-                            piecesPerUnit: piecesPerMainUnit 
+                        results.push({
+                            product: normalizedProduct,
+                            unitName: 'كرتون',
+                            unitPrice: perPiecePrice,
+                            barcode: normalizedProduct.barcode,
+                            conversionFactor: piecesPerMainUnit,
+                            piecesPerUnit: piecesPerMainUnit
                         });
                     }
                 });
@@ -2992,7 +2993,7 @@ const POSPage: React.FC = () => {
             dbProducts.forEach((p: any) => {
                 const normalizedProduct = normalizeProduct(p);
                 const piecesPerMainUnit = getPiecesPerMainUnit(normalizedProduct);
-                
+
                 // Always use retail price with unit conversion
                 let getPriceForProduct = (): number => {
                     const basePrice = normalizedProduct.price;
@@ -3003,23 +3004,23 @@ const POSPage: React.FC = () => {
                 const productBarcode = normalizedProduct.barcode || (p as any).primaryBarcode || '';
                 if (productBarcode && (productBarcode === trimmed || productBarcode.toLowerCase() === lower)) {
                     const perPiecePrice = getPriceForProduct();
-                    results.push({ 
-                        product: normalizedProduct, 
-                        unitName: 'كرتون', 
-                        unitPrice: perPiecePrice, 
-                        barcode: productBarcode, 
-                        conversionFactor: piecesPerMainUnit, 
-                        piecesPerUnit: piecesPerMainUnit 
+                    results.push({
+                        product: normalizedProduct,
+                        unitName: 'كرتون',
+                        unitPrice: perPiecePrice,
+                        barcode: productBarcode,
+                        conversionFactor: piecesPerMainUnit,
+                        piecesPerUnit: piecesPerMainUnit
                     });
                 }
-                
+
                 // Barcode match on units
                 if (normalizedProduct.units) {
                     for (const u of normalizedProduct.units) {
                         if (u.barcode && (u.barcode === trimmed || u.barcode.toLowerCase() === lower)) {
                             // For units, use unit's sellingPrice if available, otherwise calculate from retail price
                             const perPiecePrice = u.sellingPrice || (piecesPerMainUnit > 0 ? (normalizedProduct.price / piecesPerMainUnit) : normalizedProduct.price);
-                            
+
                             // CRITICAL FIX: Calculate unit-specific cost price
                             const unitCostPrice = calculateUnitCostPrice(p, u);
                             const productWithUnitCost = {
@@ -3027,30 +3028,30 @@ const POSPage: React.FC = () => {
                                 costPrice: unitCostPrice,
                                 cost: unitCostPrice,
                             };
-                            
+
                             // Secondary units are counted as 1 piece per scan
-                            results.push({ 
-                                product: productWithUnitCost, 
-                                unitName: u.unitName || 'قطعة', 
-                                unitPrice: perPiecePrice, 
-                                barcode: u.barcode, 
-                                conversionFactor: u.conversionFactor || piecesPerMainUnit, 
-                                piecesPerUnit: 1 
+                            results.push({
+                                product: productWithUnitCost,
+                                unitName: u.unitName || 'قطعة',
+                                unitPrice: perPiecePrice,
+                                barcode: u.barcode,
+                                conversionFactor: u.conversionFactor || piecesPerMainUnit,
+                                piecesPerUnit: 1
                             });
                         }
                     }
                 }
-                
+
                 // Name contains (already filtered by IndexedDB search, but add to results)
                 if (normalizedProduct.name && normalizedProduct.name.toLowerCase().includes(lower)) {
                     const perPiecePrice = getPriceForProduct();
-                    results.push({ 
-                        product: normalizedProduct, 
-                        unitName: 'كرتون', 
-                        unitPrice: perPiecePrice, 
-                        barcode: productBarcode, 
-                        conversionFactor: piecesPerMainUnit, 
-                        piecesPerUnit: piecesPerMainUnit 
+                    results.push({
+                        product: normalizedProduct,
+                        unitName: 'كرتون',
+                        unitPrice: perPiecePrice,
+                        barcode: productBarcode,
+                        conversionFactor: piecesPerMainUnit,
+                        piecesPerUnit: piecesPerMainUnit
                     });
                 }
             });
@@ -3069,11 +3070,11 @@ const POSPage: React.FC = () => {
             const results: SearchMatch[] = [];
             products.forEach((p) => {
                 const piecesPerMainUnit = getPiecesPerMainUnit(p);
-                
+
                 // Always use retail price with unit conversion
                 const basePrice = p.price;
                 const perPiecePrice = piecesPerMainUnit > 0 ? (basePrice / piecesPerMainUnit) : basePrice;
-                
+
                 if (p.barcode && (p.barcode === trimmed || p.barcode.toLowerCase() === lower)) {
                     results.push({ product: p, unitName: 'كرتون', unitPrice: perPiecePrice, barcode: p.barcode, conversionFactor: piecesPerMainUnit, piecesPerUnit: piecesPerMainUnit });
                 }
@@ -3096,12 +3097,12 @@ const POSPage: React.FC = () => {
     // Helper function to extract unit info from product and matched unit
     const extractUnitInfo = useCallback((product: POSProduct, matchedUnit: any | null) => {
         const piecesPerMainUnit = getPiecesPerMainUnit(product);
-        
+
         let unitName = 'قطعة';
         let unitPrice = product.price;
         let conversionFactor = 1;
         let piecesPerUnit = 1;
-        
+
         // If a unit was matched (e.g. unit barcode scan), use that unit's info
         // Resolve name from normalized product.units by barcode so we use the same label as the dropdown
         if (matchedUnit) {
@@ -3119,7 +3120,7 @@ const POSPage: React.FC = () => {
             conversionFactor = piecesPerMainUnit;
             piecesPerUnit = piecesPerMainUnit;
         }
-        
+
         return { unitName, unitPrice, conversionFactor, piecesPerUnit };
     }, [getPiecesPerMainUnit]);
 
@@ -3133,12 +3134,12 @@ const POSPage: React.FC = () => {
         }
 
         console.log(`[POS] Searching product by barcode in IndexedDB: "${trimmed}"`);
-        
+
         // VALIDATION: Ensure IndexedDB is initialized and has products
         try {
             await productsDB.init();
             const productCount = await productsDB.getProductCount();
-            
+
             if (productCount === 0) {
                 console.error('[POS] ❌ CRITICAL: IndexedDB is empty! Products must be synced on login.');
                 console.error('[POS] ❌ Barcode scanning cannot work without local product cache.');
@@ -3150,18 +3151,18 @@ const POSPage: React.FC = () => {
             showToast('خطأ في الوصول إلى قاعدة البيانات المحلية', 'error');
             return { success: false };
         }
-        
+
         // CRITICAL: Search ONLY in IndexedDB (offline-first)
         // Products are synced on login, so all products should be available locally
         try {
             const dbResult = await productsDB.getProductByBarcode(trimmed);
-            
+
             if (dbResult && dbResult.product) {
                 console.log(`[POS] ✅ Product found in IndexedDB: ${dbResult.product.name || 'Unknown'}`);
-                
+
                 // Normalize the product
                 const normalizedProduct = normalizeProduct(dbResult.product);
-                
+
                 // Debug: Log scale barcode properties after normalization
                 if (dbResult.product.isScaleBarcodeProduct || dbResult.product.isScaleBarcode) {
                     console.log('[POS] Scale barcode properties after normalization:', {
@@ -3179,11 +3180,11 @@ const POSPage: React.FC = () => {
                         },
                     });
                 }
-                
+
                 // Check if this is a scale barcode product
                 const isScaleBarcode = normalizedProduct.isScaleBarcodeProduct || normalizedProduct.isScaleBarcode;
                 const extractedWeight = normalizedProduct.extractedWeight; // Weight in kg (for quantity calculation)
-                
+
                 // CRITICAL FIX: If a unit barcode was matched, calculate the unit-specific cost price
                 // This ensures cost price matches the same unit as the selling price
                 if (dbResult.matchedUnit) {
@@ -3192,9 +3193,9 @@ const POSPage: React.FC = () => {
                     normalizedProduct.cost = unitCostPrice;
                     console.log(`[POS] ✅ Unit barcode matched - using unit cost price: ${unitCostPrice} (parent cost: ${dbResult.product.costPrice || 0})`);
                 }
-                
+
                 let { unitName, unitPrice, conversionFactor, piecesPerUnit } = extractUnitInfo(normalizedProduct, dbResult.matchedUnit);
-                
+
                 // For scale barcode products, use extracted weight as quantity
                 // extractedWeight is already in kg (converted in productsDB)
                 let finalPiecesPerUnit = piecesPerUnit;
@@ -3206,7 +3207,7 @@ const POSPage: React.FC = () => {
                     unitName = weightUnit === 'kg' ? 'كيلوجرام' : 'جرام';
                     console.log(`[POS] ✅ Scale barcode detected - scanned: "${trimmed}", base: "${normalizedProduct.baseBarcode}", extracted weight: ${normalizedProduct.extractedWeightGrams || extractedWeight * 1000}${weightUnit} (${finalPiecesPerUnit}kg for quantity)`);
                 }
-                
+
                 // Return immediately with product from IndexedDB
                 // No API calls - instant response for reliable POS operation
                 return {
@@ -3280,15 +3281,15 @@ const POSPage: React.FC = () => {
         }
 
         const { product, unitName, unitPrice, conversionFactor, piecesPerUnit } = pendingServerSearch;
-        
+
         try {
             // Close the Add Product modal if it's open
             setIsProductNotFoundModalOpen(false);
             setNotFoundBarcode('');
-            
+
             // Clear the notification
             setPendingServerSearch(null);
-            
+
             // Add product to cart
             await handleAddProduct(
                 product,
@@ -3297,7 +3298,7 @@ const POSPage: React.FC = () => {
                 conversionFactor,
                 piecesPerUnit
             );
-            
+
             console.log('[POS] Product loaded from server search notification:', product.name);
         } catch (error) {
             console.error('[POS] Error loading product from notification:', error);
@@ -3347,7 +3348,7 @@ const POSPage: React.FC = () => {
                 setProducts(prevProducts => {
                     const updated = prevProducts.filter(p => {
                         const matchesById = String(p.id) === String(normalizedProduct.id);
-                        const matchesByOriginalId = normalizedProduct.originalId && 
+                        const matchesByOriginalId = normalizedProduct.originalId &&
                             String(p.originalId) === String(normalizedProduct.originalId);
                         return !matchesById && !matchesByOriginalId;
                     });
@@ -3401,7 +3402,7 @@ const POSPage: React.FC = () => {
             try {
                 // Process this barcode
                 const barcodeResult = await searchProductByBarcode(barcode);
-                
+
                 if (barcodeResult.success && barcodeResult.product) {
                     // Product found - add to cart automatically
                     // handleAddProduct will check saleCompleted and start a new sale if needed
@@ -3438,20 +3439,20 @@ const POSPage: React.FC = () => {
 
         // Add to queue
         barcodeQueueRef.current.push(trimmed);
-        
+
         // Play beep sound immediately when barcode is detected
         playBeepSound();
-        
+
         // Clear search term immediately to prepare for next scan
         setSearchTerm('');
-        
+
         // Start processing queue (will only start if not already processing)
         processBarcodeQueue();
     }, [processBarcodeQueue]);
 
     const handleSearch = async (e: React.FormEvent) => {
         e.preventDefault();
-        
+
         const trimmedSearchTerm = searchTerm.trim();
         if (!trimmedSearchTerm) return;
 
@@ -3685,10 +3686,10 @@ const POSPage: React.FC = () => {
 
     const handleHoldSale = async () => {
         if (currentInvoice.items.length === 0) return;
-        
+
         // Reset submission flag when holding sale
         isSubmittingInvoiceRef.current = false;
-        
+
         // Create a deep copy of the current invoice to prevent reference issues
         const invoiceToHold: HeldInvoice = {
             ...currentInvoice,
@@ -3702,7 +3703,7 @@ const POSPage: React.FC = () => {
             })),
             heldKey: `held_${currentInvoice.id}_${Date.now()}_${UUID()}`,
         };
-        
+
         // Add to held invoices state
         setHeldInvoices(prev => {
             const updated = [...prev, invoiceToHold];
@@ -3710,7 +3711,7 @@ const POSPage: React.FC = () => {
             saveHeldInvoicesToStorage(updated);
             return updated;
         });
-        
+
         // HYBRID INVOICE COUNTER: Get current invoice number for new cart display
         // (this is the next number that will be used when the sale is finalized)
         const nextInvoiceNumber = invoiceCounterService.getCurrentInvoiceNumber();
@@ -3726,16 +3727,16 @@ const POSPage: React.FC = () => {
             showToast('لا يمكن استعادة الفاتورة المعلقة أثناء عرض إيصال البيع. يرجى بدء عملية بيع جديدة أولاً.', 'info');
             return;
         }
-        
+
         // Reset submission flag when restoring sale
         isSubmittingInvoiceRef.current = false;
-        
+
         const invoiceToRestore = heldInvoices.find(inv => inv.heldKey === heldKey);
         if (invoiceToRestore) {
             // HYBRID INVOICE COUNTER: Get current invoice number for restored invoice
             // This prevents conflicts when the suspended invoice is completed and synced
             const newInvoiceNumber = invoiceCounterService.getCurrentInvoiceNumber();
-            
+
             // Create a deep copy when restoring to prevent reference issues
             // IMPORTANT: Assign the new invoice number to avoid conflicts
             const restoredInvoice: POSInvoice = {
@@ -3749,19 +3750,19 @@ const POSPage: React.FC = () => {
                     originalId: item.originalId,
                 })),
             };
-            
+
             // Remove from held invoices and update localStorage
             setHeldInvoices(prev => {
                 const updated = prev.filter(inv => inv.heldKey !== heldKey);
                 saveHeldInvoicesToStorage(updated);
                 return updated;
             });
-            
+
             // Set the restored invoice as current with the new invoice number
             setCurrentInvoice(restoredInvoice);
             setSaleCompleted(false); // Reset sale completed state
             setCompletedInvoice(null); // Clear any completed invoice when restoring
-            
+
             console.log(`[POS] Held invoice restored: ${heldKey} -> new invoice ${newInvoiceNumber}.`);
         }
     };
@@ -3783,34 +3784,34 @@ const POSPage: React.FC = () => {
             console.log(`[POS] Held invoice deleted: ${heldKey}`);
         }
     };
-    
+
     const startNewSale = async () => {
         // QUEUE-BASED MODEL: No strict lock needed - queue handles sequential processing
         // Users can start new sales immediately while previous sales are being processed
 
         try {
             sessionStorage.removeItem(getPOSDraftStorageKey(location.pathname));
-        } catch (_) {}
-        
+        } catch (_) { }
+
         // Clear pending flag since we're starting the sale now
         pendingNewSaleRef.current = false;
-        
+
         // Reset sale state when starting new sale
         setSaleCompleted(false);
         setCompletedInvoice(null); // Clear completed invoice when starting new sale
-        
+
         // HYBRID INVOICE COUNTER: Get current invoice number for new cart display
         // (this is the next number that will be used when the sale is finalized)
         const nextInvoiceNumber = invoiceCounterService.getCurrentInvoiceNumber();
-        
+
         setCurrentInvoice(generateNewInvoice(currentUserName, nextInvoiceNumber));
         console.log(`[POS] Started new sale with invoice number: ${nextInvoiceNumber}`);
-        
+
         setSelectedPaymentMethod('Cash');
         setCreditPaidAmount(0);
         setCreditPaidAmountInput(null);
         setCreditPaidAmountError(null);
-        
+
         // Auto-focus search field after starting new sale for faster workflow
         setTimeout(() => {
             if (searchInputRef.current) {
@@ -3818,7 +3819,7 @@ const POSPage: React.FC = () => {
             }
         }, 100);
     }
-    
+
     // Store startNewSale in ref so it can be accessed by handleAddProduct (which is defined earlier)
     startNewSaleRef.current = startNewSale;
 
@@ -3835,44 +3836,44 @@ const POSPage: React.FC = () => {
         }
         await startNewSale();
     };
-    
+
     const handleReturn = async () => {
         // Prevent duplicate submissions
         if (isProcessingReturn || isProcessingPayment) {
             console.warn('⚠️ Return processing already in progress, ignoring duplicate request');
             return;
         }
-        
+
         if (currentInvoice.items.length === 0) {
             showToast('يرجى إضافة منتجات للإرجاع', 'info');
             return;
         }
-        
+
         // Set processing state immediately to prevent duplicate clicks
         setIsProcessingReturn(true);
-        
+
         try {
             // Fetch next invoice number for return (returns use same sequential format)
             const nextInvoiceNumber = await fetchNextInvoiceNumber();
-            
+
             // Create a return invoice with current cart items
             const returnInvoice = generateNewInvoice(currentUserName, nextInvoiceNumber, true);
             returnInvoice.customer = currentInvoice.customer;
-            
+
             // Copy items to return invoice (quantities will be positive for returns)
             returnInvoice.items = currentInvoice.items.map(item => ({
                 ...item,
                 quantity: Math.abs(item.quantity), // Ensure positive quantity for returns
                 total: Math.abs(item.total), // Ensure positive total for returns
             }));
-            
+
             // Recalculate totals for return invoice
             const totals = calculateTotals(returnInvoice.items, returnInvoice.invoiceDiscount);
             returnInvoice.subtotal = totals.subtotal;
             returnInvoice.totalItemDiscount = totals.totalItemDiscount;
             returnInvoice.tax = totals.tax;
             returnInvoice.grandTotal = totals.grandTotal;
-            
+
             // Process the return - await to ensure processing completes
             await processReturnInvoice(returnInvoice);
         } catch (error: any) {
@@ -3886,10 +3887,10 @@ const POSPage: React.FC = () => {
             setIsProcessingReturn(false);
         }
     }
-    
+
     const processReturnInvoice = async (returnInvoice: POSInvoice) => {
         const finalInvoice = { ...returnInvoice, paymentMethod: 'Cash' }; // Returns are typically cash
-        
+
         // PERFORMANCE FIX: Do optimistic local state updates immediately (non-blocking)
         // This ensures the UI updates instantly while background operations run
         setProducts(prevProducts => {
@@ -3898,26 +3899,26 @@ const POSPage: React.FC = () => {
                 if (!item || !item.productId || item.quantity <= 0) {
                     return;
                 }
-                
+
                 const productIndex = newProducts.findIndex(p => String(p.id) === String(item.productId));
                 if (productIndex !== -1) {
                     const product = newProducts[productIndex];
                     const piecesPerMainUnit = getPiecesPerMainUnit(product);
                     // Calculate stock addition - convert quantity to main units
                     const stockAddition = convertQuantityToMainUnits(product, item.unit, item.quantity);
-                    
+
                     // Update stock optimistically (ADD stock for returns)
                     const oldStock = product.stock;
                     const newStock = product.stock + stockAddition;
                     newProducts[productIndex].stock = newStock;
-                    
+
                     // Update IndexedDB in background (non-blocking)
                     if (product.originalId) {
                         productsDB.updateProductStock(product.originalId, newStock).catch(error => {
                             console.error(`[POS] Error updating stock in IndexedDB for product ${product.originalId}:`, error);
                         });
                     }
-                    
+
                     if (process.env.NODE_ENV === 'development') {
                         console.log(`Local state: Added stock for product "${product.name}" (ID: ${item.productId}): ${oldStock} -> ${newStock} (+${stockAddition})`);
                     }
@@ -3925,150 +3926,150 @@ const POSPage: React.FC = () => {
             });
             return newProducts;
         });
-        
+
         // CRITICAL: Mark return as completed IMMEDIATELY to enable instant navigation
         // This happens before any blocking operations
         console.log('Return Finalized:', finalInvoice);
-        
+
         // Store completed invoice for receipt display
         setCompletedInvoice(finalInvoice);
         setSaleCompleted(true);
         setIsProcessingPayment(false); // Clear loading state immediately
-        
+
         // CRITICAL FIX: Clear cart immediately after return completion to prevent items from reappearing
         // HYBRID INVOICE COUNTER: Get current invoice number for new cart display
         const nextInvoiceNumber = invoiceCounterService.getCurrentInvoiceNumber();
         const newEmptyInvoice = generateNewInvoice(currentUserName, nextInvoiceNumber);
         setCurrentInvoice(newEmptyInvoice);
-        
+
         // PERFORMANCE FIX: Move all heavy operations to background (non-blocking)
         // Critical processing is complete (saleCompleted is set, cart is cleared)
         // Background operations continue asynchronously but don't block the UI
         // Since this function is async, it returns a resolved promise automatically
         // Stock updates, sale sync, and product sync all run in background
-        
+
         // Background task: Update stock in backend (non-blocking)
         const stockUpdateResults: Array<{ success: boolean; productName: string; productId: string | number; error?: string }> = [];
-        
+
         // Run stock updates in background without blocking
         Promise.resolve().then(async () => {
             try {
-            for (const item of returnInvoice.items) {
-                if (!item || !item.productId || item.quantity <= 0) {
-                    continue;
-                }
+                for (const item of returnInvoice.items) {
+                    if (!item || !item.productId || item.quantity <= 0) {
+                        continue;
+                    }
 
-                const invoiceItemProductId = item.productId;
-                const invoiceItemName = item.name;
-                
-                let productIdToUpdate: string | undefined = item.originalId;
-                let product: POSProduct | undefined;
-                
-                if (productIdToUpdate) {
-                    console.log(`[Return Stock Update] Using originalId from cart item: ${productIdToUpdate}`);
-                } else {
-                    const matchingProducts = products.filter(p => String(p.id) === String(invoiceItemProductId));
-                    if (matchingProducts.length === 0) {
-                        stockUpdateResults.push({ 
-                            success: false, 
-                            productName: invoiceItemName, 
+                    const invoiceItemProductId = item.productId;
+                    const invoiceItemName = item.name;
+
+                    let productIdToUpdate: string | undefined = item.originalId;
+                    let product: POSProduct | undefined;
+
+                    if (productIdToUpdate) {
+                        console.log(`[Return Stock Update] Using originalId from cart item: ${productIdToUpdate}`);
+                    } else {
+                        const matchingProducts = products.filter(p => String(p.id) === String(invoiceItemProductId));
+                        if (matchingProducts.length === 0) {
+                            stockUpdateResults.push({
+                                success: false,
+                                productName: invoiceItemName,
+                                productId: invoiceItemProductId,
+                                error: `Product not found for return`
+                            });
+                            continue;
+                        }
+                        product = matchingProducts[0];
+                        productIdToUpdate = product.originalId;
+                    }
+
+                    if (!productIdToUpdate) {
+                        stockUpdateResults.push({
+                            success: false,
+                            productName: invoiceItemName,
                             productId: invoiceItemProductId,
-                            error: `Product not found for return`
+                            error: `Missing originalId for return`
                         });
                         continue;
                     }
-                    product = matchingProducts[0];
-                    productIdToUpdate = product.originalId;
-                }
 
-                if (!productIdToUpdate) {
-                    stockUpdateResults.push({ 
-                        success: false, 
-                        productName: invoiceItemName, 
-                        productId: invoiceItemProductId,
-                        error: `Missing originalId for return`
-                    });
-                    continue;
-                }
-
-                // Calculate stock addition for returns - convert quantity to main units
-                let stockAddition: number;
-                if (product) {
-                    stockAddition = convertQuantityToMainUnits(product, item.unit, item.quantity);
-                } else if (item.conversionFactor && item.conversionFactor > 0) {
-                    // Fallback: use conversionFactor if product not available
-                    stockAddition = item.quantity / item.conversionFactor;
-                } else {
-                    stockAddition = item.quantity;
-                }
-                stockAddition = roundForStock(stockAddition);
-
-                const productIdToUpdateString = String(productIdToUpdate);
-                
-                // OFFLINE-FIRST APPROACH: Update local IndexedDB first, then sync
-                const currentStock = product?.stock || 0;
-                const newStock = currentStock + stockAddition; // ADD stock for returns
-                
-                try {
-                    // Step 1: Update local IndexedDB immediately (already done in optimistic update above)
-                    // This ensures the UI shows correct stock even when offline
-                    
-                    // Step 2: Queue stock change for sync (works offline)
-                    try {
-                        await inventorySync.queueStockChange(
-                            productIdToUpdateString,
-                            invoiceItemName,
-                            currentStock,
-                            newStock,
-                            'return'
-                        );
-                        console.log(`📦 Return stock change queued for ${invoiceItemName}: ${currentStock} -> ${newStock} (+${stockAddition})`);
-                    } catch (queueError) {
-                        console.warn(`⚠️ Failed to queue return stock change for ${invoiceItemName}:`, queueError);
-                        // Continue anyway - local update succeeded
+                    // Calculate stock addition for returns - convert quantity to main units
+                    let stockAddition: number;
+                    if (product) {
+                        stockAddition = convertQuantityToMainUnits(product, item.unit, item.quantity);
+                    } else if (item.conversionFactor && item.conversionFactor > 0) {
+                        // Fallback: use conversionFactor if product not available
+                        stockAddition = item.quantity / item.conversionFactor;
+                    } else {
+                        stockAddition = item.quantity;
                     }
-                    
-                    // Step 3: Try to sync immediately if online (non-blocking)
-                    if (navigator.onLine) {
-                        // Try to sync in background, but don't wait for it
-                        inventorySync.syncUnsyncedChanges().catch((syncError) => {
-                            console.warn(`⚠️ Background sync failed for return ${invoiceItemName}, will retry later:`, syncError);
+                    stockAddition = roundForStock(stockAddition);
+
+                    const productIdToUpdateString = String(productIdToUpdate);
+
+                    // OFFLINE-FIRST APPROACH: Update local IndexedDB first, then sync
+                    const currentStock = product?.stock || 0;
+                    const newStock = currentStock + stockAddition; // ADD stock for returns
+
+                    try {
+                        // Step 1: Update local IndexedDB immediately (already done in optimistic update above)
+                        // This ensures the UI shows correct stock even when offline
+
+                        // Step 2: Queue stock change for sync (works offline)
+                        try {
+                            await inventorySync.queueStockChange(
+                                productIdToUpdateString,
+                                invoiceItemName,
+                                currentStock,
+                                newStock,
+                                'return'
+                            );
+                            console.log(`📦 Return stock change queued for ${invoiceItemName}: ${currentStock} -> ${newStock} (+${stockAddition})`);
+                        } catch (queueError) {
+                            console.warn(`⚠️ Failed to queue return stock change for ${invoiceItemName}:`, queueError);
+                            // Continue anyway - local update succeeded
+                        }
+
+                        // Step 3: Try to sync immediately if online (non-blocking)
+                        if (navigator.onLine) {
+                            // Try to sync in background, but don't wait for it
+                            inventorySync.syncUnsyncedChanges().catch((syncError) => {
+                                console.warn(`⚠️ Background sync failed for return ${invoiceItemName}, will retry later:`, syncError);
+                            });
+                        }
+
+                        console.log(`✓ Return: Stock added for "${invoiceItemName}": ${currentStock} -> ${newStock} (+${stockAddition})`);
+                        stockUpdateResults.push({
+                            success: true,
+                            productName: invoiceItemName,
+                            productId: invoiceItemProductId
+                        });
+                    } catch (error: any) {
+                        console.error(`✗ Failed to update stock for return:`, error);
+                        stockUpdateResults.push({
+                            success: false,
+                            productName: invoiceItemName,
+                            productId: invoiceItemProductId,
+                            error: error?.message || 'Unknown error'
                         });
                     }
-                    
-                    console.log(`✓ Return: Stock added for "${invoiceItemName}": ${currentStock} -> ${newStock} (+${stockAddition})`);
-                    stockUpdateResults.push({ 
-                        success: true, 
-                        productName: invoiceItemName,
-                        productId: invoiceItemProductId
-                    });
-                } catch (error: any) {
-                    console.error(`✗ Failed to update stock for return:`, error);
-                    stockUpdateResults.push({ 
-                        success: false, 
-                        productName: invoiceItemName, 
-                        productId: invoiceItemProductId,
-                        error: error?.message || 'Unknown error'
-                    });
                 }
+
+                // Log summary of stock updates
+                const successful = stockUpdateResults.filter(r => r.success).length;
+                const failed = stockUpdateResults.filter(r => !r.success).length;
+                console.log(`Return stock updates completed: ${successful} successful, ${failed} failed`);
+
+                if (failed > 0) {
+                    const failedProducts = stockUpdateResults
+                        .filter(r => !r.success)
+                        .map(r => `${r.productName} (ID: ${r.productId})`)
+                        .join(', ');
+                    console.warn(`Failed to update stock for return: ${failedProducts}`);
+                }
+            } catch (error) {
+                console.error('Error updating stock for return in background:', error);
+                // Stock update failed but return is already completed - log error only
             }
-            
-            // Log summary of stock updates
-            const successful = stockUpdateResults.filter(r => r.success).length;
-            const failed = stockUpdateResults.filter(r => !r.success).length;
-            console.log(`Return stock updates completed: ${successful} successful, ${failed} failed`);
-            
-            if (failed > 0) {
-                const failedProducts = stockUpdateResults
-                    .filter(r => !r.success)
-                    .map(r => `${r.productName} (ID: ${r.productId})`)
-                    .join(', ');
-                console.warn(`Failed to update stock for return: ${failedProducts}`);
-            }
-        } catch (error) {
-            console.error('Error updating stock for return in background:', error);
-            // Stock update failed but return is already completed - log error only
-        }
         }).catch(error => {
             console.error('Background stock update task failed for return:', error);
         });
@@ -4077,7 +4078,7 @@ const POSPage: React.FC = () => {
         const productIdsToSync = returnInvoice.items
             .map(item => item.originalId)
             .filter((id): id is string => !!id);
-        
+
         if (productIdsToSync.length > 0) {
             // Use requestIdleCallback to defer non-critical sync to idle time
             const scheduleSync = (callback: () => void) => {
@@ -4088,7 +4089,7 @@ const POSPage: React.FC = () => {
                     setTimeout(callback, 100);
                 }
             };
-            
+
             scheduleSync(() => {
                 productSync.syncAfterQuantityChange(productIdsToSync).then(async (result) => {
                     if (result.success && result.products && result.products.length > 0) {
@@ -4126,7 +4127,7 @@ const POSPage: React.FC = () => {
 
                 const customerName = returnInvoice.customer?.name || 'عميل نقدي';
                 const customerId = returnInvoice.customer?.id || 'walk-in-customer';
-                
+
                 // Idempotency: one clientSaleId per return so retries don't create duplicates
                 const clientSaleId = generateClientSaleId();
                 // Prepare sale data for backend API (as a return invoice)
@@ -4135,8 +4136,8 @@ const POSPage: React.FC = () => {
                     clientSaleId,
                     invoiceNumber: returnInvoice.id,
                     storeId: storeId, // Required by SaleRecord type
-                    date: returnInvoice.date instanceof Date 
-                        ? returnInvoice.date.toISOString() 
+                    date: returnInvoice.date instanceof Date
+                        ? returnInvoice.date.toISOString()
                         : new Date().toISOString(),
                     customerId: customerId !== 'walk-in-customer' ? customerId : undefined,
                     customerName: customerName,
@@ -4158,7 +4159,7 @@ const POSPage: React.FC = () => {
                         const positiveTotal = Math.abs(item.total);
                         // Calculate totalPrice: (unitPrice * quantity) - discount, then negate
                         const calculatedTotalPrice = (positiveUnitPrice * positiveQuantity) - (positiveDiscount * positiveQuantity);
-                        
+
                         return {
                             productId: backendProductId, // Use original backend ID
                             productName: item.name,
@@ -4185,10 +4186,10 @@ const POSPage: React.FC = () => {
 
                 // Use non-blocking sale creation (saves locally immediately, syncs in background)
                 const syncResult = await salesSync.createSale(saleData, storeId);
-                
+
                 if (syncResult.success) {
                     console.log('✅ Return saved to IndexedDB (will sync in background):', returnInvoice.id);
-                    
+
                     // Note: Any sync errors will be handled by background sync service
                     if (syncResult.error) {
                         console.warn('⚠️ Return saved locally, will sync later:', syncResult.error);
@@ -4197,8 +4198,8 @@ const POSPage: React.FC = () => {
                     // Create SaleTransaction for return (with negative values) for localStorage backup
                     const returnTransaction: SaleTransaction = {
                         id: syncResult.saleId || returnInvoice.id,
-                        date: returnInvoice.date instanceof Date 
-                            ? returnInvoice.date.toISOString() 
+                        date: returnInvoice.date instanceof Date
+                            ? returnInvoice.date.toISOString()
                             : new Date().toISOString(),
                         customerName: customerName,
                         customerId: customerId,
@@ -4239,7 +4240,7 @@ const POSPage: React.FC = () => {
             console.error('Background return sync task failed:', error);
         });
     }
-    
+
     const handleFinalizePayment = async () => {
         // Prevent duplicate submissions (lock immediately so double-click/F1 cannot race)
         if (isSubmittingInvoiceRef.current || isProcessingPayment) {
@@ -4247,7 +4248,7 @@ const POSPage: React.FC = () => {
             return;
         }
         isSubmittingInvoiceRef.current = true;
-        
+
         if (currentInvoice.items.length === 0) {
             isSubmittingInvoiceRef.current = false;
             return;
@@ -4321,20 +4322,20 @@ const POSPage: React.FC = () => {
                         currentBalance = customerPointsBalance;
                     }
                 }
-                
+
                 // Check balance (only disable if we know for sure it's 0 or less)
                 if (currentBalance !== null && currentBalance <= 0) {
                     isSubmittingInvoiceRef.current = false;
                     showToast('العميل لا يمتلك نقاط كافية', 'error');
                     return;
                 }
-                
+
                 if (pointsToRedeem <= 0) {
                     isSubmittingInvoiceRef.current = false;
                     showToast('يرجى إدخال عدد النقاط المراد استخدامها', 'error');
                     return;
                 }
-                
+
                 // Validate that points to redeem don't exceed available balance
                 if (currentBalance !== null && pointsToRedeem > currentBalance) {
                     isSubmittingInvoiceRef.current = false;
@@ -4510,20 +4511,20 @@ const POSPage: React.FC = () => {
         try {
             // HYBRID INVOICE COUNTER: Get next invoice number for re-sale
             const nextInvoiceNumber = invoiceCounterService.getNextInvoiceNumber();
-            
+
             // Prepare cart items from the conflicting invoice
             const cartItems: POSCartItem[] = [];
             const missingProducts: string[] = [];
-            
+
             for (const item of conflictingInvoiceData.items) {
                 try {
                     // Try to find product in local products array first
                     let product: POSProduct | undefined = products.find(p => {
                         // Match by originalId (backend ID) or by productId
                         return (p.originalId && String(p.originalId) === String(item.productId)) ||
-                               (String(p.id) === String(item.productId));
+                            (String(p.id) === String(item.productId));
                     });
-                    
+
                     // If product not found locally, try to fetch from API
                     if (!product && item.productId) {
                         try {
@@ -4535,7 +4536,7 @@ const POSPage: React.FC = () => {
                                 setProducts(prevProducts => {
                                     const updated = prevProducts.filter(p => {
                                         const matchesById = String(p.id) === String(normalizedProduct.id);
-                                        const matchesByOriginalId = normalizedProduct.originalId && 
+                                        const matchesByOriginalId = normalizedProduct.originalId &&
                                             String(p.originalId) === String(normalizedProduct.originalId);
                                         return !matchesById && !matchesByOriginalId;
                                     });
@@ -4550,7 +4551,7 @@ const POSPage: React.FC = () => {
                             continue;
                         }
                     }
-                    
+
                     // If we have a product, create a cart item with the exact quantity from the invoice
                     if (product) {
                         const unit = item.unit || 'قطعة';
@@ -4558,11 +4559,11 @@ const POSPage: React.FC = () => {
                         const unitPrice = item.unitPrice || 0;
                         const discount = item.discount || 0;
                         const total = item.totalPrice || (quantity * unitPrice);
-                        
+
                         // Get conversion factor from product if available
                         const piecesPerMainUnit = getPiecesPerMainUnit(product);
                         const conversionFactor = getUnitConversionFactor(product, unit);
-                        
+
                         const cartItem: POSCartItem = {
                             cartItemId: `${product.id}-${item.productName}-${unit}-${Date.now()}-${Math.random()}`,
                             productId: product.id,
@@ -4576,7 +4577,7 @@ const POSPage: React.FC = () => {
                             conversionFactor: conversionFactor || piecesPerMainUnit,
                             costPrice: product.costPrice || product.cost || 0,
                         };
-                        
+
                         cartItems.push(cartItem);
                     } else {
                         console.warn(`Product not found for item: ${item.productName} (ID: ${item.productId})`);
@@ -4587,12 +4588,12 @@ const POSPage: React.FC = () => {
                     missingProducts.push(item.productName);
                 }
             }
-            
+
             // Show warning for missing products
             if (missingProducts.length > 0) {
                 showToast(`تعذر العثور على ${missingProducts.length} منتج: ${missingProducts.slice(0, 3).join(', ')}${missingProducts.length > 3 ? '...' : ''}`, 'info');
             }
-            
+
             // Find customer if available
             let customer: Customer | null = null;
             if (conflictingInvoiceData.customerName) {
@@ -4601,7 +4602,7 @@ const POSPage: React.FC = () => {
                     customer = foundCustomer;
                 }
             }
-            
+
             // Create new invoice with items and calculate totals
             const totals = calculateTotals(cartItems, conflictingInvoiceData.invoiceDiscount || 0);
             const updatedInvoice: POSInvoice = {
@@ -4611,15 +4612,15 @@ const POSPage: React.FC = () => {
                 invoiceDiscount: conflictingInvoiceData.invoiceDiscount || 0,
                 ...totals,
             };
-            
+
             setCurrentInvoice(updatedInvoice);
-            
+
             // Generate a new invoice number for the re-sale
             try {
                 const newInvoiceNumber = await fetchNextInvoiceNumber();
                 updatedInvoice.id = newInvoiceNumber;
                 setCurrentInvoice(updatedInvoice);
-                
+
                 // Clear conflict tracking for the old invoice number if it was tracked
                 if (conflictingInvoiceData?.invoiceNumber) {
                     conflictInvoiceNumbersRef.current.delete(conflictingInvoiceData.invoiceNumber);
@@ -4627,11 +4628,11 @@ const POSPage: React.FC = () => {
             } catch (error) {
                 console.error('Failed to generate new invoice number for re-sale:', error);
             }
-            
+
             // Close the modal
             setIsReSaleModalOpen(false);
             setConflictingInvoiceData(null);
-            
+
             // Show success message
             showToast('تم نسخ عناصر الفاتورة إلى السلة بنجاح', 'success');
         } catch (error) {
@@ -4668,11 +4669,11 @@ const POSPage: React.FC = () => {
 
         const customerName = invoice.customer?.name || 'عميل نقدي';
         const customerId = invoice.customer?.id || 'walk-in-customer';
-        
+
         // Handle points redemption if Points payment method is selected
         let pointsRedeemed = 0;
         let pointsRedemptionValue = 0;
-        
+
         if (method === 'Points' && pointsRedeem > 0 && invoice.customer && invoice.customer.id !== 'walk-in-customer') {
             try {
                 // Redeem points before saving sale
@@ -4683,7 +4684,7 @@ const POSPage: React.FC = () => {
                     invoiceNumber: invoiceNumber,
                     description: `Points redeemed for invoice ${invoiceNumber}`,
                 });
-                
+
                 if (pointsResponse.data.success) {
                     pointsRedeemed = pointsRedeem;
                     pointsRedemptionValue = pointsResponse.data.data.transaction.pointsValue;
@@ -4700,12 +4701,12 @@ const POSPage: React.FC = () => {
                 // Continue with sale anyway
             }
         }
-        
+
         // Calculate paid and remaining amounts based on payment method
         let paidAmount = 0;
         let remainingAmount = 0;
         let status: SaleStatus = 'Paid';
-        
+
         if (method === 'Cash' || method === 'Card') {
             // Full payment for cash and card
             paidAmount = invoice.grandTotal;
@@ -4715,7 +4716,7 @@ const POSPage: React.FC = () => {
             // Credit payment - use the paid amount if specified
             paidAmount = creditPaid;
             remainingAmount = invoice.grandTotal - creditPaid;
-            
+
             if (remainingAmount <= 0) {
                 status = 'Paid';
                 remainingAmount = 0;
@@ -4728,7 +4729,7 @@ const POSPage: React.FC = () => {
             // Points payment - calculate based on redeemed points value
             paidAmount = pointsRedemptionValue;
             remainingAmount = Math.max(0, invoice.grandTotal - pointsRedemptionValue);
-            
+
             if (remainingAmount <= 0) {
                 status = 'Paid';
                 remainingAmount = 0;
@@ -4737,7 +4738,7 @@ const POSPage: React.FC = () => {
                 showToast(`تم استخدام النقاط. المبلغ المتبقي: ${formatCurrency(remainingAmount)}`, 'info');
             }
         }
-        
+
         // Idempotency: use provided clientSaleId or generate one (same ID reused on retries/sync)
         const idempotencyId = clientSaleId ?? generateClientSaleId();
         // Prepare sale data for IndexedDB and backend
@@ -4745,8 +4746,8 @@ const POSPage: React.FC = () => {
             clientSaleId: idempotencyId,
             invoiceNumber: invoiceNumber,
             storeId: storeId,
-            date: invoice.date instanceof Date 
-                ? invoice.date.toISOString() 
+            date: invoice.date instanceof Date
+                ? invoice.date.toISOString()
                 : new Date().toISOString(),
             customerId: customerId !== 'walk-in-customer' ? customerId : undefined,
             customerName: customerName,
@@ -4786,7 +4787,7 @@ const POSPage: React.FC = () => {
             seller: invoice.cashier,
             invoiceType: invoice.invoiceType ?? 'retail',
         };
-        
+
         return {
             saleData,
             paidAmount,
@@ -4841,21 +4842,21 @@ const POSPage: React.FC = () => {
             items: currentInvoice.items.map(item => ({ ...item })), // Deep copy items
             paymentMethod: currentOverrides?.paymentMethod ?? selectedPaymentMethod
         };
-        
+
         // Validate invoice has items
         if (!cartSnapshot.items || cartSnapshot.items.length === 0) {
             console.warn('⚠️ Attempted to finalize invoice with no items');
             isSubmittingInvoiceRef.current = false;
             return;
         }
-        
+
         // Check if this is a return (should not happen here, but safety check)
         if (cartSnapshot.originalInvoiceId) {
             console.warn('Attempted to finalize a return invoice through sale flow. Use processReturnInvoice instead.');
             isSubmittingInvoiceRef.current = false;
             return;
         }
-        
+
         // Get storeId from user
         const storeId = user?.storeId;
         if (!storeId) {
@@ -4863,14 +4864,14 @@ const POSPage: React.FC = () => {
             isSubmittingInvoiceRef.current = false;
             return;
         }
-        
+
         // HYBRID INVOICE COUNTER: Get next invoice number immediately from local counter
         // This ensures immediate invoice number assignment even for pending/hold sales
         const invoiceNumber = invoiceCounterService.getNextInvoiceNumber();
-        
+
         // Update invoice with invoice number
         cartSnapshot.id = invoiceNumber;
-        
+
         // QUEUE-BASED MODEL: Create isolated sale context with UUID
         const saleId = saleQueueService.generateSaleId();
         const isolatedContext: IsolatedSaleContext = {
@@ -4881,9 +4882,9 @@ const POSPage: React.FC = () => {
             createdAt: Date.now(),
             state: 'CREATED',
         };
-        
+
         console.log(`[POS] Created isolated sale context: ${saleId} for invoice ${invoiceNumber}`);
-        
+
         // Prepare sale data (includes points redemption if needed)
         let saleData: any;
         let paidAmount: number;
@@ -4891,7 +4892,7 @@ const POSPage: React.FC = () => {
         let status: SaleStatus;
         let customerName: string;
         let customerId: string;
-        
+
         try {
             const prepared = await prepareSaleData(cartSnapshot, invoiceNumber, storeId, currentOverrides, saleId);
             saleData = prepared.saleData;
@@ -4906,25 +4907,25 @@ const POSPage: React.FC = () => {
             isSubmittingInvoiceRef.current = false;
             return;
         }
-        
+
         // Use cartSnapshot for all processing (not currentInvoice)
         const finalInvoice = cartSnapshot;
-        
+
         // QUEUE-BASED MODEL: Use cartSnapshot items for stock updates
         // This ensures we process the correct items even if user starts a new sale
         const invoiceItems = cartSnapshot.items || [];
-        
+
         if (invoiceItems.length === 0) {
             console.warn('No items in invoice, skipping stock update');
         } else {
-            console.log(`Updating stock for ${invoiceItems.length} product(s) in invoice:`, 
+            console.log(`Updating stock for ${invoiceItems.length} product(s) in invoice:`,
                 invoiceItems.map(item => ({ productId: item.productId, name: item.name, quantity: item.quantity })));
         }
-        
+
         // PERFORMANCE FIX: Do optimistic local state updates immediately (non-blocking)
         // This ensures the UI updates instantly while background operations run
         const invoiceItemsForStateUpdate = finalInvoice.items || [];
-        
+
         // Store original stock values BEFORE optimistic update for use in background task
         const originalStockValues = new Map<string | number, number>();
         invoiceItemsForStateUpdate.forEach(item => {
@@ -4935,11 +4936,11 @@ const POSPage: React.FC = () => {
                 }
             }
         });
-        
+
         // Update local state optimistically (immediate, non-blocking)
         setProducts(prevProducts => {
             const newProducts = [...prevProducts];
-            
+
             // CRITICAL FIX: Only iterate over invoice items, not all products
             invoiceItemsForStateUpdate.forEach(item => {
                 // Validate item has required fields
@@ -4953,14 +4954,14 @@ const POSPage: React.FC = () => {
 
                 // Find the product by matching productId
                 const productIndex = newProducts.findIndex(p => String(p.id) === String(invoiceItemProductId));
-                
+
                 // Skip if product not found
                 if (productIndex === -1) {
                     return;
                 }
 
                 const product = newProducts[productIndex];
-                
+
                 // CRITICAL VALIDATION: Ensure we found the correct product
                 if (String(product.id) !== String(invoiceItemProductId)) {
                     return;
@@ -4985,49 +4986,49 @@ const POSPage: React.FC = () => {
                     console.log(`Local state: Updated stock for product "${product.name}" (ID: ${invoiceItemProductId}): ${oldStock} -> ${newStock} (reduced by ${stockReduction})`);
                 }
             });
-            
+
             return newProducts;
         });
-        
+
         // QUEUE-BASED MODEL: Mark sale as completed IMMEDIATELY and show receipt
         // The sale will be processed by the queue in the background
         console.log('Sale Finalized (queued):', cartSnapshot);
-        
+
         // Store completed invoice for receipt display
         setCompletedInvoice(cartSnapshot);
         setSaleCompleted(true);
-        
+
         // QUEUE-BASED MODEL: Create new cart IMMEDIATELY after queueing
         // This allows user to start next sale while current sale is being processed
         // HYBRID INVOICE COUNTER: Get current invoice number for new cart display
         // (counter was already incremented when we got the invoice number for this sale)
         const nextInvoiceNumber = invoiceCounterService.getCurrentInvoiceNumber();
-        
+
         // Create new empty cart immediately
         const newEmptyInvoice = generateNewInvoice(currentUserName, nextInvoiceNumber);
         setCurrentInvoice(newEmptyInvoice);
         console.log(`[POS] Created new cart immediately after queueing: ${nextInvoiceNumber}`);
-        
+
         // QUEUE-BASED MODEL: Enqueue sale for sequential processing
         console.log(`[POS] Enqueueing sale ${saleId} with invoice number: ${invoiceNumber}`);
-        
+
         // Enqueue the sale - it will be processed sequentially by the queue service
         // Fire-and-forget: UI does not wait for this to complete
         saleQueueService.enqueueSale(isolatedContext, saleData).then((result) => {
             if (result.success) {
                 console.log(`✅ Sale ${saleId} processed successfully (backend ID: ${result.backendId})`);
-                
+
                 // Update completed invoice with backend ID if available
                 if (result.backendId) {
                     setCompletedInvoice(prev => prev ? { ...prev, id: invoiceNumber } : null);
                 }
-                
+
                 // Save to localStorage as backup
                 try {
                     const saleTransaction: SaleTransaction = {
                         id: invoiceNumber,
-                        date: cartSnapshot.date instanceof Date 
-                            ? cartSnapshot.date.toISOString() 
+                        date: cartSnapshot.date instanceof Date
+                            ? cartSnapshot.date.toISOString()
                             : new Date().toISOString(),
                         customerName: customerName,
                         customerId: customerId,
@@ -5072,259 +5073,259 @@ const POSPage: React.FC = () => {
             setIsProcessingPayment(false);
             throw error;
         });
-        
+
         // Do NOT release lock here: keep it true until .then/.catch above so a rapid second
         // trigger cannot snapshot the same cart again before React has committed the new empty cart
-        
+
         // PERFORMANCE FIX: Move all heavy operations to background (non-blocking)
         // Stock updates, sale sync, and product sync all run in background
-        
+
         // Background task: Update stock in backend (non-blocking)
         const stockUpdateResults: Array<{ success: boolean; productName: string; productId: string | number; error?: string }> = [];
-        
+
         // Run stock updates in background without blocking
         Promise.resolve().then(async () => {
             try {
-            // OPTIMIZATION: Batch API calls instead of sequential processing
-            // Step 1: Prepare all product update data (validation and calculation)
-            interface ProductUpdateData {
-                item: POSCartItem;
-                productIdToUpdate: string;
-                invoiceItemProductId: string | number;
-                invoiceItemName: string;
-                stockChange: number;
-                product?: POSProduct;
-            }
-            
-            const productUpdateDataList: ProductUpdateData[] = [];
-            
-            // First pass: validate and prepare all update data
-            for (const item of invoiceItems) {
-                // Validate that item has required fields
-                if (!item || !item.productId || item.quantity <= 0) {
-                    const errorMsg = `Invalid invoice item: missing productId or invalid quantity`;
-                    console.warn(errorMsg, item);
-                    stockUpdateResults.push({ 
-                        success: false, 
-                        productName: item?.name || 'Unknown', 
-                        productId: item?.productId || 'unknown',
-                        error: errorMsg 
+                // OPTIMIZATION: Batch API calls instead of sequential processing
+                // Step 1: Prepare all product update data (validation and calculation)
+                interface ProductUpdateData {
+                    item: POSCartItem;
+                    productIdToUpdate: string;
+                    invoiceItemProductId: string | number;
+                    invoiceItemName: string;
+                    stockChange: number;
+                    product?: POSProduct;
+                }
+
+                const productUpdateDataList: ProductUpdateData[] = [];
+
+                // First pass: validate and prepare all update data
+                for (const item of invoiceItems) {
+                    // Validate that item has required fields
+                    if (!item || !item.productId || item.quantity <= 0) {
+                        const errorMsg = `Invalid invoice item: missing productId or invalid quantity`;
+                        console.warn(errorMsg, item);
+                        stockUpdateResults.push({
+                            success: false,
+                            productName: item?.name || 'Unknown',
+                            productId: item?.productId || 'unknown',
+                            error: errorMsg
+                        });
+                        continue;
+                    }
+
+                    // Store the invoice item's productId to ensure we use the correct one
+                    const invoiceItemProductId = item.productId;
+                    const invoiceItemName = item.name;
+
+                    // CRITICAL FIX: Use originalId from cart item if available, otherwise try to find product
+                    let productIdToUpdate: string | undefined = item.originalId;
+                    let product: POSProduct | undefined;
+
+                    if (productIdToUpdate) {
+                        // We have the originalId directly from the cart item - use it!
+                        console.log(`[Stock Update] Using originalId from cart item: ${productIdToUpdate} for product "${invoiceItemName}"`);
+                    } else {
+                        // Fallback: Try to find product in products array to get originalId
+                        console.warn(`[Stock Update] originalId not found in cart item, searching in products array for productId: ${invoiceItemProductId}`);
+                        const matchingProducts = products.filter(p => String(p.id) === String(invoiceItemProductId));
+
+                        if (matchingProducts.length === 0) {
+                            const errorMsg = `Product not found in products list and no originalId in cart item for productId: ${invoiceItemProductId}, name: ${invoiceItemName}`;
+                            console.error(errorMsg, {
+                                invoiceItemProductId,
+                                invoiceItemName,
+                                availableProductIds: products.map(p => ({ id: p.id, name: p.name }))
+                            });
+                            stockUpdateResults.push({
+                                success: false,
+                                productName: invoiceItemName,
+                                productId: invoiceItemProductId,
+                                error: errorMsg
+                            });
+                            continue;
+                        }
+
+                        // If multiple products match (shouldn't happen, but handle it), use the first one
+                        if (matchingProducts.length > 1) {
+                            console.warn(`Multiple products found with same ID: ${invoiceItemProductId}. Using first match.`, matchingProducts);
+                        }
+
+                        product = matchingProducts[0];
+
+                        // CRITICAL VALIDATION: Ensure product ID matches invoice item ID
+                        if (String(product.id) !== String(invoiceItemProductId)) {
+                            const errorMsg = `Product ID mismatch: product.id (${product.id}) !== item.productId (${invoiceItemProductId})`;
+                            console.error(errorMsg, { product, item });
+                            stockUpdateResults.push({
+                                success: false,
+                                productName: invoiceItemName,
+                                productId: invoiceItemProductId,
+                                error: errorMsg
+                            });
+                            continue;
+                        }
+
+                        // Validate product name matches (additional safety check)
+                        if (product.name !== invoiceItemName) {
+                            console.warn(`Product name mismatch: product.name (${product.name}) !== item.name (${invoiceItemName}). Continuing anyway.`);
+                        }
+
+                        if (!product.originalId) {
+                            const errorMsg = `Product missing originalId for productId: ${invoiceItemProductId}, name: ${invoiceItemName}`;
+                            console.error(errorMsg, { product });
+                            stockUpdateResults.push({
+                                success: false,
+                                productName: invoiceItemName,
+                                productId: invoiceItemProductId,
+                                error: errorMsg
+                            });
+                            continue;
+                        }
+
+                        productIdToUpdate = product.originalId;
+                    }
+
+                    // Calculate the stock change - convert quantity to main units
+                    // For sales, we SUBTRACT stock
+                    const itemQuantity = item.quantity;
+
+                    // Convert quantity from sold unit to main units using unit hierarchy
+                    let stockChange: number;
+                    if (product) {
+                        stockChange = convertQuantityToMainUnits(product, item.unit, itemQuantity);
+                    } else if (item.conversionFactor && item.conversionFactor > 0) {
+                        // Fallback: use conversionFactor if product not available
+                        stockChange = itemQuantity / item.conversionFactor;
+                    } else {
+                        // No conversion factor, assume already in main units
+                        stockChange = itemQuantity;
+                    }
+
+                    // Keep conversions stable without forcing integer rounding
+                    stockChange = roundForStock(stockChange);
+
+                    // CRITICAL: Use the specific product's originalId to update ONLY that product
+                    // Store in a const to prevent accidental modification
+                    const productIdToUpdateString = String(productIdToUpdate);
+
+                    // Final validation: ensure productIdToUpdate is valid
+                    if (!productIdToUpdate || productIdToUpdate === 'undefined' || productIdToUpdate === 'null') {
+                        const errorMsg = `Invalid originalId for product: ${invoiceItemProductId}, originalId: ${productIdToUpdate}`;
+                        console.error(errorMsg, { item, product });
+                        stockUpdateResults.push({
+                            success: false,
+                            productName: invoiceItemName,
+                            productId: invoiceItemProductId,
+                            error: errorMsg
+                        });
+                        continue;
+                    }
+
+                    // Log the update attempt with full context
+                    console.log(`[Stock Update] Processing item:`, {
+                        invoiceItemProductId,
+                        invoiceItemName,
+                        productId: product?.id || 'N/A',
+                        productName: product?.name || invoiceItemName,
+                        productIdToUpdate: productIdToUpdateString,
+                        quantity: item.quantity,
+                        stockChange,
                     });
-                    continue;
-                }
 
-                // Store the invoice item's productId to ensure we use the correct one
-                const invoiceItemProductId = item.productId;
-                const invoiceItemName = item.name;
-                
-                // CRITICAL FIX: Use originalId from cart item if available, otherwise try to find product
-                let productIdToUpdate: string | undefined = item.originalId;
-                let product: POSProduct | undefined;
-                
-                if (productIdToUpdate) {
-                    // We have the originalId directly from the cart item - use it!
-                    console.log(`[Stock Update] Using originalId from cart item: ${productIdToUpdate} for product "${invoiceItemName}"`);
-                } else {
-                    // Fallback: Try to find product in products array to get originalId
-                    console.warn(`[Stock Update] originalId not found in cart item, searching in products array for productId: ${invoiceItemProductId}`);
-                    const matchingProducts = products.filter(p => String(p.id) === String(invoiceItemProductId));
-                    
-                    if (matchingProducts.length === 0) {
-                        const errorMsg = `Product not found in products list and no originalId in cart item for productId: ${invoiceItemProductId}, name: ${invoiceItemName}`;
-                        console.error(errorMsg, { 
-                            invoiceItemProductId, 
-                            invoiceItemName, 
-                            availableProductIds: products.map(p => ({ id: p.id, name: p.name })) 
-                        });
-                        stockUpdateResults.push({ 
-                            success: false, 
-                            productName: invoiceItemName, 
-                            productId: invoiceItemProductId,
-                            error: errorMsg 
-                        });
-                        continue;
-                    }
+                    // OFFLINE-FIRST APPROACH: Update local IndexedDB first, then sync
+                    const expectedName = product?.name || invoiceItemName;
+                    // Use original stock value BEFORE optimistic update, not the already-reduced stock
+                    const originalStock = originalStockValues.get(invoiceItemProductId) ?? (product?.stock ?? 0);
+                    const currentStock = originalStock; // Use original stock for sync calculation
+                    const newStock = Math.max(0, originalStock - stockChange);
 
-                    // If multiple products match (shouldn't happen, but handle it), use the first one
-                    if (matchingProducts.length > 1) {
-                        console.warn(`Multiple products found with same ID: ${invoiceItemProductId}. Using first match.`, matchingProducts);
-                    }
-
-                    product = matchingProducts[0];
-
-                    // CRITICAL VALIDATION: Ensure product ID matches invoice item ID
-                    if (String(product.id) !== String(invoiceItemProductId)) {
-                        const errorMsg = `Product ID mismatch: product.id (${product.id}) !== item.productId (${invoiceItemProductId})`;
-                        console.error(errorMsg, { product, item });
-                        stockUpdateResults.push({ 
-                            success: false, 
-                            productName: invoiceItemName, 
-                            productId: invoiceItemProductId,
-                            error: errorMsg 
-                        });
-                        continue;
-                    }
-
-                    // Validate product name matches (additional safety check)
-                    if (product.name !== invoiceItemName) {
-                        console.warn(`Product name mismatch: product.name (${product.name}) !== item.name (${invoiceItemName}). Continuing anyway.`);
-                    }
-
-                    if (!product.originalId) {
-                        const errorMsg = `Product missing originalId for productId: ${invoiceItemProductId}, name: ${invoiceItemName}`;
-                        console.error(errorMsg, { product });
-                        stockUpdateResults.push({ 
-                            success: false, 
-                            productName: invoiceItemName, 
-                            productId: invoiceItemProductId,
-                            error: errorMsg 
-                        });
-                        continue;
-                    }
-                    
-                    productIdToUpdate = product.originalId;
-                }
-
-                // Calculate the stock change - convert quantity to main units
-                // For sales, we SUBTRACT stock
-                const itemQuantity = item.quantity;
-                
-                // Convert quantity from sold unit to main units using unit hierarchy
-                let stockChange: number;
-                if (product) {
-                    stockChange = convertQuantityToMainUnits(product, item.unit, itemQuantity);
-                } else if (item.conversionFactor && item.conversionFactor > 0) {
-                    // Fallback: use conversionFactor if product not available
-                    stockChange = itemQuantity / item.conversionFactor;
-                } else {
-                    // No conversion factor, assume already in main units
-                    stockChange = itemQuantity;
-                }
-                
-                // Keep conversions stable without forcing integer rounding
-                stockChange = roundForStock(stockChange);
-
-                // CRITICAL: Use the specific product's originalId to update ONLY that product
-                // Store in a const to prevent accidental modification
-                const productIdToUpdateString = String(productIdToUpdate);
-                
-                // Final validation: ensure productIdToUpdate is valid
-                if (!productIdToUpdate || productIdToUpdate === 'undefined' || productIdToUpdate === 'null') {
-                    const errorMsg = `Invalid originalId for product: ${invoiceItemProductId}, originalId: ${productIdToUpdate}`;
-                    console.error(errorMsg, { item, product });
-                    stockUpdateResults.push({ 
-                        success: false, 
-                        productName: invoiceItemName, 
-                        productId: invoiceItemProductId,
-                        error: errorMsg 
-                    });
-                    continue;
-                }
-
-                // Log the update attempt with full context
-                console.log(`[Stock Update] Processing item:`, {
-                    invoiceItemProductId,
-                    invoiceItemName,
-                    productId: product?.id || 'N/A',
-                    productName: product?.name || invoiceItemName,
-                    productIdToUpdate: productIdToUpdateString,
-                    quantity: item.quantity,
-                    stockChange,
-                });
-                
-                // OFFLINE-FIRST APPROACH: Update local IndexedDB first, then sync
-                const expectedName = product?.name || invoiceItemName;
-                // Use original stock value BEFORE optimistic update, not the already-reduced stock
-                const originalStock = originalStockValues.get(invoiceItemProductId) ?? (product?.stock ?? 0);
-                const currentStock = originalStock; // Use original stock for sync calculation
-                const newStock = Math.max(0, originalStock - stockChange);
-                
-                try {
-                    // Step 1: Update local IndexedDB immediately (already done in optimistic update above)
-                    // This ensures the UI shows correct stock even when offline
-                    
-                    // Step 2: Queue stock change for sync (works offline)
                     try {
-                        await inventorySync.queueStockChange(
-                            productIdToUpdateString,
-                            expectedName,
-                            currentStock,
-                            newStock,
-                            'sale'
-                        );
-                        console.log(`📦 Stock change queued for ${expectedName}: ${currentStock} -> ${newStock} (reduced by ${stockChange})`);
-                    } catch (queueError) {
-                        console.warn(`⚠️ Failed to queue stock change for ${expectedName}:`, queueError);
-                        // Continue anyway - local update succeeded
-                    }
-                    
-                    // Step 3: Try to sync immediately if online (non-blocking)
-                    if (navigator.onLine) {
-                        // Try to sync in background, but don't wait for it
-                        inventorySync.syncUnsyncedChanges().catch((syncError) => {
-                            console.warn(`⚠️ Background sync failed for ${expectedName}, will retry later:`, syncError);
+                        // Step 1: Update local IndexedDB immediately (already done in optimistic update above)
+                        // This ensures the UI shows correct stock even when offline
+
+                        // Step 2: Queue stock change for sync (works offline)
+                        try {
+                            await inventorySync.queueStockChange(
+                                productIdToUpdateString,
+                                expectedName,
+                                currentStock,
+                                newStock,
+                                'sale'
+                            );
+                            console.log(`📦 Stock change queued for ${expectedName}: ${currentStock} -> ${newStock} (reduced by ${stockChange})`);
+                        } catch (queueError) {
+                            console.warn(`⚠️ Failed to queue stock change for ${expectedName}:`, queueError);
+                            // Continue anyway - local update succeeded
+                        }
+
+                        // Step 3: Try to sync immediately if online (non-blocking)
+                        if (navigator.onLine) {
+                            // Try to sync in background, but don't wait for it
+                            inventorySync.syncUnsyncedChanges().catch((syncError) => {
+                                console.warn(`⚠️ Background sync failed for ${expectedName}, will retry later:`, syncError);
+                            });
+                        }
+
+                        stockUpdateResults.push({
+                            success: true,
+                            productName: expectedName,
+                            productId: invoiceItemProductId
                         });
+                    } catch (error: any) {
+                        const errorMsg = error?.message || 'Unknown error';
+                        const productName = product?.name || invoiceItemName;
+                        console.error(`✗ Failed to update stock for product "${productName}" (Frontend ID: ${invoiceItemProductId}, Backend ID: ${productIdToUpdateString}):`, error);
+                        stockUpdateResults.push({
+                            success: false,
+                            productName: productName,
+                            productId: invoiceItemProductId,
+                            error: errorMsg
+                        });
+                        // Continue with other products even if one fails
                     }
-                    
-                    stockUpdateResults.push({ 
-                        success: true, 
-                        productName: expectedName,
-                        productId: invoiceItemProductId
-                    });
-                } catch (error: any) {
-                    const errorMsg = error?.message || 'Unknown error';
-                    const productName = product?.name || invoiceItemName;
-                    console.error(`✗ Failed to update stock for product "${productName}" (Frontend ID: ${invoiceItemProductId}, Backend ID: ${productIdToUpdateString}):`, error);
-                    stockUpdateResults.push({ 
-                        success: false, 
-                        productName: productName, 
-                        productId: invoiceItemProductId,
-                        error: errorMsg 
-                    });
-                    // Continue with other products even if one fails
                 }
-            }
 
-            // Stock updates are processed sequentially above
-            // Log summary of stock updates
-            const successful = stockUpdateResults.filter(r => r.success).length;
-            const failed = stockUpdateResults.filter(r => !r.success).length;
-            console.log(`Stock updates completed: ${successful} successful, ${failed} failed`);
-            
-            if (failed > 0) {
-                const failedProducts = stockUpdateResults
-                    .filter(r => !r.success)
-                    .map(r => `${r.productName} (ID: ${r.productId})`)
-                    .join(', ');
-                console.warn(`Failed to update stock for: ${failedProducts}`);
-            }
+                // Stock updates are processed sequentially above
+                // Log summary of stock updates
+                const successful = stockUpdateResults.filter(r => r.success).length;
+                const failed = stockUpdateResults.filter(r => !r.success).length;
+                console.log(`Stock updates completed: ${successful} successful, ${failed} failed`);
 
-            // CRITICAL: Verify we only updated products in the invoice
-            const updatedProductIds = stockUpdateResults
-                .filter(r => r.success)
-                .map(r => r.productId);
-            const invoiceProductIds = invoiceItems.map(item => item.productId);
-            // Compare as strings to handle type differences
-            const extraUpdates = updatedProductIds.filter(id => {
-                const idStr = String(id);
-                return !invoiceProductIds.some(invId => String(invId) === idStr);
-            });
-            if (extraUpdates.length > 0) {
-                console.error(`CRITICAL ERROR: Updated products not in invoice!`, extraUpdates);
+                if (failed > 0) {
+                    const failedProducts = stockUpdateResults
+                        .filter(r => !r.success)
+                        .map(r => `${r.productName} (ID: ${r.productId})`)
+                        .join(', ');
+                    console.warn(`Failed to update stock for: ${failedProducts}`);
+                }
+
+                // CRITICAL: Verify we only updated products in the invoice
+                const updatedProductIds = stockUpdateResults
+                    .filter(r => r.success)
+                    .map(r => r.productId);
+                const invoiceProductIds = invoiceItems.map(item => item.productId);
+                // Compare as strings to handle type differences
+                const extraUpdates = updatedProductIds.filter(id => {
+                    const idStr = String(id);
+                    return !invoiceProductIds.some(invId => String(invId) === idStr);
+                });
+                if (extraUpdates.length > 0) {
+                    console.error(`CRITICAL ERROR: Updated products not in invoice!`, extraUpdates);
+                }
+            } catch (error) {
+                console.error('Error updating stock in background:', error);
+                // Stock update failed but sale is already completed - log error only
             }
-        } catch (error) {
-            console.error('Error updating stock in background:', error);
-            // Stock update failed but sale is already completed - log error only
-        }
         }).catch(error => {
             console.error('Background stock update task failed:', error);
         });
-        
+
         // Background task: Sync products after quantity changes (non-blocking)
         const productIdsToSync = invoiceItems
             .map(item => item.originalId)
             .filter((id): id is string => !!id);
-        
+
         if (productIdsToSync.length > 0) {
             // Use requestIdleCallback to defer non-critical sync to idle time
             const scheduleSync = (callback: () => void) => {
@@ -5335,7 +5336,7 @@ const POSPage: React.FC = () => {
                     setTimeout(callback, 100);
                 }
             };
-            
+
             scheduleSync(() => {
                 productSync.syncAfterQuantityChange(productIdsToSync).then(async (result) => {
                     if (result.success && result.products && result.products.length > 0) {
@@ -5374,21 +5375,21 @@ const POSPage: React.FC = () => {
                 // CRITICAL FIX: Process queued products into a new invoice
                 // This ensures queued products are added to the next sale, not lost
                 const queuedProducts = queuedProductsRef.current.splice(0); // Get and clear queue
-                
+
                 if (queuedProducts.length > 0) {
                     console.log(`[POS] Processing ${queuedProducts.length} queued product(s) that were scanned during payment processing`);
-                    
+
                     // Use setTimeout to ensure state updates have settled before processing queue
                     setTimeout(async () => {
                         // CRITICAL: Use pre-fetched invoice number if available, otherwise fetch
                         let nextInvoiceNumber: string;
-                        
+
                         if (nextInvoiceNumberRef.current) {
                             // Use pre-fetched number immediately
                             nextInvoiceNumber = nextInvoiceNumberRef.current;
                             nextInvoiceNumberRef.current = null; // Clear it since we're using it
                             console.log(`[POS] Using pre-fetched invoice number for queued products: ${nextInvoiceNumber}`);
-                            
+
                             // Pre-fetch next number for upcoming sale
                             preFetchNextInvoiceNumber().catch(error => {
                                 console.error('[POS] Failed to pre-fetch next invoice number:', error);
@@ -5398,7 +5399,7 @@ const POSPage: React.FC = () => {
                             try {
                                 nextInvoiceNumber = await fetchNextInvoiceNumber();
                                 console.log(`[POS] Fetched invoice number for queued products: ${nextInvoiceNumber}`);
-                                
+
                                 // Pre-fetch next number
                                 preFetchNextInvoiceNumber().catch(error => {
                                     console.error('[POS] Failed to pre-fetch next invoice number:', error);
@@ -5410,7 +5411,7 @@ const POSPage: React.FC = () => {
                                 nextInvoiceNumber = currentMatch ? `INV-${parseInt(currentMatch[1], 10) + 1}` : 'INV-1';
                             }
                         }
-                        
+
                         // CRITICAL FIX: Only create/update invoice if cart is empty or belongs to old invoice
                         // If user has already started a new sale, add queued products to that cart instead
                         try {
@@ -5423,19 +5424,19 @@ const POSPage: React.FC = () => {
                                 }
                                 return prev; // Don't modify here
                             });
-                            
+
                             if (shouldCreateNewInvoice) {
                                 const newInvoice = generateNewInvoice(currentUserName, nextInvoiceNumber);
                                 setCurrentInvoice(newInvoice);
                                 console.log(`[POS] Created new invoice for queued products: ${nextInvoiceNumber}`);
-                                
+
                                 // Wait for state to settle
                                 await new Promise(resolve => setTimeout(resolve, 50));
-                                
+
                                 // Temporarily set saleCompleted to false so handleAddProduct can add to the new invoice
                                 setSaleCompleted(false);
                                 await new Promise(resolve => setTimeout(resolve, 50));
-                                
+
                                 // Process queued products sequentially - they'll be added to the new invoice
                                 for (const queued of queuedProducts) {
                                     try {
@@ -5451,24 +5452,24 @@ const POSPage: React.FC = () => {
                                         console.error('[POS] Error processing queued product:', error);
                                     }
                                 }
-                                
+
                                 // Wait a bit for products to be added
                                 await new Promise(resolve => setTimeout(resolve, 50));
-                                
+
                                 // Set saleCompleted back to true to keep receipt visible
                                 setSaleCompleted(true);
                                 console.log(`[POS] Queued products added to new cart. Receipt remains visible.`);
                             } else {
                                 // User has already started a new sale - add queued products to existing cart
                                 console.log(`[POS] User started new sale, adding queued products to existing cart`);
-                                
+
                                 // Temporarily set saleCompleted to false if needed
                                 const wasCompleted = saleCompleted;
                                 if (wasCompleted) {
                                     setSaleCompleted(false);
                                     await new Promise(resolve => setTimeout(resolve, 50));
                                 }
-                                
+
                                 // Process queued products - handleAddProduct will add them to current cart
                                 for (const queued of queuedProducts) {
                                     try {
@@ -5484,13 +5485,13 @@ const POSPage: React.FC = () => {
                                         console.error('[POS] Error processing queued product:', error);
                                     }
                                 }
-                                
+
                                 // Restore saleCompleted state if it was true
                                 if (wasCompleted) {
                                     await new Promise(resolve => setTimeout(resolve, 50));
                                     setSaleCompleted(true);
                                 }
-                                
+
                                 console.log(`[POS] Queued products added to existing cart.`);
                             }
                         } catch (error) {
@@ -5505,7 +5506,7 @@ const POSPage: React.FC = () => {
                         });
                     }
                 }
-                
+
                 // CRITICAL: If user requested new sale during processing, start it now
                 if (pendingNewSaleRef.current) {
                     console.log('[POS] User requested new sale during processing, starting now...');
@@ -5517,7 +5518,7 @@ const POSPage: React.FC = () => {
                         });
                     }, 100);
                 }
-                
+
                 // Check for unsynced sales after sync completes
                 checkUnsyncedSales();
                 // Clear locked invoice number after a delay (allow time for UI updates)
@@ -5530,19 +5531,19 @@ const POSPage: React.FC = () => {
             // Ensure processing state is cleared even if promise chain fails
             isSubmittingInvoiceRef.current = false;
             setIsProcessingPayment(false);
-            
+
             // CRITICAL FIX: Process queued products into a new invoice
             // This ensures queued products are added to the next sale, not lost
             const queuedProducts = queuedProductsRef.current.splice(0); // Get and clear queue
-            
+
             if (queuedProducts.length > 0) {
                 console.log(`[POS] Processing ${queuedProducts.length} queued product(s) that were scanned during payment processing (after error)`);
-                
+
                 // Use setTimeout to ensure state updates have settled before processing queue
                 setTimeout(async () => {
                     // CRITICAL: Use pre-fetched invoice number if available
                     let nextInvoiceNumber: string;
-                    
+
                     if (nextInvoiceNumberRef.current) {
                         nextInvoiceNumber = nextInvoiceNumberRef.current;
                         nextInvoiceNumberRef.current = null;
@@ -5563,18 +5564,18 @@ const POSPage: React.FC = () => {
                             nextInvoiceNumber = currentMatch ? `INV-${parseInt(currentMatch[1], 10) + 1}` : 'INV-1';
                         }
                     }
-                    
+
                     try {
                         const newInvoice = generateNewInvoice(currentUserName, nextInvoiceNumber);
                         setCurrentInvoice(newInvoice);
                         console.log(`[POS] Created new invoice for queued products (after error): ${nextInvoiceNumber}`);
-                        
+
                         await new Promise(resolve => setTimeout(resolve, 50));
-                        
+
                         // Temporarily set saleCompleted to false so handleAddProduct can add to the new invoice
                         setSaleCompleted(false);
                         await new Promise(resolve => setTimeout(resolve, 50));
-                        
+
                         // Process queued products sequentially
                         for (const queued of queuedProducts) {
                             try {
@@ -5590,9 +5591,9 @@ const POSPage: React.FC = () => {
                                 console.error('[POS] Error processing queued product:', error);
                             }
                         }
-                        
+
                         await new Promise(resolve => setTimeout(resolve, 50));
-                        
+
                         // Set saleCompleted back to true to keep receipt visible
                         setSaleCompleted(true);
                         console.log(`[POS] Queued products added to cart (after error). Receipt remains visible.`);
@@ -5608,7 +5609,7 @@ const POSPage: React.FC = () => {
                     });
                 }
             }
-            
+
             // CRITICAL: If user requested new sale during processing, start it now
             if (pendingNewSaleRef.current) {
                 console.log('[POS] User requested new sale during processing (after error), starting now...');
@@ -5619,7 +5620,7 @@ const POSPage: React.FC = () => {
                     });
                 }, 100);
             }
-            
+
             lockedInvoiceNumberRef.current = null;
         });
     };
@@ -5631,22 +5632,22 @@ const POSPage: React.FC = () => {
         const isReturn = 'originalInvoiceId' in invoice && invoice.originalInvoiceId !== undefined
             || ('status' in invoice && invoice.status === 'Returned')
             || ('id' in invoice && invoice.id.startsWith('RET-'));
-        
+
         // Get store address and business name from state, with fallback to localStorage
         const settings = loadSettings(null);
         const addressFromState = storeAddress || '';
         const addressFromSettings = settings?.storeAddress || '';
         const addressToDisplay = addressFromState || addressFromSettings || '';
-        
+
         const legacyDefaultBusinessName = String.fromCharCode(80, 111, 115, 104, 80, 111, 105, 110, 116, 72, 117, 98);
         const businessNameToDisplay = businessName || (settings?.businessName && settings.businessName.trim() && settings.businessName !== legacyDefaultBusinessName ? settings.businessName.trim() : '');
-        
+
         // Get store logo from state (loaded from backend API) with fallback to localStorage settings
         // This ensures we always use the correct store's logo from the backend
         const logoUrlFromState = storeLogoUrl || '';
         const logoUrlFromSettings = settings?.logoUrl || '';
         const finalLogoUrl = logoUrlFromState || logoUrlFromSettings;
-        
+
         // Check if we have a custom logo - accept Firebase URLs, data URLs (base64 images), or blob URLs
         const hasCustomLogo = !!(finalLogoUrl && finalLogoUrl.trim() && (
             finalLogoUrl.includes('firebasestorage.googleapis.com') || // Firebase Storage URL
@@ -5654,38 +5655,38 @@ const POSPage: React.FC = () => {
             finalLogoUrl.startsWith('blob:') || // Blob URL
             (finalLogoUrl.startsWith('http') && finalLogoUrl.includes('logo')) // HTTP URL (for other storage services)
         ));
-        
+
         // Debug logging to help troubleshoot
-        console.log('[Receipt] Logo Debug:', { 
-            hasSettings: !!settings, 
+        console.log('[Receipt] Logo Debug:', {
+            hasSettings: !!settings,
             logoUrlFromState: logoUrlFromState ? `${logoUrlFromState.substring(0, 50)}...` : 'empty',
             logoUrlFromSettings: logoUrlFromSettings ? `${logoUrlFromSettings.substring(0, 50)}...` : 'empty',
             finalLogoUrl: finalLogoUrl ? `${finalLogoUrl.substring(0, 80)}...` : 'empty',
             hasCustomLogo,
             logoUrlType: finalLogoUrl ? (
                 finalLogoUrl.includes('firebasestorage.googleapis.com') ? 'firebase' :
-                finalLogoUrl.startsWith('data:') ? 'data' : 
-                finalLogoUrl.startsWith('blob:') ? 'blob' : 
-                finalLogoUrl.startsWith('http') ? 'http' : 'other'
+                    finalLogoUrl.startsWith('data:') ? 'data' :
+                        finalLogoUrl.startsWith('blob:') ? 'blob' :
+                            finalLogoUrl.startsWith('http') ? 'http' : 'other'
             ) : 'none',
             settingsKeys: settings ? Object.keys(settings) : []
         });
-        
+
         // Calculate payment information
         // Get payment method from invoice (could be POSInvoice or SaleTransaction)
-        const paymentMethod = ('paymentMethod' in invoice && invoice.paymentMethod) 
-            ? String(invoice.paymentMethod).toLowerCase() 
+        const paymentMethod = ('paymentMethod' in invoice && invoice.paymentMethod)
+            ? String(invoice.paymentMethod).toLowerCase()
             : null;
-        const grandTotalValue = isReturn 
-            ? -Math.abs('grandTotal' in invoice ? invoice.grandTotal : ('totalAmount' in invoice ? invoice.totalAmount : 0)) 
+        const grandTotalValue = isReturn
+            ? -Math.abs('grandTotal' in invoice ? invoice.grandTotal : ('totalAmount' in invoice ? invoice.totalAmount : 0))
             : ('grandTotal' in invoice ? invoice.grandTotal : ('totalAmount' in invoice ? invoice.totalAmount : 0));
-        
+
         // Calculate paid amount and remaining amount based on payment method
         // For Cash and Visa: full amount is paid, no remaining balance
         // For Credit: check if invoice has paidAmount/remainingAmount, otherwise calculate
         let paidAmount: number | undefined;
         let remainingAmount: number | undefined;
-        
+
         if (paymentMethod === 'cash' || paymentMethod === 'card' || paymentMethod === 'visa') {
             // Cash and Visa: full amount is considered paid
             paidAmount = Math.abs(grandTotalValue);
@@ -5707,14 +5708,14 @@ const POSPage: React.FC = () => {
             paidAmount = Math.abs(grandTotalValue);
             remainingAmount = undefined;
         }
-        
+
         // Normalize payment method for display: 'card' -> 'visa', 'cash' -> 'cash', 'credit' -> 'credit'
         const displayPaymentMethod = paymentMethod === 'card' ? 'visa' : (paymentMethod || 'cash');
-        
+
         return (
-            <div 
-                id="printable-receipt" 
-                className="w-full max-w-md bg-white dark:bg-gray-800 p-6 sm:p-8 rounded-xl shadow-xl text-right" 
+            <div
+                id="printable-receipt"
+                className="w-full max-w-md bg-white dark:bg-gray-800 p-6 sm:p-8 rounded-xl shadow-xl text-right"
                 style={{ fontFamily: 'system-ui, -apple-system, "Segoe UI", Arial, sans-serif' }}
                 data-payment-method={displayPaymentMethod}
                 data-paid-amount={paidAmount}
@@ -5734,9 +5735,9 @@ const POSPage: React.FC = () => {
                     <div className="flex justify-center mb-5">
                         {hasCustomLogo && finalLogoUrl ? (
                             <div className="receipt-logo">
-                                <img 
-                                    src={finalLogoUrl} 
-                                    alt="Store logo" 
+                                <img
+                                    src={finalLogoUrl}
+                                    alt="Store logo"
                                     className="w-20 h-20 sm:w-24 sm:h-24 object-contain rounded-2xl shadow-xl bg-white dark:bg-gray-800 p-2 border-2 border-gray-100 dark:border-gray-700"
                                     style={{
                                         maxWidth: '96px',
@@ -5756,10 +5757,10 @@ const POSPage: React.FC = () => {
                                 background: 'linear-gradient(135deg, #f97316 0%, #f59e0b 50%, #ea580c 100%)',
                                 boxShadow: '0 10px 25px -5px rgba(249, 115, 22, 0.3), 0 4px 6px -2px rgba(249, 115, 22, 0.2)',
                             }}>
-                                <svg 
-                                    className="w-12 h-12 sm:w-14 sm:h-14 text-white" 
-                                    fill="none" 
-                                    viewBox="0 0 24 24" 
+                                <svg
+                                    className="w-12 h-12 sm:w-14 sm:h-14 text-white"
+                                    fill="none"
+                                    viewBox="0 0 24 24"
                                     stroke="currentColor"
                                     strokeWidth="2.5"
                                 >
@@ -5768,10 +5769,10 @@ const POSPage: React.FC = () => {
                             </div>
                         )}
                     </div>
-                    
+
                     {businessNameToDisplay ? (
                         <>
-                            <h1 className="text-3xl sm:text-4xl md:text-5xl font-extrabold text-gray-900 dark:text-gray-100 mb-4 tracking-tight leading-tight" style={{ 
+                            <h1 className="text-3xl sm:text-4xl md:text-5xl font-extrabold text-gray-900 dark:text-gray-100 mb-4 tracking-tight leading-tight" style={{
                                 fontSize: 'clamp(1.875rem, 5vw, 2.5rem)',
                                 letterSpacing: '-0.02em',
                             }}>
@@ -5785,7 +5786,7 @@ const POSPage: React.FC = () => {
                         </>
                     ) : title ? (
                         <>
-                            <h1 className="text-3xl sm:text-4xl md:text-5xl font-extrabold text-gray-900 dark:text-gray-100 mb-4 tracking-tight leading-tight" style={{ 
+                            <h1 className="text-3xl sm:text-4xl md:text-5xl font-extrabold text-gray-900 dark:text-gray-100 mb-4 tracking-tight leading-tight" style={{
                                 fontSize: 'clamp(1.875rem, 5vw, 2.5rem)',
                                 letterSpacing: '-0.02em',
                             }}>
@@ -5809,7 +5810,7 @@ const POSPage: React.FC = () => {
                     <div className="grid grid-cols-2 gap-x-6 gap-y-4">
                         <div className="flex flex-col">
                             <span className="text-xs text-gray-400 dark:text-gray-500 mb-2 font-semibold uppercase tracking-wide">{AR_LABELS.date}</span>
-                            <span 
+                            <span
                                 className="text-sm font-bold text-gray-900 dark:text-gray-100"
                                 data-date={invoice.date instanceof Date ? invoice.date.toISOString() : new Date(invoice.date).toISOString()}
                             >
@@ -5841,7 +5842,7 @@ const POSPage: React.FC = () => {
                         </div>
                     </div>
                 </div>
-                
+
                 {/* Items Table - Modern Design */}
                 <div className="overflow-x-auto -mx-1 sm:mx-0 mb-6">
                     <div className="mb-3">
@@ -5874,8 +5875,8 @@ const POSPage: React.FC = () => {
                                 // Calculate index based on original order (before reversal)
                                 const productIndex = invoice.items.length - idx;
                                 return (
-                                    <tr 
-                                        key={item.cartItemId || `receipt-item-${idx}`} 
+                                    <tr
+                                        key={item.cartItemId || `receipt-item-${idx}`}
                                         className="border-b border-gray-100 dark:border-gray-800 hover:bg-gray-50/50 dark:hover:bg-gray-800/30 transition-colors"
                                     >
                                         <td className="py-3.5 px-3 text-center text-gray-700 dark:text-gray-300 font-medium">
@@ -5920,7 +5921,7 @@ const POSPage: React.FC = () => {
                             {formatCurrency(isReturn ? -Math.abs(invoice.tax) : invoice.tax)}
                         </span>
                     </div>
-                    <div className="grand-total flex justify-between items-center pt-4 mt-4 px-4 py-4 rounded-lg bg-gradient-to-r from-orange-50 to-amber-50 dark:from-gray-800 dark:to-gray-800/50" style={{ 
+                    <div className="grand-total flex justify-between items-center pt-4 mt-4 px-4 py-4 rounded-lg bg-gradient-to-r from-orange-50 to-amber-50 dark:from-gray-800 dark:to-gray-800/50" style={{
                         borderTop: '3px solid #f97316',
                         boxShadow: '0 2px 4px rgba(0, 0, 0, 0.05)',
                     }}>
@@ -5984,13 +5985,13 @@ const POSPage: React.FC = () => {
             </div>
         );
     }
-    
+
     // Add Points section after receipt (only for completed sales with customer)
     const renderAddPointsSection = (invoice: POSInvoice) => {
         if (!invoice.customer || invoice.id.startsWith('RET-') || invoice.originalInvoiceId) {
             return null;
         }
-        
+
         return (
             <div className="mt-4 p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800 print-hidden">
                 <div className="flex items-center justify-between mb-2">
@@ -6020,10 +6021,10 @@ const POSPage: React.FC = () => {
         // Use invoiceNumber if available (for SaleTransaction), otherwise use id (for POSInvoice)
         const invoiceNumber = ('invoiceNumber' in invoice && invoice.invoiceNumber) ? invoice.invoiceNumber : invoice.id;
         const storeId = user?.storeId || '';
-        const invoiceUrl = storeId 
+        const invoiceUrl = storeId
             ? `${window.location.origin}/invoice/${storeId}/${invoiceNumber}`
             : `${window.location.origin}/invoice/${invoiceNumber}`;
-        
+
         return (
             <div id="printable-qr-receipt" className="w-full max-w-md bg-white dark:bg-gray-800 p-6 sm:p-8 rounded-lg shadow-lg text-center">
                 {/* Invoice Number */}
@@ -6067,7 +6068,7 @@ const POSPage: React.FC = () => {
             });
         }, 300);
     };
-    
+
     if (saleCompleted && completedInvoice) {
         const isReturnInvoice = completedInvoice.id.startsWith('RET-') || completedInvoice.originalInvoiceId !== undefined;
         const businessName = loadSettings(null)?.businessName;
@@ -6099,11 +6100,10 @@ const POSPage: React.FC = () => {
                     {/* Queue Status Indicator */}
                     {(queueLength > 0 || queueProcessing) && (
                         <div className="mb-2 sm:mb-3 print-hidden w-full flex justify-center">
-                            <div className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-md text-xs sm:text-sm font-medium ${
-                                queueProcessing 
-                                    ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300' 
+                            <div className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-md text-xs sm:text-sm font-medium ${queueProcessing
+                                    ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300'
                                     : 'bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-300'
-                            }`}>
+                                }`}>
                                 {queueProcessing && (
                                     <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                                         <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
@@ -6111,7 +6111,7 @@ const POSPage: React.FC = () => {
                                     </svg>
                                 )}
                                 <span>
-                                    {queueProcessing 
+                                    {queueProcessing
                                         ? `جاري معالجة فاتورة... (${queueLength} في الانتظار)`
                                         : `${queueLength} فاتورة في الانتظار`
                                     }
@@ -6119,10 +6119,10 @@ const POSPage: React.FC = () => {
                             </div>
                         </div>
                     )}
-                    
+
                     {/* Buttons above invoice */}
                     <div className="flex flex-row gap-2 sm:gap-3 mb-4 sm:mb-6 print-hidden w-full justify-center">
-                        <button 
+                        <button
                             id="newSaleBtn"
                             ref={startNewSaleButtonRef}
                             onClick={startNewSale}
@@ -6138,15 +6138,15 @@ const POSPage: React.FC = () => {
                             {!isProcessingPayment && <PlusIcon className="h-4 w-4 ml-1.5" />}
                             <span>{isProcessingPayment ? 'جاري المعالجة...' : AR_LABELS.startNewSale}</span>
                         </button>
-                        <button 
-                            onClick={() => printReceipt('printable-receipt')} 
+                        <button
+                            onClick={() => printReceipt('printable-receipt')}
                             className="inline-flex items-center justify-center px-3 sm:px-4 py-2 text-xs sm:text-sm font-medium rounded-md text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 transition-colors border border-gray-300 dark:border-gray-600"
                         >
                             <span className="h-4 w-4 ml-1.5"><PrintIcon /></span>
                             <span>{AR_LABELS.printReceipt}</span>
                         </button>
-                        <button 
-                            onClick={handlePrintQRInvoice} 
+                        <button
+                            onClick={handlePrintQRInvoice}
                             className="inline-flex items-center justify-center px-3 sm:px-4 py-2 text-xs sm:text-sm font-medium rounded-md text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 transition-colors border border-gray-300 dark:border-gray-600"
                         >
                             <svg className="h-4 w-4 ml-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
@@ -6162,30 +6162,30 @@ const POSPage: React.FC = () => {
                             <div className={showQRReceipt ? 'hidden' : 'w-full'}>
                                 {renderReceipt(completedInvoice, receiptTitle)}
                                 {/* Add Points Button - Only show if customer exists and not a return */}
-                                {completedInvoice.customer && 
-                                 !completedInvoice.id.startsWith('RET-') && 
-                                 !completedInvoice.originalInvoiceId && (
-                                    <div className="mt-4 p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800 print-hidden">
-                                        <div className="flex items-center justify-between mb-2">
-                                            <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                                                إضافة نقاط للعميل
-                                            </span>
+                                {completedInvoice.customer &&
+                                    !completedInvoice.id.startsWith('RET-') &&
+                                    !completedInvoice.originalInvoiceId && (
+                                        <div className="mt-4 p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800 print-hidden">
+                                            <div className="flex items-center justify-between mb-2">
+                                                <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                                                    إضافة نقاط للعميل
+                                                </span>
+                                            </div>
+                                            <AddPointsButton
+                                                invoiceNumber={completedInvoice.id}
+                                                customerId={completedInvoice.customer.id}
+                                                customerPhone={completedInvoice.customer.phone}
+                                                purchaseAmount={completedInvoice.grandTotal}
+                                                onSuccess={(points, newBalance) => {
+                                                    console.log(`✅ Points added: ${points}, New balance: ${newBalance}`);
+                                                }}
+                                                onError={(error) => {
+                                                    console.error('Failed to add points:', error);
+                                                }}
+                                                className="w-full"
+                                            />
                                         </div>
-                                        <AddPointsButton
-                                            invoiceNumber={completedInvoice.id}
-                                            customerId={completedInvoice.customer.id}
-                                            customerPhone={completedInvoice.customer.phone}
-                                            purchaseAmount={completedInvoice.grandTotal}
-                                            onSuccess={(points, newBalance) => {
-                                                console.log(`✅ Points added: ${points}, New balance: ${newBalance}`);
-                                            }}
-                                            onError={(error) => {
-                                                console.error('Failed to add points:', error);
-                                            }}
-                                            className="w-full"
-                                        />
-                                    </div>
-                                )}
+                                    )}
                             </div>
                             <div className={showQRReceipt ? 'w-full' : 'hidden'}>
                                 {completedInvoice && renderQRReceipt(completedInvoice, receiptTitle)}
@@ -6196,7 +6196,7 @@ const POSPage: React.FC = () => {
             </div>
         );
     }
-    
+
     return (
         <div ref={posContainerRef} className="relative h-screen overflow-hidden">
             {/* Full-page loading overlay during processing */}
@@ -6228,7 +6228,7 @@ const POSPage: React.FC = () => {
             <div className="absolute inset-0 bg-gradient-to-br from-slate-50 via-orange-50/20 to-amber-100/30 dark:from-slate-950 dark:via-orange-950/20 dark:to-amber-950/30" />
             <div className="absolute -top-40 -right-40 h-80 w-80 rounded-full bg-gradient-to-br from-orange-400/15 to-amber-400/15 blur-3xl animate-pulse" />
             <div className="absolute -bottom-40 -left-40 h-80 w-80 rounded-full bg-gradient-to-br from-rose-400/15 to-orange-400/15 blur-3xl animate-pulse" style={{ animationDelay: '2s' }} />
-            
+
             <div className={`relative w-full h-full flex flex-col px-2 sm:px-4 lg:px-6 py-2 sm:py-3 lg:py-4 overflow-hidden ${isProcessingPayment ? 'pointer-events-none' : ''}`}>
                 {/* Suspended Invoices Horizontal Tabs - Above main grid */}
                 {heldInvoices.length > 0 && (
@@ -6268,7 +6268,7 @@ const POSPage: React.FC = () => {
                         </div>
                     </div>
                 )}
-                
+
                 {/* Sync Status Indicator - HIDDEN: Technical sync messages hidden from UI (logged only) */}
                 {/* {unsyncedSalesCount > 0 && (
                     <div className="flex-shrink-0 mb-1.5 sm:mb-2 w-full">
@@ -6296,58 +6296,57 @@ const POSPage: React.FC = () => {
                         </div>
                     </div>
                 )} */}
-                
+
                 {/* Three Column Layout - Proportional widths: ~19% - 50% - 31%; when quick products hidden: 2 columns so invoice expands */}
                 <div className={`grid grid-cols-1 gap-2 sm:gap-3 md:gap-3 lg:gap-4 h-full min-h-0 w-full overflow-hidden items-stretch ${quickProductsPanelVisible ? 'md:grid-cols-[0.75fr_2.3fr_1fr]' : 'md:grid-cols-[2.3fr_1fr]'}`}>
-                {/* Column 1: Quick Products (hidden when quickProductsPanelVisible is false) */}
+                    {/* Column 1: Quick Products (hidden when quickProductsPanelVisible is false) */}
                     {quickProductsPanelVisible && (
-                    <div className="flex flex-col gap-2 sm:gap-2.5 md:gap-3 lg:gap-4 min-h-0 min-w-0 h-full">
-                        {/* Quick Products */}
-                        <div className="bg-white/95 dark:bg-gray-800/95 rounded-xl sm:rounded-2xl shadow-sm p-2.5 sm:p-3 md:p-4 lg:p-5 backdrop-blur-xl border border-slate-200/50 dark:border-slate-700/50 flex-grow min-h-0 overflow-y-auto relative z-0">
-                            <div className="flex items-center justify-between gap-2 mb-2 sm:mb-3 lg:mb-4">
-                                <button
-                                    type="button"
-                                    onClick={() => setQuickProductsPanelVisible(false)}
-                                    className="flex-shrink-0 p-1.5 rounded-lg border border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-700/50 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-600 hover:text-gray-900 dark:hover:text-gray-100 transition-colors"
-                                    title={AR_LABELS.hideQuickProducts}
-                                    aria-label={AR_LABELS.hideQuickProducts}
-                                >
-                                    <XIcon className="h-4 w-4 sm:h-5 sm:w-5" />
-                                </button>
-                                <h3 className="font-bold text-sm sm:text-base text-gray-900 dark:text-gray-100 text-right flex-1">{AR_LABELS.quickProducts}</h3>
+                        <div className="flex flex-col gap-2 sm:gap-2.5 md:gap-3 lg:gap-4 min-h-0 min-w-0 h-full">
+                            {/* Quick Products */}
+                            <div className="bg-white/95 dark:bg-gray-800/95 rounded-xl sm:rounded-2xl shadow-sm p-2.5 sm:p-3 md:p-4 lg:p-5 backdrop-blur-xl border border-slate-200/50 dark:border-slate-700/50 flex-grow min-h-0 overflow-y-auto relative z-0">
+                                <div className="flex items-center justify-between gap-2 mb-2 sm:mb-3 lg:mb-4">
+                                    <button
+                                        type="button"
+                                        onClick={() => setQuickProductsPanelVisible(false)}
+                                        className="flex-shrink-0 p-1.5 rounded-lg border border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-700/50 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-600 hover:text-gray-900 dark:hover:text-gray-100 transition-colors"
+                                        title={AR_LABELS.hideQuickProducts}
+                                        aria-label={AR_LABELS.hideQuickProducts}
+                                    >
+                                        <XIcon className="h-4 w-4 sm:h-5 sm:w-5" />
+                                    </button>
+                                    <h3 className="font-bold text-sm sm:text-base text-gray-900 dark:text-gray-100 text-right flex-1">{AR_LABELS.quickProducts}</h3>
+                                </div>
+                                {isLoadingQuickProducts ? (
+                                    <div className="text-center py-4 text-sm text-gray-500 dark:text-gray-400">
+                                        جاري التحميل...
+                                    </div>
+                                ) : quickProducts.length === 0 ? (
+                                    <div className="text-center py-4 text-sm text-gray-500 dark:text-gray-400">
+                                        لا توجد منتجات سريعة. قم بتمكين المنتجات من إعدادات المنتج.
+                                    </div>
+                                ) : (
+                                    <div className="grid grid-cols-2 gap-1.5 sm:gap-2 md:gap-2.5 lg:gap-3">
+                                        {quickProducts.map((p, index) => (
+                                            <button
+                                                key={`quick-product-${p.id}-${index}`}
+                                                type="button"
+                                                onClick={() => handleAddProduct(p)}
+                                                className={`group p-3 sm:p-4 border rounded-lg sm:rounded-xl text-center transition-all duration-200 hover:shadow-md active:scale-95 ${p.stock <= 0
+                                                        ? 'border-red-200 dark:border-red-900/50 hover:bg-red-50/50 dark:hover:bg-red-900/10 hover:border-red-300 dark:hover:border-red-800'
+                                                        : 'border-gray-200 dark:border-gray-700 hover:bg-orange-50 dark:hover:bg-gray-700 hover:border-orange-300 dark:hover:border-orange-600'
+                                                    }`}
+                                            >
+                                                <span className="block text-xs sm:text-sm font-semibold text-gray-800 dark:text-gray-200 mb-1">{p.name}</span>
+                                                <span className="block text-xs font-bold text-orange-600">{formatCurrency(getActivePrice(p))}</span>
+                                                {p.stock <= 0 && (
+                                                    <span className="block text-xs text-red-600 dark:text-red-400 mt-1">نفد المخزون</span>
+                                                )}
+                                            </button>
+                                        ))}
+                                    </div>
+                                )}
                             </div>
-                            {isLoadingQuickProducts ? (
-                                <div className="text-center py-4 text-sm text-gray-500 dark:text-gray-400">
-                                    جاري التحميل...
-                                </div>
-                            ) : quickProducts.length === 0 ? (
-                                <div className="text-center py-4 text-sm text-gray-500 dark:text-gray-400">
-                                    لا توجد منتجات سريعة. قم بتمكين المنتجات من إعدادات المنتج.
-                                </div>
-                            ) : (
-                                <div className="grid grid-cols-2 gap-1.5 sm:gap-2 md:gap-2.5 lg:gap-3">
-                                    {quickProducts.map((p, index) => (
-                                        <button 
-                                            key={`quick-product-${p.id}-${index}`} 
-                                            type="button"
-                                            onClick={() => handleAddProduct(p)} 
-                                            className={`group p-3 sm:p-4 border rounded-lg sm:rounded-xl text-center transition-all duration-200 hover:shadow-md active:scale-95 ${
-                                                p.stock <= 0
-                                                    ? 'border-red-200 dark:border-red-900/50 hover:bg-red-50/50 dark:hover:bg-red-900/10 hover:border-red-300 dark:hover:border-red-800'
-                                                    : 'border-gray-200 dark:border-gray-700 hover:bg-orange-50 dark:hover:bg-gray-700 hover:border-orange-300 dark:hover:border-orange-600'
-                                            }`}
-                                        >
-                                            <span className="block text-xs sm:text-sm font-semibold text-gray-800 dark:text-gray-200 mb-1">{p.name}</span>
-                                            <span className="block text-xs font-bold text-orange-600">{formatCurrency(getActivePrice(p))}</span>
-                                            {p.stock <= 0 && (
-                                                <span className="block text-xs text-red-600 dark:text-red-400 mt-1">نفد المخزون</span>
-                                            )}
-                                        </button>
-                                    ))}
-                                </div>
-                            )}
                         </div>
-                    </div>
                     )}
 
                     {/* Column 2: Transaction/Cart (50% - Center, wider) */}
@@ -6393,10 +6392,10 @@ const POSPage: React.FC = () => {
                         <form onSubmit={handleSearch} className="p-2.5 sm:p-3 md:p-3.5 lg:p-4 border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
                             <div className="relative">
                                 <SearchIcon className="absolute left-2 sm:left-3 top-1/2 -translate-y-1/2 h-4 w-4 sm:h-5 sm:w-5 text-gray-400 dark:text-gray-500" />
-                                <input 
+                                <input
                                     ref={searchInputRef}
-                                    type="text" 
-                                    value={searchTerm} 
+                                    type="text"
+                                    value={searchTerm}
                                     onChange={e => {
                                         const value = e.target.value;
                                         setSearchTerm(value);
@@ -6407,13 +6406,13 @@ const POSPage: React.FC = () => {
                                             // For barcode input, don't show suggestions while typing
                                             setProductSuggestionsOpen(false);
                                         }
-                                    }} 
+                                    }}
                                     onKeyDown={async (e) => {
                                         // Handle Enter key for barcode search
                                         if (e.key === 'Enter') {
                                             e.preventDefault();
                                             const trimmed = searchTerm.trim();
-                                            
+
                                             // If it's a barcode (numeric only), use queue-based search
                                             if (trimmed && isBarcodeInput(trimmed)) {
                                                 // Use queue-based barcode search to prevent concurrent processing
@@ -6430,7 +6429,7 @@ const POSPage: React.FC = () => {
                                             setProductSuggestionsOpen(true);
                                         }
                                     }}
-                                    placeholder={AR_LABELS.searchProductPlaceholder} 
+                                    placeholder={AR_LABELS.searchProductPlaceholder}
                                     className="w-full pl-8 sm:pl-10 pr-3 sm:pr-4 py-2 sm:py-2.5 text-sm sm:text-base rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-orange-500 focus:border-transparent text-right"
                                 />
                                 {productSuggestionsOpen && productSuggestions.length > 0 && (
@@ -6485,175 +6484,175 @@ const POSPage: React.FC = () => {
                                             <th className="px-2 sm:px-3 py-2 sm:py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[10%] text-center align-middle"></th>
                                         </tr>
                                     </thead>
-                                <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
-                                   {currentInvoice.items.length === 0 ? (
+                                    <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
+                                        {currentInvoice.items.length === 0 ? (
                                             <tr><td colSpan={6 + (showUnitColumn ? 1 : 0) + (showCostPrice ? 2 : 0)} className="text-center align-middle py-8 sm:py-10 text-xs sm:text-sm text-gray-500 dark:text-gray-400">{AR_LABELS.noItemsInCart}</td></tr>
-                                   ) : currentInvoice.items.slice().reverse().map((item, index) => {
-                                        const productForItem = products.find(p => String(p.id) === String(item.productId))
-                                            || products.find(p => item.originalId && String(p.originalId) === String(item.originalId));
-                                        const parentProduct = productForItem?.parentProductId
-                                            ? products.find(p => String(p.id) === String(productForItem.parentProductId)) || products.find(p => String(p.originalId) === String(productForItem.parentProductId))
-                                            : null;
-                                        const productUnits = (parentProduct?.units && parentProduct.units.length > 0 ? parentProduct.units : productForItem?.units) ?? [];
-                                        const unitLabel = (u: { unitName?: string; name?: string }) => (u.unitName || (u as any).name || '').trim() || '—';
-                                        const unitOptionsFromProduct = productUnits.map(u => ({ value: unitLabel(u), label: unitLabel(u) }));
-                                        const unitOptions = unitOptionsFromProduct.length > 0
-                                            ? unitOptionsFromProduct
-                                            : (item.unit && String(item.unit).trim() !== '')
-                                                ? [{ value: item.unit, label: item.unit }]
-                                                : [];
-                                        const showUnitDropdown = unitOptions.length > 0;
-                                        // Use item's base cost so display never "divides again" when changing units multiple times
-                                        const productForCost = parentProduct || productForItem;
-                                        const unitForCost = productUnits.find((u: any) => (unitLabel(u) || '').toLowerCase() === (item.unit || '').trim().toLowerCase());
-                                        const baseCostForDisplay = item.baseCostPrice ?? (productForCost as POSProduct)?.baseCostPrice ?? productForCost?.costPrice ?? 0;
-                                        const displayUnitCost = productForCost && unitForCost != null
-                                            ? calculateUnitCostPrice(productForCost, unitForCost, baseCostForDisplay)
-                                            : (item.costPrice ?? item.cost ?? 0);
-                                        return (
-                                        <tr key={item.cartItemId || `item-${index}`} className="hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors duration-150">
-                                                <td className="px-2 sm:px-3 py-3 sm:py-4 text-xs sm:text-sm text-gray-500 dark:text-gray-400 align-middle">{index + 1}</td>
-                                                <td className="px-2 sm:px-3 py-3 sm:py-4 text-xs sm:text-sm font-medium text-gray-900 dark:text-gray-100 break-words align-middle">{item.name}</td>
-                                                {showUnitColumn && (
+                                        ) : currentInvoice.items.slice().reverse().map((item, index) => {
+                                            const productForItem = products.find(p => String(p.id) === String(item.productId))
+                                                || products.find(p => item.originalId && String(p.originalId) === String(item.originalId));
+                                            const parentProduct = productForItem?.parentProductId
+                                                ? products.find(p => String(p.id) === String(productForItem.parentProductId)) || products.find(p => String(p.originalId) === String(productForItem.parentProductId))
+                                                : null;
+                                            const productUnits = (parentProduct?.units && parentProduct.units.length > 0 ? parentProduct.units : productForItem?.units) ?? [];
+                                            const unitLabel = (u: { unitName?: string; name?: string }) => (u.unitName || (u as any).name || '').trim() || '—';
+                                            const unitOptionsFromProduct = productUnits.map(u => ({ value: unitLabel(u), label: unitLabel(u) }));
+                                            const unitOptions = unitOptionsFromProduct.length > 0
+                                                ? unitOptionsFromProduct
+                                                : (item.unit && String(item.unit).trim() !== '')
+                                                    ? [{ value: item.unit, label: item.unit }]
+                                                    : [];
+                                            const showUnitDropdown = unitOptions.length > 0;
+                                            // Use item's base cost so display never "divides again" when changing units multiple times
+                                            const productForCost = parentProduct || productForItem;
+                                            const unitForCost = productUnits.find((u: any) => (unitLabel(u) || '').toLowerCase() === (item.unit || '').trim().toLowerCase());
+                                            const baseCostForDisplay = item.baseCostPrice ?? (productForCost as POSProduct)?.baseCostPrice ?? productForCost?.costPrice ?? 0;
+                                            const displayUnitCost = productForCost && unitForCost != null
+                                                ? calculateUnitCostPrice(productForCost, unitForCost, baseCostForDisplay)
+                                                : (item.costPrice ?? item.cost ?? 0);
+                                            return (
+                                                <tr key={item.cartItemId || `item-${index}`} className="hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors duration-150">
+                                                    <td className="px-2 sm:px-3 py-3 sm:py-4 text-xs sm:text-sm text-gray-500 dark:text-gray-400 align-middle">{index + 1}</td>
+                                                    <td className="px-2 sm:px-3 py-3 sm:py-4 text-xs sm:text-sm font-medium text-gray-900 dark:text-gray-100 break-words align-middle">{item.name}</td>
+                                                    {showUnitColumn && (
+                                                        <td className="px-2 sm:px-3 py-3 sm:py-4 text-center align-middle">
+                                                            {showUnitDropdown ? (
+                                                                <CustomDropdown
+                                                                    value={item.unit}
+                                                                    onChange={(val) => item.cartItemId && handleUnitChange(item.cartItemId, val)}
+                                                                    options={unitOptions}
+                                                                    placeholder={AR_LABELS.unit}
+                                                                    size="sm"
+                                                                    className="min-w-0 max-w-[100px] text-gray-900 dark:text-gray-100"
+                                                                />
+                                                            ) : (
+                                                                <span className="text-xs sm:text-sm text-gray-600 dark:text-gray-400">{item.unit || '—'}</span>
+                                                            )}
+                                                        </td>
+                                                    )}
                                                     <td className="px-2 sm:px-3 py-3 sm:py-4 text-center align-middle">
-                                                        {showUnitDropdown ? (
-                                                            <CustomDropdown
-                                                                value={item.unit}
-                                                                onChange={(val) => item.cartItemId && handleUnitChange(item.cartItemId, val)}
-                                                                options={unitOptions}
-                                                                placeholder={AR_LABELS.unit}
-                                                                size="sm"
-                                                                className="min-w-0 max-w-[100px] text-gray-900 dark:text-gray-100"
+                                                        <div className="inline-flex items-center justify-center gap-1" dir="ltr">
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => {
+                                                                    if (!item.cartItemId) return;
+                                                                    setQuantityDrafts(prev => {
+                                                                        const next = { ...prev };
+                                                                        delete next[item.cartItemId as string];
+                                                                        return next;
+                                                                    });
+                                                                    handleUpdateQuantity(item.cartItemId, item.quantity - QUANTITY_STEP);
+                                                                }}
+                                                                className="w-6 h-6 sm:w-7 sm:h-7 inline-flex items-center justify-center rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-600 focus:ring-2 focus:ring-orange-500"
+                                                                aria-label="إنقاص الكمية"
+                                                                disabled={!item.cartItemId}
+                                                            >
+                                                                −
+                                                            </button>
+                                                            <input
+                                                                type="text"
+                                                                inputMode="decimal"
+                                                                value={item.cartItemId ? (quantityDrafts[item.cartItemId] ?? formatQuantityForInput(item.quantity)) : formatQuantityForInput(item.quantity)}
+                                                                onFocus={(e) => {
+                                                                    // Select all text when focused for easy replacement
+                                                                    e.target.select();
+                                                                }}
+                                                                onChange={(e) => {
+                                                                    if (!item.cartItemId) return;
+                                                                    const raw = e.target.value.replace(',', '.');
+                                                                    if (!isAllowedQuantityDraft(raw)) return;
+                                                                    setQuantityDrafts(prev => ({ ...prev, [item.cartItemId as string]: raw }));
+
+                                                                    const parsed = parseQuantityDraft(raw);
+                                                                    if (parsed !== null) {
+                                                                        handleUpdateQuantity(item.cartItemId, parsed);
+                                                                    }
+                                                                }}
+                                                                onBlur={() => {
+                                                                    if (!item.cartItemId) return;
+                                                                    const raw = quantityDrafts[item.cartItemId];
+                                                                    if (raw === undefined) return;
+
+                                                                    const parsed = parseQuantityDraft(raw);
+                                                                    if (parsed !== null) {
+                                                                        handleUpdateQuantity(item.cartItemId, parsed);
+                                                                    }
+
+                                                                    setQuantityDrafts(prev => {
+                                                                        const next = { ...prev };
+                                                                        delete next[item.cartItemId as string];
+                                                                        return next;
+                                                                    });
+                                                                }}
+                                                                onKeyDown={(e) => {
+                                                                    if (!item.cartItemId) return;
+                                                                    if (e.key === 'Enter') {
+                                                                        (e.currentTarget as HTMLInputElement).blur();
+                                                                    }
+                                                                    if (e.key === 'Escape') {
+                                                                        setQuantityDrafts(prev => {
+                                                                            const next = { ...prev };
+                                                                            delete next[item.cartItemId as string];
+                                                                            return next;
+                                                                        });
+                                                                        (e.currentTarget as HTMLInputElement).blur();
+                                                                    }
+                                                                }}
+                                                                className="w-[52px] sm:w-[60px] text-xs sm:text-sm text-center border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent py-1 sm:py-1.5"
                                                             />
-                                                        ) : (
-                                                            <span className="text-xs sm:text-sm text-gray-600 dark:text-gray-400">{item.unit || '—'}</span>
-                                                        )}
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => {
+                                                                    if (!item.cartItemId) return;
+                                                                    setQuantityDrafts(prev => {
+                                                                        const next = { ...prev };
+                                                                        delete next[item.cartItemId as string];
+                                                                        return next;
+                                                                    });
+                                                                    handleUpdateQuantity(item.cartItemId, item.quantity + QUANTITY_STEP);
+                                                                }}
+                                                                className="w-6 h-6 sm:w-7 sm:h-7 inline-flex items-center justify-center rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-600 focus:ring-2 focus:ring-orange-500"
+                                                                aria-label="زيادة الكمية"
+                                                                disabled={!item.cartItemId}
+                                                            >
+                                                                +
+                                                            </button>
+                                                        </div>
                                                     </td>
-                                                )}
-                                                <td className="px-2 sm:px-3 py-3 sm:py-4 text-center align-middle">
-                                                <div className="inline-flex items-center justify-center gap-1" dir="ltr">
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => {
-                                                            if (!item.cartItemId) return;
-                                                            setQuantityDrafts(prev => {
-                                                                const next = { ...prev };
-                                                                delete next[item.cartItemId as string];
-                                                                return next;
-                                                            });
-                                                            handleUpdateQuantity(item.cartItemId, item.quantity - QUANTITY_STEP);
-                                                        }}
-                                                        className="w-6 h-6 sm:w-7 sm:h-7 inline-flex items-center justify-center rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-600 focus:ring-2 focus:ring-orange-500"
-                                                        aria-label="إنقاص الكمية"
-                                                        disabled={!item.cartItemId}
-                                                    >
-                                                        −
-                                                    </button>
-                                                    <input
-                                                        type="text"
-                                                        inputMode="decimal"
-                                                        value={item.cartItemId ? (quantityDrafts[item.cartItemId] ?? formatQuantityForInput(item.quantity)) : formatQuantityForInput(item.quantity)}
-                                                        onFocus={(e) => {
-                                                            // Select all text when focused for easy replacement
-                                                            e.target.select();
-                                                        }}
-                                                        onChange={(e) => {
-                                                            if (!item.cartItemId) return;
-                                                            const raw = e.target.value.replace(',', '.');
-                                                            if (!isAllowedQuantityDraft(raw)) return;
-                                                            setQuantityDrafts(prev => ({ ...prev, [item.cartItemId as string]: raw }));
-
-                                                            const parsed = parseQuantityDraft(raw);
-                                                            if (parsed !== null) {
-                                                                handleUpdateQuantity(item.cartItemId, parsed);
-                                                            }
-                                                        }}
-                                                        onBlur={() => {
-                                                            if (!item.cartItemId) return;
-                                                            const raw = quantityDrafts[item.cartItemId];
-                                                            if (raw === undefined) return;
-
-                                                            const parsed = parseQuantityDraft(raw);
-                                                            if (parsed !== null) {
-                                                                handleUpdateQuantity(item.cartItemId, parsed);
-                                                            }
-
-                                                            setQuantityDrafts(prev => {
-                                                                const next = { ...prev };
-                                                                delete next[item.cartItemId as string];
-                                                                return next;
-                                                            });
-                                                        }}
-                                                        onKeyDown={(e) => {
-                                                            if (!item.cartItemId) return;
-                                                            if (e.key === 'Enter') {
-                                                                (e.currentTarget as HTMLInputElement).blur();
-                                                            }
-                                                            if (e.key === 'Escape') {
-                                                                setQuantityDrafts(prev => {
-                                                                    const next = { ...prev };
-                                                                    delete next[item.cartItemId as string];
-                                                                    return next;
-                                                                });
-                                                                (e.currentTarget as HTMLInputElement).blur();
-                                                            }
-                                                        }}
-                                                        className="w-[52px] sm:w-[60px] text-xs sm:text-sm text-center border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent py-1 sm:py-1.5"
-                                                    />
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => {
-                                                            if (!item.cartItemId) return;
-                                                            setQuantityDrafts(prev => {
-                                                                const next = { ...prev };
-                                                                delete next[item.cartItemId as string];
-                                                                return next;
-                                                            });
-                                                            handleUpdateQuantity(item.cartItemId, item.quantity + QUANTITY_STEP);
-                                                        }}
-                                                        className="w-6 h-6 sm:w-7 sm:h-7 inline-flex items-center justify-center rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-600 focus:ring-2 focus:ring-orange-500"
-                                                        aria-label="زيادة الكمية"
-                                                        disabled={!item.cartItemId}
-                                                    >
-                                                        +
-                                                    </button>
-                                                </div>
-                                            </td>
-                                            <td className="px-2 sm:px-3 py-3 sm:py-4 text-xs sm:text-sm text-gray-700 dark:text-gray-300 whitespace-nowrap text-center align-middle">{formatCurrency(item.unitPrice)}</td>
-                                            {showCostPrice && (
-                                                <td className="px-2 sm:px-3 py-3 sm:py-4 text-xs sm:text-sm text-gray-600 dark:text-gray-400 whitespace-nowrap text-center align-middle tabular-nums">
-                                                    {displayUnitCost > 0
-                                                        ? `${(((item.unitPrice - displayUnitCost) / displayUnitCost) * 100).toFixed(1)}%`
-                                                        : '—'}
-                                                </td>
-                                            )}
-                                            {showCostPrice && (
-                                                <td className="px-2 sm:px-3 py-3 sm:py-4 text-xs sm:text-sm text-gray-600 dark:text-gray-400 whitespace-nowrap text-center align-middle">{formatCurrency(displayUnitCost)}</td>
-                                            )}
-                                            <td className="px-2 sm:px-3 py-3 sm:py-4 text-xs sm:text-sm font-semibold text-orange-600 whitespace-nowrap text-center align-middle">{formatCurrency(item.total - (item.discount * item.quantity))}</td>
-                                            <td className="px-2 sm:px-3 py-3 sm:py-4 text-center align-middle">
-                                                <button 
-                                                    onClick={async () => {
-                                                        if (item.cartItemId) {
-                                                            const confirmed = await confirmDialog({
-                                                                message: 'هل أنت متأكد أنك تريد إزالة هذا المنتج من السلة؟',
-                                                                title: 'تأكيد الحذف',
-                                                                confirmLabel: 'حذف',
-                                                                cancelLabel: 'إلغاء'
-                                                            });
-                                                            if (!confirmed) return;
-                                                            handleRemoveItem(item.cartItemId);
-                                                            showToast('تم حذف المنتج من السلة', 'success');
-                                                        }
-                                                    }} 
-                                                    className="text-red-600 hover:text-red-900 dark:text-red-400 dark:hover:text-red-300 p-1.5 sm:p-2 rounded-lg hover:bg-red-50 dark:hover:bg-gray-700 transition-colors mx-auto"
-                                                >
-                                                    <span className="w-4 h-4 sm:w-5 sm:h-5 block"><DeleteIcon /></span>
-                                                </button>
-                                            </td>
-                                        </tr>
-                                        );
-                                    })}
+                                                    <td className="px-2 sm:px-3 py-3 sm:py-4 text-xs sm:text-sm text-gray-700 dark:text-gray-300 whitespace-nowrap text-center align-middle">{formatCurrency(item.unitPrice)}</td>
+                                                    {showCostPrice && (
+                                                        <td className="px-2 sm:px-3 py-3 sm:py-4 text-xs sm:text-sm text-gray-600 dark:text-gray-400 whitespace-nowrap text-center align-middle tabular-nums">
+                                                            {displayUnitCost > 0
+                                                                ? `${(((item.unitPrice - displayUnitCost) / displayUnitCost) * 100).toFixed(1)}%`
+                                                                : '—'}
+                                                        </td>
+                                                    )}
+                                                    {showCostPrice && (
+                                                        <td className="px-2 sm:px-3 py-3 sm:py-4 text-xs sm:text-sm text-gray-600 dark:text-gray-400 whitespace-nowrap text-center align-middle">{formatCurrency(displayUnitCost)}</td>
+                                                    )}
+                                                    <td className="px-2 sm:px-3 py-3 sm:py-4 text-xs sm:text-sm font-semibold text-orange-600 whitespace-nowrap text-center align-middle">{formatCurrency(item.total - (item.discount * item.quantity))}</td>
+                                                    <td className="px-2 sm:px-3 py-3 sm:py-4 text-center align-middle">
+                                                        <button
+                                                            onClick={async () => {
+                                                                if (item.cartItemId) {
+                                                                    const confirmed = await confirmDialog({
+                                                                        message: 'هل أنت متأكد أنك تريد إزالة هذا المنتج من السلة؟',
+                                                                        title: 'تأكيد الحذف',
+                                                                        confirmLabel: 'حذف',
+                                                                        cancelLabel: 'إلغاء'
+                                                                    });
+                                                                    if (!confirmed) return;
+                                                                    handleRemoveItem(item.cartItemId);
+                                                                    showToast('تم حذف المنتج من السلة', 'success');
+                                                                }
+                                                            }}
+                                                            className="text-red-600 hover:text-red-900 dark:text-red-400 dark:hover:text-red-300 p-1.5 sm:p-2 rounded-lg hover:bg-red-50 dark:hover:bg-gray-700 transition-colors mx-auto"
+                                                        >
+                                                            <span className="w-4 h-4 sm:w-5 sm:h-5 block"><DeleteIcon /></span>
+                                                        </button>
+                                                    </td>
+                                                </tr>
+                                            );
+                                        })}
                                     </tbody>
                                 </table>
                             </div>
@@ -6688,7 +6687,7 @@ const POSPage: React.FC = () => {
                                 <div className="flex items-center justify-between mb-1 sm:mb-1.5 lg:mb-2">
                                     <h3 className="font-bold text-sm sm:text-base text-gray-700 dark:text-gray-200 text-right">{AR_LABELS.customerName}</h3>
                                 </div>
-                                
+
                                 {/* Customer Search Input with Dropdown */}
                                 <div className="flex items-start gap-2 mb-2">
                                     <div className="relative z-[100] flex-1 min-w-0">
@@ -6727,7 +6726,7 @@ const POSPage: React.FC = () => {
                                                                 try {
                                                                     const syncResult = await customerSync.syncCustomers({ forceRefresh: true });
                                                                     if (!isMountedRef.current) return;
-                                                                    
+
                                                                     if (syncResult.success && syncResult.customers) {
                                                                         const transformedCustomers: Customer[] = transformAndFilterCustomers(syncResult.customers);
                                                                         try {
@@ -6779,7 +6778,7 @@ const POSPage: React.FC = () => {
                                             placeholder="ابحث عن عميل..."
                                             className="w-full pl-8 pr-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-orange-500 focus:border-transparent text-right"
                                         />
-                                        
+
                                         {/* Customer List Dropdown - positioned relative to input container */}
                                         {isCustomerDropdownOpen && (
                                             <>
@@ -6795,7 +6794,7 @@ const POSPage: React.FC = () => {
                                                         ) : (() => {
                                                             // Use allCustomers if customers is empty but allCustomers has data
                                                             const customersToShow = customers.length > 0 ? customers : (allCustomers.length > 0 ? allCustomers : []);
-                                                            
+
                                                             // Debug logging for UI rendering
                                                             console.log('[POS] UI Render - Customer Dropdown:', {
                                                                 isLoadingCustomers,
@@ -6806,50 +6805,49 @@ const POSPage: React.FC = () => {
                                                                 customersLoaded,
                                                                 sampleCustomers: customersToShow.slice(0, 3).map(c => ({ id: c.id, name: c.name, phone: c.phone }))
                                                             });
-                                                            
+
                                                             return customersToShow.length === 0 ? (
                                                                 <div className="p-4 text-center text-sm text-gray-500 dark:text-gray-400">
                                                                     {customerSearchTerm ? 'لا توجد نتائج' : 'لا يوجد عملاء'}
                                                                 </div>
                                                             ) : (
                                                                 customersToShow.map((customer) => (
-                                                                <button
-                                                                    key={customer.id}
-                                                                    type="button"
-                                                                    onClick={(e) => {
-                                                                        e.stopPropagation();
-                                                                        setCurrentInvoice(inv => ({...inv, customer}));
-                                                                        // Fetch customer points balance when customer is selected
-                                                                        if (customer && customer.id && customer.id !== 'walk-in-customer') {
-                                                                            fetchCustomerPointsBalance(customer.id, customer.phone);
-                                                                        } else {
-                                                                            setCustomerPointsBalance(null);
-                                                                            setPointsToRedeem(0);
-                                                                        }
-                                                                        setIsCustomerDropdownOpen(false);
-                                                                        setCustomerSearchTerm('');
-                                                                    }}
-                                                                    className={`w-full text-right p-3 hover:bg-orange-50 dark:hover:bg-gray-700 transition-colors border-b border-gray-100 dark:border-gray-700 last:border-b-0 ${
-                                                                        currentInvoice.customer?.id === customer.id ? 'bg-orange-100 dark:bg-orange-900/30' : ''
-                                                                    }`}
-                                                                >
-                                                                    <div className="flex flex-col items-end w-full">
-                                                                        <div className="flex items-center justify-between w-full">
-                                                                            <p className="font-semibold text-sm text-gray-900 dark:text-gray-100">
-                                                                                {customer.name || customer.phone || 'عميل بدون اسم'}
-                                                                            </p>
-                                                                            <CustomerPointsDisplay
-                                                                                customerId={customer.id}
-                                                                                customerPhone={customer.phone}
-                                                                                showLabel={false}
-                                                                                className="mr-2"
-                                                                            />
+                                                                    <button
+                                                                        key={customer.id}
+                                                                        type="button"
+                                                                        onClick={(e) => {
+                                                                            e.stopPropagation();
+                                                                            setCurrentInvoice(inv => ({ ...inv, customer }));
+                                                                            // Fetch customer points balance when customer is selected
+                                                                            if (customer && customer.id && customer.id !== 'walk-in-customer') {
+                                                                                fetchCustomerPointsBalance(customer.id, customer.phone);
+                                                                            } else {
+                                                                                setCustomerPointsBalance(null);
+                                                                                setPointsToRedeem(0);
+                                                                            }
+                                                                            setIsCustomerDropdownOpen(false);
+                                                                            setCustomerSearchTerm('');
+                                                                        }}
+                                                                        className={`w-full text-right p-3 hover:bg-orange-50 dark:hover:bg-gray-700 transition-colors border-b border-gray-100 dark:border-gray-700 last:border-b-0 ${currentInvoice.customer?.id === customer.id ? 'bg-orange-100 dark:bg-orange-900/30' : ''
+                                                                            }`}
+                                                                    >
+                                                                        <div className="flex flex-col items-end w-full">
+                                                                            <div className="flex items-center justify-between w-full">
+                                                                                <p className="font-semibold text-sm text-gray-900 dark:text-gray-100">
+                                                                                    {customer.name || customer.phone || 'عميل بدون اسم'}
+                                                                                </p>
+                                                                                <CustomerPointsDisplay
+                                                                                    customerId={customer.id}
+                                                                                    customerPhone={customer.phone}
+                                                                                    showLabel={false}
+                                                                                    className="mr-2"
+                                                                                />
+                                                                            </div>
+                                                                            {customer.name && customer.phone && customer.name !== customer.phone && (
+                                                                                <p className="text-xs text-gray-600 dark:text-gray-400 mt-1">{customer.phone}</p>
+                                                                            )}
                                                                         </div>
-                                                                        {customer.name && customer.phone && customer.name !== customer.phone && (
-                                                                            <p className="text-xs text-gray-600 dark:text-gray-400 mt-1">{customer.phone}</p>
-                                                                        )}
-                                                                    </div>
-                                                                </button>
+                                                                    </button>
                                                                 ))
                                                             );
                                                         })()}
@@ -6859,7 +6857,7 @@ const POSPage: React.FC = () => {
                                         )}
                                     </div>
 
-                                    <button 
+                                    <button
                                         type="button"
                                         onClick={() => setIsAddCustomerModalOpen(true)}
                                         className="shrink-0 inline-flex items-center justify-center whitespace-nowrap rounded-lg border border-orange-300 bg-orange-50 px-2.5 py-1.5 text-[11px] sm:text-xs font-semibold text-orange-700 shadow-sm transition-colors hover:bg-orange-100 hover:border-orange-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:border-orange-800/60 dark:bg-orange-950/25 dark:text-orange-200 dark:hover:bg-orange-950/40 dark:focus-visible:ring-offset-gray-800"
@@ -6874,7 +6872,7 @@ const POSPage: React.FC = () => {
                                         <div className="flex justify-between items-start">
                                             <button
                                                 onClick={() => {
-                                                    setCurrentInvoice(inv => ({...inv, customer: null}));
+                                                    setCurrentInvoice(inv => ({ ...inv, customer: null }));
                                                     setCustomerPointsBalance(null);
                                                     setPointsToRedeem(0);
                                                     if (selectedPaymentMethod === 'Points') {
@@ -6998,7 +6996,34 @@ const POSPage: React.FC = () => {
                                 </div>
                             </div>
 
-                            {/* Confirm Payment - payment method is chosen in the confirmation modal when a customer is selected */}
+                            {/* Payment method selector - visible so cashier can switch before confirming */}
+                            <div className="mb-1.5 sm:mb-2 md:mb-2.5 lg:mb-3">
+                                <h3 className="text-[10px] sm:text-xs md:text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1 sm:mb-1.5 lg:mb-2 text-right">{AR_LABELS.paymentMethod}</h3>
+                                <div className="grid grid-cols-2 gap-2">
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            setSelectedPaymentMethod('Cash');
+                                            setCurrentInvoice(inv => ({ ...inv, paymentMethod: 'Cash' }));
+                                        }}
+                                        className={`py-2 sm:py-2.5 px-3 sm:px-4 rounded-xl border-2 text-center font-semibold text-xs sm:text-sm transition-colors ${selectedPaymentMethod === 'Cash' ? 'border-orange-500 bg-orange-50 dark:bg-orange-900/30 text-orange-700 dark:text-orange-300' : 'border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:border-orange-300 dark:hover:border-orange-600'}`}
+                                    >
+                                        {AR_LABELS.cash}
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            setSelectedPaymentMethod('Card');
+                                            setCurrentInvoice(inv => ({ ...inv, paymentMethod: 'Card' }));
+                                        }}
+                                        className={`py-2 sm:py-2.5 px-3 sm:px-4 rounded-xl border-2 text-center font-semibold text-xs sm:text-sm transition-colors ${selectedPaymentMethod === 'Card' ? 'border-orange-500 bg-orange-50 dark:bg-orange-900/30 text-orange-700 dark:text-orange-300' : 'border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:border-orange-300 dark:hover:border-orange-600'}`}
+                                    >
+                                        {AR_LABELS.visa}
+                                    </button>
+                                </div>
+                            </div>
+
+                            {/* Confirm Payment - payment method is chosen above or in the confirmation modal when a customer is selected */}
                             <div>
                                 <div className="bg-white/80 dark:bg-gray-800/80 rounded-xl p-2.5 sm:p-3 md:p-3.5 lg:p-4 border border-gray-200/50 dark:border-gray-700/50 backdrop-blur-sm space-y-2 sm:space-y-2.5 md:space-y-3">
                                     <div className="flex flex-col sm:flex-row gap-1.5 sm:gap-2 md:gap-2.5 lg:gap-3">
@@ -7011,9 +7036,9 @@ const POSPage: React.FC = () => {
                                                 {AR_LABELS.autoPrintInvoice}
                                             </label>
                                         </div>
-                                        <button 
-                                            onClick={handleReturn} 
-                                            disabled={currentInvoice.items.length === 0 || isProcessingReturn || isProcessingPayment} 
+                                        <button
+                                            onClick={handleReturn}
+                                            disabled={currentInvoice.items.length === 0 || isProcessingReturn || isProcessingPayment}
                                             className="flex-1 px-2.5 sm:px-3 md:px-3.5 lg:px-4 py-1.5 sm:py-2 md:py-2.5 text-xs sm:text-sm font-bold text-white bg-gradient-to-r from-red-500 via-rose-500 to-red-600 rounded-lg hover:from-red-600 hover:via-rose-600 hover:to-red-700 disabled:from-gray-400 disabled:via-gray-400 disabled:to-gray-500 dark:disabled:from-gray-600 dark:disabled:via-gray-600 dark:disabled:to-gray-700 shadow-lg hover:shadow-xl hover:scale-[1.02] transition-all duration-200 disabled:cursor-not-allowed disabled:scale-100 flex items-center justify-center gap-2"
                                         >
                                             {isProcessingReturn && (
@@ -7025,11 +7050,11 @@ const POSPage: React.FC = () => {
                                             {isProcessingReturn ? 'جاري المعالجة...' : AR_LABELS.returnProduct}
                                         </button>
                                     </div>
-                                    <button 
+                                    <button
                                         id="confirmPaymentBtn"
                                         ref={confirmPaymentButtonRef}
-                                        onClick={handleFinalizePayment} 
-                                        disabled={currentInvoice.items.length === 0 || isProcessingPayment || hasUnsyncedSales} 
+                                        onClick={handleFinalizePayment}
+                                        disabled={currentInvoice.items.length === 0 || isProcessingPayment || hasUnsyncedSales}
                                         className="w-full px-4 sm:px-6 md:px-7 lg:px-8 py-3 sm:py-4 md:py-4.5 lg:py-5 text-base sm:text-lg md:text-xl font-bold text-white bg-gradient-to-r from-green-500 via-emerald-500 to-green-600 rounded-xl hover:from-green-600 hover:via-emerald-600 hover:to-green-700 disabled:from-gray-400 disabled:via-gray-400 disabled:to-gray-500 dark:disabled:from-gray-600 dark:disabled:via-gray-600 dark:disabled:to-gray-700 shadow-2xl hover:shadow-3xl hover:scale-[1.02] transition-all duration-200 disabled:cursor-not-allowed disabled:scale-100 flex items-center justify-center gap-2"
                                         title={hasUnsyncedSales ? 'لا يمكن تأكيد الدفع: يوجد فواتير مكررة تحتاج للمراجعة. يرجى التحقق من الفواتير المحفوظة وحذف المكررة.' : ''}
                                     >
@@ -7126,8 +7151,8 @@ const POSPage: React.FC = () => {
                     </div>
                 </div>
             )}
-            <AddCustomerModal 
-                isOpen={isAddCustomerModalOpen} 
+            <AddCustomerModal
+                isOpen={isAddCustomerModalOpen}
                 onClose={() => setIsAddCustomerModalOpen(false)}
                 onSave={async (customer: Customer) => {
                     try {
@@ -7141,7 +7166,7 @@ const POSPage: React.FC = () => {
 
                         if (response.success && response.data && (response.data as any).data?.customer) {
                             const newCustomerData = (response.data as any).data.customer;
-                            
+
                             // Store the new customer directly in IndexedDB immediately (we already have it from the response)
                             // Use syncAfterCreateOrUpdate for proper sync handling and cross-tab notification
                             try {
@@ -7151,12 +7176,12 @@ const POSPage: React.FC = () => {
                                 console.error('[POSPage] Error syncing customer to IndexedDB:', syncError);
                                 // Continue anyway - the customer was created successfully
                             }
-                            
+
                             // Reload customers from IndexedDB to get updated list
                             if (isMountedRef.current) {
                                 const dbCustomers = await customersDB.getAllCustomers();
                                 const transformedCustomers: Customer[] = transformAndFilterCustomers(dbCustomers);
-                                
+
                                 try {
                                     setAllCustomers(transformedCustomers);
                                     setCustomers(transformedCustomers);
@@ -7165,7 +7190,7 @@ const POSPage: React.FC = () => {
                                     console.debug('[POS] State update skipped (component unmounted)');
                                 }
                             }
-                            
+
                             // Optionally select the newly created customer
                             const newCustomer: Customer = {
                                 id: newCustomerData.id,
@@ -7174,12 +7199,12 @@ const POSPage: React.FC = () => {
                                 address: newCustomerData.address,
                                 previousBalance: newCustomerData.previousBalance || 0,
                             };
-                            
+
                             // Only select if it's not a dummy customer
                             if (!isDummyCustomer(newCustomer)) {
-                                setCurrentInvoice(inv => ({...inv, customer: newCustomer}));
+                                setCurrentInvoice(inv => ({ ...inv, customer: newCustomer }));
                             }
-                            
+
                             setIsAddCustomerModalOpen(false);
                         }
                     } catch (err: any) {
@@ -7217,7 +7242,7 @@ const POSPage: React.FC = () => {
                 }}
                 onReSale={handleReSale}
             />
-            
+
             {/* Product Found Notification (Optimistic UI) */}
             {pendingServerSearch && pendingServerSearch.product && (
                 <div className="fixed top-4 right-4 z-[100] max-w-md bg-white dark:bg-gray-800 rounded-lg shadow-xl border border-green-200 dark:border-green-800 p-4 transition-all duration-300 animate-in slide-in-from-top">
@@ -7259,16 +7284,15 @@ const POSPage: React.FC = () => {
                     </div>
                 </div>
             )}
-            
+
             {/* Toast Notification */}
             {toastMessage && (
-                <div className={`fixed top-4 left-1/2 transform -translate-x-1/2 z-[100] px-4 py-3 rounded-lg shadow-lg backdrop-blur-sm border transition-all duration-300 ${
-                    toastType === 'error' 
-                        ? 'bg-red-50 dark:bg-red-900/30 border-red-200 dark:border-red-800 text-red-800 dark:text-red-200' 
+                <div className={`fixed top-4 left-1/2 transform -translate-x-1/2 z-[100] px-4 py-3 rounded-lg shadow-lg backdrop-blur-sm border transition-all duration-300 ${toastType === 'error'
+                        ? 'bg-red-50 dark:bg-red-900/30 border-red-200 dark:border-red-800 text-red-800 dark:text-red-200'
                         : toastType === 'success'
-                        ? 'bg-green-50 dark:bg-green-900/30 border-green-200 dark:border-green-800 text-green-800 dark:text-green-200'
-                        : 'bg-blue-50 dark:bg-blue-900/30 border-blue-200 dark:border-blue-800 text-blue-800 dark:text-blue-200'
-                }`}>
+                            ? 'bg-green-50 dark:bg-green-900/30 border-green-200 dark:border-green-800 text-green-800 dark:text-green-200'
+                            : 'bg-blue-50 dark:bg-blue-900/30 border-blue-200 dark:border-blue-800 text-blue-800 dark:text-blue-200'
+                    }`}>
                     <div className="flex items-center gap-2">
                         <span className="font-medium text-sm">{toastMessage}</span>
                         <button
@@ -7351,7 +7375,7 @@ const AddCustomerModal: React.FC<{
             };
 
             await onSave(tempCustomer);
-            
+
             // Reset form only on success
             setName('');
             setPhone('');
@@ -7377,25 +7401,23 @@ const AddCustomerModal: React.FC<{
                     <div className="p-6 space-y-4">
                         <h2 className="text-xl font-bold text-gray-900 dark:text-gray-100">إضافة رصيد أولي</h2>
                         <p className="text-sm text-gray-600 dark:text-gray-400">اختر نوع الرصيد الأولي للعميل (يمكنك تخطي هذه الخطوة)</p>
-                        
+
                         <div className="space-y-2">
                             <button
                                 onClick={() => setInitialBalanceType('balance')}
-                                className={`w-full px-4 py-3 rounded-md text-right font-medium transition-colors ${
-                                    initialBalanceType === 'balance'
+                                className={`w-full px-4 py-3 rounded-md text-right font-medium transition-colors ${initialBalanceType === 'balance'
                                         ? 'bg-green-500 text-white'
                                         : 'bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200 hover:bg-gray-300 dark:hover:bg-gray-600'
-                                }`}
+                                    }`}
                             >
                                 {AR_LABELS.addBalance}
                             </button>
                             <button
                                 onClick={() => setInitialBalanceType('debt')}
-                                className={`w-full px-4 py-3 rounded-md text-right font-medium transition-colors ${
-                                    initialBalanceType === 'debt'
+                                className={`w-full px-4 py-3 rounded-md text-right font-medium transition-colors ${initialBalanceType === 'debt'
                                         ? 'bg-red-500 text-white'
                                         : 'bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200 hover:bg-gray-300 dark:hover:bg-gray-600'
-                                }`}
+                                    }`}
                             >
                                 {AR_LABELS.addDebt}
                             </button>
@@ -7406,10 +7428,10 @@ const AddCustomerModal: React.FC<{
                                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                                     {initialBalanceType === 'balance' ? AR_LABELS.addBalance : AR_LABELS.addDebt}
                                 </label>
-                                <input 
-                                    type="number" 
-                                    value={initialAmount} 
-                                    onChange={e => setInitialAmount(parseFloat(e.target.value) || 0)} 
+                                <input
+                                    type="number"
+                                    value={initialAmount}
+                                    onChange={e => setInitialAmount(parseFloat(e.target.value) || 0)}
                                     placeholder="0.00"
                                     className="w-full p-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200 rounded-md text-left"
                                     min="0"
@@ -7419,22 +7441,22 @@ const AddCustomerModal: React.FC<{
                         )}
                     </div>
                     <div className="flex justify-start space-x-4 space-x-reverse p-4 bg-gray-50 dark:bg-gray-800/50 border-t dark:border-gray-700 rounded-b-lg">
-                        <button 
-                            onClick={handleBalanceStepSave} 
+                        <button
+                            onClick={handleBalanceStepSave}
                             disabled={isSubmitting || !initialBalanceType || initialAmount <= 0}
                             className="px-4 py-2 bg-orange-500 text-white rounded-md disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                             {isSubmitting ? 'جاري الحفظ...' : AR_LABELS.save}
                         </button>
-                        <button 
-                            onClick={handleSkipBalance} 
+                        <button
+                            onClick={handleSkipBalance}
                             disabled={isSubmitting}
                             className="px-4 py-2 bg-gray-300 dark:bg-gray-600 text-gray-800 dark:text-gray-200 rounded-md disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                             تخطي
                         </button>
-                        <button 
-                            onClick={() => setShowInitialBalanceStep(false)} 
+                        <button
+                            onClick={() => setShowInitialBalanceStep(false)}
                             disabled={isSubmitting}
                             className="px-4 py-2 bg-gray-200 dark:bg-gray-600 text-gray-800 dark:text-gray-200 rounded-md disabled:opacity-50 disabled:cursor-not-allowed"
                         >
@@ -7452,13 +7474,13 @@ const AddCustomerModal: React.FC<{
             <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-md text-right" onClick={e => e.stopPropagation()}>
                 <div className="p-6 space-y-4">
                     <h2 className="text-xl font-bold text-gray-900 dark:text-gray-100">{AR_LABELS.addNewCustomer}</h2>
-                    
+
                     <div>
                         <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{AR_LABELS.customerName}</label>
-                        <input 
-                            type="text" 
-                            value={name} 
-                            onChange={e => setName(e.target.value)} 
+                        <input
+                            type="text"
+                            value={name}
+                            onChange={e => setName(e.target.value)}
                             placeholder="اختياري"
                             className="w-full p-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200 rounded-md text-right"
                         />
@@ -7468,9 +7490,9 @@ const AddCustomerModal: React.FC<{
                         <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                             {AR_LABELS.phone} <span className="text-red-500">*</span>
                         </label>
-                        <input 
-                            type="tel" 
-                            value={phone} 
+                        <input
+                            type="tel"
+                            value={phone}
                             onChange={e => {
                                 setPhone(e.target.value);
                                 if (errors.phone) setErrors({});
@@ -7483,9 +7505,9 @@ const AddCustomerModal: React.FC<{
 
                     <div>
                         <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{AR_LABELS.address}</label>
-                        <textarea 
-                            value={address} 
-                            onChange={e => setAddress(e.target.value)} 
+                        <textarea
+                            value={address}
+                            onChange={e => setAddress(e.target.value)}
                             placeholder="اختياري"
                             rows={3}
                             className="w-full p-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200 rounded-md text-right resize-none"
@@ -7493,15 +7515,15 @@ const AddCustomerModal: React.FC<{
                     </div>
                 </div>
                 <div className="flex justify-start space-x-4 space-x-reverse p-4 bg-gray-50 dark:bg-gray-800/50 border-t dark:border-gray-700 rounded-b-lg">
-                    <button 
-                        onClick={handleBasicInfoSave} 
+                    <button
+                        onClick={handleBasicInfoSave}
                         disabled={isSubmitting}
                         className="px-4 py-2 bg-orange-500 text-white rounded-md disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                         {isSubmitting ? 'جاري الحفظ...' : 'التالي'}
                     </button>
-                    <button 
-                        onClick={onClose} 
+                    <button
+                        onClick={onClose}
                         disabled={isSubmitting}
                         className="px-4 py-2 bg-gray-200 dark:bg-gray-600 text-gray-800 dark:text-gray-200 rounded-md disabled:opacity-50 disabled:cursor-not-allowed"
                     >
