@@ -326,9 +326,6 @@ const POSPage: React.FC = () => {
         useServerStockCheck?: boolean;
     };
     const queuedProductsRef = useRef<QueuedProduct[]>([]); // Queue of products waiting to be added after processing completes
-    // Prevent duplicate add-product only from true double-fire (same scan firing twice). Keep short so cashiers can scan same barcode repeatedly to increase qty.
-    const lastAddProductRef = useRef<{ productId: string; unit: string; at: number } | null>(null);
-    const ADD_PRODUCT_DEBOUNCE_MS = 80;
     // Prevent duplicate invoice submissions
     const isSubmittingInvoiceRef = useRef(false); // Ref to track if invoice is being submitted (prevents race conditions)
     const invoiceNumberInitializedRef = useRef(false); // Track if invoice number has been initialized
@@ -2538,18 +2535,6 @@ const POSPage: React.FC = () => {
     }, []);
 
     const handleAddProduct = async (product: POSProduct, unit = 'قطعة', unitPriceOverride?: number, conversionFactorOverride?: number, piecesPerUnitOverride?: number, useServerStockCheck = false) => {
-        // Guard: only suppress true duplicate events from the same physical scan (e.g. scanner double-fire within ~80ms).
-        // Consecutive scans of the same barcode (e.g. 100ms+ apart) are allowed and will increase quantity via existing-item logic below.
-        const productId = String(product.id ?? product.originalId ?? '');
-        const unitKey = (unit || 'قطعة').trim();
-        const now = Date.now();
-        const last = lastAddProductRef.current;
-        if (last && last.productId === productId && last.unit === unitKey && now - last.at < ADD_PRODUCT_DEBOUNCE_MS) {
-            console.warn('[POS] Ignoring duplicate add-product (same product+unit within debounce – likely double-fire from one scan)', { productId, unit: unitKey });
-            return;
-        }
-        lastAddProductRef.current = { productId, unit: unitKey, at: now };
-
         // If sale is completed, start a new sale first to ensure the product is added to a fresh cart
         // This prevents products scanned immediately after sale confirmation from being lost
         if (saleCompleted && startNewSaleRef.current) {
