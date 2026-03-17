@@ -156,7 +156,7 @@ class ProductSyncManager {
 
     try {
       const startTime = Date.now();
-      const lastSyncAt = productsDB.getLastSyncAt();
+      const lastSyncAt = await productsDB.getLastSyncAt();
 
       // Incremental sync: fetch only products modified since last sync (when we have a previous sync and not forcing full refresh)
       if (lastSyncAt && !forceRefresh) {

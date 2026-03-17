@@ -27,6 +27,7 @@ interface BarcodeCacheEntry {
 }
 
 const BARCODE_CACHE_TTL_MS = 2 * 60 * 1000; // 2 minutes
+const MAX_PRODUCTS_CACHE = 1000; // Upper bound on cached products per store
 
 class ProductsDB {
   private dbName = 'POS_ProductsDB';
@@ -203,7 +204,8 @@ class ProductsDB {
 
     await Promise.all(promises);
     this.clearBarcodeCache(storeId);
-    console.log(`[ProductsDB] Stored/updated ${uniqueProducts.length} products in IndexedDB`);
+    await this.enforceCacheLimit(storeId);
+    console.log(`[ProductsDB] Stored/updated ${uniqueProducts.length} products in IndexedDB (capped at ${MAX_PRODUCTS_CACHE} per store)`);
   }
 
   /**
@@ -250,7 +252,8 @@ class ProductsDB {
     });
 
     this.clearBarcodeCache(storeId);
-    console.log(`[ProductsDB] Stored product: ${normalizedProduct.name || normalizedId}`);
+    await this.enforceCacheLimit(storeId);
+    console.log(`[ProductsDB] Stored product: ${normalizedProduct.name || normalizedId} (cache capped at ${MAX_PRODUCTS_CACHE} per store)`);
   }
 
   /**
@@ -343,22 +346,110 @@ class ProductsDB {
 
   /**
    * Get last full/incremental sync time (ISO string) for incremental sync.
-   * Stored in localStorage, store-scoped.
+   * Stored in IndexedDB (per-store metadata), not localStorage.
    */
-  getLastSyncAt(): string | null {
+  async getLastSyncAt(): Promise<string | null> {
+    await this.init();
+    if (!this.db) {
+      return null;
+    }
+
     const storeId = this.getStoreId();
     if (!storeId) return null;
-    return localStorage.getItem(ProductsDB.lastSyncKey(storeId));
+
+    const id = ProductsDB.lastSyncKey(storeId);
+
+    return new Promise((resolve, reject) => {
+      const transaction = this.db!.transaction([this.storeName], 'readonly');
+      const objectStore = transaction.objectStore(this.storeName);
+      const request = objectStore.get(id);
+
+      request.onsuccess = () => {
+        const record = request.result as ProductRecord | undefined;
+        const product: any | undefined = record?.product;
+        const lastSyncAt: string | null = product?.__meta_lastSyncAt || null;
+        resolve(lastSyncAt);
+      };
+
+      request.onerror = () => {
+        reject(request.error);
+      };
+    });
   }
 
   /**
    * Set last sync time (ISO string) after a successful sync.
    * Used for incremental sync (modifiedSince).
    */
-  setLastSyncAt(iso: string): void {
+  async setLastSyncAt(iso: string): Promise<void> {
+    await this.init();
+    if (!this.db) {
+      return;
+    }
+
     const storeId = this.getStoreId();
     if (!storeId) return;
-    localStorage.setItem(ProductsDB.lastSyncKey(storeId), iso);
+
+    const id = ProductsDB.lastSyncKey(storeId);
+
+    const transaction = this.db.transaction([this.storeName], 'readwrite');
+    const objectStore = transaction.objectStore(this.storeName);
+
+    const record: ProductRecord = {
+      id,
+      product: { __meta_lastSyncAt: iso },
+      storeId,
+      lastUpdated: Date.now(),
+    };
+
+    await new Promise<void>((resolve, reject) => {
+      const request = objectStore.put(record);
+      request.onsuccess = () => resolve();
+      request.onerror = () => reject(request.error);
+    });
+  }
+
+  /**
+   * Enforce product cache size limit (per store) using lastUpdated as an LRU heuristic.
+   */
+  private async enforceCacheLimit(storeId: string): Promise<void> {
+    await this.init();
+    if (!this.db) {
+      return;
+    }
+
+    const db = this.db;
+
+    await new Promise<void>((resolve, reject) => {
+      const transaction = db.transaction([this.storeName], 'readwrite');
+      const objectStore = transaction.objectStore(this.storeName);
+      const index = objectStore.index('lastUpdated');
+      const records: ProductRecord[] = [];
+
+      index.openCursor().onsuccess = (event) => {
+        const cursor = (event.target as IDBRequest<IDBCursorWithValue | null>).result;
+        if (cursor) {
+          const record = cursor.value as ProductRecord;
+          if (record.storeId === storeId) {
+            records.push(record);
+          }
+          cursor.continue();
+        } else {
+          const excess = records.length - MAX_PRODUCTS_CACHE;
+          if (excess > 0) {
+            const toDelete = records.slice(0, excess);
+            toDelete.forEach((rec) => {
+              objectStore.delete(rec.id);
+            });
+          }
+          resolve();
+        }
+      };
+
+      transaction.onerror = () => {
+        reject(transaction.error);
+      };
+    });
   }
 
   /**
@@ -967,17 +1058,6 @@ class ProductsDB {
     const storeId = this.getStoreId();
     if (!storeId) {
       return;
-    }
-
-    // Use localStorage as a signal
-    try {
-      localStorage.setItem(`products_db_changed_${storeId}`, Date.now().toString());
-      // Remove after a short delay to allow other tabs to detect it
-      setTimeout(() => {
-        localStorage.removeItem(`products_db_changed_${storeId}`);
-      }, 100);
-    } catch (error) {
-      console.warn('[ProductsDB] Failed to notify other tabs:', error);
     }
 
     // Use BroadcastChannel if available

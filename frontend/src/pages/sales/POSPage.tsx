@@ -7,7 +7,6 @@ import { ToggleSwitch } from '@/shared/components/ui/ToggleSwitch';
 import CustomDropdown from '@/shared/components/ui/CustomDropdown/CustomDropdown';
 import { customersApi, productsApi, salesApi, ApiError, getApiErrorMessage, storeSettingsApi, pointsApi } from '@/lib/api/client';
 import { useCurrency } from '@/shared/contexts/CurrencyContext';
-import { saveSale } from '@/shared/utils/salesStorage';
 import { loadSettings, saveSettings } from '@/shared/utils/settingsStorage';
 import { playBeepSound, preloadBeepSound } from '@/shared/utils/soundUtils';
 import { convertArabicToEnglishNumerals, formatQuantityForDisplay } from '@/shared/utils';
@@ -23,6 +22,7 @@ import { inventorySync } from '@/lib/sync/inventorySync';
 import { saleQueueService, IsolatedSaleContext, SaleLifecycleState } from '@/lib/saleQueue/saleQueueService';
 import { invoiceCounterService } from '@/lib/invoiceCounter/invoiceCounterService';
 import { generateClientSaleId } from '@/lib/utils/clientSaleId';
+import { heldInvoicesDB, HeldInvoice as DBHeldInvoice } from '@/lib/db/heldInvoicesDB';
 import { ProductNotFoundModal } from '@/shared/components/ui/ProductNotFoundModal';
 import { ReSaleModal } from '@/shared/components/ui/ReSaleModal';
 import { useConfirmDialog } from '@/shared/contexts/ConfirmDialogContext';
@@ -405,53 +405,10 @@ const POSPage: React.FC = () => {
 
     type HeldInvoice = POSInvoice & { heldKey: string };
 
-    // Helper functions for held invoices persistence
-    const HELD_INVOICES_STORAGE_KEY = 'pos_held_invoices';
-    const MAX_HELD_INVOICES = 15; // Cap to avoid hitting ~10 MB storage limit
+    const MAX_HELD_INVOICES = 15;
 
-    // Regular function for loading (can be used in useState initializer)
-    const loadHeldInvoicesFromStorage = (): HeldInvoice[] => {
-        try {
-            const stored = localStorage.getItem(HELD_INVOICES_STORAGE_KEY);
-            if (stored) {
-                const parsed = JSON.parse(stored);
-                const mapped = parsed.map((inv: any) => ({
-                    ...inv,
-                    date: inv.date ? new Date(inv.date) : new Date(),
-                    heldKey: inv.heldKey || `held_${inv.id || 'INV'}_${inv.date || Date.now()}_${UUID()}`,
-                }));
-                return mapped.slice(0, MAX_HELD_INVOICES);
-            }
-        } catch (error) {
-            console.error('Error loading held invoices from localStorage:', error);
-        }
-        return [];
-    };
-
-    const saveHeldInvoicesToStorage = useCallback((invoices: HeldInvoice[]) => {
-        try {
-            const toSave = invoices.slice(0, MAX_HELD_INVOICES);
-            localStorage.setItem(HELD_INVOICES_STORAGE_KEY, JSON.stringify(toSave));
-        } catch (error: any) {
-            if (error?.name === 'QuotaExceededError') {
-                try {
-                    const trimmed = invoices.slice(0, Math.min(5, invoices.length));
-                    localStorage.setItem(HELD_INVOICES_STORAGE_KEY, JSON.stringify(trimmed));
-                } catch { }
-            }
-            console.error('Error saving held invoices to localStorage:', error);
-        }
-    }, []);
-
-    // Initialize held invoices from localStorage
-    const [heldInvoices, setHeldInvoices] = useState<HeldInvoice[]>(() => {
-        try {
-            return loadHeldInvoicesFromStorage();
-        } catch (error) {
-            console.error('Error initializing held invoices:', error);
-            return [];
-        }
-    });
+    // Initialize held invoices (loaded asynchronously from IndexedDB)
+    const [heldInvoices, setHeldInvoices] = useState<HeldInvoice[]>([]);
     const [searchTerm, setSearchTerm] = useState('');
     const [saleCompleted, setSaleCompleted] = useState(false);
     const [showQRReceipt, setShowQRReceipt] = useState(false);
@@ -1207,10 +1164,47 @@ const POSPage: React.FC = () => {
         };
     }, [location.pathname, editSaleId]);
 
-    // Sync held invoices to localStorage whenever they change
+    // Load held invoices from IndexedDB on mount
     useEffect(() => {
-        saveHeldInvoicesToStorage(heldInvoices);
-    }, [heldInvoices, saveHeldInvoicesToStorage]);
+        let isMounted = true;
+        const loadHeldInvoices = async () => {
+            try {
+                if (!user?.storeId) return;
+                const stored = await heldInvoicesDB.getAllHeldInvoices(user.storeId);
+                if (!isMounted) return;
+                const normalized = stored
+                    .map((inv): HeldInvoice => ({
+                        ...(inv as DBHeldInvoice),
+                        heldKey: inv.heldKey || `held_${inv.id || 'INV'}_${inv.date || Date.now()}_${UUID()}`,
+                    }))
+                    .slice(0, MAX_HELD_INVOICES);
+                setHeldInvoices(normalized);
+            } catch (error) {
+                console.error('Error loading held invoices from IndexedDB:', error);
+            }
+        };
+        loadHeldInvoices();
+        return () => {
+            isMounted = false;
+        };
+    }, [user?.storeId]);
+
+    // Persist held invoices to IndexedDB whenever they change (debounced, non-blocking for UI)
+    useEffect(() => {
+        if (!user?.storeId) return;
+        if (!heldInvoices || heldInvoices.length === 0) {
+            heldInvoicesDB.saveHeldInvoices(user.storeId as string, []).catch((err) =>
+                console.error('Error clearing held invoices in IndexedDB:', err)
+            );
+            return;
+        }
+        const timeout = setTimeout(() => {
+            heldInvoicesDB
+                .saveHeldInvoices(user.storeId as string, heldInvoices.slice(0, MAX_HELD_INVOICES))
+                .catch((err) => console.error('Error saving held invoices to IndexedDB:', err));
+        }, 200);
+        return () => clearTimeout(timeout);
+    }, [heldInvoices, user?.storeId]);
 
     // Fetch customers from API and sync to IndexedDB
     const fetchCustomers = useCallback(async () => {
@@ -1547,34 +1541,9 @@ const POSPage: React.FC = () => {
         };
     }, []);
 
-    // Fetch quick products from API with caching and backend filtering
-    const QUICK_PRODUCTS_CACHE_MAX_ITEMS = 80; // Cap cache size to reduce storage (~10 MB limit)
+    // Fetch quick products from API with backend filtering (no LocalStorage cache)
+    const QUICK_PRODUCTS_CACHE_MAX_ITEMS = 80; // Limit UI list size only
     const fetchQuickProducts = useCallback(async () => {
-        const CACHE_KEY = 'pos_quick_products_cache';
-        const CACHE_TIMESTAMP_KEY = 'pos_quick_products_cache_timestamp';
-        const CACHE_TTL = 5 * 60 * 1000; // 5 minutes cache TTL
-
-        // Check cache first
-        try {
-            const cachedData = localStorage.getItem(CACHE_KEY);
-            const cachedTimestamp = localStorage.getItem(CACHE_TIMESTAMP_KEY);
-
-            if (cachedData && cachedTimestamp) {
-                const timestamp = parseInt(cachedTimestamp, 10);
-                const now = Date.now();
-
-                if (now - timestamp < CACHE_TTL) {
-                    const quickProductsList = JSON.parse(cachedData);
-                    setQuickProducts(Array.isArray(quickProductsList) ? quickProductsList : []);
-                    setIsLoadingQuickProducts(false);
-                    console.log(`Loaded ${quickProductsList.length} quick products from cache`);
-                    return;
-                }
-            }
-        } catch (cacheError) {
-            console.warn('Error reading cache, fetching from API:', cacheError);
-        }
-
         setIsLoadingQuickProducts(true);
         try {
             const response = await productsApi.getProducts({
@@ -1589,39 +1558,13 @@ const POSPage: React.FC = () => {
                 const quickProductsList = (productsData.length > 0 ? productsData.map((p: any) => normalizeProduct(p)) : []).slice(0, QUICK_PRODUCTS_CACHE_MAX_ITEMS);
                 setQuickProducts(quickProductsList);
 
-                try {
-                    localStorage.setItem(CACHE_KEY, JSON.stringify(quickProductsList));
-                    localStorage.setItem(CACHE_TIMESTAMP_KEY, Date.now().toString());
-                } catch (cacheError: any) {
-                    if (cacheError?.name === 'QuotaExceededError') {
-                        try {
-                            localStorage.removeItem(CACHE_KEY);
-                            localStorage.removeItem(CACHE_TIMESTAMP_KEY);
-                        } catch { }
-                        console.warn('Storage full: quick products cache cleared. Using API-only.');
-                    } else {
-                        console.warn('Error caching quick products:', cacheError);
-                    }
-                }
-
                 console.log(`Loaded ${quickProductsList.length} quick products from API`);
             } else {
                 setQuickProducts([]);
             }
         } catch (err: any) {
             console.error('Error fetching quick products:', err);
-            try {
-                const cachedData = localStorage.getItem(CACHE_KEY);
-                if (cachedData) {
-                    const quickProductsList = JSON.parse(cachedData);
-                    setQuickProducts(Array.isArray(quickProductsList) ? quickProductsList : []);
-                    console.log('Using expired cache as fallback');
-                } else {
-                    setQuickProducts([]);
-                }
-            } catch (fallbackError) {
-                setQuickProducts([]);
-            }
+            setQuickProducts([]);
         } finally {
             setIsLoadingQuickProducts(false);
         }
@@ -3132,7 +3075,7 @@ const POSPage: React.FC = () => {
         return { unitName, unitPrice, conversionFactor, piecesPerUnit };
     }, [getPiecesPerMainUnit]);
 
-    // Barcode search: hybrid strategy — session cache for repeated scans (instant), API first then IDB for first/miss.
+    // Barcode search: hybrid strategy — session cache for repeated scans (instant), then IndexedDB, then API as final fallback.
     const searchProductByBarcode = useCallback(async (barcode: string): Promise<{ success: boolean; product?: POSProduct; unitName?: string; unitPrice?: number; conversionFactor?: number; piecesPerUnit?: number }> => {
         const trimmed = normalizeBarcodeInput(barcode);
         if (!trimmed) {
@@ -3189,7 +3132,58 @@ const POSPage: React.FC = () => {
             };
         };
 
-        // 1) Try backend first so barcode always uses fresh data when online
+        // Ensure IDB barcode cache is not used for this lookup when we hit IndexedDB/API
+        productSync.invalidateCache();
+
+        // 1) Try IndexedDB first (local-first, works offline and avoids API latency when cached)
+        try {
+            await productsDB.init();
+            const productCount = await productsDB.getProductCount();
+            if (productCount === 0) {
+                console.log('[POS] Barcode not found: IndexedDB empty', logCtx);
+            } else {
+                const dbResult = await productsDB.getProductByBarcode(trimmed);
+                if (dbResult && dbResult.product) {
+                    console.log('[POS] Barcode found (source: indexeddb):', { ...logCtx, productName: dbResult.product.name || 'Unknown' });
+                    const normalizedProduct = normalizeProduct(dbResult.product);
+                    if (dbResult.matchedUnit) {
+                        const unitCostPrice = calculateUnitCostPrice(dbResult.product, dbResult.matchedUnit);
+                        normalizedProduct.costPrice = unitCostPrice;
+                        normalizedProduct.cost = unitCostPrice;
+                    }
+                    let { unitName, unitPrice, conversionFactor, piecesPerUnit } = extractUnitInfo(normalizedProduct, dbResult.matchedUnit);
+                    const isScaleBarcode = normalizedProduct.isScaleBarcodeProduct || normalizedProduct.isScaleBarcode;
+                    const extractedWeight = normalizedProduct.extractedWeight;
+                    let finalPiecesPerUnit = piecesPerUnit;
+                    if (isScaleBarcode && extractedWeight) {
+                        finalPiecesPerUnit = extractedWeight;
+                        const weightUnit = normalizedProduct.scaleBarcodeFormat?.weightUnit || 'g';
+                        unitName = weightUnit === 'kg' ? 'كيلوجرام' : 'جرام';
+                    }
+                    const idbResult = {
+                        success: true as const,
+                        product: normalizedProduct,
+                        unitName,
+                        unitPrice,
+                        conversionFactor,
+                        piecesPerUnit: finalPiecesPerUnit,
+                    };
+                    storeInSessionCache({
+                        product: normalizedProduct,
+                        unitName,
+                        unitPrice,
+                        conversionFactor,
+                        piecesPerUnit: finalPiecesPerUnit,
+                    });
+                    return idbResult;
+                }
+                console.log('[POS] Barcode not found in IndexedDB', logCtx);
+            }
+        } catch (error) {
+            console.error('[POS] Error during barcode IndexedDB lookup:', error);
+        }
+
+        // 2) Fallback to backend API when product is not found locally
         try {
             const apiResponse = await productsApi.getProductByBarcode(trimmed);
             const apiData = (apiResponse as any)?.data;
@@ -3217,59 +3211,12 @@ const POSPage: React.FC = () => {
         } catch (apiError: any) {
             const status = apiError?.response?.status;
             const is404 = status === 404;
-            console.log('[POS] Barcode API result:', { ...logCtx, source: 'api', apiStatus: status, is404, willTryIndexedDB: true });
+            console.log('[POS] Barcode API result:', { ...logCtx, source: 'api', apiStatus: status, is404, willTryIndexedDB: false });
             if (!is404) {
-                console.warn('[POS] API barcode lookup failed (will try IndexedDB):', apiError?.message || apiError);
+                console.warn('[POS] API barcode lookup failed:', apiError?.message || apiError);
             }
         }
 
-        // 2) Fallback to IndexedDB (offline or product not yet on server)
-        try {
-            await productsDB.init();
-            const productCount = await productsDB.getProductCount();
-            if (productCount === 0) {
-                console.log('[POS] Barcode not found: IndexedDB empty', logCtx);
-                return { success: false };
-            }
-            const dbResult = await productsDB.getProductByBarcode(trimmed);
-            if (dbResult && dbResult.product) {
-                console.log('[POS] Barcode found (source: indexeddb):', { ...logCtx, productName: dbResult.product.name || 'Unknown' });
-                const normalizedProduct = normalizeProduct(dbResult.product);
-                if (dbResult.matchedUnit) {
-                    const unitCostPrice = calculateUnitCostPrice(dbResult.product, dbResult.matchedUnit);
-                    normalizedProduct.costPrice = unitCostPrice;
-                    normalizedProduct.cost = unitCostPrice;
-                }
-                let { unitName, unitPrice, conversionFactor, piecesPerUnit } = extractUnitInfo(normalizedProduct, dbResult.matchedUnit);
-                const isScaleBarcode = normalizedProduct.isScaleBarcodeProduct || normalizedProduct.isScaleBarcode;
-                const extractedWeight = normalizedProduct.extractedWeight;
-                let finalPiecesPerUnit = piecesPerUnit;
-                if (isScaleBarcode && extractedWeight) {
-                    finalPiecesPerUnit = extractedWeight;
-                    const weightUnit = normalizedProduct.scaleBarcodeFormat?.weightUnit || 'g';
-                    unitName = weightUnit === 'kg' ? 'كيلوجرام' : 'جرام';
-                }
-                const idbResult = {
-                    success: true as const,
-                    product: normalizedProduct,
-                    unitName,
-                    unitPrice,
-                    conversionFactor,
-                    piecesPerUnit: finalPiecesPerUnit,
-                };
-                storeInSessionCache({
-                    product: normalizedProduct,
-                    unitName,
-                    unitPrice,
-                    conversionFactor,
-                    piecesPerUnit: finalPiecesPerUnit,
-                });
-                return idbResult;
-            }
-            console.log('[POS] Barcode not found in IndexedDB', logCtx);
-        } catch (error) {
-            console.error('[POS] Error during barcode IndexedDB fallback:', error);
-        }
         return { success: false };
     }, [normalizeProduct, extractUnitInfo, calculateUnitCostPrice, normalizeBarcodeInput]);
 
@@ -3759,12 +3706,10 @@ const POSPage: React.FC = () => {
             heldKey: `held_${currentInvoice.id}_${Date.now()}_${UUID()}`,
         };
 
-        // Add to held invoices state
+        // Add to held invoices state (IndexedDB persistence is handled by effect)
         setHeldInvoices(prev => {
-            const updated = [...prev, invoiceToHold];
-            // Persist to localStorage
-            saveHeldInvoicesToStorage(updated);
-            return updated;
+            const next = [...prev, invoiceToHold];
+            return next.slice(0, MAX_HELD_INVOICES);
         });
 
         // HYBRID INVOICE COUNTER: Get current invoice number for new cart display
@@ -3806,12 +3751,8 @@ const POSPage: React.FC = () => {
                 })),
             };
 
-            // Remove from held invoices and update localStorage
-            setHeldInvoices(prev => {
-                const updated = prev.filter(inv => inv.heldKey !== heldKey);
-                saveHeldInvoicesToStorage(updated);
-                return updated;
-            });
+            // Remove from held invoices (IndexedDB persistence is handled by effect)
+            setHeldInvoices(prev => prev.filter(inv => inv.heldKey !== heldKey));
 
             // Set the restored invoice as current with the new invoice number
             setCurrentInvoice(restoredInvoice);
@@ -3831,11 +3772,7 @@ const POSPage: React.FC = () => {
             cancelLabel: 'إلغاء'
         });
         if (confirmed) {
-            setHeldInvoices(prev => {
-                const updated = prev.filter(inv => inv.heldKey !== heldKey);
-                saveHeldInvoicesToStorage(updated);
-                return updated;
-            });
+            setHeldInvoices(prev => prev.filter(inv => inv.heldKey !== heldKey));
             console.log(`[POS] Held invoice deleted: ${heldKey}`);
         }
     };
@@ -4280,9 +4217,7 @@ const POSPage: React.FC = () => {
                         tax: -Math.abs(returnInvoice.tax), // Negative for returns
                     };
 
-                    // Save to localStorage as backup (legacy support)
-                    saveSale(returnTransaction);
-                    console.log('Return transaction saved to localStorage (backup):', returnTransaction);
+                    // Return is already stored in IndexedDB via salesSync; no LocalStorage backup required
                 } else {
                     throw new Error(syncResult.error || 'Failed to save return');
                 }
@@ -5108,10 +5043,9 @@ const POSPage: React.FC = () => {
                         invoiceDiscount: cartSnapshot.invoiceDiscount,
                         tax: cartSnapshot.tax,
                     };
-                    saveSale(saleTransaction);
-                    console.log('✅ Sale transaction saved to localStorage (backup):', saleTransaction);
-                } catch (localStorageError) {
-                    console.error('❌ Failed to save sale to localStorage:', localStorageError);
+                    // Sale is already stored in IndexedDB via salesSync; no LocalStorage backup required
+                } catch {
+                    // Ignore legacy backup errors
                 }
             } else {
                 console.error(`❌ Sale ${saleId} failed:`, result.error);
