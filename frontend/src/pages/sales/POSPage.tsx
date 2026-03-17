@@ -3323,47 +3323,7 @@ const POSPage: React.FC = () => {
         }
     }, [normalizeProduct, extractUnitInfo, handleAddProduct]);
 
-    // Helper to add an optimistic (temporary) cart item while barcode lookup runs in background
-    const addOptimisticCartItemForBarcode = useCallback((barcode: string): string => {
-        const tempId = `temp-${Date.now()}-${Math.random()}`;
-        const safeBarcode = normalizeBarcodeInput(barcode);
-
-        setCurrentInvoice(inv => {
-            if (!inv || !inv.items) {
-                return generateNewInvoice(currentUserName, inv?.id || 'INV-1');
-            }
-
-            const optimisticItem: POSCartItem = {
-                cartItemId: tempId,
-                productId: 0,
-                originalId: undefined,
-                name: 'جاري تحميل المنتج...',
-                unit: 'قطعة',
-                quantity: 1,
-                unitPrice: 0,
-                total: 0,
-                discount: 0,
-                conversionFactor: 1,
-                costPrice: 0,
-                baseCostPrice: 0,
-            } as POSCartItem;
-
-            // Attach runtime-only flags for UI state (not part of POSCartItem type)
-            (optimisticItem as any).isLoading = true;
-            (optimisticItem as any).isOptimistic = true;
-            (optimisticItem as any).optimisticBarcode = safeBarcode;
-
-            return {
-                ...inv,
-                items: [...inv.items, optimisticItem],
-            };
-        });
-
-        return tempId;
-    }, [currentUserName, normalizeBarcodeInput, setCurrentInvoice]);
-
-    // Queue processor for barcodes - ensures sequential processing
-    // Implements optimistic UI: temporary loading row is shown instantly, then reconciled with real data
+    // Queue processor for barcodes - ensures sequential processing without showing loading rows
     const processBarcodeQueue = useCallback(async () => {
         // If already processing, don't start another process
         if (isProcessingBarcodeRef.current) {
@@ -3380,23 +3340,14 @@ const POSPage: React.FC = () => {
 
         // Process barcodes one at a time
         while (barcodeQueueRef.current.length > 0) {
-            const barcode = barcodeQueueRef.current.shift(); // Get and remove first barcode
+            const barcode = barcodeQueueRef.current.shift();
             if (!barcode) continue;
 
-            // Add optimistic cart row immediately for instant visual feedback
-            const optimisticId = addOptimisticCartItemForBarcode(barcode);
-
             try {
-                // Process this barcode (API + IndexedDB lookup)
+                // Process this barcode (IndexedDB + API lookup) without any loading UI
                 const barcodeResult = await searchProductByBarcode(barcode);
 
                 if (barcodeResult.success && barcodeResult.product) {
-                    // Remove optimistic item before inserting real product
-                    setCurrentInvoice(inv => ({
-                        ...inv,
-                        items: inv.items.filter(item => item.cartItemId !== optimisticId),
-                    }));
-
                     // Product found - add to cart automatically (will merge with existing row if already present)
                     handleAddProduct(
                         barcodeResult.product,
@@ -3408,11 +3359,7 @@ const POSPage: React.FC = () => {
                     setSearchTerm('');
                     setProductSuggestionsOpen(false);
                 } else {
-                    // Product not found - remove optimistic item and show not-found UI
-                    setCurrentInvoice(inv => ({
-                        ...inv,
-                        items: inv.items.filter(item => item.cartItemId !== optimisticId),
-                    }));
+                    // Product not found - show not-found UI without temporary loading row
                     setNotFoundBarcode(barcode);
                     setIsProductNotFoundModalOpen(true);
                     setSearchTerm('');
@@ -3420,17 +3367,12 @@ const POSPage: React.FC = () => {
                 }
             } catch (error) {
                 console.error('[POS] Error processing barcode from queue:', error);
-                // Ensure optimistic item is cleaned up on error
-                setCurrentInvoice(inv => ({
-                    ...inv,
-                    items: inv.items.filter(item => item.cartItemId !== optimisticId),
-                }));
                 // Continue processing next barcode even if this one failed
             }
         }
         // Mark as not processing
         isProcessingBarcodeRef.current = false;
-    }, [searchProductByBarcode, handleAddProduct, addOptimisticCartItemForBarcode, setCurrentInvoice, setSearchTerm, setProductSuggestionsOpen, setNotFoundBarcode, setIsProductNotFoundModalOpen]);
+    }, [searchProductByBarcode, handleAddProduct, setSearchTerm, setProductSuggestionsOpen, setNotFoundBarcode, setIsProductNotFoundModalOpen]);
 
     // Function to add barcode to queue and trigger processing
     const queueBarcodeSearch = useCallback((barcode: string) => {
