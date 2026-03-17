@@ -317,6 +317,9 @@ const POSPage: React.FC = () => {
     const barcodeQueueRef = useRef<string[]>([]); // Queue of barcodes waiting to be processed
     const isProcessingBarcodeRef = useRef(false); // Track if a barcode is currently being processed
     const serverSearchRequestIdRef = useRef(0); // Ignore stale server-search results when user types quickly
+    // Session-only barcode cache: first scan hits API, repeated scans use this for instant add (cleared on reload)
+    const BARCODE_SESSION_CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
+    const barcodeSessionCacheRef = useRef<Map<string, { result: { product: POSProduct; unitName: string; unitPrice: number; conversionFactor: number; piecesPerUnit: number }; expiry: number }>>(new Map());
     // Queue for products scanned during payment processing
     type QueuedProduct = {
         product: POSProduct;
@@ -3129,8 +3132,7 @@ const POSPage: React.FC = () => {
         return { unitName, unitPrice, conversionFactor, piecesPerUnit };
     }, [getPiecesPerMainUnit]);
 
-    // Barcode search: ALWAYS prefer backend first for fresh data, then fallback to IndexedDB (offline/sync gap).
-    // Cache is cleared before lookup so we never use stale in-memory barcode cache.
+    // Barcode search: hybrid strategy — session cache for repeated scans (instant), API first then IDB for first/miss.
     const searchProductByBarcode = useCallback(async (barcode: string): Promise<{ success: boolean; product?: POSProduct; unitName?: string; unitPrice?: number; conversionFactor?: number; piecesPerUnit?: number }> => {
         const trimmed = normalizeBarcodeInput(barcode);
         if (!trimmed) {
@@ -3139,10 +3141,27 @@ const POSPage: React.FC = () => {
         }
 
         const logCtx = { searchTerm: trimmed, isBarcodeSearch: true };
-        console.log('[POS] Barcode lookup started:', logCtx);
 
-        // Ensure we never use stale in-memory barcode cache for this lookup
+        // 0) Session cache: repeated scans use cached result for instant add (no API call)
+        const cached = barcodeSessionCacheRef.current.get(trimmed);
+        if (cached && Date.now() < cached.expiry) {
+            console.log('[POS] Barcode found (source: session_cache):', { ...logCtx, productName: cached.result.product?.name || 'Unknown' });
+            return { success: true, ...cached.result };
+        }
+        if (cached) {
+            barcodeSessionCacheRef.current.delete(trimmed); // expired, remove
+        }
+
+        console.log('[POS] Barcode lookup started (cache miss):', logCtx);
+        // Ensure IDB barcode cache is not used for this lookup when we hit API/IDB
         productSync.invalidateCache();
+
+        const storeInSessionCache = (result: { product: POSProduct; unitName: string; unitPrice: number; conversionFactor: number; piecesPerUnit: number }) => {
+            barcodeSessionCacheRef.current.set(trimmed, {
+                result,
+                expiry: Date.now() + BARCODE_SESSION_CACHE_TTL_MS,
+            });
+        };
 
         const useApiResult = (productObj: any, matchedUnit: any) => {
             const normalizedProduct = normalizeProduct(productObj);
@@ -3184,7 +3203,15 @@ const POSPage: React.FC = () => {
                 } catch (storeErr) {
                     console.warn('[POS] Could not cache API product in IndexedDB (storage may be full):', storeErr);
                 }
-                return useApiResult(productObj, matchedUnit);
+                const apiResult = useApiResult(productObj, matchedUnit);
+                storeInSessionCache({
+                    product: apiResult.product!,
+                    unitName: apiResult.unitName!,
+                    unitPrice: apiResult.unitPrice!,
+                    conversionFactor: apiResult.conversionFactor!,
+                    piecesPerUnit: apiResult.piecesPerUnit!,
+                });
+                return apiResult;
             }
             console.log('[POS] Barcode not found via API (success but no product):', logCtx);
         } catch (apiError: any) {
@@ -3222,14 +3249,22 @@ const POSPage: React.FC = () => {
                     const weightUnit = normalizedProduct.scaleBarcodeFormat?.weightUnit || 'g';
                     unitName = weightUnit === 'kg' ? 'كيلوجرام' : 'جرام';
                 }
-                return {
-                    success: true,
+                const idbResult = {
+                    success: true as const,
                     product: normalizedProduct,
                     unitName,
                     unitPrice,
                     conversionFactor,
                     piecesPerUnit: finalPiecesPerUnit,
                 };
+                storeInSessionCache({
+                    product: normalizedProduct,
+                    unitName,
+                    unitPrice,
+                    conversionFactor,
+                    piecesPerUnit: finalPiecesPerUnit,
+                });
+                return idbResult;
             }
             console.log('[POS] Barcode not found in IndexedDB', logCtx);
         } catch (error) {
