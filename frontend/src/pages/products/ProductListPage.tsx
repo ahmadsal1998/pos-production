@@ -152,7 +152,7 @@ const ProductListPage: React.FC<ProductListPageProps> = () => {
         const storeId = getStoreIdFromToken();
         
         // CRITICAL: Never use cache for barcode searches - always fetch fresh data from server
-        const isBarcodeSearch = searchTerm && searchTerm.trim() && /^[0-9]+$/.test(searchTerm.trim());
+        const isBarcodeSearch = !!(searchTerm && searchTerm.trim() && /^[0-9]+$/.test(searchTerm.trim()));
         
         // Invalidate in-memory barcode cache for barcode searches so next lookup is fresh
         if (isBarcodeSearch && storeId) {

@@ -316,6 +316,7 @@ const POSPage: React.FC = () => {
     // Barcode processing queue to prevent concurrent searches
     const barcodeQueueRef = useRef<string[]>([]); // Queue of barcodes waiting to be processed
     const isProcessingBarcodeRef = useRef(false); // Track if a barcode is currently being processed
+    const serverSearchRequestIdRef = useRef(0); // Ignore stale server-search results when user types quickly
     // Queue for products scanned during payment processing
     type QueuedProduct = {
         product: POSProduct;
@@ -2845,24 +2846,33 @@ const POSPage: React.FC = () => {
         return baseCost;
     }, []);
 
-    // Server-side search function (fallback when client-side products aren't loaded)
+    // Server-side search: query ALL matching products (all=true) so we never miss due to pagination
     const searchProductsOnServer = useCallback(async (term: string): Promise<SearchMatch[]> => {
-        const trimmed = term.trim();
+        const trimmed = (term || '').trim().replace(/[\x00-\x1F\x7F]/g, '');
         if (!trimmed) return [];
+
+        const requestId = ++serverSearchRequestIdRef.current;
+        const logCtx = { searchTerm: trimmed, isBarcodeSearch: false, requestId };
 
         try {
             setIsSearchingServer(true);
-            console.log(`[POS] Performing server-side search for: "${trimmed}"`);
+            console.log('[POS] Server-side search started:', logCtx);
 
-            // Use API search parameter to search on server
+            // Query all products matching search (all=true) so scope is not limited to first page
             const response = await productsApi.getProducts({
-                page: 1,
-                limit: 100, // Get up to 100 results
-                search: trimmed
+                all: true,
+                search: trimmed,
+                includeCategories: true,
             });
+
+            if (requestId !== serverSearchRequestIdRef.current) {
+                console.log('[POS] Server-side search superseded by newer request, ignoring:', logCtx);
+                return [];
+            }
 
             if (response.success) {
                 const productsData = (response.data as any)?.products || (response.data as any)?.data?.products || [];
+                console.log('[POS] Server-side search response:', { ...logCtx, source: 'api', productCount: productsData.length });
                 const results: SearchMatch[] = [];
 
                 productsData.forEach((p: any) => {
@@ -2946,14 +2956,19 @@ const POSPage: React.FC = () => {
                     return true;
                 });
 
-                console.log(`[POS] Server-side search found ${uniqueResults.length} matches`);
+                if (requestId !== serverSearchRequestIdRef.current) return [];
+                console.log('[POS] Server-side search completed:', { ...logCtx, matchCount: uniqueResults.length });
                 return uniqueResults;
             } else {
-                console.warn('[POS] Server-side search response was not successful');
+                if (requestId === serverSearchRequestIdRef.current) {
+                    console.warn('[POS] Server-side search response was not successful:', logCtx);
+                }
                 return [];
             }
         } catch (err: any) {
-            console.error('[POS] Error in server-side search:', err);
+            if (requestId === serverSearchRequestIdRef.current) {
+                console.error('[POS] Server-side search error:', { ...logCtx, error: err?.message || err });
+            }
             return [];
         } finally {
             setIsSearchingServer(false);
@@ -3079,6 +3094,11 @@ const POSPage: React.FC = () => {
         return /^[0-9]+$/.test(trimmed);
     }, []);
 
+    /** Normalize barcode/search input: trim and remove control characters for reliable lookup */
+    const normalizeBarcodeInput = useCallback((input: string): string => {
+        return (input || '').replace(/\s+/g, ' ').trim().replace(/[\x00-\x1F\x7F]/g, '');
+    }, []);
+
     // Helper function to extract unit info from product and matched unit
     const extractUnitInfo = useCallback((product: POSProduct, matchedUnit: any | null) => {
         const piecesPerMainUnit = getPiecesPerMainUnit(product);
@@ -3109,92 +3129,99 @@ const POSPage: React.FC = () => {
         return { unitName, unitPrice, conversionFactor, piecesPerUnit };
     }, [getPiecesPerMainUnit]);
 
-    // Barcode search function - OFFLINE-FIRST: searches ONLY in IndexedDB
-    // All products should be synced to IndexedDB on login, so this should always find products
-    // No API calls during scanning - this ensures instant, reliable barcode scanning
+    // Barcode search: ALWAYS prefer backend first for fresh data, then fallback to IndexedDB (offline/sync gap).
+    // Cache is cleared before lookup so we never use stale in-memory barcode cache.
     const searchProductByBarcode = useCallback(async (barcode: string): Promise<{ success: boolean; product?: POSProduct; unitName?: string; unitPrice?: number; conversionFactor?: number; piecesPerUnit?: number }> => {
-        const trimmed = barcode.trim();
+        const trimmed = normalizeBarcodeInput(barcode);
         if (!trimmed) {
+            console.log('[POS] Barcode lookup skipped: empty after normalize');
             return { success: false };
         }
 
-        console.log(`[POS] Searching product by barcode in IndexedDB: "${trimmed}"`);
+        const logCtx = { searchTerm: trimmed, isBarcodeSearch: true };
+        console.log('[POS] Barcode lookup started:', logCtx);
 
-        // VALIDATION: Ensure IndexedDB is initialized and has products
+        // Ensure we never use stale in-memory barcode cache for this lookup
+        productSync.invalidateCache();
+
+        const useApiResult = (productObj: any, matchedUnit: any) => {
+            const normalizedProduct = normalizeProduct(productObj);
+            if (matchedUnit) {
+                const unitCostPrice = calculateUnitCostPrice(productObj, matchedUnit);
+                normalizedProduct.costPrice = unitCostPrice;
+                normalizedProduct.cost = unitCostPrice;
+            }
+            let { unitName, unitPrice, conversionFactor, piecesPerUnit } = extractUnitInfo(normalizedProduct, matchedUnit);
+            const isScaleBarcode = normalizedProduct.isScaleBarcodeProduct || normalizedProduct.isScaleBarcode;
+            const extractedWeight = normalizedProduct.extractedWeight;
+            let finalPiecesPerUnit = piecesPerUnit;
+            if (isScaleBarcode && extractedWeight) {
+                finalPiecesPerUnit = extractedWeight;
+                const weightUnit = normalizedProduct.scaleBarcodeFormat?.weightUnit || 'g';
+                unitName = weightUnit === 'kg' ? 'كيلوجرام' : 'جرام';
+            }
+            return {
+                success: true as const,
+                product: normalizedProduct,
+                unitName,
+                unitPrice,
+                conversionFactor,
+                piecesPerUnit: finalPiecesPerUnit,
+            };
+        };
+
+        // 1) Try backend first so barcode always uses fresh data when online
+        try {
+            const apiResponse = await productsApi.getProductByBarcode(trimmed);
+            const apiData = (apiResponse as any)?.data;
+            const productObj = apiData?.data?.product;
+            const matchedUnit = apiData?.data?.matchedUnit ?? null;
+            if (apiData?.success && productObj) {
+                console.log('[POS] Barcode found (source: api):', { ...logCtx, productName: productObj.name || 'Unknown' });
+                try {
+                    await productsDB.storeProduct(productObj);
+                    productsDB.notifyOtherTabs();
+                } catch (storeErr) {
+                    console.warn('[POS] Could not cache API product in IndexedDB (storage may be full):', storeErr);
+                }
+                return useApiResult(productObj, matchedUnit);
+            }
+            console.log('[POS] Barcode not found via API (success but no product):', logCtx);
+        } catch (apiError: any) {
+            const status = apiError?.response?.status;
+            const is404 = status === 404;
+            console.log('[POS] Barcode API result:', { ...logCtx, source: 'api', apiStatus: status, is404, willTryIndexedDB: true });
+            if (!is404) {
+                console.warn('[POS] API barcode lookup failed (will try IndexedDB):', apiError?.message || apiError);
+            }
+        }
+
+        // 2) Fallback to IndexedDB (offline or product not yet on server)
         try {
             await productsDB.init();
             const productCount = await productsDB.getProductCount();
-
             if (productCount === 0) {
-                console.error('[POS] ❌ CRITICAL: IndexedDB is empty! Products must be synced on login.');
-                console.error('[POS] ❌ Barcode scanning cannot work without local product cache.');
-                showToast('خطأ: لم يتم تحميل المنتجات. يرجى تسجيل الخروج والدخول مرة أخرى.', 'error');
+                console.log('[POS] Barcode not found: IndexedDB empty', logCtx);
                 return { success: false };
             }
-        } catch (error) {
-            console.error('[POS] ❌ Error checking IndexedDB product count:', error);
-            showToast('خطأ في الوصول إلى قاعدة البيانات المحلية', 'error');
-            return { success: false };
-        }
-
-        // CRITICAL: Search ONLY in IndexedDB (offline-first)
-        // Products are synced on login, so all products should be available locally
-        try {
             const dbResult = await productsDB.getProductByBarcode(trimmed);
-
             if (dbResult && dbResult.product) {
-                console.log(`[POS] ✅ Product found in IndexedDB: ${dbResult.product.name || 'Unknown'}`);
-
-                // Normalize the product
+                console.log('[POS] Barcode found (source: indexeddb):', { ...logCtx, productName: dbResult.product.name || 'Unknown' });
                 const normalizedProduct = normalizeProduct(dbResult.product);
-
-                // Debug: Log scale barcode properties after normalization
-                if (dbResult.product.isScaleBarcodeProduct || dbResult.product.isScaleBarcode) {
-                    console.log('[POS] Scale barcode properties after normalization:', {
-                        beforeNormalize: {
-                            isScaleBarcodeProduct: dbResult.product.isScaleBarcodeProduct,
-                            isScaleBarcode: dbResult.product.isScaleBarcode,
-                            extractedWeight: dbResult.product.extractedWeight,
-                            extractedWeightGrams: dbResult.product.extractedWeightGrams,
-                        },
-                        afterNormalize: {
-                            isScaleBarcodeProduct: normalizedProduct.isScaleBarcodeProduct,
-                            isScaleBarcode: normalizedProduct.isScaleBarcode,
-                            extractedWeight: normalizedProduct.extractedWeight,
-                            extractedWeightGrams: normalizedProduct.extractedWeightGrams,
-                        },
-                    });
-                }
-
-                // Check if this is a scale barcode product
-                const isScaleBarcode = normalizedProduct.isScaleBarcodeProduct || normalizedProduct.isScaleBarcode;
-                const extractedWeight = normalizedProduct.extractedWeight; // Weight in kg (for quantity calculation)
-
-                // CRITICAL FIX: If a unit barcode was matched, calculate the unit-specific cost price
-                // This ensures cost price matches the same unit as the selling price
                 if (dbResult.matchedUnit) {
                     const unitCostPrice = calculateUnitCostPrice(dbResult.product, dbResult.matchedUnit);
                     normalizedProduct.costPrice = unitCostPrice;
                     normalizedProduct.cost = unitCostPrice;
-                    console.log(`[POS] ✅ Unit barcode matched - using unit cost price: ${unitCostPrice} (parent cost: ${dbResult.product.costPrice || 0})`);
                 }
-
                 let { unitName, unitPrice, conversionFactor, piecesPerUnit } = extractUnitInfo(normalizedProduct, dbResult.matchedUnit);
-
-                // For scale barcode products, use extracted weight as quantity
-                // extractedWeight is already in kg (converted in productsDB)
+                const isScaleBarcode = normalizedProduct.isScaleBarcodeProduct || normalizedProduct.isScaleBarcode;
+                const extractedWeight = normalizedProduct.extractedWeight;
                 let finalPiecesPerUnit = piecesPerUnit;
                 if (isScaleBarcode && extractedWeight) {
-                    // Use extracted weight (in kg) as quantity
                     finalPiecesPerUnit = extractedWeight;
-                    // Use appropriate unit name for scale barcode products
                     const weightUnit = normalizedProduct.scaleBarcodeFormat?.weightUnit || 'g';
                     unitName = weightUnit === 'kg' ? 'كيلوجرام' : 'جرام';
-                    console.log(`[POS] ✅ Scale barcode detected - scanned: "${trimmed}", base: "${normalizedProduct.baseBarcode}", extracted weight: ${normalizedProduct.extractedWeightGrams || extractedWeight * 1000}${weightUnit} (${finalPiecesPerUnit}kg for quantity)`);
                 }
-
-                // Return immediately with product from IndexedDB
-                // No API calls - instant response for reliable POS operation
                 return {
                     success: true,
                     product: normalizedProduct,
@@ -3203,61 +3230,13 @@ const POSPage: React.FC = () => {
                     conversionFactor,
                     piecesPerUnit: finalPiecesPerUnit,
                 };
-            } else {
-                // Product not found in IndexedDB - FALLBACK to backend API
-                // This fixes issues when storage is full (~10 MB) or product was added after last sync
-                console.warn(`[POS] ⚠️ Product not found in IndexedDB for barcode: "${trimmed}", trying API...`);
-                try {
-                    const apiResponse = await productsApi.getProductByBarcode(trimmed);
-                    const apiData = (apiResponse as any)?.data;
-                    const productObj = apiData?.data?.product;
-                    const matchedUnit = apiData?.data?.matchedUnit ?? null;
-                    if (apiData?.success && productObj) {
-                        console.log(`[POS] ✅ Product found via API fallback: ${productObj.name || 'Unknown'}`);
-                        const normalizedProduct = normalizeProduct(productObj);
-                        if (matchedUnit) {
-                            const unitCostPrice = calculateUnitCostPrice(productObj, matchedUnit);
-                            normalizedProduct.costPrice = unitCostPrice;
-                            normalizedProduct.cost = unitCostPrice;
-                        }
-                        let { unitName, unitPrice, conversionFactor, piecesPerUnit } = extractUnitInfo(normalizedProduct, matchedUnit);
-                        const isScaleBarcode = normalizedProduct.isScaleBarcodeProduct || normalizedProduct.isScaleBarcode;
-                        const extractedWeight = normalizedProduct.extractedWeight;
-                        let finalPiecesPerUnit = piecesPerUnit;
-                        if (isScaleBarcode && extractedWeight) {
-                            finalPiecesPerUnit = extractedWeight;
-                            const weightUnit = normalizedProduct.scaleBarcodeFormat?.weightUnit || 'g';
-                            unitName = weightUnit === 'kg' ? 'كيلوجرام' : 'جرام';
-                        }
-                        // Store in IndexedDB for future scans (best-effort; ignore quota errors)
-                        try {
-                            await productsDB.storeProduct(productObj);
-                            productsDB.notifyOtherTabs();
-                        } catch (storeErr) {
-                            console.warn('[POS] Could not cache API product in IndexedDB (storage may be full):', storeErr);
-                        }
-                        return {
-                            success: true,
-                            product: normalizedProduct,
-                            unitName,
-                            unitPrice,
-                            conversionFactor,
-                            piecesPerUnit: finalPiecesPerUnit,
-                        };
-                    }
-                } catch (apiError: any) {
-                    const is404 = apiError?.response?.status === 404;
-                    if (!is404) {
-                        console.error('[POS] ❌ API fallback for barcode failed:', apiError);
-                    }
-                }
-                return { success: false };
             }
+            console.log('[POS] Barcode not found in IndexedDB', logCtx);
         } catch (error) {
-            console.error('[POS] ❌ Error searching IndexedDB for barcode:', error);
-            return { success: false };
+            console.error('[POS] Error during barcode IndexedDB fallback:', error);
         }
-    }, [normalizeProduct, extractUnitInfo, calculateUnitCostPrice, showToast]);
+        return { success: false };
+    }, [normalizeProduct, extractUnitInfo, calculateUnitCostPrice, normalizeBarcodeInput]);
 
     // Handler to load product from server search notification
     const handleLoadProductFromNotification = useCallback(async () => {
@@ -3362,9 +3341,47 @@ const POSPage: React.FC = () => {
         }
     }, [normalizeProduct, extractUnitInfo, handleAddProduct]);
 
+    // Helper to add an optimistic (temporary) cart item while barcode lookup runs in background
+    const addOptimisticCartItemForBarcode = useCallback((barcode: string): string => {
+        const tempId = `temp-${Date.now()}-${Math.random()}`;
+        const safeBarcode = normalizeBarcodeInput(barcode);
+
+        setCurrentInvoice(inv => {
+            if (!inv || !inv.items) {
+                return generateNewInvoice(currentUserName, inv?.id || 'INV-1');
+            }
+
+            const optimisticItem: POSCartItem = {
+                cartItemId: tempId,
+                productId: 0,
+                originalId: undefined,
+                name: 'جاري تحميل المنتج...',
+                unit: 'قطعة',
+                quantity: 1,
+                unitPrice: 0,
+                total: 0,
+                discount: 0,
+                conversionFactor: 1,
+                costPrice: 0,
+                baseCostPrice: 0,
+            } as POSCartItem;
+
+            // Attach runtime-only flags for UI state (not part of POSCartItem type)
+            (optimisticItem as any).isLoading = true;
+            (optimisticItem as any).isOptimistic = true;
+            (optimisticItem as any).optimisticBarcode = safeBarcode;
+
+            return {
+                ...inv,
+                items: [...inv.items, optimisticItem],
+            };
+        });
+
+        return tempId;
+    }, [currentUserName, normalizeBarcodeInput, setCurrentInvoice]);
+
     // Queue processor for barcodes - ensures sequential processing
-    // Note: handleAddProduct already checks saleCompleted and starts a new sale if needed,
-    // so we don't need to duplicate that check here
+    // Implements optimistic UI: temporary loading row is shown instantly, then reconciled with real data
     const processBarcodeQueue = useCallback(async () => {
         // If already processing, don't start another process
         if (isProcessingBarcodeRef.current) {
@@ -3384,13 +3401,21 @@ const POSPage: React.FC = () => {
             const barcode = barcodeQueueRef.current.shift(); // Get and remove first barcode
             if (!barcode) continue;
 
+            // Add optimistic cart row immediately for instant visual feedback
+            const optimisticId = addOptimisticCartItemForBarcode(barcode);
+
             try {
-                // Process this barcode
+                // Process this barcode (API + IndexedDB lookup)
                 const barcodeResult = await searchProductByBarcode(barcode);
 
                 if (barcodeResult.success && barcodeResult.product) {
-                    // Product found - add to cart automatically
-                    // handleAddProduct will check saleCompleted and start a new sale if needed
+                    // Remove optimistic item before inserting real product
+                    setCurrentInvoice(inv => ({
+                        ...inv,
+                        items: inv.items.filter(item => item.cartItemId !== optimisticId),
+                    }));
+
+                    // Product found - add to cart automatically (will merge with existing row if already present)
                     handleAddProduct(
                         barcodeResult.product,
                         barcodeResult.unitName || 'قطعة',
@@ -3401,7 +3426,11 @@ const POSPage: React.FC = () => {
                     setSearchTerm('');
                     setProductSuggestionsOpen(false);
                 } else {
-                    // Product not found - show modal
+                    // Product not found - remove optimistic item and show not-found UI
+                    setCurrentInvoice(inv => ({
+                        ...inv,
+                        items: inv.items.filter(item => item.cartItemId !== optimisticId),
+                    }));
                     setNotFoundBarcode(barcode);
                     setIsProductNotFoundModalOpen(true);
                     setSearchTerm('');
@@ -3409,17 +3438,21 @@ const POSPage: React.FC = () => {
                 }
             } catch (error) {
                 console.error('[POS] Error processing barcode from queue:', error);
+                // Ensure optimistic item is cleaned up on error
+                setCurrentInvoice(inv => ({
+                    ...inv,
+                    items: inv.items.filter(item => item.cartItemId !== optimisticId),
+                }));
                 // Continue processing next barcode even if this one failed
             }
         }
-
         // Mark as not processing
         isProcessingBarcodeRef.current = false;
-    }, [searchProductByBarcode, handleAddProduct]);
+    }, [searchProductByBarcode, handleAddProduct, addOptimisticCartItemForBarcode, setCurrentInvoice, setSearchTerm, setProductSuggestionsOpen, setNotFoundBarcode, setIsProductNotFoundModalOpen]);
 
     // Function to add barcode to queue and trigger processing
     const queueBarcodeSearch = useCallback((barcode: string) => {
-        const trimmed = barcode.trim();
+        const trimmed = normalizeBarcodeInput(barcode);
         if (!trimmed) return;
 
         // Add to queue
@@ -3433,12 +3466,12 @@ const POSPage: React.FC = () => {
 
         // Start processing queue (will only start if not already processing)
         processBarcodeQueue();
-    }, [processBarcodeQueue]);
+    }, [processBarcodeQueue, normalizeBarcodeInput]);
 
     const handleSearch = async (e: React.FormEvent) => {
         e.preventDefault();
 
-        const trimmedSearchTerm = searchTerm.trim();
+        const trimmedSearchTerm = normalizeBarcodeInput(searchTerm);
         if (!trimmedSearchTerm) return;
 
         // Check if input is a barcode (numeric only)
@@ -3451,7 +3484,7 @@ const POSPage: React.FC = () => {
         // Not a barcode - use regular name search
         // If products aren't loaded or array is empty, use server-side search
         if (!productsLoaded || products.length === 0) {
-            console.log('[POS] Using server-side search (client-side products not loaded)');
+            console.log('[POS] Using server-side search (client-side products not loaded)', { searchTerm: trimmedSearchTerm });
             const matches = await searchProductsOnServer(trimmedSearchTerm);
             if (matches.length === 0) {
                 showToast('المنتج غير موجود', 'info');
@@ -3506,7 +3539,8 @@ const POSPage: React.FC = () => {
         // Only use server-side search if client-side products aren't loaded
         if (!productsLoaded || products.length === 0) {
             const timeoutId = setTimeout(async () => {
-                const results = await searchProductsOnServer(searchTerm);
+                const normalized = normalizeBarcodeInput(searchTerm);
+                const results = normalized ? await searchProductsOnServer(normalized) : [];
                 setServerSearchResults(results);
             }, 300); // Debounce 300ms
 
@@ -3514,7 +3548,7 @@ const POSPage: React.FC = () => {
         } else {
             setServerSearchResults([]);
         }
-    }, [searchTerm, productsLoaded, products.length, searchProductsOnServer]);
+    }, [searchTerm, productsLoaded, products.length, searchProductsOnServer, normalizeBarcodeInput]);
 
     // Update client-side search results when search term changes (debounced)
     useEffect(() => {
@@ -3526,7 +3560,8 @@ const POSPage: React.FC = () => {
         // Only use client-side search if products are loaded
         if (productsLoaded && products.length > 0) {
             const timeoutId = setTimeout(async () => {
-                const matches = await resolveSearchMatches(searchTerm);
+                const normalized = normalizeBarcodeInput(searchTerm);
+                const matches = normalized ? await resolveSearchMatches(normalized) : [];
                 setClientSearchResults(matches);
             }, 300); // Debounce 300ms
 
@@ -3534,7 +3569,7 @@ const POSPage: React.FC = () => {
         } else {
             setClientSearchResults([]);
         }
-    }, [searchTerm, resolveSearchMatches, productsLoaded, products.length]);
+    }, [searchTerm, resolveSearchMatches, productsLoaded, products.length, normalizeBarcodeInput]);
 
     // Compute product suggestions from either server or client results
     const productSuggestions = useMemo(() => {
@@ -6513,13 +6548,19 @@ const POSPage: React.FC = () => {
                                             const productForCost = parentProduct || productForItem;
                                             const unitForCost = productUnits.find((u: any) => (unitLabel(u) || '').toLowerCase() === (item.unit || '').trim().toLowerCase());
                                             const baseCostForDisplay = item.baseCostPrice ?? (productForCost as POSProduct)?.baseCostPrice ?? productForCost?.costPrice ?? 0;
+                                            const isLoadingRow = (item as any).isLoading;
                                             const displayUnitCost = productForCost && unitForCost != null
                                                 ? calculateUnitCostPrice(productForCost, unitForCost, baseCostForDisplay)
                                                 : (item.costPrice ?? item.cost ?? 0);
                                             return (
-                                                <tr key={item.cartItemId || `item-${index}`} className="hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors duration-150">
+                                                <tr
+                                                    key={item.cartItemId || `item-${index}`}
+                                                    className={`hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors duration-150 ${isLoadingRow ? 'opacity-60 animate-pulse cursor-wait' : ''}`}
+                                                >
                                                     <td className="px-2 sm:px-3 py-3 sm:py-4 text-xs sm:text-sm text-gray-500 dark:text-gray-400 align-middle">{index + 1}</td>
-                                                    <td className="px-2 sm:px-3 py-3 sm:py-4 text-xs sm:text-sm font-medium text-gray-900 dark:text-gray-100 break-words align-middle">{item.name}</td>
+                                                    <td className="px-2 sm:px-3 py-3 sm:py-4 text-xs sm:text-sm font-medium text-gray-900 dark:text-gray-100 break-words align-middle">
+                                                        {isLoadingRow ? 'جاري تحميل المنتج...' : item.name}
+                                                    </td>
                                                     {showUnitColumn && (
                                                         <td className="px-2 sm:px-3 py-3 sm:py-4 text-center align-middle">
                                                             {showUnitDropdown ? (
@@ -6551,7 +6592,7 @@ const POSPage: React.FC = () => {
                                                                 }}
                                                                 className="w-6 h-6 sm:w-7 sm:h-7 inline-flex items-center justify-center rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-600 focus:ring-2 focus:ring-orange-500"
                                                                 aria-label="إنقاص الكمية"
-                                                                disabled={!item.cartItemId}
+                                                                disabled={!item.cartItemId || isLoadingRow}
                                                             >
                                                                 −
                                                             </button>
@@ -6564,6 +6605,7 @@ const POSPage: React.FC = () => {
                                                                     e.target.select();
                                                                 }}
                                                                 onChange={(e) => {
+                                                                    if (isLoadingRow) return;
                                                                     if (!item.cartItemId) return;
                                                                     const raw = e.target.value.replace(',', '.');
                                                                     if (!isAllowedQuantityDraft(raw)) return;
@@ -6575,6 +6617,7 @@ const POSPage: React.FC = () => {
                                                                     }
                                                                 }}
                                                                 onBlur={() => {
+                                                                    if (isLoadingRow) return;
                                                                     if (!item.cartItemId) return;
                                                                     const raw = quantityDrafts[item.cartItemId];
                                                                     if (raw === undefined) return;
@@ -6609,6 +6652,7 @@ const POSPage: React.FC = () => {
                                                             <button
                                                                 type="button"
                                                                 onClick={() => {
+                                                                    if (isLoadingRow) return;
                                                                     if (!item.cartItemId) return;
                                                                     setQuantityDrafts(prev => {
                                                                         const next = { ...prev };
