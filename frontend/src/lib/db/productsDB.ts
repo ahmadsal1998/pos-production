@@ -9,6 +9,8 @@ interface ProductRecord {
   product: any;
   storeId: string;
   lastUpdated: number;
+  /** LRU touch time; eviction prefers lowest (lastUsed ?? lastUpdated). */
+  lastUsed?: number;
 }
 
 interface SearchOptions {
@@ -27,17 +29,24 @@ interface BarcodeCacheEntry {
 }
 
 const BARCODE_CACHE_TTL_MS = 2 * 60 * 1000; // 2 minutes
-const MAX_PRODUCTS_CACHE = 1000; // Upper bound on cached products per store
+const MAX_PRODUCTS_CACHE = 3000; // Upper bound on cached products per store (LRU eviction)
+/** Batched IDB deletes per transaction chunk to avoid long main-thread blocking */
+const EVICTION_DELETE_BATCH = 80;
+/** Debounce window to coalesce lastUsed writes after scans/reads */
+const LAST_USED_BUMP_DEBOUNCE_MS = 120;
+const LAST_USED_FLUSH_BATCH = 24;
 
 class ProductsDB {
   private dbName = 'POS_ProductsDB';
-  private version = 1;
+  private version = 2;
   private storeName = 'products';
   private indexName = 'storeId';
   private db: IDBDatabase | null = null;
   private initPromise: Promise<void> | null = null;
   /** Store-scoped in-memory barcode cache: key = storeId_barcode, value = { result, expiry } */
   private barcodeCache = new Map<string, BarcodeCacheEntry>();
+  private lastUsedPendingIds = new Set<string>();
+  private lastUsedFlushTimer: ReturnType<typeof setTimeout> | null = null;
 
   /**
    * Initialize IndexedDB
@@ -75,15 +84,37 @@ class ProductsDB {
 
       request.onupgradeneeded = (event) => {
         const db = (event.target as IDBOpenDBRequest).result;
+        const oldVersion = event.oldVersion;
+        const tx = (event.target as IDBOpenDBRequest).transaction!;
 
-        // Create object store if it doesn't exist
         if (!db.objectStoreNames.contains(this.storeName)) {
           const objectStore = db.createObjectStore(this.storeName, { keyPath: 'id' });
-          // Create index on storeId for fast queries
           objectStore.createIndex(this.indexName, 'storeId', { unique: false });
-          // Create index on lastUpdated for cache management
           objectStore.createIndex('lastUpdated', 'lastUpdated', { unique: false });
+          objectStore.createIndex('lastUsed', 'lastUsed', { unique: false });
           console.log('[ProductsDB] Object store created');
+        } else if (oldVersion < 2) {
+          const objectStore = tx.objectStore(this.storeName);
+          if (!objectStore.indexNames.contains('lastUsed')) {
+            try {
+              objectStore.createIndex('lastUsed', 'lastUsed', { unique: false });
+            } catch (e) {
+              console.warn('[ProductsDB] Could not create lastUsed index:', e);
+            }
+          }
+          const cursorReq = objectStore.openCursor();
+          cursorReq.onsuccess = (ev) => {
+            const cursor = (ev.target as IDBRequest<IDBCursorWithValue | null>).result;
+            if (cursor) {
+              const rec = cursor.value as ProductRecord;
+              if (rec.lastUsed == null && typeof rec.lastUpdated === 'number') {
+                rec.lastUsed = rec.lastUpdated;
+                cursor.update(rec);
+              }
+              cursor.continue();
+            }
+          };
+          console.log('[ProductsDB] Upgraded to v2: lastUsed + LRU migration');
         }
       };
     });
@@ -96,6 +127,73 @@ class ProductsDB {
    */
   private getStoreId(): string | null {
     return getStoreIdFromToken();
+  }
+
+  /** Records that count toward per-store product cache cap (excludes sync metadata). */
+  private isProductCacheRecord(record: ProductRecord, storeId: string): boolean {
+    if (!record || record.storeId !== storeId) return false;
+    if (record.product?.__meta_lastSyncAt) return false;
+    if (record.id === ProductsDB.lastSyncKey(storeId)) return false;
+    return true;
+  }
+
+  private lruScore(record: ProductRecord): number {
+    return record.lastUsed ?? record.lastUpdated ?? 0;
+  }
+
+  /** Debounced lastUsed bumps — coalesces rapid barcode scans, non-blocking for callers. */
+  private scheduleLastUsedBump(recordId: string): void {
+    this.lastUsedPendingIds.add(recordId);
+    if (this.lastUsedFlushTimer != null) return;
+    this.lastUsedFlushTimer = setTimeout(() => {
+      this.lastUsedFlushTimer = null;
+      const ids = [...this.lastUsedPendingIds];
+      this.lastUsedPendingIds.clear();
+      void this.flushLastUsedBumps(ids);
+    }, LAST_USED_BUMP_DEBOUNCE_MS);
+  }
+
+  private async flushLastUsedBumps(ids: string[]): Promise<void> {
+    if (!this.db || ids.length === 0) return;
+    const unique = [...new Set(ids)];
+    const db = this.db;
+    for (let i = 0; i < unique.length; i += LAST_USED_FLUSH_BATCH) {
+      const chunk = unique.slice(i, i + LAST_USED_FLUSH_BATCH);
+      try {
+        await new Promise<void>((resolve, reject) => {
+          const tx = db.transaction([this.storeName], 'readwrite');
+          const os = tx.objectStore(this.storeName);
+          let idx = 0;
+          const step = () => {
+            if (idx >= chunk.length) {
+              resolve();
+              return;
+            }
+            const id = chunk[idx++];
+            const g = os.get(id);
+            g.onsuccess = () => {
+              const rec = g.result as ProductRecord | undefined;
+              if (rec && !rec.product?.__meta_lastSyncAt) {
+                rec.lastUsed = Date.now();
+                const p = os.put(rec);
+                p.onsuccess = () => step();
+                p.onerror = () => step();
+              } else {
+                step();
+              }
+            };
+            g.onerror = () => step();
+          };
+          step();
+          tx.onerror = () => reject(tx.error);
+        });
+      } catch (e) {
+        console.warn('[ProductsDB] flushLastUsedBumps:', e);
+      }
+      if (i + LAST_USED_FLUSH_BATCH < unique.length) {
+        await new Promise((r) => setTimeout(r, 0));
+      }
+    }
   }
 
   /**
@@ -194,6 +292,7 @@ class ProductsDB {
         product,
         storeId,
         lastUpdated: now,
+        lastUsed: now,
       };
       return new Promise<void>((resolve, reject) => {
         const request = objectStore.put(record);
@@ -238,11 +337,13 @@ class ProductsDB {
     const transaction = this.db.transaction([this.storeName], 'readwrite');
     const objectStore = transaction.objectStore(this.storeName);
     const id = this.getProductId(normalizedProduct, storeId);
+    const now = Date.now();
     const record: ProductRecord = {
       id,
       product: normalizedProduct,
       storeId,
-      lastUpdated: Date.now(),
+      lastUpdated: now,
+      lastUsed: now,
     };
 
     await new Promise<void>((resolve, reject) => {
@@ -410,7 +511,8 @@ class ProductsDB {
   }
 
   /**
-   * Enforce product cache size limit (per store) using lastUpdated as an LRU heuristic.
+   * Enforce per-store product cache cap using LRU (lastUsed, else lastUpdated).
+   * Eviction runs in batched deletes with yields between batches to reduce main-thread blocking.
    */
   private async enforceCacheLimit(storeId: string): Promise<void> {
     await this.init();
@@ -419,37 +521,56 @@ class ProductsDB {
     }
 
     const db = this.db;
+    const syncMetaId = ProductsDB.lastSyncKey(storeId);
 
-    await new Promise<void>((resolve, reject) => {
-      const transaction = db.transaction([this.storeName], 'readwrite');
+    const productRecords = await new Promise<ProductRecord[]>((resolve, reject) => {
+      const transaction = db.transaction([this.storeName], 'readonly');
       const objectStore = transaction.objectStore(this.storeName);
-      const index = objectStore.index('lastUpdated');
-      const records: ProductRecord[] = [];
+      const index = objectStore.index(this.indexName);
+      const request = index.getAll(storeId);
 
-      index.openCursor().onsuccess = (event) => {
-        const cursor = (event.target as IDBRequest<IDBCursorWithValue | null>).result;
-        if (cursor) {
-          const record = cursor.value as ProductRecord;
-          if (record.storeId === storeId) {
-            records.push(record);
-          }
-          cursor.continue();
-        } else {
-          const excess = records.length - MAX_PRODUCTS_CACHE;
-          if (excess > 0) {
-            const toDelete = records.slice(0, excess);
-            toDelete.forEach((rec) => {
-              objectStore.delete(rec.id);
-            });
-          }
-          resolve();
-        }
+      request.onsuccess = () => {
+        const all = request.result as ProductRecord[];
+        const filtered = all.filter(
+          (r) =>
+            r &&
+            r.storeId === storeId &&
+            !r.product?.__meta_lastSyncAt &&
+            r.id !== syncMetaId
+        );
+        resolve(filtered);
       };
-
-      transaction.onerror = () => {
-        reject(transaction.error);
-      };
+      request.onerror = () => reject(request.error);
     });
+
+    const excess = productRecords.length - MAX_PRODUCTS_CACHE;
+    if (excess <= 0) {
+      return;
+    }
+
+    productRecords.sort((a, b) => this.lruScore(a) - this.lruScore(b));
+    const toDelete = productRecords.slice(0, excess).map((r) => r.id);
+
+    for (let i = 0; i < toDelete.length; i += EVICTION_DELETE_BATCH) {
+      const batch = toDelete.slice(i, i + EVICTION_DELETE_BATCH);
+      await new Promise<void>((resolve, reject) => {
+        const tx = db.transaction([this.storeName], 'readwrite');
+        const os = tx.objectStore(this.storeName);
+        for (const id of batch) {
+          os.delete(id);
+        }
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+        tx.onabort = () => reject(tx.error ?? new Error('aborted'));
+      });
+      if (i + EVICTION_DELETE_BATCH < toDelete.length) {
+        await new Promise((r) => setTimeout(r, 0));
+      }
+    }
+
+    console.log(
+      `[ProductsDB] LRU eviction: removed ${toDelete.length} records (cap ${MAX_PRODUCTS_CACHE} per store)`
+    );
   }
 
   /**
@@ -478,6 +599,9 @@ class ProductsDB {
 
       request.onsuccess = () => {
         const record = request.result as ProductRecord | undefined;
+        if (record && this.isProductCacheRecord(record, storeId)) {
+          this.scheduleLastUsedBump(record.id);
+        }
         resolve(record ? record.product : null);
       };
 
@@ -529,6 +653,14 @@ class ProductsDB {
     const cacheKey = `${storeId}_${trimmedBarcode}`;
     const cached = this.barcodeCache.get(cacheKey);
     if (cached && Date.now() < cached.expiry) {
+      const p = cached.result.product;
+      if (p) {
+        try {
+          this.scheduleLastUsedBump(this.getProductId(p, storeId));
+        } catch {
+          /* ignore */
+        }
+      }
       return cached.result;
     }
 
@@ -540,12 +672,13 @@ class ProductsDB {
 
       request.onsuccess = () => {
         const records = request.result as ProductRecord[];
-        const products = records.map((record) => record.product);
 
         // PRIORITY 1: Check for scale barcodes FIRST (before exact matches)
         // This ensures that scale barcodes like "1234000500" are recognized
         // even if the base barcode "1234" exists as an exact match
-        for (const product of products) {
+        for (const record of records) {
+          if (!this.isProductCacheRecord(record, storeId)) continue;
+          const product = record.product;
           if (!product.isScaleBarcode || !product.baseBarcode || !product.scaleBarcodeFormat) {
             continue;
           }
@@ -603,17 +736,21 @@ class ProductsDB {
           });
 
           const result = { product: scaleProduct, matchedUnit: null };
+          this.scheduleLastUsedBump(record.id);
           this.barcodeCache.set(cacheKey, { result, expiry: Date.now() + BARCODE_CACHE_TTL_MS });
           resolve(result);
           return;
         }
 
         // PRIORITY 2: Search for exact barcode match (only if scale barcode didn't match)
-        for (const product of products) {
+        for (const record of records) {
+          if (!this.isProductCacheRecord(record, storeId)) continue;
+          const product = record.product;
           // Check product barcode (exact match)
           const productBarcode = (product.barcode || product.primaryBarcode || '').trim();
           if (productBarcode === trimmedBarcode) {
             const result = { product, matchedUnit: null };
+            this.scheduleLastUsedBump(record.id);
             this.barcodeCache.set(cacheKey, { result, expiry: Date.now() + BARCODE_CACHE_TTL_MS });
             resolve(result);
             return;
@@ -625,6 +762,7 @@ class ProductsDB {
               const unitBarcode = (unit.barcode || '').trim();
               if (unitBarcode === trimmedBarcode) {
                 const result = { product, matchedUnit: unit };
+                this.scheduleLastUsedBump(record.id);
                 this.barcodeCache.set(cacheKey, { result, expiry: Date.now() + BARCODE_CACHE_TTL_MS });
                 resolve(result);
                 return;
@@ -780,7 +918,9 @@ class ProductsDB {
         const record = getRequest.result as ProductRecord | undefined;
         if (record) {
           record.product.stock = newStock;
-          record.lastUpdated = Date.now();
+          const now = Date.now();
+          record.lastUpdated = now;
+          record.lastUsed = now;
           const putRequest = objectStore.put(record);
           putRequest.onsuccess = () => {
             console.log(`[ProductsDB] Updated stock for product ${normalizedId}: ${newStock}`);
@@ -804,7 +944,9 @@ class ProductsDB {
             
             if (matchingRecord) {
               matchingRecord.product.stock = newStock;
-              matchingRecord.lastUpdated = Date.now();
+              const now = Date.now();
+              matchingRecord.lastUpdated = now;
+              matchingRecord.lastUsed = now;
               const putRequest = objectStore.put(matchingRecord);
               putRequest.onsuccess = () => {
                 console.log(`[ProductsDB] Updated stock for product ${normalizedId} (found by search): ${newStock}`);
