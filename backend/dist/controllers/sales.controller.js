@@ -57,6 +57,7 @@ var import_PointsBalance = __toESM(require("../models/PointsBalance"));
 var import_PointsTransaction = __toESM(require("../models/PointsTransaction"));
 var import_StorePointsAccount = __toESM(require("../models/StorePointsAccount"));
 var import_sales = require("../services/sales.service");
+var import_pushNotification = require("../services/pushNotification.service");
 const getCurrentInvoiceNumber = (0, import_error.asyncHandler)(async (req, res) => {
   const storeId = req.user?.storeId || null;
   if (!storeId) {
@@ -118,7 +119,8 @@ const createSale = (0, import_error.asyncHandler)(async (req, res, next) => {
     status,
     seller,
     isReturn = false,
-    invoiceType
+    invoiceType,
+    clientSaleId
   } = req.body;
   if (!invoiceNumber || !customerName || !items || !Array.isArray(items) || items.length === 0) {
     return res.status(400).json({
@@ -159,7 +161,8 @@ const createSale = (0, import_error.asyncHandler)(async (req, res, next) => {
       status,
       seller,
       isReturn,
-      invoiceType
+      invoiceType,
+      clientSaleId
     });
     return res.status(201).json({
       success: true,
@@ -1282,6 +1285,7 @@ const createSimpleSale = (0, import_error.asyncHandler)(async (req, res) => {
     isReturn: false
   };
   const sale = await Sale.create(saleData);
+  void import_pushNotification.pushNotificationService.notifySaleCompleted(normalizedStoreId, sale.invoiceNumber).catch((err) => import_logger.log.warn("[Simple Sale] Push notification failed", err));
   const addPointsForCustomer = async (globalCustomerId, customerName2, customerPhone) => {
     try {
       import_logger.log.info(`[Simple Sale] Attempting to add points for globalCustomerId: ${globalCustomerId}, invoice: ${invoiceNumber}, amount: ${total}`);

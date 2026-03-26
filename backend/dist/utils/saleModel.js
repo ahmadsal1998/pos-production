@@ -187,7 +187,7 @@ const saleSchema = new import_mongoose.Schema(
     }
   }
 );
-saleSchema.index({ invoiceNumber: 1, storeId: 1 }, { unique: true });
+saleSchema.index({ storeId: 1, invoiceNumber: 1 }, { unique: true });
 saleSchema.index({ date: -1, storeId: 1 });
 saleSchema.index({ customerId: 1, storeId: 1 });
 saleSchema.index({ status: 1, storeId: 1 });

@@ -7,7 +7,7 @@ import {
 } from '@/shared/constants';
 import PurchaseQuickActions from '@/features/financial/components/PurchaseQuickActions';
 import { PurchasePOSView } from '@/features/financial/components/PurchasePOSView';
-import { formatDate } from '@/shared/utils';
+import { coerceFormInputValue, formatDate } from '@/shared/utils';
 import { printReceipt } from '@/shared/utils/printUtils';
 import PaymentsAnalytics from '@/features/financial/components/PaymentsAnalytics';
 import PaymentsQuickActions from '@/features/financial/components/PaymentsQuickActions';
@@ -187,7 +187,7 @@ const SimpleAddProductModal: React.FC<{ isOpen: boolean; onClose: () => void; on
 
     const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
         const { name, value, type } = e.target;
-        setProductData(prev => ({...prev, [name]: type === 'number' ? parseFloat(value) : value }));
+        setProductData(prev => ({ ...prev, [name]: coerceFormInputValue(name, type, value) }));
     };
 
     const handleSave = () => {
@@ -218,7 +218,7 @@ const SimpleAddProductModal: React.FC<{ isOpen: boolean; onClose: () => void; on
                     <input name="name" value={productData.name} onChange={handleChange} placeholder={AR_LABELS.productName} className="w-full border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200 rounded-md shadow-sm"/>
                     <input name="costPrice" type="number" value={productData.costPrice} onChange={handleChange} placeholder={AR_LABELS.unitCost} className="w-full border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200 rounded-md shadow-sm"/>
                     <input name="price" type="number" value={productData.price} onChange={handleChange} placeholder={AR_LABELS.price} className="w-full border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200 rounded-md shadow-sm"/>
-                    <input name="barcode" value={productData.barcode} onChange={handleChange} placeholder={AR_LABELS.barcode} className="w-full border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200 rounded-md shadow-sm"/>
+                    <input name="barcode" type="text" inputMode="numeric" autoComplete="off" value={productData.barcode} onChange={handleChange} placeholder={AR_LABELS.barcode} className="w-full border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200 rounded-md shadow-sm"/>
                 </div>
                  <div className="flex justify-start space-x-4 space-x-reverse pt-4">
                     <button onClick={handleSave} className="px-4 py-2 bg-orange-500 text-white rounded-md">{AR_LABELS.save}</button>

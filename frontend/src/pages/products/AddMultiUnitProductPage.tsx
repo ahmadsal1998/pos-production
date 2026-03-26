@@ -19,6 +19,7 @@ import { categoriesApi } from '@/lib/api/client';
 import CategoryFormModal from '@/features/products/components/category-management/CategoryFormModal';
 import { Category } from '@/shared/types';
 import { ApiError } from '@/lib/api/client';
+import { coerceFormInputValue } from '@/shared/utils/formInput';
 
 interface AddMultiUnitProductPageProps {}
 
@@ -228,13 +229,13 @@ const AddMultiUnitProductPage: React.FC<AddMultiUnitProductPageProps> = () => {
       return; // Don't update formData, just open modal
     }
     
-    const parsedValue = type === 'number' ? parseFloat(value) : value;
+    const coerced = coerceFormInputValue(unitId && field ? field : name, type, value);
 
     if (unitId && field) {
       setFormData((prev) => ({
         ...prev,
         unitLevels: prev.unitLevels.map((unit) =>
-          unit.id === unitId ? { ...unit, [field]: parsedValue } : unit
+          unit.id === unitId ? { ...unit, [field]: coerced } : unit
         ),
       }));
       setUnitErrors((prev) => {
@@ -255,7 +256,7 @@ const AddMultiUnitProductPage: React.FC<AddMultiUnitProductPageProps> = () => {
     } else {
       setFormData((prev) => ({
         ...prev,
-        [name]: parsedValue,
+        [name]: coerced,
       }));
       setErrors((prev) => {
         const newErrors = { ...prev };

@@ -11,7 +11,7 @@ import { Brand, Unit, Category } from '@/shared/types';
 import { ApiError, getApiErrorMessage } from '@/lib/api/client';
 import { getStoreIdFromToken } from '@/lib/cache/productsCache';
 import { productSync } from '@/lib/sync/productSync';
-import { formatQuantityForDisplay } from '@/shared/utils';
+import { coerceFormInputValue, formatQuantityForDisplay } from '@/shared/utils';
 
 interface ProductFormData {
   // Basic Information
@@ -300,13 +300,19 @@ const AddProductPage: React.FC = () => {
                 // Pre-fill form with product data
                 const formDataUpdate: ProductFormData = {
                   name: product.name || '',
-                  primaryBarcode: product.barcode || '',
+                  primaryBarcode:
+                    product.barcode != null && product.barcode !== '' ? String(product.barcode) : '',
                   costPrice: product.costPrice || 0,
                   initialQuantity: product.stock || 0,
                   retailSellingPrice: product.price || 0,
                   warehouseId: product.warehouseId || '',
                   mainUnitId: productMainUnitId,
-                  units: Array.isArray(product.units) ? product.units : [],
+                  units: Array.isArray(product.units)
+                    ? product.units.map((u: ProductFormData['units'][number]) => ({
+                        ...u,
+                        barcode: u.barcode != null ? String(u.barcode) : '',
+                      }))
+                    : [],
                   wholesalePrice: product.wholesalePrice || 0,
                   multiWarehouseDistribution: Array.isArray(product.multiWarehouseDistribution)
                     ? product.multiWarehouseDistribution
@@ -341,7 +347,10 @@ const AddProductPage: React.FC = () => {
                   showInQuickProducts: product.showInQuickProducts === true,
                   // Scale barcode support
                   isScaleBarcode: product.isScaleBarcode === true,
-                  baseBarcode: product.baseBarcode || '',
+                  baseBarcode:
+                    product.baseBarcode != null && product.baseBarcode !== ''
+                      ? String(product.baseBarcode)
+                      : '',
                   scaleBarcodeFormat: product.scaleBarcodeFormat || null,
                 };
                 
@@ -520,13 +529,13 @@ const AddProductPage: React.FC = () => {
         ...prev,
         discountRules: {
           ...prev.discountRules,
-          [field]: type === 'number' ? parseFloat(value) || 0 : value,
+          [field]: coerceFormInputValue(field, type, value),
         },
       }));
     } else {
       setFormData(prev => ({
         ...prev,
-        [name]: type === 'number' ? parseFloat(value) || 0 : value,
+        [name]: coerceFormInputValue(name, type, value),
       }));
     }
     

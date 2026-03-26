@@ -71,6 +71,9 @@ export * from './settingsStorage';
 // Export sound utilities
 export * from './soundUtils';
 
+// Form input coercion (barcode/password must stay strings)
+export * from './formInput';
+
 /**
  * Converts Arabic numerals (٠-٩) to English numerals (0-9)
  * @param text - The text containing Arabic numerals

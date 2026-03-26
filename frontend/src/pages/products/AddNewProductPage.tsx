@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AR_LABELS, PRODUCT_CATEGORIES, AddProductIcon, CancelIcon, GenerateBarcodeIcon } from '@/shared/constants';
+import { coerceFormInputValue } from '@/shared/utils/formInput';
 import { apiClient, getApiErrorMessage } from '@/lib/api/client';
 
 interface AddNewProductPageProps {}
@@ -23,11 +24,9 @@ const AddNewProductPage: React.FC<AddNewProductPageProps> = () => {
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value, type } = e.target;
-    const parsedValue = type === 'number' ? parseFloat(value) : value;
-
     setFormData((prev) => ({
       ...prev,
-      [name]: parsedValue,
+      [name]: coerceFormInputValue(name, type, value),
     }));
 
     // Clear error when user starts typing

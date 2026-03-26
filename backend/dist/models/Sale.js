@@ -183,6 +183,12 @@ const saleSchema = new import_mongoose.Schema(
       enum: ["retail", "wholesale"],
       default: "retail",
       index: true
+    },
+    clientSaleId: {
+      type: String,
+      default: null,
+      sparse: true,
+      index: true
     }
   },
   {
@@ -198,6 +204,7 @@ const saleSchema = new import_mongoose.Schema(
   }
 );
 saleSchema.index({ storeId: 1, invoiceNumber: 1 }, { unique: true });
+saleSchema.index({ storeId: 1, clientSaleId: 1 }, { unique: true, sparse: true });
 saleSchema.index({ storeId: 1, date: -1 });
 saleSchema.index({ storeId: 1, customerId: 1 });
 saleSchema.index({ storeId: 1, status: 1 });

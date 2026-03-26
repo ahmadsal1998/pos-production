@@ -156,6 +156,10 @@ const productSchema = new import_mongoose.Schema(
           required: true,
           min: [0, "Selling price cannot be negative"]
         },
+        costPrice: {
+          type: Number,
+          min: [0, "Unit cost price cannot be negative"]
+        },
         conversionFactor: {
           type: Number,
           default: 1,
@@ -228,6 +232,11 @@ const productSchema = new import_mongoose.Schema(
         enum: ["g", "kg"],
         default: "g"
       }
+    },
+    // Flexible JSON: quantity tiers + optional date window (validated in POS / admin UI)
+    posDynamicPricing: {
+      type: import_mongoose.Schema.Types.Mixed,
+      default: void 0
     }
   },
   {

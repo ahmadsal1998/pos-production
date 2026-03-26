@@ -53,15 +53,24 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
       }
     };
 
+    /**
+     * Replace "000…" with the first typed digit only for explicit decimal entry
+     * (amounts/quantities). Do not run for password, barcode, OTP, or plain text —
+     * those must preserve leading zeros (e.g. 00001).
+     */
     const onKeyDown = (e: KeyboardEvent) => {
       const target = e.target as HTMLInputElement;
       if (
         target?.tagName !== 'INPUT' ||
         target.type === 'number' ||
+        target.type === 'password' ||
         e.ctrlKey ||
         e.metaKey ||
         e.altKey
       ) {
+        return;
+      }
+      if (target.inputMode !== 'decimal') {
         return;
       }
       const val = target.value;
