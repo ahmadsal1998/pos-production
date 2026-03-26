@@ -1569,7 +1569,10 @@ const POSPage: React.FC = () => {
 
             if (response.success) {
                 const productsData = (response.data as any)?.products || (response.data as any)?.data?.products || [];
-                const quickProductsList = (productsData.length > 0 ? productsData.map((p: any) => normalizeProduct(p)) : []).slice(0, QUICK_PRODUCTS_CACHE_MAX_ITEMS);
+                const quickProductsList = (productsData.length > 0 ? productsData.map((p: any) => normalizeProduct(p)) : []).slice(
+                    0,
+                    QUICK_PRODUCTS_CACHE_MAX_ITEMS
+                );
                 setQuickProducts(quickProductsList);
 
                 console.log(`Loaded ${quickProductsList.length} quick products from API`);
@@ -6453,16 +6456,6 @@ const POSPage: React.FC = () => {
                                                         : 'border-gray-200 dark:border-gray-700 hover:bg-orange-50 dark:hover:bg-gray-700 hover:border-orange-300 dark:hover:border-orange-600'
                                                     }`}
                                             >
-                                                {p.originalId && (
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => setProductEditTarget(p)}
-                                                        className="absolute top-1.5 left-1.5 z-10 p-1 rounded-md text-orange-600 hover:bg-orange-100 dark:hover:bg-orange-900/40"
-                                                        title="تعديل التسعير"
-                                                    >
-                                                        <EditIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                                                    </button>
-                                                )}
                                                 <button
                                                     type="button"
                                                     onClick={() => handleAddProduct(p)}
@@ -6780,21 +6773,23 @@ const POSPage: React.FC = () => {
                                                     <td className="px-2 sm:px-3 py-3 sm:py-4 text-xs sm:text-sm font-semibold text-orange-600 whitespace-nowrap text-center align-middle">{formatCurrency(getCartLineNet(item))}</td>
                                                     <td className="px-2 sm:px-3 py-3 sm:py-4 text-center align-middle">
                                                         <div className="flex items-center justify-center gap-0.5 sm:gap-1">
-                                                            <button
-                                                                type="button"
-                                                                title="تعديل التسعير"
-                                                                onClick={() => {
-                                                                    const p = productForItem;
-                                                                    if (p?.originalId) {
-                                                                        setProductEditTarget(p);
-                                                                    } else {
-                                                                        showToast('لا يمكن تعديل هذا المنتج (لا يوجد معرف للخادم)', 'error');
-                                                                    }
-                                                                }}
-                                                                className="text-orange-600 hover:text-orange-800 dark:text-orange-400 dark:hover:text-orange-300 p-1.5 sm:p-2 rounded-lg hover:bg-orange-50 dark:hover:bg-gray-700 transition-colors"
-                                                            >
-                                                                <span className="w-4 h-4 sm:w-5 sm:h-5 block"><EditIcon /></span>
-                                                            </button>
+                                                            {productForItem?.originalId && (
+                                                                <button
+                                                                    type="button"
+                                                                    title="تعديل التسعير"
+                                                                    onClick={() => {
+                                                                        const p = productForItem;
+                                                                        if (p?.originalId) {
+                                                                            setProductEditTarget(p);
+                                                                        } else {
+                                                                            showToast('لا يمكن تعديل هذا المنتج (لا يوجد معرف للخادم)', 'error');
+                                                                        }
+                                                                    }}
+                                                                    className="text-orange-600 hover:text-orange-800 dark:text-orange-400 dark:hover:text-orange-300 p-1.5 sm:p-2 rounded-lg hover:bg-orange-50 dark:hover:bg-gray-700 transition-colors"
+                                                                >
+                                                                    <span className="w-4 h-4 sm:w-5 sm:h-5 block"><EditIcon /></span>
+                                                                </button>
+                                                            )}
                                                             <button
                                                                 type="button"
                                                                 onClick={async () => {
