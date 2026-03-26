@@ -469,9 +469,9 @@ export const getProducts = asyncHandler(async (req: AuthenticatedRequest, res: R
       : Boolean(showInQuickProducts);
     let fieldsToSelect: string | undefined;
     if (viewList) {
-      fieldsToSelect = 'name price stock barcode status categoryId parentProductId costPrice updatedAt';
+      fieldsToSelect = 'name price stock barcode status categoryId parentProductId costPrice updatedAt posDynamicPricing';
     } else if (showInQuickProductsValue) {
-      fieldsToSelect = 'name price stock barcode showInQuickProducts status units costPrice categoryId brandId description updatedAt';
+      fieldsToSelect = 'name price stock barcode showInQuickProducts status units costPrice categoryId brandId description updatedAt posDynamicPricing';
     }
     // Otherwise return all fields (detail)
 

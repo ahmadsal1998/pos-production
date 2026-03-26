@@ -31,6 +31,8 @@ export interface ProductDocument extends Document {
     unitName: string;
     barcode?: string;
     sellingPrice: number;
+    /** Optional per-unit cost (same currency as product.costPrice); used for multi-unit POS cost. */
+    costPrice?: number;
     conversionFactor?: number; // Legacy field for backward compatibility
     multiplier?: number; // How many of the smallest unit are in this unit
     order?: number; // Order in hierarchy (0 for largest, increments for smaller)
@@ -51,6 +53,15 @@ export interface ProductDocument extends Document {
     weightStartIndex: number; // Starting position of weight in barcode (0-based)
     weightLength: number; // Length of weight digits
     weightUnit: 'g' | 'kg'; // Unit for weight (grams or kilograms)
+  };
+  /** POS dynamic pricing: quantity tiers + optional date offer */
+  posDynamicPricing?: {
+    quantityOffers: Array<{ quantity: number; offerPrice: number }>;
+    dateOffer?: {
+      offerPrice: number;
+      startDate: Date;
+      endDate: Date;
+    } | null;
   };
   createdAt: Date;
   updatedAt: Date;
@@ -181,6 +192,10 @@ const productSchema = new Schema(
           required: true,
           min: [0, 'Selling price cannot be negative'],
         },
+        costPrice: {
+          type: Number,
+          min: [0, 'Unit cost price cannot be negative'],
+        },
         conversionFactor: {
           type: Number,
           default: 1,
@@ -253,6 +268,11 @@ const productSchema = new Schema(
         enum: ['g', 'kg'],
         default: 'g',
       },
+    },
+    // Flexible JSON: quantity tiers + optional date window (validated in POS / admin UI)
+    posDynamicPricing: {
+      type: Schema.Types.Mixed,
+      default: undefined,
     },
   },
   {

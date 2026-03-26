@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react'
 import { useNavigate, useSearchParams, useLocation } from 'react-router-dom';
 import { Product, Customer, POSInvoice, POSCartItem, SaleTransaction, SaleStatus, SalePaymentMethod } from '@/shared/types';
 import QRCode from 'react-qr-code';
-import { AR_LABELS, UUID, SearchIcon, DeleteIcon, PlusIcon, HandIcon, CancelIcon, PrintIcon, CheckCircleIcon, XIcon, PanelLeftOpenIcon } from '@/shared/constants';
+import { AR_LABELS, UUID, SearchIcon, DeleteIcon, PlusIcon, HandIcon, CancelIcon, PrintIcon, CheckCircleIcon, XIcon, PanelLeftOpenIcon, EditIcon } from '@/shared/constants';
 import { ToggleSwitch } from '@/shared/components/ui/ToggleSwitch';
 import CustomDropdown from '@/shared/components/ui/CustomDropdown/CustomDropdown';
 import { customersApi, productsApi, salesApi, ApiError, getApiErrorMessage, storeSettingsApi, pointsApi } from '@/lib/api/client';
@@ -23,6 +23,8 @@ import { saleQueueService, IsolatedSaleContext, SaleLifecycleState } from '@/lib
 import { invoiceCounterService } from '@/lib/invoiceCounter/invoiceCounterService';
 import { generateClientSaleId } from '@/lib/utils/clientSaleId';
 import { heldInvoicesDB, HeldInvoice as DBHeldInvoice } from '@/lib/db/heldInvoicesDB';
+import { resolvePosLinePricing, normalizePosDynamicPricing, type PosDynamicPricing } from '@/features/sales/hooks/usePricing';
+import ProductEditModal from '@/features/sales/components/ProductEditModal';
 import { ProductNotFoundModal } from '@/shared/components/ui/ProductNotFoundModal';
 import { ReSaleModal } from '@/shared/components/ui/ReSaleModal';
 import { useConfirmDialog } from '@/shared/contexts/ConfirmDialogContext';
@@ -40,7 +42,9 @@ type POSProduct = Product & {
         barcode?: string;
         sellingPrice: number;
         conversionFactor: number;
-        /** Hierarchy order (0 = base); used for unit cost calculation when changing unit. */
+        /** Optional explicit cost for this unit (when set on backend). */
+        costPrice?: number;
+        /** Hierarchy order (0 = largest/main packaging, higher = smaller units). */
         order?: number;
         /** How many of this unit fit in the previous (larger) unit; used for unit cost calculation. */
         unitsInPrevious?: number;
@@ -65,6 +69,7 @@ type POSProduct = Product & {
     };
     extractedWeight?: number; // Weight in kg (for quantity calculation)
     extractedWeightGrams?: number; // Weight in grams (for reference)
+    posDynamicPricing?: PosDynamicPricing;
 };
 
 // All dummy/fake customers have been removed. Customer list starts empty.
@@ -440,6 +445,7 @@ const POSPage: React.FC = () => {
     const [autoPrintEnabled, setAutoPrintEnabled] = useState(() => getAutoPrintSetting());
     const [isAddCustomerModalOpen, setIsAddCustomerModalOpen] = useState(false);
     const [isProductNotFoundModalOpen, setIsProductNotFoundModalOpen] = useState(false);
+    const [productEditTarget, setProductEditTarget] = useState<POSProduct | null>(null);
     const [isReSaleModalOpen, setIsReSaleModalOpen] = useState(false);
     const [conflictingInvoiceData, setConflictingInvoiceData] = useState<any>(null);
     // Payment Confirmation Modal (when customer is selected - force explicit payment method choice)
@@ -513,8 +519,11 @@ const POSPage: React.FC = () => {
         console.log('Tax rate loaded from localStorage:', newTaxRate, '(', (newTaxRate * 100).toFixed(2), '%)');
     }, []);
 
+    /** Net line amount (after per-unit discount). Never use stale `item.total` for money — always derive from unit price × qty. */
+    const getCartLineNet = (item: POSCartItem) => item.unitPrice * item.quantity - item.discount * item.quantity;
+
     const calculateTotals = useCallback((items: POSCartItem[], invoiceDiscount: number): Pick<POSInvoice, 'subtotal' | 'totalItemDiscount' | 'tax' | 'grandTotal'> => {
-        const subtotal = items.reduce((acc, item) => acc + item.total, 0);
+        const subtotal = items.reduce((acc, item) => acc + item.unitPrice * item.quantity, 0);
         const totalItemDiscount = items.reduce((acc, item) => acc + item.discount * item.quantity, 0);
         const totalDiscountValue = totalItemDiscount + invoiceDiscount;
         const taxableAmount = Math.max(0, subtotal - totalDiscountValue);
@@ -1518,6 +1527,10 @@ const POSPage: React.FC = () => {
                     barcode: u.barcode || '',
                     sellingPrice: parseFloat(u.sellingPrice) || retailPrice,
                     conversionFactor: parseFloat(u.conversionFactor) || 1,
+                    costPrice:
+                        u.costPrice !== undefined && u.costPrice !== null && u.costPrice !== ''
+                            ? parseFloat(u.costPrice)
+                            : undefined,
                     // Preserve hierarchy so unit cost updates when changing unit (same as Purchases screen)
                     order: u.order !== undefined && u.order !== null ? Number(u.order) : idx,
                     unitsInPrevious: u.unitsInPrevious !== undefined && u.unitsInPrevious !== null ? Number(u.unitsInPrevious) : undefined,
@@ -1538,6 +1551,7 @@ const POSPage: React.FC = () => {
             scaleBarcodeFormat: p.scaleBarcodeFormat || undefined,
             extractedWeight: p.extractedWeight !== undefined && p.extractedWeight !== null ? p.extractedWeight : undefined, // Weight in kg
             extractedWeightGrams: p.extractedWeightGrams !== undefined && p.extractedWeightGrams !== null ? p.extractedWeightGrams : undefined, // Weight in grams
+            posDynamicPricing: normalizePosDynamicPricing(p.posDynamicPricing),
         };
     }, []);
 
@@ -1858,13 +1872,13 @@ const POSPage: React.FC = () => {
         // Always use retail price with unit conversion
         const basePrice = product.price;
         const piecesPerMainUnit = conversionFactor || 1;
+        let base: number;
         if (product.units && product.units.length > 0 && unit && unit !== 'قطعة') {
-            // Product has units and we're using a specific unit - calculate per-piece price
-            return piecesPerMainUnit > 0 ? (basePrice / piecesPerMainUnit) : basePrice;
+            base = piecesPerMainUnit > 0 ? (basePrice / piecesPerMainUnit) : basePrice;
         } else {
-            // Product without units or using base unit - use base price directly
-            return basePrice;
+            base = basePrice;
         }
+        return resolvePosLinePricing(base, 1, product.posDynamicPricing, new Date()).effectiveUnitPrice;
     }, []);
 
     /** Get unit price for a product based on invoice type (retail vs wholesale). Used when adding to cart and when toggling type. */
@@ -1892,6 +1906,27 @@ const POSPage: React.FC = () => {
         return basePrice;
     }, []);
 
+    /** Base invoice/unit price + POS dynamic rules (bundle quantity offers + date offer). */
+    const getFinalLinePricingForCartLine = useCallback(
+        (
+            product: POSProduct,
+            unit: string,
+            piecesPerMainUnit: number,
+            invoiceType: 'retail' | 'wholesale',
+            lineQuantity: number,
+            isScaleBarcodeProduct?: boolean
+        ) => {
+            const base = getPriceForProductAndUnit(
+                product,
+                unit,
+                piecesPerMainUnit,
+                invoiceType,
+                isScaleBarcodeProduct
+            );
+            return resolvePosLinePricing(base, lineQuantity, product.posDynamicPricing, new Date());
+        },
+        [getPriceForProductAndUnit]
+    );
 
     // State for server-side customer search results
     const [serverCustomerSearchResults, setServerCustomerSearchResults] = useState<Customer[]>([]);
@@ -2540,31 +2575,6 @@ const POSPage: React.FC = () => {
             console.log(`[POS] Using default piecesPerUnit: ${piecesPerUnit} (unit: ${unit})`);
         }
 
-        // Calculate the unit price based on invoice type (retail vs wholesale)
-        // Priority: unitPriceOverride > getPriceForProductAndUnit(invoiceType)
-        const invoiceType = currentInvoice.invoiceType ?? 'retail';
-        let incomingUnitPrice: number;
-        if (unitPriceOverride !== undefined && unitPriceOverride > 0) {
-            incomingUnitPrice = unitPriceOverride;
-        } else {
-            incomingUnitPrice = getPriceForProductAndUnit(
-                finalProduct,
-                unit,
-                piecesPerMainUnit,
-                invoiceType,
-                isScaleBarcodeProduct
-            );
-            if (isScaleBarcodeProduct) {
-                console.log(`[POS] Scale barcode product - using ${invoiceType} price per kg: ${incomingUnitPrice}, weight: ${extractedWeight}kg`);
-            }
-        }
-
-        // Final safety check: ensure we have a valid price
-        if (!incomingUnitPrice || incomingUnitPrice <= 0 || !isFinite(incomingUnitPrice)) {
-            console.warn('Invalid price calculated, using product price:', { product, incomingUnitPrice, finalProduct });
-            incomingUnitPrice = product.price || 0;
-        }
-
         // CRITICAL: Always use the passed product's stock as the source of truth
         // The passed product comes from fresh API data (e.g., barcode search), which has the latest quantity
         // Only fall back to state product if the passed product doesn't have stock data
@@ -2613,8 +2623,28 @@ const POSPage: React.FC = () => {
                 return generateNewInvoice(currentUserName, inv?.id || 'INV-1');
             }
 
+            const invoiceType = inv.invoiceType ?? 'retail';
+            let baseUnitPrice: number;
+            if (unitPriceOverride !== undefined && unitPriceOverride > 0) {
+                baseUnitPrice = unitPriceOverride;
+            } else {
+                baseUnitPrice = getPriceForProductAndUnit(
+                    finalProduct,
+                    unit,
+                    piecesPerMainUnit,
+                    invoiceType,
+                    isScaleBarcodeProduct
+                );
+                if (isScaleBarcodeProduct) {
+                    console.log(`[POS] Scale barcode product - using ${invoiceType} price per kg: ${baseUnitPrice}, weight: ${extractedWeight}kg`);
+                }
+            }
+            if (!baseUnitPrice || baseUnitPrice <= 0 || !isFinite(baseUnitPrice)) {
+                console.warn('Invalid base price calculated, using product price:', { product, baseUnitPrice, finalProduct });
+                baseUnitPrice = product.price || 0;
+            }
+
             // Check for existing item using productId AND name AND unit to avoid hash collision issues
-            // Only update quantity if it's truly the same product (same ID, name, and unit)
             const existingItem = inv.items.find(item =>
                 item.productId === product.id &&
                 item.name === product.name &&
@@ -2624,23 +2654,28 @@ const POSPage: React.FC = () => {
             const newQuantity = currentQuantity + piecesPerUnit;
 
             if (existingItem) {
-                // Same product, same unit - update quantity
+                const { lineTotal: bundleLineTotal, effectiveUnitPrice: lineUnitPrice } = resolvePosLinePricing(
+                    baseUnitPrice,
+                    newQuantity,
+                    finalProduct.posDynamicPricing,
+                    new Date()
+                );
                 const updatedQuantity = newQuantity;
-                const updatedTotal = (existingItem.total ?? (existingItem.unitPrice * existingItem.quantity)) + (incomingUnitPrice * piecesPerUnit);
-                const averagedUnitPrice = updatedQuantity > 0 ? updatedTotal / updatedQuantity : existingItem.unitPrice;
+                const updatedTotal = bundleLineTotal;
 
-                // If existing item doesn't have cartItemId, generate one for backward compatibility
                 const itemCartItemId = existingItem.cartItemId || `${existingItem.productId}-${existingItem.name}-${existingItem.unit}-${Date.now()}-${Math.random()}`;
 
                 return {
                     ...inv,
                     items: inv.items.map(item => {
-                        // Match by cartItemId if available, otherwise fall back to productId + name + unit
                         const isMatch = existingItem.cartItemId
                             ? item.cartItemId === existingItem.cartItemId
                             : (item.productId === product.id && item.name === product.name && item.unit === unit);
 
-                        const itemBaseCost = (product as POSProduct).baseCostPrice ?? product.costPrice ?? product.cost ?? 0;
+                        const itemBaseCost =
+                            (finalProduct as POSProduct).baseCostPrice ?? finalProduct.costPrice ?? finalProduct.cost ?? 0;
+                        const matchedForCost = resolveProductUnitByName(finalProduct, unit);
+                        const lineUnitCost = calculateUnitCostPrice(finalProduct, matchedForCost, itemBaseCost);
                         return isMatch
                             ? {
                                 ...item,
@@ -2648,9 +2683,9 @@ const POSPage: React.FC = () => {
                                 originalId: item.originalId || product.originalId,
                                 quantity: updatedQuantity,
                                 total: updatedTotal,
-                                unitPrice: averagedUnitPrice,
+                                unitPrice: lineUnitPrice,
                                 conversionFactor: item.conversionFactor || conversionFactor || piecesPerMainUnit,
-                                costPrice: item.costPrice ?? (product.costPrice || product.cost || 0),
+                                costPrice: lineUnitCost,
                                 baseCostPrice: item.baseCostPrice ?? itemBaseCost,
                             }
                             : item;
@@ -2658,11 +2693,18 @@ const POSPage: React.FC = () => {
                 };
             }
 
-            // New product or different unit - add as new item
             const initialQuantity = piecesPerUnit;
-            const initialTotal = incomingUnitPrice * piecesPerUnit;
+            const { lineTotal: initialLineTotal, effectiveUnitPrice: lineUnitPrice } = resolvePosLinePricing(
+                baseUnitPrice,
+                initialQuantity,
+                finalProduct.posDynamicPricing,
+                new Date()
+            );
+            const initialTotal = initialLineTotal;
 
             const baseCost = (product as POSProduct).baseCostPrice ?? product.costPrice ?? product.cost ?? 0;
+            const matchedForCost = resolveProductUnitByName(finalProduct, unit);
+            const lineUnitCost = calculateUnitCostPrice(finalProduct, matchedForCost, baseCost);
             const newItem: POSCartItem = {
                 cartItemId: `${product.id}-${product.name}-${unit}-${Date.now()}-${Math.random()}`,
                 productId: product.id,
@@ -2670,12 +2712,12 @@ const POSPage: React.FC = () => {
                 name: product.name,
                 unit: unit,
                 quantity: initialQuantity,
-                unitPrice: incomingUnitPrice,
+                unitPrice: lineUnitPrice,
                 total: initialTotal,
                 discount: 0,
                 conversionFactor: conversionFactor || piecesPerMainUnit,
-                costPrice: product.costPrice || product.cost || 0,
-                baseCostPrice: baseCost, // So unit cost is always calculated from this, not from current unit cost
+                costPrice: lineUnitCost,
+                baseCostPrice: baseCost,
             };
             return { ...inv, items: [...inv.items, newItem] };
         });
@@ -2740,8 +2782,23 @@ const POSPage: React.FC = () => {
 
     type SearchMatch = { product: POSProduct; unitName: string; unitPrice: number; barcode?: string; conversionFactor?: number; piecesPerUnit?: number };
 
-    // Helper function to calculate unit cost price based on **base (main) unit cost** and unit hierarchy.
-    // When baseCostOverride is provided (e.g. from cart item), use it so cost is never "divided again" when changing units.
+    /** Resolve a unit row from `product.units` by name (case-insensitive). Piece aliases → smallest unit (highest `order`). */
+    const resolveProductUnitByName = useCallback((parentProduct: POSProduct | undefined, unitName: string | undefined): any | null => {
+        const units = parentProduct?.units;
+        if (!units || units.length === 0) return null;
+        const raw = (unitName || '').trim().toLowerCase();
+        if (!raw) return null;
+        const exact = units.find((u) => (u.unitName || '').trim().toLowerCase() === raw);
+        if (exact) return exact;
+        const pieceAliases = ['قطعة', 'قطعه', 'piece', 'pc'];
+        if (pieceAliases.includes(raw)) {
+            const sorted = [...units].sort((a: any, b: any) => (b.order ?? 0) - (a.order ?? 0));
+            return sorted[0] ?? null;
+        }
+        return null;
+    }, []);
+
+    // Helper: unit cost from main-unit cost + hierarchy, or explicit `unit.costPrice` when present.
     const calculateUnitCostPrice = useCallback((parentProduct: any, matchedUnit: any | null, baseCostOverride?: number): number => {
         const baseCost = baseCostOverride != null && Number.isFinite(baseCostOverride)
             ? baseCostOverride
@@ -2751,22 +2808,39 @@ const POSPage: React.FC = () => {
             return baseCost;
         }
 
+        const explicit = matchedUnit.costPrice != null ? Number(matchedUnit.costPrice) : NaN;
+        if (Number.isFinite(explicit) && explicit >= 0) {
+            return explicit;
+        }
+
         const allUnits = parentProduct.units || [];
-        const matchedUnitOrder = matchedUnit.order ?? 0;
-        const isMainUnit = matchedUnitOrder === 0;
+        if (allUnits.length === 0) {
+            return baseCost;
+        }
+
+        const sortedWithIdx = [...allUnits].map((u, idx) => ({ u, idx })).sort((a, b) => {
+            const ao = a.u.order ?? 0;
+            const bo = b.u.order ?? 0;
+            if (ao !== bo) return ao - bo;
+            return a.idx - b.idx;
+        });
+        const mainUnit = sortedWithIdx[0]?.u;
+        const isMainUnit =
+            !!mainUnit && (matchedUnit.unitName || '').trim() === (mainUnit.unitName || '').trim();
 
         if (isMainUnit) {
             return baseCost;
         }
 
-        // Calculate cumulative conversion factor from main unit to matched unit
+        const mainO = mainUnit ? (mainUnit.order ?? 0) : 0;
+        const matchedO = matchedUnit.order ?? 0;
         let cumulativeConversionFactor = 1;
 
         if (allUnits.length > 0) {
             const unitsInPath = allUnits
                 .filter((u: any) => {
                     const uOrder = u.order ?? 0;
-                    return uOrder >= 1 && uOrder <= matchedUnitOrder;
+                    return uOrder > mainO && uOrder <= matchedO;
                 })
                 .sort((a: any, b: any) => {
                     const aOrder = a.order ?? 0;
@@ -3497,12 +3571,14 @@ const POSPage: React.FC = () => {
 
     // Compute product suggestions from either server or client results
     const productSuggestions = useMemo(() => {
-        // If using server-side search, return server results
-        if (!productsLoaded || products.length === 0) {
-            return serverSearchResults.slice(0, 12);
-        }
-        // Otherwise use client-side search results
-        return clientSearchResults.slice(0, 12);
+        const raw =
+            !productsLoaded || products.length === 0
+                ? serverSearchResults.slice(0, 12)
+                : clientSearchResults.slice(0, 12);
+        return raw.map((m) => ({
+            ...m,
+            unitPrice: resolvePosLinePricing(m.unitPrice, 1, m.product.posDynamicPricing, new Date()).effectiveUnitPrice,
+        }));
     }, [productsLoaded, products.length, serverSearchResults, clientSearchResults]);
 
     const handleUpdateQuantity = (cartItemId: string, quantity: number) => {
@@ -3518,14 +3594,36 @@ const POSPage: React.FC = () => {
             return;
         }
 
-        setCurrentInvoice(inv => ({
-            ...inv,
-            items: inv.items.map(item =>
-                item.cartItemId === cartItemId
-                    ? { ...item, quantity: halfStepQuantity, total: item.unitPrice * halfStepQuantity }
-                    : item
-            ),
-        }));
+        setCurrentInvoice(inv => {
+            const line = inv.items.find(i => i.cartItemId === cartItemId);
+            if (!line) return inv;
+            const product =
+                products.find(p => String(p.id) === String(line.productId)) ||
+                products.find(p => line.originalId && String(p.originalId) === String(line.originalId));
+            const invoiceType = inv.invoiceType ?? 'retail';
+            const piecesPerMain = line.conversionFactor ?? (product ? getPiecesPerMainUnit(product) : 1);
+            const pricing =
+                product != null
+                    ? getFinalLinePricingForCartLine(
+                          product,
+                          line.unit,
+                          piecesPerMain,
+                          invoiceType,
+                          halfStepQuantity,
+                          product.isScaleBarcodeProduct || product.isScaleBarcode
+                      )
+                    : { lineTotal: line.unitPrice * halfStepQuantity, effectiveUnitPrice: line.unitPrice };
+            const unitPrice = pricing.effectiveUnitPrice;
+            const lineTotal = pricing.lineTotal;
+            return {
+                ...inv,
+                items: inv.items.map(i =>
+                    i.cartItemId === cartItemId
+                        ? { ...i, quantity: halfStepQuantity, unitPrice, total: lineTotal }
+                        : i
+                ),
+            };
+        });
     };
 
     const handleUpdateItemDiscount = (cartItemId: string, discount: number) => {
@@ -3558,20 +3656,24 @@ const POSPage: React.FC = () => {
             const product = (productForItem as POSProduct).parentProductId
                 ? (products.find(p => String(p.id) === String((productForItem as POSProduct).parentProductId)) || products.find(p => String(p.originalId) === String((productForItem as POSProduct).parentProductId)) || productForItem)
                 : productForItem;
-            const unit = product.units?.find(
-                u => (u.unitName || '').toLowerCase() === normalizedNew.toLowerCase()
-            );
+            const unit =
+                resolveProductUnitByName(product as POSProduct, normalizedNew) ??
+                product.units?.find(
+                    u => (u.unitName || '').toLowerCase() === normalizedNew.toLowerCase()
+                );
             if (!unit) return inv;
             const invoiceType = inv.invoiceType ?? 'retail';
             const piecesPerMainUnit = getPiecesPerMainUnit(product);
-            const unitPrice = getPriceForProductAndUnit(
+            const { lineTotal: lineTotalAfterUnit, effectiveUnitPrice } = getFinalLinePricingForCartLine(
                 product,
                 unit.unitName || normalizedNew,
                 unit.conversionFactor || piecesPerMainUnit,
                 invoiceType,
+                item.quantity,
                 product?.isScaleBarcodeProduct || product?.isScaleBarcode
             );
-            const finalUnitPrice = Number.isFinite(unitPrice) && unitPrice >= 0 ? unitPrice : item.unitPrice;
+            const finalUnitPrice = Number.isFinite(effectiveUnitPrice) && effectiveUnitPrice >= 0 ? effectiveUnitPrice : item.unitPrice;
+            const finalLineTotal = Number.isFinite(lineTotalAfterUnit) ? lineTotalAfterUnit : item.quantity * finalUnitPrice;
             // Always use item's base cost (or product's) so cost is never divided again when changing units multiple times
             const baseCost = item.baseCostPrice ?? (product as POSProduct).baseCostPrice ?? product.costPrice ?? 0;
             const unitCostPrice = calculateUnitCostPrice(product, unit, baseCost);
@@ -3584,7 +3686,7 @@ const POSPage: React.FC = () => {
                             ...i,
                             unit: unit.unitName,
                             unitPrice: finalUnitPrice,
-                            total: i.quantity * finalUnitPrice,
+                            total: finalLineTotal,
                             costPrice: unitCostPrice,
                             cost: unitCostPrice,
                             baseCostPrice: i.baseCostPrice ?? baseCost,
@@ -3592,7 +3694,7 @@ const POSPage: React.FC = () => {
                 ),
             };
         });
-    }, [products, getPiecesPerMainUnit, getPriceForProductAndUnit, calculateUnitCostPrice]);
+    }, [products, getPiecesPerMainUnit, getFinalLinePricingForCartLine, calculateUnitCostPrice, resolveProductUnitByName]);
 
     /** Toggle invoice type (retail/wholesale). Recalculates all line prices; quantities and stock unchanged. */
     const handleInvoiceTypeToggle = useCallback(() => {
@@ -3604,19 +3706,76 @@ const POSPage: React.FC = () => {
                 );
                 if (!product) return item;
                 const piecesPerMainUnit = item.conversionFactor ?? getPiecesPerMainUnit(product);
-                const unitPrice = getPriceForProductAndUnit(
+                const { lineTotal: lt, effectiveUnitPrice } = getFinalLinePricingForCartLine(
                     product,
                     item.unit,
                     piecesPerMainUnit,
                     newType,
+                    item.quantity,
                     product.isScaleBarcodeProduct || product.isScaleBarcode
                 );
-                const safePrice = Number.isFinite(unitPrice) && unitPrice > 0 ? unitPrice : item.unitPrice;
-                return { ...item, unitPrice: safePrice, total: item.quantity * safePrice };
+                const safePrice = Number.isFinite(effectiveUnitPrice) && effectiveUnitPrice > 0 ? effectiveUnitPrice : item.unitPrice;
+                const safeLineTotal = Number.isFinite(lt) ? lt : item.quantity * safePrice;
+                return { ...item, unitPrice: safePrice, total: safeLineTotal };
             });
             return { ...inv, invoiceType: newType, items: updatedItems };
         });
-    }, [products, getPiecesPerMainUnit, getPriceForProductAndUnit]);
+    }, [products, getPiecesPerMainUnit, getFinalLinePricingForCartLine]);
+
+    const handleProductEditSaved = useCallback(
+        (updated: { id: number; originalId?: string; name: string; price: number; posDynamicPricing?: PosDynamicPricing }) => {
+            const mergeProduct = (p: POSProduct): POSProduct => {
+                if (String(p.id) !== String(updated.id) && (!updated.originalId || String(p.originalId) !== String(updated.originalId))) {
+                    return p;
+                }
+                return { ...p, price: updated.price, posDynamicPricing: updated.posDynamicPricing };
+            };
+            setProducts((prev) => prev.map(mergeProduct));
+            setQuickProducts((prev) => prev.map(mergeProduct));
+            void (async () => {
+                try {
+                    if (!updated.originalId) return;
+                    const raw = await productsDB.getProduct(updated.originalId);
+                    if (raw) {
+                        await productsDB.storeProducts(
+                            [{ ...raw, price: updated.price, posDynamicPricing: updated.posDynamicPricing ?? null }],
+                            { clearAll: false }
+                        );
+                    }
+                } catch (e) {
+                    console.warn('[POS] IndexedDB update after product edit:', e);
+                }
+            })();
+            setCurrentInvoice((inv) => ({
+                ...inv,
+                items: inv.items.map((item) => {
+                    const match =
+                        String(item.productId) === String(updated.id) ||
+                        (updated.originalId && item.originalId && String(item.originalId) === String(updated.originalId));
+                    if (!match) return item;
+                    const product =
+                        products.find((p) => String(p.id) === String(item.productId)) ||
+                        products.find((p) => item.originalId && String(p.originalId) === String(item.originalId));
+                    if (!product) return item;
+                    const merged: POSProduct = { ...product, price: updated.price, posDynamicPricing: updated.posDynamicPricing };
+                    const piecesPerMain = item.conversionFactor ?? getPiecesPerMainUnit(merged);
+                    const invoiceType = inv.invoiceType ?? 'retail';
+                    const { lineTotal: lt, effectiveUnitPrice } = getFinalLinePricingForCartLine(
+                        merged,
+                        item.unit,
+                        piecesPerMain,
+                        invoiceType,
+                        item.quantity,
+                        merged.isScaleBarcodeProduct || merged.isScaleBarcode
+                    );
+                    return { ...item, unitPrice: effectiveUnitPrice, total: lt };
+                }),
+            }));
+            barcodeSessionCacheRef.current.clear();
+            showToast('تم حفظ التسعير', 'success');
+        },
+        [products, getPiecesPerMainUnit, getFinalLinePricingForCartLine, showToast]
+    );
 
     /** Show Unit column when at least one item has a product with multiple units, or any item has unit info (so column is visible even if product lookup fails for some users). */
     const showUnitColumn = useMemo(() => {
@@ -3798,7 +3957,7 @@ const POSPage: React.FC = () => {
             returnInvoice.items = currentInvoice.items.map(item => ({
                 ...item,
                 quantity: Math.abs(item.quantity), // Ensure positive quantity for returns
-                total: Math.abs(item.total), // Ensure positive total for returns
+                total: Math.abs(item.unitPrice) * Math.abs(item.quantity), // Derive from price × qty (never trust stale item.total)
             }));
 
             // Recalculate totals for return invoice
@@ -4090,7 +4249,6 @@ const POSPage: React.FC = () => {
                         const positiveQuantity = Math.abs(item.quantity);
                         const positiveUnitPrice = Math.abs(item.unitPrice);
                         const positiveDiscount = Math.abs(item.discount || 0);
-                        const positiveTotal = Math.abs(item.total);
                         // Calculate totalPrice: (unitPrice * quantity) - discount, then negate
                         const calculatedTotalPrice = (positiveUnitPrice * positiveQuantity) - (positiveDiscount * positiveQuantity);
 
@@ -4149,7 +4307,7 @@ const POSPage: React.FC = () => {
                             unit: item.unit,
                             quantity: item.quantity,
                             unitPrice: -Math.abs(item.unitPrice), // Negative for returns
-                            total: -Math.abs(item.total), // Negative for returns
+                            total: -Math.abs(item.unitPrice * item.quantity), // Gross line; derive from price × qty
                             discount: item.discount,
                             conversionFactor: item.conversionFactor,
                         })),
@@ -4496,6 +4654,11 @@ const POSPage: React.FC = () => {
                         const piecesPerMainUnit = getPiecesPerMainUnit(product);
                         const conversionFactor = getUnitConversionFactor(product, unit);
 
+                        const baseCostForResale =
+                            (product as POSProduct).baseCostPrice ?? product.costPrice ?? product.cost ?? 0;
+                        const matchedForCost = resolveProductUnitByName(product as POSProduct, unit);
+                        const lineUnitCost = calculateUnitCostPrice(product, matchedForCost, baseCostForResale);
+
                         const cartItem: POSCartItem = {
                             cartItemId: `${product.id}-${item.productName}-${unit}-${Date.now()}-${Math.random()}`,
                             productId: product.id,
@@ -4507,7 +4670,8 @@ const POSPage: React.FC = () => {
                             total: total,
                             discount: discount,
                             conversionFactor: conversionFactor || piecesPerMainUnit,
-                            costPrice: product.costPrice || product.cost || 0,
+                            costPrice: lineUnitCost,
+                            baseCostPrice: baseCostForResale,
                         };
 
                         cartItems.push(cartItem);
@@ -4571,7 +4735,7 @@ const POSPage: React.FC = () => {
             console.error('Error in handleReSale:', error);
             showToast('حدث خطأ أثناء إعادة البيع. يرجى المحاولة مرة أخرى.', 'error');
         }
-    }, [conflictingInvoiceData, currentUserName, fetchNextInvoiceNumber, customers, products, normalizeProduct, showToast, getPiecesPerMainUnit, getUnitConversionFactor, calculateTotals]);
+    }, [conflictingInvoiceData, currentUserName, fetchNextInvoiceNumber, customers, products, normalizeProduct, showToast, getPiecesPerMainUnit, getUnitConversionFactor, calculateTotals, resolveProductUnitByName, calculateUnitCostPrice]);
 
     /**
      * Helper function to prepare sale data for queue processing
@@ -4698,7 +4862,7 @@ const POSPage: React.FC = () => {
                     productName: item.name,
                     quantity: item.quantity,
                     unitPrice: item.unitPrice,
-                    totalPrice: item.total - (item.discount * item.quantity),
+                    totalPrice: item.unitPrice * item.quantity - item.discount * item.quantity,
                     // CRITICAL FIX: Include costPrice from cart item to ensure unit-specific cost price is used
                     // This ensures net profit calculation uses the correct cost price (unit or parent) that was displayed during sale
                     costPrice: item.costPrice || item.cost || 0,
@@ -4976,7 +5140,7 @@ const POSPage: React.FC = () => {
                             unit: item.unit,
                             quantity: item.quantity,
                             unitPrice: item.unitPrice,
-                            total: item.total,
+                            total: item.unitPrice * item.quantity,
                             discount: item.discount,
                             conversionFactor: item.conversionFactor,
                         })),
@@ -5824,7 +5988,9 @@ const POSPage: React.FC = () => {
                         <tbody>
                             {invoice.items.slice().reverse().map((item, idx) => {
                                 const itemUnitPrice = isReturn ? -Math.abs(item.unitPrice) : item.unitPrice;
-                                const itemTotal = isReturn ? -Math.abs(item.total - item.discount * item.quantity) : (item.total - item.discount * item.quantity);
+                                const itemTotal = isReturn
+                                    ? -Math.abs(item.unitPrice * item.quantity - item.discount * item.quantity)
+                                    : item.unitPrice * item.quantity - item.discount * item.quantity;
                                 // Calculate index based on original order (before reversal)
                                 const productIndex = invoice.items.length - idx;
                                 return (
@@ -6280,21 +6446,35 @@ const POSPage: React.FC = () => {
                                 ) : (
                                     <div className="grid grid-cols-2 gap-1.5 sm:gap-2 md:gap-2.5 lg:gap-3">
                                         {quickProducts.map((p, index) => (
-                                            <button
+                                            <div
                                                 key={`quick-product-${p.id}-${index}`}
-                                                type="button"
-                                                onClick={() => handleAddProduct(p)}
-                                                className={`group p-3 sm:p-4 border rounded-lg sm:rounded-xl text-center transition-all duration-200 hover:shadow-md active:scale-95 ${p.stock <= 0
+                                                className={`relative group border rounded-lg sm:rounded-xl text-center transition-all duration-200 hover:shadow-md ${p.stock <= 0
                                                         ? 'border-red-200 dark:border-red-900/50 hover:bg-red-50/50 dark:hover:bg-red-900/10 hover:border-red-300 dark:hover:border-red-800'
                                                         : 'border-gray-200 dark:border-gray-700 hover:bg-orange-50 dark:hover:bg-gray-700 hover:border-orange-300 dark:hover:border-orange-600'
                                                     }`}
                                             >
-                                                <span className="block text-xs sm:text-sm font-semibold text-gray-800 dark:text-gray-200 mb-1">{p.name}</span>
-                                                <span className="block text-xs font-bold text-orange-600">{formatCurrency(getActivePrice(p))}</span>
-                                                {p.stock <= 0 && (
-                                                    <span className="block text-xs text-red-600 dark:text-red-400 mt-1">نفد المخزون</span>
+                                                {p.originalId && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setProductEditTarget(p)}
+                                                        className="absolute top-1.5 left-1.5 z-10 p-1 rounded-md text-orange-600 hover:bg-orange-100 dark:hover:bg-orange-900/40"
+                                                        title="تعديل التسعير"
+                                                    >
+                                                        <EditIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                                                    </button>
                                                 )}
-                                            </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleAddProduct(p)}
+                                                    className="w-full p-3 sm:p-4 active:scale-95"
+                                                >
+                                                    <span className="block text-xs sm:text-sm font-semibold text-gray-800 dark:text-gray-200 mb-1">{p.name}</span>
+                                                    <span className="block text-xs font-bold text-orange-600">{formatCurrency(getActivePrice(p))}</span>
+                                                    {p.stock <= 0 && (
+                                                        <span className="block text-xs text-red-600 dark:text-red-400 mt-1">نفد المخزون</span>
+                                                    )}
+                                                </button>
+                                            </div>
                                         ))}
                                     </div>
                                 )}
@@ -6457,7 +6637,13 @@ const POSPage: React.FC = () => {
                                             const showUnitDropdown = unitOptions.length > 0;
                                             // Use item's base cost so display never "divides again" when changing units multiple times
                                             const productForCost = parentProduct || productForItem;
-                                            const unitForCost = productUnits.find((u: any) => (unitLabel(u) || '').toLowerCase() === (item.unit || '').trim().toLowerCase());
+                                            const unitForCost = productForCost
+                                                ? resolveProductUnitByName(productForCost as POSProduct, item.unit) ??
+                                                  productUnits.find(
+                                                      (u: any) =>
+                                                          (unitLabel(u) || '').toLowerCase() === (item.unit || '').trim().toLowerCase()
+                                                  )
+                                                : null;
                                             const baseCostForDisplay = item.baseCostPrice ?? (productForCost as POSProduct)?.baseCostPrice ?? productForCost?.costPrice ?? 0;
                                             const isLoadingRow = (item as any).isLoading;
                                             const displayUnitCost = productForCost && unitForCost != null
@@ -6591,26 +6777,44 @@ const POSPage: React.FC = () => {
                                                     {showCostPrice && (
                                                         <td className="px-2 sm:px-3 py-3 sm:py-4 text-xs sm:text-sm text-gray-600 dark:text-gray-400 whitespace-nowrap text-center align-middle">{formatCurrency(displayUnitCost)}</td>
                                                     )}
-                                                    <td className="px-2 sm:px-3 py-3 sm:py-4 text-xs sm:text-sm font-semibold text-orange-600 whitespace-nowrap text-center align-middle">{formatCurrency(item.total - (item.discount * item.quantity))}</td>
+                                                    <td className="px-2 sm:px-3 py-3 sm:py-4 text-xs sm:text-sm font-semibold text-orange-600 whitespace-nowrap text-center align-middle">{formatCurrency(getCartLineNet(item))}</td>
                                                     <td className="px-2 sm:px-3 py-3 sm:py-4 text-center align-middle">
-                                                        <button
-                                                            onClick={async () => {
-                                                                if (item.cartItemId) {
-                                                                    const confirmed = await confirmDialog({
-                                                                        message: 'هل أنت متأكد أنك تريد إزالة هذا المنتج من السلة؟',
-                                                                        title: 'تأكيد الحذف',
-                                                                        confirmLabel: 'حذف',
-                                                                        cancelLabel: 'إلغاء'
-                                                                    });
-                                                                    if (!confirmed) return;
-                                                                    handleRemoveItem(item.cartItemId);
-                                                                    showToast('تم حذف المنتج من السلة', 'success');
-                                                                }
-                                                            }}
-                                                            className="text-red-600 hover:text-red-900 dark:text-red-400 dark:hover:text-red-300 p-1.5 sm:p-2 rounded-lg hover:bg-red-50 dark:hover:bg-gray-700 transition-colors mx-auto"
-                                                        >
-                                                            <span className="w-4 h-4 sm:w-5 sm:h-5 block"><DeleteIcon /></span>
-                                                        </button>
+                                                        <div className="flex items-center justify-center gap-0.5 sm:gap-1">
+                                                            <button
+                                                                type="button"
+                                                                title="تعديل التسعير"
+                                                                onClick={() => {
+                                                                    const p = productForItem;
+                                                                    if (p?.originalId) {
+                                                                        setProductEditTarget(p);
+                                                                    } else {
+                                                                        showToast('لا يمكن تعديل هذا المنتج (لا يوجد معرف للخادم)', 'error');
+                                                                    }
+                                                                }}
+                                                                className="text-orange-600 hover:text-orange-800 dark:text-orange-400 dark:hover:text-orange-300 p-1.5 sm:p-2 rounded-lg hover:bg-orange-50 dark:hover:bg-gray-700 transition-colors"
+                                                            >
+                                                                <span className="w-4 h-4 sm:w-5 sm:h-5 block"><EditIcon /></span>
+                                                            </button>
+                                                            <button
+                                                                type="button"
+                                                                onClick={async () => {
+                                                                    if (item.cartItemId) {
+                                                                        const confirmed = await confirmDialog({
+                                                                            message: 'هل أنت متأكد أنك تريد إزالة هذا المنتج من السلة؟',
+                                                                            title: 'تأكيد الحذف',
+                                                                            confirmLabel: 'حذف',
+                                                                            cancelLabel: 'إلغاء'
+                                                                        });
+                                                                        if (!confirmed) return;
+                                                                        handleRemoveItem(item.cartItemId);
+                                                                        showToast('تم حذف المنتج من السلة', 'success');
+                                                                    }
+                                                                }}
+                                                                className="text-red-600 hover:text-red-900 dark:text-red-400 dark:hover:text-red-300 p-1.5 sm:p-2 rounded-lg hover:bg-red-50 dark:hover:bg-gray-700 transition-colors"
+                                                            >
+                                                                <span className="w-4 h-4 sm:w-5 sm:h-5 block"><DeleteIcon /></span>
+                                                            </button>
+                                                        </div>
                                                     </td>
                                                 </tr>
                                             );
@@ -7190,6 +7394,13 @@ const POSPage: React.FC = () => {
                     setPendingServerSearch(null);
                 }}
                 onQuickAdd={handleQuickAddProduct}
+            />
+            <ProductEditModal
+                isOpen={productEditTarget !== null}
+                product={productEditTarget}
+                onClose={() => setProductEditTarget(null)}
+                onSaved={handleProductEditSaved}
+                onError={(msg) => showToast(msg, 'error')}
             />
             <ReSaleModal
                 isOpen={isReSaleModalOpen}
