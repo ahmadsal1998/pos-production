@@ -9,6 +9,7 @@ import { getSaleModelForStore } from '../utils/saleModel';
 import { getProductModelForStore } from '../utils/productModel';
 import { invalidateAllProductBarcodeCaches } from '../utils/productCache';
 import { ProductDocument } from '../models/Product';
+import { pushNotificationService } from './pushNotification.service';
 
 /** Exported for use by sales controller in processReturn / createSimpleSale */
 export function convertQuantityToMainUnits(
@@ -515,6 +516,12 @@ export const salesService = {
           log.error(`[Sales Service] Error updating stock for product ${productId}:`, error);
         }
       }
+    }
+
+    if (!isReturn) {
+      void pushNotificationService
+        .notifySaleCompleted(normalizedStoreId, sale.invoiceNumber)
+        .catch((err) => log.warn('[Sales Service] Sale push notification failed', err));
     }
 
     return {

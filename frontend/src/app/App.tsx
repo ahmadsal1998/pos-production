@@ -3,6 +3,7 @@ import { useEffect } from 'react';
 import { router } from './router';
 import { AppProvider } from './providers/AppProvider';
 import PWAInstallPrompt from '@/features/pwa/PWAInstallPrompt';
+import SalePushNotificationsSetup from '@/features/pwa/SalePushNotificationsSetup';
 
 const App = () => {
   useEffect(() => {
@@ -13,6 +14,7 @@ const App = () => {
     <AppProvider>
       <RouterProvider router={router} />
       <PWAInstallPrompt />
+      <SalePushNotificationsSetup />
     </AppProvider>
   );
 };

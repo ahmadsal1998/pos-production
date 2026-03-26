@@ -17,6 +17,7 @@ import storeAccountRoutes from './storeAccount.routes';
 import storePointsAccountRoutes from './storePointsAccount.routes';
 import suppliersRoutes from './suppliers.routes';
 import purchasesRoutes from './purchases.routes';
+import pushRoutes from './push.routes';
 import { log } from '../utils/logger';
 
 /**
@@ -44,4 +45,5 @@ export function mountRoutes(app: Application): void {
   app.use('/api/store-points-accounts', storePointsAccountRoutes);
   app.use('/api/suppliers', suppliersRoutes);
   app.use('/api/purchases', purchasesRoutes);
+  app.use('/api/push', pushRoutes);
 }

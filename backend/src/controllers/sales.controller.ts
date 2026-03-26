@@ -21,6 +21,7 @@ import {
   convertQuantityToMainUnits,
   generateNextInvoiceNumber,
 } from '../services/sales.service';
+import { pushNotificationService } from '../services/pushNotification.service';
 
 /**
  * Get the current invoice number without incrementing (HTTP layer).
@@ -1598,6 +1599,10 @@ export const createSimpleSale = asyncHandler(async (req: AuthenticatedRequest, r
 
   // Create sale record
   const sale = await Sale.create(saleData);
+
+  void pushNotificationService
+    .notifySaleCompleted(normalizedStoreId, sale.invoiceNumber)
+    .catch((err) => log.warn('[Simple Sale] Push notification failed', err));
 
   // Helper function to add points for a customer
   const addPointsForCustomer = async (

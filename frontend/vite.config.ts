@@ -19,8 +19,15 @@ export default defineConfig(({ mode }) => {
     plugins: [
       react(),
       VitePWA({
-        registerType: 'prompt', // Show prompt when new content available; allows custom install prompt
+        registerType: 'prompt',
         injectRegister: 'auto',
+        strategies: 'injectManifest',
+        srcDir: 'src',
+        filename: 'sw.ts',
+        injectManifest: {
+          globPatterns: mode === 'development' ? [] : ['**/*.{js,css,html,ico,png,svg,woff2}'],
+          globIgnores: ['**/node_modules/**/*'],
+        },
         includeAssets: ['icons/*.png'],
         manifest: {
           name: 'POS Point Hub - نقطة البيع',
@@ -40,24 +47,6 @@ export default defineConfig(({ mode }) => {
             { src: '/icons/icon-512x512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
           ],
           prefer_related_applications: false,
-        },
-        workbox: {
-          // In dev, dev-dist only has sw/workbox files (no app build), so precache would match nothing and warn
-          globPatterns: mode === 'development' ? [] : ['**/*.{js,css,html,ico,png,svg,woff2}'],
-          // Don't use navigate fallback for API routes - use Network First below
-          navigateFallbackDenylist: [/^\/api\//],
-          runtimeCaching: [
-            {
-              urlPattern: /^https?:\/\/[^/]*\/api\/.*/i,
-              handler: 'NetworkFirst',
-              options: {
-                cacheName: 'api-cache',
-                expiration: { maxEntries: 100, maxAgeSeconds: 60 * 60 * 24 },
-                cacheableResponse: { statuses: [0, 200] },
-                networkTimeoutSeconds: 10,
-              },
-            },
-          ],
         },
         devOptions: { enabled: true },
       }),
