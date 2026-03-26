@@ -519,18 +519,33 @@ const POSPage: React.FC = () => {
         console.log('Tax rate loaded from localStorage:', newTaxRate, '(', (newTaxRate * 100).toFixed(2), '%)');
     }, []);
 
-    /** Net line amount (after per-unit discount). Never use stale `item.total` for money — always derive from unit price × qty. */
-    const getCartLineNet = (item: POSCartItem) => item.unitPrice * item.quantity - item.discount * item.quantity;
+    /**
+     * Line gross before per-line discount. Must use `item.total` when set — it is the authoritative amount
+     * from bundle/quantity offers (e.g. 3 for 10 ILS). Using `unitPrice × quantity` would reintroduce float drift
+     * (e.g. 3.33 × 3 = 9.99).
+     */
+    const getCartLineGross = useCallback((item: POSCartItem): number => {
+        if (item.total != null && Number.isFinite(item.total) && item.total >= 0) {
+            return item.total;
+        }
+        return item.unitPrice * item.quantity;
+    }, []);
+
+    /** Net line amount (after per-unit discount). */
+    const getCartLineNet = useCallback(
+        (item: POSCartItem) => getCartLineGross(item) - item.discount * item.quantity,
+        [getCartLineGross]
+    );
 
     const calculateTotals = useCallback((items: POSCartItem[], invoiceDiscount: number): Pick<POSInvoice, 'subtotal' | 'totalItemDiscount' | 'tax' | 'grandTotal'> => {
-        const subtotal = items.reduce((acc, item) => acc + item.unitPrice * item.quantity, 0);
+        const subtotal = items.reduce((acc, item) => acc + getCartLineGross(item), 0);
         const totalItemDiscount = items.reduce((acc, item) => acc + item.discount * item.quantity, 0);
         const totalDiscountValue = totalItemDiscount + invoiceDiscount;
         const taxableAmount = Math.max(0, subtotal - totalDiscountValue);
         const tax = taxableAmount * taxRate;
         const grandTotal = taxableAmount + tax;
         return { subtotal, totalItemDiscount, tax, grandTotal };
-    }, [taxRate]);
+    }, [taxRate, getCartLineGross]);
 
     useEffect(() => {
         const newTotals = calculateTotals(currentInvoice.items, currentInvoice.invoiceDiscount);
@@ -3960,7 +3975,7 @@ const POSPage: React.FC = () => {
             returnInvoice.items = currentInvoice.items.map(item => ({
                 ...item,
                 quantity: Math.abs(item.quantity), // Ensure positive quantity for returns
-                total: Math.abs(item.unitPrice) * Math.abs(item.quantity), // Derive from price × qty (never trust stale item.total)
+                total: Math.abs(getCartLineGross(item)),
             }));
 
             // Recalculate totals for return invoice
@@ -4310,7 +4325,7 @@ const POSPage: React.FC = () => {
                             unit: item.unit,
                             quantity: item.quantity,
                             unitPrice: -Math.abs(item.unitPrice), // Negative for returns
-                            total: -Math.abs(item.unitPrice * item.quantity), // Gross line; derive from price × qty
+                            total: -Math.abs(getCartLineGross(item)),
                             discount: item.discount,
                             conversionFactor: item.conversionFactor,
                         })),
@@ -4865,7 +4880,7 @@ const POSPage: React.FC = () => {
                     productName: item.name,
                     quantity: item.quantity,
                     unitPrice: item.unitPrice,
-                    totalPrice: item.unitPrice * item.quantity - item.discount * item.quantity,
+                    totalPrice: getCartLineNet(item),
                     // CRITICAL FIX: Include costPrice from cart item to ensure unit-specific cost price is used
                     // This ensures net profit calculation uses the correct cost price (unit or parent) that was displayed during sale
                     costPrice: item.costPrice || item.cost || 0,
@@ -5143,7 +5158,7 @@ const POSPage: React.FC = () => {
                             unit: item.unit,
                             quantity: item.quantity,
                             unitPrice: item.unitPrice,
-                            total: item.unitPrice * item.quantity,
+                            total: getCartLineGross(item),
                             discount: item.discount,
                             conversionFactor: item.conversionFactor,
                         })),
@@ -5991,9 +6006,7 @@ const POSPage: React.FC = () => {
                         <tbody>
                             {invoice.items.slice().reverse().map((item, idx) => {
                                 const itemUnitPrice = isReturn ? -Math.abs(item.unitPrice) : item.unitPrice;
-                                const itemTotal = isReturn
-                                    ? -Math.abs(item.unitPrice * item.quantity - item.discount * item.quantity)
-                                    : item.unitPrice * item.quantity - item.discount * item.quantity;
+                                const itemTotal = isReturn ? -Math.abs(getCartLineNet(item)) : getCartLineNet(item);
                                 // Calculate index based on original order (before reversal)
                                 const productIndex = invoice.items.length - idx;
                                 return (

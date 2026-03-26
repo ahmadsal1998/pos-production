@@ -76,7 +76,7 @@ const EnableSaleNotificationsPrompt = () => {
       } else if (result.reason === 'not_configured') {
         setError('Sale alerts are not configured on the server yet.');
       } else if (result.reason === 'unsupported') {
-        setError('This device does not support web push notifications.');
+        setError('vice does not support web push notifications.');
       } else {
         setError('Could not enable notifications. Tap Enable again in a few seconds, or sign in again if the problem continues.');
       }

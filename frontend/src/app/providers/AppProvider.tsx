@@ -33,12 +33,21 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
       }
     };
 
+    /** True only for empty or all-zero integer display — not decimals (0.5, 1.2, 0.0, 0., …). */
+    const isEmptyOrZeroIntegerField = (raw: string): boolean => {
+      const val = raw.trim();
+      if (val.includes('.')) return false;
+      if (val === '') return true;
+      if (val === '0') return true;
+      return /^0+$/.test(val);
+    };
+
     const onFocus = (e: FocusEvent) => {
       const target = e.target as HTMLInputElement;
       if (
         target?.tagName === 'INPUT' &&
         target.type === 'number' &&
-        (target.value === '' || target.value === '0' || Number(target.value) === 0)
+        isEmptyOrZeroIntegerField(target.value)
       ) {
         target.select();
       }
@@ -48,7 +57,7 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
       const target = e.target as HTMLInputElement;
       if (
         target?.tagName !== 'INPUT' ||
-        target.type !== 'number' ||
+        target.type === 'number' ||
         e.ctrlKey ||
         e.metaKey ||
         e.altKey
@@ -56,12 +65,12 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
         return;
       }
       const val = target.value;
-      const isZero = val === '' || val === '0' || Number(val) === 0;
-      if (isZero && /^[1-9]$/.test(e.key)) {
-        e.preventDefault();
-        target.value = e.key;
-        target.dispatchEvent(new Event('input', { bubbles: true }));
+      if (!isEmptyOrZeroIntegerField(val) || !/^[1-9]$/.test(e.key)) {
+        return;
       }
+      e.preventDefault();
+      target.value = e.key;
+      target.dispatchEvent(new Event('input', { bubbles: true }));
     };
 
     document.addEventListener('wheel', onWheel, { capture: true, passive: false });

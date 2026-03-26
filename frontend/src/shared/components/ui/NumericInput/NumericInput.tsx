@@ -13,13 +13,17 @@ export interface NumericInputProps
  * - On focus when value is 0, selects all for easy replacement
  */
 export const NumericInput = forwardRef<HTMLInputElement, NumericInputProps>(
-  ({ value, onChange, onFocus, onKeyDown, onWheel, ...rest }, ref) => {
+  ({ value, onChange, onFocus, onKeyDown, onWheel, step, ...rest }, ref) => {
     const numValue = typeof value === 'string' ? value : String(value);
+    const t = numValue.trim();
+    /** Match AppProvider: only treat as “replace first digit” when not a decimal-in-progress string. */
     const isZero =
-      value === 0 ||
-      value === '0' ||
-      numValue === '' ||
-      (typeof value === 'number' && value === 0);
+      !t.includes('.') &&
+      (value === 0 ||
+        value === '0' ||
+        t === '' ||
+        /^0+$/.test(t) ||
+        (typeof value === 'number' && value === 0));
 
     const handleFocus = useCallback(
       (e: React.FocusEvent<HTMLInputElement>) => {
@@ -57,6 +61,7 @@ export const NumericInput = forwardRef<HTMLInputElement, NumericInputProps>(
       <input
         ref={ref}
         type="number"
+        step={step ?? 'any'}
         value={numValue}
         onChange={onChange}
         onFocus={handleFocus}

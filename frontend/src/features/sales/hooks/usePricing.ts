@@ -23,8 +23,20 @@ function endOfDay(d: Date): Date {
     return x;
 }
 
+/** Smallest currency unit (agorot / cents) to avoid float error on bundle totals. */
+const MONEY_SCALE = 100;
+
+function toCents(n: number): number {
+    if (!Number.isFinite(n)) return 0;
+    return Math.round(n * MONEY_SCALE);
+}
+
+function fromCents(c: number): number {
+    return Math.round(c) / MONEY_SCALE;
+}
+
 function roundMoney(n: number): number {
-    return Math.round(n * 100) / 100;
+    return fromCents(toCents(n));
 }
 
 export type PosLinePricingResult = {
@@ -76,7 +88,10 @@ export function resolvePosLinePricing(
             const bundleTotal = rule.offerPrice;
             const bundles = Math.floor(q / bundleSize);
             const remainder = q % bundleSize;
-            const lineTotal = roundMoney(bundles * bundleTotal + remainder * baseUnitPrice);
+            // Integer cents: bundle totals are exact; remainder uses rounded fractional cents.
+            const lineTotalCents =
+                bundles * toCents(bundleTotal) + Math.round(remainder * baseUnitPrice * MONEY_SCALE);
+            const lineTotal = fromCents(lineTotalCents);
             const effectiveUnitPrice = roundMoney(lineTotal / q);
             return { lineTotal, effectiveUnitPrice };
         }
