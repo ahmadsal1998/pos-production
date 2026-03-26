@@ -69,12 +69,16 @@ const EnableSaleNotificationsPrompt = () => {
       const result = await subscribeSalePushFromUserGesture();
       if (result.ok) {
         setAlreadyEnabled(true);
+      } else if (result.message) {
+        setError(result.message);
       } else if (result.reason === 'denied') {
         setError('Notifications were blocked. Enable them in Settings → Safari → your site, or Settings → Notifications.');
       } else if (result.reason === 'not_configured') {
         setError('Sale alerts are not configured on the server yet.');
+      } else if (result.reason === 'unsupported') {
+        setError('This device does not support web push notifications.');
       } else {
-        setError('Could not enable notifications. Try again after refreshing the app.');
+        setError('Could not enable notifications. Tap Enable again in a few seconds, or sign in again if the problem continues.');
       }
     } finally {
       setLoading(false);
