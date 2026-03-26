@@ -20,19 +20,59 @@ async function fetchVapidPublicKey(): Promise<string | null> {
   return json.data.publicKey as string;
 }
 
+/**
+ * Ensures the PWA service worker is registered and active (required before push on iOS).
+ * Uses the same registration entry as vite-plugin-pwa when available.
+ */
+export async function ensureServiceWorkerReadyForPush(): Promise<ServiceWorkerRegistration | null> {
+  if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return null;
+
+  try {
+    const { registerSW } = await import('virtual:pwa-register');
+    await registerSW({ immediate: true });
+  } catch {
+    // Tests or non-Vite env: rely on existing registration
+  }
+
+  try {
+    return await navigator.serviceWorker.ready;
+  } catch {
+    return null;
+  }
+}
+
 export type RegisterSalePushResult =
   | { ok: true }
-  | { ok: false; reason: 'unsupported' | 'not_configured' | 'denied' | 'no_subscription' | 'error' };
+  | {
+      ok: false;
+      reason: 'unsupported' | 'not_configured' | 'denied' | 'no_subscription' | 'error' | 'permission_pending';
+    };
+
+export type RegisterSalePushOptions = {
+  /**
+   * If false, never calls `Notification.requestPermission()` (use after user already granted in a click handler).
+   * If true (default), requests permission when still "default" (OK for desktop/Android auto flow).
+   */
+  requestPermission?: boolean;
+};
 
 /**
- * Registers the service worker (if needed), requests notification permission,
- * subscribes to Web Push with the server VAPID key, and POSTs the subscription to the API
- * scoped to the current store (JWT).
+ * Subscribes to Web Push and POSTs the subscription (scoped to store via JWT).
+ * Call `requestPermission` from a **direct user gesture** on iOS before or use {@link subscribeSalePushFromUserGesture}.
  */
-export async function registerSalePushNotifications(): Promise<RegisterSalePushResult> {
+export async function registerSalePushNotifications(
+  options: RegisterSalePushOptions = {}
+): Promise<RegisterSalePushResult> {
+  const requestPermission = options.requestPermission !== false;
+
   if (typeof window === 'undefined') return { ok: false, reason: 'unsupported' };
   if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
     return { ok: false, reason: 'unsupported' };
+  }
+
+  const registration = await ensureServiceWorkerReadyForPush();
+  if (!registration?.active) {
+    return { ok: false, reason: 'no_subscription' };
   }
 
   const publicKey = await fetchVapidPublicKey();
@@ -40,10 +80,11 @@ export async function registerSalePushNotifications(): Promise<RegisterSalePushR
     return { ok: false, reason: 'not_configured' };
   }
 
-  const registration = await navigator.serviceWorker.ready;
-
   let permission = Notification.permission;
   if (permission === 'default') {
+    if (!requestPermission) {
+      return { ok: false, reason: 'permission_pending' };
+    }
     permission = await Notification.requestPermission();
   }
   if (permission !== 'granted') {
@@ -68,4 +109,24 @@ export async function registerSalePushNotifications(): Promise<RegisterSalePushR
   } catch {
     return { ok: false, reason: 'error' };
   }
+}
+
+/**
+ * iOS-safe flow: run inside an `onClick` handler.
+ * Request permission first (keeps the user gesture), then activate SW, then subscribe — same as Apple’s recommended order for Web Push on iOS.
+ */
+export async function subscribeSalePushFromUserGesture(): Promise<RegisterSalePushResult> {
+  if (typeof window === 'undefined') return { ok: false, reason: 'unsupported' };
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+    return { ok: false, reason: 'unsupported' };
+  }
+
+  const permission = await Notification.requestPermission();
+  if (permission !== 'granted') {
+    return { ok: false, reason: 'denied' };
+  }
+
+  await ensureServiceWorkerReadyForPush();
+
+  return registerSalePushNotifications({ requestPermission: false });
 }
