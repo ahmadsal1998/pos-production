@@ -31,6 +31,7 @@ import { useConfirmDialog } from '@/shared/contexts/ConfirmDialogContext';
 import { AddPointsButton } from '@/shared/components/AddPointsButton';
 import { CustomerPointsDisplay } from '@/shared/components/CustomerPointsDisplay';
 import { Link } from 'react-router-dom';
+import { usePosKeyboardShortcuts } from '@/pages/sales/hooks/usePosKeyboardShortcuts';
 // PaymentProcessingModal removed - using simple payment flow
 
 // Local POS product type with optional units
@@ -4531,67 +4532,19 @@ const POSPage: React.FC = () => {
         }
     };
 
-    // Keyboard shortcuts: F1 = Confirm Payment, F2 = Start New Sale (work anywhere on POS screen; always prevent browser default)
-    useEffect(() => {
-        const handleKeyDown = (e: KeyboardEvent) => {
-            // F1 key: Trigger the confirm payment button
-            if (e.key === 'F1') {
-                e.preventDefault();
-                e.stopPropagation();
-                // Skip action when typing in input/textarea so we don't confirm by accident
-                const target = e.target as HTMLElement;
-                const isInputField =
-                    target.tagName === 'INPUT' ||
-                    target.tagName === 'TEXTAREA' ||
-                    target.isContentEditable ||
-                    target.closest('input') !== null ||
-                    target.closest('textarea') !== null;
-                if (isInputField) return;
-
-                const confirmButton = confirmPaymentButtonRef.current;
-                if (confirmButton && !confirmButton.disabled) {
-                    confirmButton.click();
-                    return;
-                }
-                if (!saleCompleted && currentInvoice.items.length > 0 && !isProcessingPayment && !isSubmittingInvoiceRef.current && !hasUnsyncedSales) {
-                    handleFinalizePayment();
-                }
-                return;
-            }
-
-            // F2 key: Trigger the "start new sale" button
-            if (e.key === 'F2') {
-                e.preventDefault();
-                e.stopPropagation();
-                const target = e.target as HTMLElement;
-                const isInputField =
-                    target.tagName === 'INPUT' ||
-                    target.tagName === 'TEXTAREA' ||
-                    target.isContentEditable ||
-                    target.closest('input') !== null ||
-                    target.closest('textarea') !== null;
-                if (isInputField) return;
-
-                if (isProcessingPayment || isSubmittingInvoiceRef.current) {
-                    return;
-                }
-                const newSaleButton = startNewSaleButtonRef.current;
-                if (newSaleButton && !newSaleButton.disabled) {
-                    newSaleButton.click();
-                    return;
-                }
-                if (saleCompleted) {
-                    startNewSale();
-                }
-            }
-        };
-
-        window.addEventListener('keydown', handleKeyDown);
-
-        return () => {
-            window.removeEventListener('keydown', handleKeyDown);
-        };
-    }, [saleCompleted, currentInvoice.items.length, isProcessingPayment, handleFinalizePayment, startNewSale]);
+    // Keyboard shortcuts: F1 = Confirm Payment, F2 = Start New Sale (keydown, global; see usePosKeyboardShortcuts)
+    usePosKeyboardShortcuts({
+        confirmPaymentButtonRef,
+        startNewSaleButtonRef,
+        isSubmittingInvoiceRef,
+        startNewSaleRef,
+        ctx: {
+            paymentConfirmationModalOpen,
+            handlePaymentConfirmationConfirm,
+            hasUnsyncedSales,
+            isProcessingPayment,
+        },
+    });
 
     // Prevent page refresh/navigation during processing
     useEffect(() => {
@@ -6262,6 +6215,7 @@ const POSPage: React.FC = () => {
                             ref={startNewSaleButtonRef}
                             onClick={startNewSale}
                             disabled={isProcessingPayment || isSubmittingInvoiceRef.current}
+                            title="F2 — بدء فاتورة جديدة"
                             className="inline-flex items-center justify-center px-3 sm:px-4 py-2 text-xs sm:text-sm font-medium rounded-md shadow-sm text-white bg-orange-500 hover:bg-orange-600 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
                         >
                             {isProcessingPayment && (
@@ -7230,7 +7184,11 @@ const POSPage: React.FC = () => {
                                         onClick={handleFinalizePayment}
                                         disabled={currentInvoice.items.length === 0 || isProcessingPayment || hasUnsyncedSales}
                                         className="w-full px-4 sm:px-6 md:px-7 lg:px-8 py-3 sm:py-4 md:py-4.5 lg:py-5 text-base sm:text-lg md:text-xl font-bold text-white bg-gradient-to-r from-green-500 via-emerald-500 to-green-600 rounded-xl hover:from-green-600 hover:via-emerald-600 hover:to-green-700 disabled:from-gray-400 disabled:via-gray-400 disabled:to-gray-500 dark:disabled:from-gray-600 dark:disabled:via-gray-600 dark:disabled:to-gray-700 shadow-2xl hover:shadow-3xl hover:scale-[1.02] transition-all duration-200 disabled:cursor-not-allowed disabled:scale-100 flex items-center justify-center gap-2"
-                                        title={hasUnsyncedSales ? 'لا يمكن تأكيد الدفع: يوجد فواتير مكررة تحتاج للمراجعة. يرجى التحقق من الفواتير المحفوظة وحذف المكررة.' : ''}
+                                        title={
+                                            hasUnsyncedSales
+                                                ? 'لا يمكن تأكيد الدفع: يوجد فواتير مكررة تحتاج للمراجعة. يرجى التحقق من الفواتير المحفوظة وحذف المكررة.'
+                                                : 'F1 — تأكيد الدفع'
+                                        }
                                     >
                                         {isProcessingPayment && (
                                             <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
