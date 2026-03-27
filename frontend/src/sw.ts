@@ -37,9 +37,9 @@ self.addEventListener('push', (event: PushEvent) => {
     }
   } catch {
     const t = event.data?.text();
-    payload = { title: 'POS Point Hub', body: t || 'Sale completed successfully' };
+    payload = { title: 'سوبرماركت ابو اللوف', body: t || 'Sale completed successfully' };
   }
-  const title = payload.title || 'POS Point Hub';
+  const title = payload.title || 'سوبرماركت ابو اللوف';
   const body = payload.body || 'Sale completed successfully';
   event.waitUntil(
     self.registration.showNotification(title, {

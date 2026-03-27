@@ -1,5 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { SunIcon, MoonIcon } from '@/shared/assets/icons';
+import { AppBrandLogo } from '@/shared/components/brand';
+import { APP_DISPLAY_NAME } from '@/shared/constants/brand';
 
 interface AuthLayoutProps {
   title?: string;
@@ -58,12 +60,10 @@ const AuthLayout: React.FC<AuthLayoutProps> = ({ title, subtitle, children }) =>
 
         <div className="rounded-3xl bg-white/90 p-8 py-12 shadow-2xl ring-1 ring-gray-900/10 backdrop-blur-xl transition-transform duration-300 hover:shadow-[0_24px_60px_-15px_rgba(59,130,246,0.35)] dark:bg-gray-900/70 dark:ring-white/10 sm:p-10 sm:py-14">
           <div className="mb-8 flex flex-col items-center text-center">
-            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-blue-600 via-indigo-600 to-purple-600 text-white shadow-lg shadow-blue-500/40">
-              <span className="text-2xl font-bold">P</span>
-            </div>
+            <AppBrandLogo size="md" className="h-14 w-14" />
             <div className="mt-3">
               <div className="text-xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
-                PoshPoint
+                {APP_DISPLAY_NAME}
               </div>
               {title && (
                 <div className="mt-1 text-sm text-gray-600 dark:text-gray-300">{title}</div>

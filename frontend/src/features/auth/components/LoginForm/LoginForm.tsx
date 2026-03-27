@@ -1,5 +1,7 @@
 import { useState } from 'react';
 import { AR_LABELS, UserIcon, LockIcon } from '@/shared/constants';
+import { AppBrandLogo } from '@/shared/components/brand';
+import { APP_DISPLAY_NAME } from '@/shared/constants/brand';
 
 interface LoginFormProps {
   onLoginSuccess: () => void;
@@ -42,11 +44,11 @@ const LoginForm = ({ onLoginSuccess, onForgotPassword }: LoginFormProps) => {
     <div className="w-full max-w-md space-y-8 rounded-3xl bg-white/90 backdrop-blur-xl p-8 shadow-2xl ring-1 ring-gray-900/10 sm:p-10">
       {/* Logo & Header */}
       <div className="text-center">
-        <div className="mx-auto mb-6 flex h-20 w-20 items-center justify-center rounded-2xl bg-gradient-to-br from-blue-600 via-indigo-600 to-purple-600 shadow-xl shadow-blue-500/50 transition-transform hover:scale-105">
-          <span className="text-3xl font-bold text-white">P</span>
+        <div className="mx-auto mb-6 flex h-20 w-20 items-center justify-center transition-transform hover:scale-105">
+          <AppBrandLogo size="xl" className="h-20 w-20 max-h-20 max-w-20" />
         </div>
         <h1 className="text-3xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
-          PoshPoint
+          {APP_DISPLAY_NAME}
         </h1>
         <p className="mt-2 text-sm text-gray-600">{AR_LABELS.login}</p>
       </div>

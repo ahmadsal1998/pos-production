@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { AR_LABELS } from '../../../../shared/constants';
+import { AppBrandLogo } from '@/shared/components/brand';
 
 interface VerificationPageProps {
   email: string;
@@ -37,8 +38,8 @@ const VerificationPage = ({ email, onVerified, onBackToLogin }: VerificationPage
   return (
     <div className="w-full max-w-md space-y-6 rounded-3xl bg-white/80 p-8 shadow-2xl ring-1 ring-gray-900/10 backdrop-blur-xl dark:bg-gray-900/70 dark:ring-white/10 sm:p-10">
       <div className="text-center">
-        <div className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-blue-600 via-indigo-600 to-purple-600 text-white shadow-lg shadow-blue-500/40">
-          <span className="text-xl font-bold">P</span>
+        <div className="mx-auto mb-5 flex h-16 w-16 items-center justify-center">
+          <AppBrandLogo size="lg" className="h-16 w-16 max-h-16 max-w-16" />
         </div>
         <h1 className="text-2xl font-bold text-gray-800 dark:text-gray-100">
           {AR_LABELS.enterVerificationCode}

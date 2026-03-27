@@ -4,6 +4,8 @@ import { useAppStore, useAuthStore } from '@/app/store';
 import { useDropdown } from '@/shared/contexts/DropdownContext';
 import { LogoutIcon } from '@/shared/assets/icons';
 import { AR_LABELS } from '@/shared/constants/ui';
+import { AppBrandLogo } from '@/shared/components/brand';
+import { APP_DISPLAY_NAME } from '@/shared/constants/brand';
 
 interface AdminSidebarProps {
   activePath: string;
@@ -193,12 +195,15 @@ const AdminSidebar: React.FC<AdminSidebarProps> = ({ isOpen, onClose }) => {
                 )}
               </svg>
             </button>
-            
-            {/* Logo Text - Hidden when collapsed */}
-            <span className={`text-xl sm:text-2xl font-bold bg-gradient-to-r from-blue-400 via-blue-500 to-blue-600 bg-clip-text text-transparent transition-all duration-300 whitespace-nowrap ${
-              isSidebarCollapsed ? 'opacity-0 w-0 overflow-hidden' : 'opacity-100'
-            }`}>
-              {AR_LABELS.brandRestaurantAdmin}
+
+            <AppBrandLogo size="sm" decorative className="h-9 w-9 flex-shrink-0 rounded-lg transition-all duration-300" />
+            {/* Brand name - Hidden when collapsed */}
+            <span
+              className={`text-sm sm:text-base font-bold text-slate-100 transition-all duration-300 whitespace-nowrap truncate min-w-0 ${
+                isSidebarCollapsed ? 'opacity-0 w-0 overflow-hidden' : 'opacity-100'
+              }`}
+            >
+              {APP_DISPLAY_NAME}
             </span>
           </div>
         </div>

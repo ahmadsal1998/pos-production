@@ -2,6 +2,8 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { NavItem } from '@/shared/constants';
 import { AR_LABELS, NAV_ITEMS, ChevronDownIcon } from '@/shared/constants';
+import { AppBrandLogo } from '@/shared/components/brand';
+import { APP_DISPLAY_NAME } from '@/shared/constants/brand';
 import { useAppStore, useAuthStore } from '@/app/store';
 import { useDropdown } from '@/shared/contexts/DropdownContext';
 import { LogoutIcon, MobileRechargeIcon, LinkPayIcon } from '@/shared/assets/icons';
@@ -280,7 +282,9 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
       >
         {/* Logo Section with Toggle Button */}
         <div className="relative px-4 py-5 border-b border-gray-200 dark:border-gray-800 bg-gradient-to-br from-white to-gray-50 dark:from-gray-900 dark:to-gray-950">
-          <div className={`flex items-center ${isSidebarCollapsed ? 'justify-center' : 'justify-start gap-3'}`}>
+          <div
+            className={`flex items-center gap-2 min-w-0 ${isSidebarCollapsed ? 'justify-center flex-wrap' : 'justify-start gap-3'}`}
+          >
             {/* Toggle Button - Visible on all screen sizes */}
             <button
               onClick={toggleSidebar}
@@ -303,6 +307,21 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
                 )}
               </svg>
             </button>
+            {isSidebarCollapsed ? (
+              <AppBrandLogo
+                size="sm"
+                decorative
+                className="h-8 w-8 rounded-lg ring-1 ring-gray-200 dark:ring-gray-700 flex-shrink-0"
+                title={APP_DISPLAY_NAME}
+              />
+            ) : (
+              <>
+                <AppBrandLogo size="sm" decorative className="h-9 w-9 flex-shrink-0 rounded-lg" />
+                <span className="text-sm font-bold text-gray-900 dark:text-white leading-tight truncate min-w-0">
+                  {APP_DISPLAY_NAME}
+                </span>
+              </>
+            )}
           </div>
         </div>
 

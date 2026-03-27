@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useRegisterSW } from 'virtual:pwa-register/react';
+import { APP_DISPLAY_NAME } from '@/shared/constants/brand';
 
 declare global {
   interface WindowEventMap {
@@ -86,7 +87,7 @@ const PWAInstallPrompt = () => {
               </svg>
             </div>
             <div className="min-w-0 flex-1">
-              <p className="font-medium text-gray-900 dark:text-white">Install POS Hub</p>
+              <p className="font-medium text-gray-900 dark:text-white">Install {APP_DISPLAY_NAME}</p>
               <p className="mt-0.5 text-sm text-gray-600 dark:text-gray-400">
                 Install on your device to use like an app and work offline.
               </p>

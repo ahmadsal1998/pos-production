@@ -9,6 +9,7 @@ import {
   ensureServiceWorkerReadyForPush,
   subscribeSalePushFromUserGesture,
 } from '@/lib/push/registerSalePush';
+import { APP_DISPLAY_NAME } from '@/shared/constants/brand';
 
 /** Session-only dismiss so a user who tapped "Not now" in Safari still sees the banner after opening from Home Screen. */
 const DISMISS_SESSION_KEY = 'sale-push-ios-banner-dismissed';
@@ -120,7 +121,7 @@ const EnableSaleNotificationsPrompt = () => {
           <p className="font-medium text-gray-900 dark:text-amber-50">Sale notifications (iPhone)</p>
           {showInstallFirst ? (
             <p className="mt-1 text-sm text-amber-900/90 dark:text-amber-100/90">
-              Add POS Hub to your Home Screen first: tap <span className="font-medium">Share</span>, then{' '}
+              Add {APP_DISPLAY_NAME} to your Home Screen first: tap <span className="font-medium">Share</span>, then{' '}
               <span className="font-medium">Add to Home Screen</span>. Open the app from the home icon, then enable
               notifications below.
             </p>
