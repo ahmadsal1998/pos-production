@@ -74,6 +74,12 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
         return;
       }
       const val = target.value;
+      // Empty field: let the native keypress through so React controlled inputs update
+      // correctly. The replace-0/000 logic below breaks first-digit entry when we
+      // preventDefault + dispatch synthetic input (state/DOM get out of sync).
+      if (val.trim() === '') {
+        return;
+      }
       if (!isEmptyOrZeroIntegerField(val) || !/^[1-9]$/.test(e.key)) {
         return;
       }
